@@ -23,7 +23,7 @@ on:
       - ".github/workflows/helm-publish.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "chore/mcp-sdk-v2"]
     paths:
       - "charts/mcp-stack/**"
       - ".github/workflows/helm-publish.yml"

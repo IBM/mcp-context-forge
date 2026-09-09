@@ -14,7 +14,7 @@ name: Web Lint & Static Analysis
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "chore/mcp-sdk-v2"]
     paths:
       - "mcpgateway/static/**"
       - "mcpgateway/templates/**"

@@ -28,7 +28,7 @@ name: Plugin Integration E2E
 on:
     merge_group:
     pull_request:
-        branches: [main]
+        branches: [main, "chore/mcp-sdk-v2"]
         types: [opened, synchronize, reopened, ready_for_review]
         paths:
             - "pyproject.toml"
