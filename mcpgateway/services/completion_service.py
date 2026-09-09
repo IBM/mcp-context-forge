@@ -156,6 +156,85 @@ class CompletionService:
         logger.info("Shutting down completion service")
         self._custom_completions.clear()
 
+    @staticmethod
+    def _gateway_connection(gateway: Any) -> tuple:
+        """Resolve the URL, auth headers and decoded query-param auth for a gateway.
+
+        Args:
+            gateway: The owning gateway ORM/model instance.
+
+        Returns:
+            A ``(gateway_url, headers, auth_query_params_decrypted)`` tuple.
+
+        Raises:
+            CompletionInternalError: If query-parameter auth cannot be decoded.
+        """
+        gateway_url = str(gateway.url)
+        headers = build_gateway_auth_headers(gateway)
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+
+        if getattr(gateway, "auth_type", None) == "query_param" and getattr(gateway, "auth_query_params", None):
+            auth_query_params_decrypted = {}
+            for param_key, encrypted_value in (gateway.auth_query_params or {}).items():
+                try:
+                    decoded = decode_auth(encrypted_value)
+                    auth_query_params_decrypted[param_key] = decoded.get(param_key, "")
+                except Exception as exc:
+                    raise CompletionInternalError(f"Failed to decode query-parameter auth for gateway '{getattr(gateway, 'id', '')}'") from exc
+            if auth_query_params_decrypted:
+                gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
+
+        return gateway_url, headers, auth_query_params_decrypted
+
+    @asynccontextmanager
+    async def _acquire_upstream_session(self, gateway: Any) -> AsyncIterator[Any]:
+        """Yield an initialized MCP client session for ``gateway``.
+
+        Reuses the upstream session pinned to the current downstream
+        ``Mcp-Session-Id`` when one is in scope (#4205); otherwise opens a
+        short-lived session via ``mcp_proxy_client()``, which negotiates the
+        protocol era the same way the registry path does (``mode=`` resolves
+        to ``settings.mcp_client_connect_mode`` by default) — this fallback is
+        not pinned to the legacy handshake.
+
+        Args:
+            gateway: The owning gateway ORM/model instance.
+
+        Yields:
+            A client session exposing ``.server_capabilities``,
+            ``.protocol_version``, and ``.complete(...)``.
+        """
+        gateway_url, headers, _auth_query_params = self._gateway_connection(gateway)
+
+        gateway_id = str(getattr(gateway, "id", ""))
+        transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
+        registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+
+        downstream_session_id = _downstream_session_id_from_request()
+        if downstream_session_id and gateway_id:
+            try:
+                registry = get_upstream_session_registry()
+            except RegistryNotInitializedError:
+                registry = None
+            if registry is not None:
+                async with registry.acquire(
+                    downstream_session_id=downstream_session_id,
+                    gateway_id=gateway_id,
+                    url=gateway_url,
+                    headers=headers,
+                    transport_type=registry_transport_type,
+                ) as upstream:
+                    yield upstream.session
+                    return
+
+        async with mcp_proxy_client(
+            url=gateway_url,
+            headers=headers,
+            timeout=settings.health_check_timeout,
+            transport="sse" if transport == "sse" else "streamablehttp",
+        ) as client:
+            yield client.session
+
     async def handle_completion(
         self,
         db: Session,
