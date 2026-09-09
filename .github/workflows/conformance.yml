@@ -53,9 +53,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=cf-integration-conformance
 
       - name: Install cargo-binstall
-        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1 # v2.75.27
-        with:
-          tool: cargo-binstall
+        run: cargo install cargo-binstall --locked
 
       - name: Install cf-integration 0.3.2 binary
         run: cargo binstall cf-integration@0.3.2 --no-confirm
