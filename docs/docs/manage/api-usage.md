@@ -661,6 +661,17 @@ returned — never its URL, transport, or credentials — and no wire call to th
 is made regardless of the tool's annotations. An empty request body defaults to
 `{"arguments": {}}`, so `POST /tools/preview/{name}` with no body is valid.
 
+!!! warning "Live invocation now enforces `input_schema`"
+    `tools/call` validates `arguments` against the tool's `input_schema` before dispatch and
+    fails the call on a mismatch. Earlier releases did not check the input schema at all, so a
+    tool whose published schema does not match what its callers actually send will now reject
+    calls it previously accepted.
+
+    Preview is the migration tool for this: run the same arguments through
+    `POST /tools/preview/{name}` and a `validated: false` response with an `invalid_arguments`
+    warning is exactly what live invocation will reject. Fix it by correcting the caller's
+    arguments, or by relaxing the tool's registered `input_schema` to match what it accepts.
+
 ### Update Tool
 
 ```bash

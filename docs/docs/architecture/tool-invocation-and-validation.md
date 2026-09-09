@@ -12,6 +12,12 @@ ContextForge invokes tools across several very different backends — federated 
 > earlier gate shared by `ToolService.invoke_tool` and the `POST /tools/preview/{name}`
 > dry-run endpoint via `_resolve_tool_for_invocation` / `_validate_tool_input_arguments`; see
 > [API Usage — Preview a Tool Call](../manage/api-usage.md#preview-a-tool-call-dry-run).
+>
+> **Schemas are untrusted input.** Both gates treat a tool's `input_schema` / `output_schema` as
+> tool-controlled data — a federated tool ships its own — so validation never reaches outside the
+> schema document. A `$ref`, `$dynamicRef`, or `$recursiveRef` that is not a same-document
+> reference is refused, and validators are built against a registry with no `retrieve` callable,
+> so an unresolvable reference fails validation closed rather than making the gateway fetch a URL.
 
 ## High-level flow
 

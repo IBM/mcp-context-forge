@@ -54,6 +54,8 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import BaseModel, ValidationError
+import referencing
+import referencing.exceptions
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -636,6 +638,46 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     return {"response_text": text}
 
 
+# SECURITY: JSON Schemas validated here are tool-controlled data — a federated tool ships its
+# own input/output schema — and jsonschema's default registry resolves remote ``$ref`` URIs by
+# fetching them with ``urllib.request.urlopen``. That is an SSRF primitive reachable from the
+# preview route and from every live invocation. Two layers close it: non-local refs are refused
+# outright (below), and validators are built against this registry, which holds only the bundled
+# metaschemas and has no ``retrieve`` callable, so any residual resolution attempt raises
+# ``referencing.exceptions.Unresolvable`` instead of hitting the network.
+_NO_RETRIEVE_REGISTRY: referencing.Registry = referencing.Registry()
+
+# Every keyword whose value is a reference URI, across the drafts we accept.
+_REFERENCE_KEYWORDS = ("$ref", "$dynamicRef", "$recursiveRef")
+
+
+def _assert_local_refs_only(schema: Any) -> None:
+    """Refuse a schema that references anything outside its own document.
+
+    Walks the whole schema (iteratively, so a deeply nested schema cannot exhaust the
+    stack) and rejects any reference keyword whose value is not a same-document pointer,
+    anchor, or the empty self-reference. Anything else — ``https://``, ``file://``, or a
+    relative path resolved against a base URI — would make validation fetch a URL.
+
+    Args:
+        schema: The parsed JSON Schema (or any sub-node of one).
+
+    Raises:
+        jsonschema.exceptions.SchemaError: If a non-local reference is present.
+    """
+    stack: List[Any] = [schema]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, Mapping):
+            for keyword in _REFERENCE_KEYWORDS:
+                ref = node.get(keyword)
+                if isinstance(ref, str) and ref and not ref.startswith("#"):
+                    raise jsonschema.exceptions.SchemaError(f"Refusing to resolve non-local {keyword} '{ref}': only same-document references (starting with '#') are supported.")
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+
+
 @lru_cache(maxsize=128)
 def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
     """Cache schema validation and validator class selection.
@@ -654,8 +696,15 @@ def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
 
     Returns:
         Tuple of (validator_class, schema_dict) ready for instantiation.
+
+    Raises:
+        jsonschema.exceptions.SchemaError: If the schema references anything outside its
+            own document (see :func:`_assert_local_refs_only`) or no validator accepts it.
     """
     schema = orjson.loads(schema_json)
+
+    # Refuse non-local $refs before any validator sees the schema (SSRF guard).
+    _assert_local_refs_only(schema)
 
     # First try auto-detection based on $schema
     validator_cls = validators.validator_for(schema)
@@ -706,12 +755,16 @@ def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
     Raises:
         error: The best matching ValidationError from jsonschema validation.
         jsonschema.exceptions.ValidationError: If validation fails.
-        jsonschema.exceptions.SchemaError: If the schema itself is invalid.
+        jsonschema.exceptions.SchemaError: If the schema itself is invalid or carries a
+            non-local ``$ref``.
+        referencing.exceptions.Unresolvable: If a reference cannot be resolved from the
+            in-memory registry (never fetched over the network).
     """
     schema_json = _canonicalize_schema(schema)
     validator_cls, checked_schema = _get_validator_class_and_check(schema_json)
-    # Create fresh validator instance for thread safety
-    validator = validator_cls(checked_schema)
+    # Create fresh validator instance for thread safety. The registry never retrieves,
+    # so an unresolvable reference fails closed instead of triggering a network fetch.
+    validator = validator_cls(checked_schema, registry=_NO_RETRIEVE_REGISTRY)
     # Use best_match to match jsonschema.validate() error selection behavior
     error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
     if error is not None:
@@ -726,19 +779,24 @@ def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Opti
     ``ToolService._resolve_tool_for_invocation`` so the two can never disagree about
     whether a given set of arguments is acceptable.
 
+    Schemas are tool-controlled, so this fails closed on a schema that reaches outside its
+    own document: a non-local ``$ref`` is rejected up front and an unresolvable reference
+    is reported as a validation failure rather than being fetched over the network.
+
     Args:
         arguments: Candidate arguments to validate.
         input_schema: The tool's JSON input schema, if any.
 
     Returns:
         None if ``arguments`` validate cleanly (or there is no schema to check against),
-        otherwise the ``str()`` of the ``jsonschema`` validation/schema error.
+        otherwise the ``str()`` of the ``jsonschema``/``referencing`` validation, schema,
+        or reference-resolution error.
     """
     if not input_schema:
         return None
     try:
         _validate_with_cached_schema(arguments, input_schema)
-    except (jsonschema.exceptions.ValidationError, jsonschema.exceptions.SchemaError) as exc:
+    except (jsonschema.exceptions.ValidationError, jsonschema.exceptions.SchemaError, referencing.exceptions.Unresolvable) as exc:
         return str(exc)
     return None
 
@@ -7295,8 +7353,10 @@ class ToolService(BaseService):
         live invocation's own schema check (#5629 -- previously the two diverged: only preview
         checked the input schema, so ``validated: true`` here did not guarantee the live path
         would accept the same arguments). Never dispatches: no REST/MCP/A2A/gRPC call is made
-        (federated tools resolve to ``target.kind == "federated"`` with no wire call to the
-        remote gateway, regardless of the tool's annotations), and TOOL_POST_INVOKE never runs.
+        (federated tools -- including a direct-proxy target selected by the caller's
+        ``X-Context-Forge-Gateway-Id`` header -- resolve to ``target.kind == "federated"`` with no
+        wire call to the remote gateway, regardless of the tool's annotations), and
+        TOOL_POST_INVOKE never runs.
 
         Only plugins tagged ``preview_safe`` have their TOOL_PRE_INVOKE hook actually run, and
         only when they'd also be dispatch-eligible live (see :meth:`_get_dispatchable_hook_refs`
@@ -7311,8 +7371,9 @@ class ToolService(BaseService):
         preview metrics and audit rows from production tool traffic by route" describes keeping
         them separate from live rows, not that no rows exist at all. Today that separation is
         simply "no rows" rather than "preview-tagged rows" -- a defensible v1 call, but a preview
-        activity view (a named #5629 follow-up) would need audit rows here, tagged as preview,
-        not the live-invocation audit call reused as-is.
+        activity view would need audit rows here, tagged as preview, not the live-invocation audit
+        call reused as-is. Tracked in
+        https://github.com/IBM/mcp-context-forge/issues/6722.
 
         Args:
             db: Database session.
@@ -7325,11 +7386,14 @@ class ToolService(BaseService):
                 a virtual server context.
             request_headers: The caller's inbound request headers, sensitive ones (Authorization,
                 Cookie, API keys -- see ``filter_sensitive_headers``) already stripped by the
-                caller, forwarded into the ``preview_safe`` hook payload for condition/logic
-                evaluation. This is *not* equivalent to what a live dispatch would see: it also
-                excludes tool-configured static headers, resolved auth headers, and
-                passthrough-merged headers, since building those would require preview to
-                resolve gateway/tool secrets it otherwise never touches (#5629 federation policy).
+                caller. Used for the same ``X-Context-Forge-Gateway-Id`` direct-proxy detection
+                live invocation performs (gateway access is still RBAC-checked in
+                :meth:`_resolve_tool_for_invocation`), and forwarded into the ``preview_safe``
+                hook payload for condition/logic evaluation. This is *not* equivalent to what a
+                live dispatch would see: it also excludes tool-configured static headers, resolved
+                auth headers, and passthrough-merged headers, since building those would require
+                preview to resolve gateway/tool secrets it otherwise never touches (#5629
+                federation policy).
 
         Returns:
             ToolPreviewResponse: The dry-run envelope described in #5629.
@@ -7337,7 +7401,10 @@ class ToolService(BaseService):
         Raises:
             ToolNotFoundError: If tool not found or access denied (same as invoke_tool).
         """
-        resolved = await self._resolve_tool_for_invocation(db, name, None, user_email, token_teams, server_id, False, False, arguments=arguments)
+        # Headers are forwarded so X-Context-Forge-Gateway-Id direct-proxy detection resolves
+        # exactly as it does live -- withholding them made a direct-proxy tool preview as
+        # not-found while the same call invoked fine.
+        resolved = await self._resolve_tool_for_invocation(db, name, request_headers, user_email, token_teams, server_id, False, False, arguments=arguments)
         tool_payload = resolved.tool_payload
         warnings: List[ToolPreviewWarning] = []
 

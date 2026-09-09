@@ -497,6 +497,46 @@ class TestPreviewToolInvocationPluginHooks:
         assert payload.headers is None
 
 
+    @pytest.mark.asyncio
+    async def test_request_headers_forwarded_to_resolver(self, service, test_db):
+        """Preview must hand its (already sanitized) headers to _resolve_tool_for_invocation so
+        X-Context-Forge-Gateway-Id direct-proxy detection resolves the same target live
+        invocation would -- withholding them made a direct-proxy tool preview as not-found."""
+        mock_resolve = AsyncMock(return_value=_resolved(_local_tool_payload()))
+        headers = {"x-context-forge-gateway-id": "gw-1"}
+
+        with patch.object(service, "_resolve_tool_for_invocation", mock_resolve), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, request_headers=headers)
+
+        assert mock_resolve.await_args.args[2] == headers
+
+
+class TestPreviewDirectProxyResolution:
+    """A direct-proxy target (selected by X-Context-Forge-Gateway-Id) must preview, not 404."""
+
+    @pytest.mark.asyncio
+    async def test_direct_proxy_previews_as_federated_target(self, service, test_db):
+        """Direct proxy resolves with no DB tool and no input schema: the envelope reports the
+        federated gateway by name only, and validation has nothing to fail against."""
+        direct_proxy_resolved = ResolvedTool(
+            is_direct_proxy=True,
+            tool=None,
+            gateway=None,
+            tool_payload={"id": None, "name": "remote_tool", "gateway_id": "gw-1", "enabled": True, "reachable": True},
+            gateway_payload={"id": "gw-1", "name": "remote-gw", "url": "https://remote.example.com/mcp"},
+            schema_validation_error=None,
+        )
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=direct_proxy_resolved)), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
+            result = await service.preview_tool_invocation(test_db, "remote_tool", {"param": "value"}, request_headers={"x-context-forge-gateway-id": "gw-1"})
+
+        assert result.validated is True
+        assert result.target.kind == "federated"
+        assert result.target.gateway_name == "remote-gw"
+        # Federation policy: name only, never the gateway's URL or credentials.
+        assert "remote.example.com" not in result.model_dump_json()
+
+
 class TestSharedResolutionPath:
     """#5629 explicit requirement: preview and live invocation must call the same
     internal resolution function, or previews can silently lie."""
