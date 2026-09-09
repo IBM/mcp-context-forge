@@ -637,6 +637,7 @@ class EmailAuthService:
         email_verified: Optional[bool] = None,
         admin_origin_source: Optional[str] = None,
         registration_events_best_effort: bool = False,
+        user_id: Optional[str] = None,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
@@ -661,6 +662,8 @@ class EmailAuthService:
                 existing granted_by-derived behavior.
             admin_origin_source: Source to record when creating an administrator.
             registration_events_best_effort: Log event-write failures without changing the account creation result. Defaults to existing error propagation.
+            user_id: Canonical user ID to store (e.g. the IdP subject for
+                SSO-provisioned users). Defaults to the normalized e-mail.
 
         Returns:
             EmailUser: The created user object
@@ -729,6 +732,7 @@ class EmailAuthService:
             full_name=full_name,
             is_admin=is_admin,
             is_active=is_active,
+            user_id=user_id or email,
             password_change_required=password_change_required,
             auth_provider=auth_provider,
             password_hash_type=password_hash_type,
