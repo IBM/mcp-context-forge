@@ -7788,7 +7788,7 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.settings", mock_settings)
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
-        with patch("mcpgateway.services.gateway_service.get_cached_ssl_context") as mock_ssl:
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context") as mock_ssl:
             mock_ssl.return_value = MagicMock()
             await gateway_service._check_single_gateway_health(gw)
 
@@ -7839,7 +7839,7 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         with (
-            patch("mcpgateway.services.gateway_service.get_cached_ssl_context") as mock_ssl,
+            patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context") as mock_ssl,
             patch("mcpgateway.services.gateway_service.get_encryption_service", side_effect=RuntimeError("no enc")),
         ):
             mock_ssl.return_value = MagicMock()
@@ -11189,3 +11189,193 @@ class TestGatewayHandshakeLegacyDiscoverSkip:
 
         # Discover probe was attempted (ResilientHttpClient was instantiated)
         mock_resilient.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# mTLS against peers trusted by the system CA bundle
+#
+# Regression coverage: these outbound clients used to build an SSL context only
+# when a custom CA certificate was configured, so a gateway that required mTLS
+# but presented a publicly trusted server certificate never had its configured
+# client_cert/client_key loaded into the httpx client.
+# ---------------------------------------------------------------------------
+
+
+class TestMtlsWithoutCustomCa:
+    @pytest.mark.asyncio
+    async def test_health_check_sends_client_cert_without_custom_ca(self, gateway_service, monkeypatch):
+        """Health check presents the client identity even with no custom CA configured."""
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        gw = _make_gateway(
+            id="gw-mtls-no-ca",
+            name="mtls-no-ca-gw",
+            url="https://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,  # peer chains to the system trust store
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+            client_cert="/path/to/cert.pem",
+            client_key=encryption.encrypt_secret("my-client-key"),
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+
+        captured: dict = {}
+
+        def _isolated_client(**kw):
+            captured.update(kw)
+            ctx = AsyncMock()
+            ctx.__aenter__ = AsyncMock(return_value=mock_client)
+            ctx.__aexit__ = AsyncMock(return_value=False)
+            return ctx
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", _isolated_client)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+                auth_encryption_secret=settings.auth_encryption_secret,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+
+        sentinel_ctx = MagicMock()
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=sentinel_ctx) as mock_ssl:
+            await gateway_service._check_single_gateway_health(gw)
+
+        mock_ssl.assert_called_once()
+        assert mock_ssl.call_args[0][0] is None  # no custom CA: system trust store retained
+        assert mock_ssl.call_args[1]["client_cert"] == "/path/to/cert.pem"
+        assert mock_ssl.call_args[1]["client_key"] == "my-client-key"  # decrypted
+        # The context actually reaches the HTTP client.
+        assert captured["verify"] is sentinel_ctx
+
+    @pytest.mark.asyncio
+    async def test_health_check_without_any_tls_material_uses_default_verify(self, gateway_service, monkeypatch):
+        """With neither a CA nor client certs, no SSL context is built (unchanged behaviour)."""
+        gw = _make_gateway(
+            id="gw-plain-tls",
+            name="plain-tls-gw",
+            url="https://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+            client_cert=None,
+            client_key=None,
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+
+        captured: dict = {}
+
+        def _isolated_client(**kw):
+            captured.update(kw)
+            ctx = AsyncMock()
+            ctx.__aenter__ = AsyncMock(return_value=mock_client)
+            ctx.__aexit__ = AsyncMock(return_value=False)
+            return ctx
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", _isolated_client)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(enable_ed25519_signing=False, health_check_timeout=5, auto_refresh_servers=False, httpx_admin_read_timeout=5, mcp_session_pool_enabled=False),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context") as mock_ssl:
+            await gateway_service._check_single_gateway_health(gw)
+
+        mock_ssl.assert_not_called()
+        assert captured["verify"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["sse", "streamablehttp"])
+    async def test_connect_helpers_send_client_cert_without_custom_ca(self, monkeypatch, transport):
+        """connect_to_*_server build an mTLS context when only client cert/key are set."""
+        service = GatewayService()
+        captured: dict = {}
+
+        class DummyClient:
+            server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {})
+
+            async def list_tools(self):
+                return SimpleNamespace(tools=[])
+
+            async def list_resources(self):
+                return SimpleNamespace(resources=[])
+
+            async def list_resource_templates(self):
+                return SimpleNamespace(resource_templates=[])
+
+            async def list_prompts(self):
+                return SimpleNamespace(prompts=[])
+
+        class DummyProxyClient:
+            def __init__(self, **kwargs):
+                # Invoking the factory is what exercises the SSL branch under test.
+                kwargs["httpx_client_factory"]()
+
+            async def __aenter__(self):
+                return DummyClient()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        unpinned_target = SimpleNamespace(client_kwargs=lambda **kw: kw)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.resolve_pinned_target", AsyncMock(return_value=unpinned_target))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.httpx2.AsyncClient", lambda **kw: captured.update(kw) or SimpleNamespace())
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_default_verify", lambda: True)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_httpx2_timeout", lambda: None)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", DummyProxyClient)
+
+        connect = service.connect_to_streamablehttp_server if transport == "streamablehttp" else service.connect_to_sse_server
+
+        sentinel_ctx = MagicMock()
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=sentinel_ctx) as mock_ssl:
+            await connect(
+                "https://example.com/mcp",
+                ca_certificate=None,  # peer chains to the system trust store
+                client_cert="/path/to/cert.pem",
+                client_key="/path/to/key.pem",
+            )
+
+        mock_ssl.assert_called_once()
+        assert mock_ssl.call_args[0][0] is None
+        assert mock_ssl.call_args[1]["client_cert"] == "/path/to/cert.pem"
+        assert mock_ssl.call_args[1]["client_key"] == "/path/to/key.pem"
+        assert captured["verify"] is sentinel_ctx
