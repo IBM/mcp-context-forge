@@ -1385,19 +1385,29 @@ class TokenValidationError(Exception):
         self.original = original
 
 
-async def validate_token_user(request: Request, token: str) -> EmailUser:
+async def validate_token_user(request: Request, token: str) -> Any:
     """Validate a bearer token through the full get_current_user() stack.
 
     This is the single shared validation path for all admin-token checks.
     Both /admin/login (redirect-to-dashboard) and /admin (dashboard itself)
     should call this so they agree on whether a token is acceptable.
 
+    Trust-mode return type (#5904): when ``jwt_trust_mode="jwt-trust"`` and
+    the token is trust-eligible (``token_use == "trusted"``), the return
+    value is the trust-mode principal (a ``VirtualPrincipal``) instead of an
+    ``EmailUser`` row. The principal is EmailUser-compatible for the
+    attributes callers read (``email``, ``is_admin``, ``full_name``) and is
+    returned directly — trust-mode principals have no local user record by
+    design.
+
     Args:
         request: FastAPI request object (for request-level caching and state).
         token: Raw JWT token string (from cookie or header).
 
     Returns:
-        EmailUser: The fully validated, authenticated user.
+        The fully validated, authenticated user: an ``EmailUser`` in default
+        mode, or a trust-mode principal (``VirtualPrincipal``) when trust
+        mode resolved the token.
 
     Raises:
         TokenValidationError: If the token is missing, invalid, expired,
@@ -1687,7 +1697,14 @@ async def get_current_user(
         # Get plugin manager singleton
         plugin_manager = await get_plugin_manager()
 
-        if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_RESOLVE_USER):
+        hooks_registered = bool(plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_RESOLVE_USER))
+        if hooks_registered and settings.jwt_trust_mode == "jwt-trust":
+            # Fail-closed default (#5904): in trust mode the signed token alone
+            # proves identity, roles, and teams; a plugin hook could re-introduce
+            # caller-supplied identity. The hook is skipped and the trust-mode
+            # path handles authentication directly.
+            logger.info("HTTP_AUTH_RESOLVE_USER hook disabled in trust mode")
+        elif hooks_registered:
             # Extract client information
             client_host = None
             client_port = None

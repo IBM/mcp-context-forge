@@ -18,7 +18,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import math
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 import uuid
 
 # Third-Party
@@ -31,6 +31,10 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailApiToken, EmailTeam, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.utils.trusted_claims import VirtualPrincipal
 
 # Initialize logging
 logging_service = LoggingService()
@@ -309,6 +313,61 @@ class TokenCatalogService:
             scopes=scopes_dict,
         )
 
+    async def mint_trust_token(self, principal: "VirtualPrincipal", trust_settings: Optional[object] = None, expires_in_minutes: Optional[int] = None) -> str:
+        """Mint a gateway-signed trust token (``token_use="trusted"``) for a verified principal.
+
+        The token satisfies the B.1 dispatch rule's eligibility check for
+        gateway-signed tokens: it carries the ``token_use="trusted"`` marker,
+        the mapped user_id claim (``jwt_claim_user_id``), and the configured
+        revocation claim (``jwt_trust_revocation_claim``, default ``jti``).
+        Every claim derives from the verified principal — server-side
+        authority only — and ``sub`` always equals ``principal.user_id``
+        (no act-as).
+
+        Trust tokens are ephemeral: this method never inserts into
+        ``email_api_tokens``. Revocation is via the jti-based blocklist only;
+        the catalog revoke endpoint does not apply to them.
+
+        Args:
+            principal: Verified principal (from ``extract_trusted_principal``
+                or built from a local ``EmailUser`` row by the admin mint
+                endpoint).
+            trust_settings: Settings object carrying the ``jwt_claim_*``
+                mappings. Defaults to the process settings.
+            expires_in_minutes: Token lifetime in minutes. ``None`` selects
+                the ``create_jwt_token`` default.
+
+        Returns:
+            str: Signed JWT token string with ``token_use="trusted"``.
+        """
+        trust_settings = trust_settings or settings
+        data = {
+            "sub": principal.user_id,
+            "jti": str(uuid.uuid4()),
+            "token_use": "trusted",  # nosec B105 - token type marker, not a password
+            trust_settings.jwt_claim_user_id: principal.user_id,
+            trust_settings.jwt_claim_teams: list(principal.teams),
+            trust_settings.jwt_claim_roles: list(principal.roles),
+            trust_settings.jwt_claim_admin: bool(principal.is_admin),
+        }
+        if principal.email:
+            data[trust_settings.jwt_claim_email] = principal.email
+
+        create_kwargs: Dict[str, object] = {}
+        if expires_in_minutes is not None:
+            create_kwargs["expires_in_minutes"] = expires_in_minutes
+        return await create_jwt_token(
+            data=data,
+            user_data={
+                "email": principal.email,
+                "full_name": principal.full_name,
+                "is_admin": bool(principal.is_admin),
+                "auth_provider": "trust",
+            },
+            teams=list(principal.teams),
+            **create_kwargs,
+        )
+
     def _hash_token(self, token: str) -> str:
         """Create secure hash of token for storage.
 
@@ -457,7 +516,19 @@ class TokenCatalogService:
         user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
 
         if not user:
+            # B.2 matrix (fail-closed default): trust-only principals have no
+            # local user record, so the catalog cannot derive claims from
+            # server-side authority. Disabled with an explicit error.
+            if settings.jwt_trust_mode == "jwt-trust":
+                raise ValueError("Token minting is disabled for trust-only principals. Create a local user account first.")
             raise ValueError(f"User not found: {user_email}")
+
+        # No act-as in trust mode (#5904): the minted sub is the target row's
+        # canonical user_id, so minting for another user delegates identity.
+        # Non-admin delegation is rejected; platform admins keep the existing
+        # delegation path (team membership is still enforced below).
+        if settings.jwt_trust_mode == "jwt-trust" and caller_email and caller_email.lower() != user_email.lower() and not is_admin:
+            raise ValueError("Token minting for another user requires platform admin privileges in trust mode.")
 
         # Validate scope containment (fail-secure if no caller_permissions)
         if scope and scope.permissions:
