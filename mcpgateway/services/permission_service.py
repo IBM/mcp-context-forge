@@ -78,6 +78,8 @@ class PermissionService:
         user_agent: Optional[str] = None,
         allow_admin_bypass: bool = True,
         check_any_team: bool = False,
+        token_is_admin: bool = False,
+        token_roles: Optional[List[str]] = None,
     ) -> bool:
         """Check if user has specific permission.
 
@@ -97,10 +99,18 @@ class PermissionService:
             ip_address: IP address for audit logging
             user_agent: User agent for audit logging
             allow_admin_bypass: If True, admin users bypass all permission checks.
-                               If False, admins must have explicit permissions.
-                               Default is True for backward compatibility.
+                           If False, admins must have explicit permissions.
+                           Default is True for backward compatibility.
             check_any_team: If True, check permission across ALL team-scoped roles
                            (used for list/read endpoints with multi-team session tokens)
+            token_is_admin: Claims-derived admin flag (JWT-trust mode, #5902).
+                           Honored without a DB user row. The public-only
+                           suppression still applies: token_teams=[] gets no
+                           bypass.
+            token_roles: Claims-derived role names (JWT-trust mode, #5902).
+                           Resolved to permissions via the server-side roles
+                           table in get_user_permissions; permissions never
+                           come from the token.
 
         Returns:
             bool: True if permission is granted, False otherwise
@@ -124,16 +134,22 @@ class PermissionService:
             # via admin bypass or team-scoped roles, even when the backing user identity is an admin.
             # This enforces strict isolation: token_teams=[] means public-only access at both Layer 1 and Layer 2.
             if token_teams is not None and len(token_teams) == 0:
-                # Public-only tokens: admin bypass is suppressed entirely
-                if allow_admin_bypass and await self._is_user_admin(user_email):
+                # Public-only tokens: admin bypass is suppressed entirely, for
+                # the DB admin flag and for the claims-derived admin claim
+                # alike (#5902).
+                if allow_admin_bypass and (token_is_admin or await self._is_user_admin(user_email)):
                     logger.warning(f"[RBAC] Admin bypass suppressed for public-only token: user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}")
                 # Continue to permission check without admin bypass
-            elif allow_admin_bypass and await self._is_user_admin(user_email):
-                # Check if user is admin (bypass all permission checks if allowed)
+            elif allow_admin_bypass and (token_is_admin or await self._is_user_admin(user_email)):
+                # Check if user is admin (bypass all permission checks if
+                # allowed). token_is_admin honors the claims-derived admin
+                # without a DB user row (#5902).
                 return True
 
-            # Get user's effective permissions (uses cache when valid)
-            user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team, token_teams=token_teams)
+            # Get user's effective permissions (uses cache when valid).
+            # token_roles carries claims-derived role names in trust mode;
+            # they resolve via the server-side roles table, never the token.
+            user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team, token_teams=token_teams, token_roles=token_roles)
 
             # Check if user has the specific permission or wildcard
             granted = permission in user_permissions or Permissions.ALL_PERMISSIONS in user_permissions
@@ -223,7 +239,9 @@ class PermissionService:
             logger.error("Error checking admin permission for %s: %s", SecurityValidator.sanitize_log_message(user_email), e)
             return False
 
-    async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False, token_teams: Optional[List[str]] = None) -> Set[str]:
+    async def get_user_permissions(
+        self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False, token_teams: Optional[List[str]] = None, token_roles: Optional[List[str]] = None
+    ) -> Set[str]:
         """Get all effective permissions for a user.
 
         Collects permissions from all user's roles across applicable scopes.
@@ -237,6 +255,11 @@ class PermissionService:
             token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True
                         and token_teams is non-empty, filters team-scoped roles to only include
                         roles from teams in this list (enforces Layer 1 narrowing at Layer 2)
+            token_roles: Optional claims-derived role names (JWT-trust mode,
+                        #5902). Resolved to permissions via the server-side
+                        roles table; unknown names grant nothing. Public-only
+                        tokens (token_teams=[]) get no claims-derived role
+                        permissions, mirroring the admin-bypass suppression.
 
         Returns:
             Set[str]: All effective permissions for the user
@@ -255,17 +278,21 @@ class PermissionService:
         # Use distinct cache key for any-team lookups to avoid poisoning global cache.
         # token_teams must be encoded in the key: None (unrestricted), [] (public-only),
         # and ["team-a"] (narrowed) all produce different permission sets.
+        # token_roles (claims-derived, trust mode) must be encoded too: two
+        # tokens for the same user_id with different role claims produce
+        # different permission sets.
         if token_teams is None:
             tt_suffix = ""
         elif len(token_teams) == 0:
             tt_suffix = ":__public__"
         else:
             tt_suffix = f":{','.join(sorted(set(token_teams)))}"
+        tr_suffix = f":__claims__:{','.join(sorted(set(token_roles)))}" if token_roles else ""
 
         if include_all_teams:
-            cache_key = f"{user_email}:__anyteam__{tt_suffix}"
+            cache_key = f"{user_email}:__anyteam__{tt_suffix}{tr_suffix}"
         else:
-            cache_key = f"{user_email}:{team_id or 'global'}{tt_suffix}"
+            cache_key = f"{user_email}:{team_id or 'global'}{tt_suffix}{tr_suffix}"
         if self._is_cache_valid(cache_key):
             cached_perms = self._permission_cache[cache_key]
             logger.debug("[RBAC] Cache hit for %s (team_id=%s): %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), cached_perms)
@@ -282,6 +309,16 @@ class PermissionService:
             role_permissions = user_role.role.get_effective_permissions()
             logger.debug("[RBAC] Role '%s' (scope=%s, scope_id=%s) has permissions: %s", user_role.role.name, user_role.scope, user_role.scope_id, role_permissions)
             permissions.update(role_permissions)
+
+        # Claims-derived roles (JWT-trust mode, #5902): resolve role names
+        # against the server-side roles table; permissions never come from
+        # the token, and unknown names grant nothing. Public-only tokens
+        # (token_teams=[]) get no claims-derived role permissions: strict
+        # isolation mirrors the admin-bypass suppression in check_permission.
+        if token_roles and not (token_teams is not None and len(token_teams) == 0):
+            claim_role_rows = self.db.execute(select(Role).where(and_(Role.name.in_(sorted(set(token_roles))), Role.is_active.is_(True)))).scalars().all()
+            for claim_role in claim_role_rows:
+                permissions.update(claim_role.get_effective_permissions())
 
         # Cache both permissions and roles
         self._permission_cache[cache_key] = permissions
