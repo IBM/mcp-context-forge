@@ -51,6 +51,7 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
+from mcp.shared.inbound import x_mcp_header_map
 import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
@@ -1221,6 +1222,52 @@ class ResolvedTool:
     tool_payload: Dict[str, Any]
     gateway_payload: Optional[Dict[str, Any]]
     schema_validation_error: Optional[str] = None
+
+
+async def _call_upstream_tool(
+    session: Any,
+    tool_name: str,
+    arguments: Dict[str, Any],
+    *,
+    input_schema: Optional[Dict[str, Any]],
+    meta: Optional[Dict[str, Any]],
+    progress_callback: Optional[Any],
+    input_responses: Optional[Any],
+    request_state: Optional[str],
+) -> Any:
+    """Invoke a tool on an upstream SDK session with x-mcp-header mirroring in place.
+
+    Every upstream tools/call goes through here so the session is seeded with the tool's
+    argument-to-header map before the request is stamped; a call site that bypassed this
+    helper would silently send no Mcp-Param-* headers. MRTR input_required results are
+    always allowed here and handled by the caller.
+
+    Args:
+        session: The SDK ``ClientSession`` to call on (per-call or pooled).
+        tool_name: The tool's name as the upstream knows it.
+        arguments: Tool arguments to forward.
+        input_schema: The tool's stored input schema (source of the header map), or ``None``.
+        meta: Request ``_meta`` to forward.
+        progress_callback: Optional progress relay callback.
+        input_responses: MRTR input responses on a retry, if any.
+        request_state: MRTR request state on a retry, if any.
+
+    Returns:
+        The upstream's ``CallToolResult`` or ``InputRequiredResult``.
+    """
+    # The SDK fills this map only from a tools/list the session ran itself; gateway sessions call
+    # straight from the stored catalog, so it is seeded from the stored schema. Legacy-negotiated
+    # sessions never consult it, so legacy upstreams receive no Mcp-Param-* headers.
+    session._x_mcp_header_maps[tool_name] = x_mcp_header_map(input_schema or {})  # pylint: disable=protected-access
+    return await session.call_tool(
+        tool_name,
+        arguments,
+        meta=meta,
+        progress_callback=progress_callback,
+        allow_input_required=True,
+        input_responses=input_responses,
+        request_state=request_state,
+    )
 
 
 class ToolService(BaseService):
@@ -6805,12 +6852,13 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(
+                                        tool_call_result = await _call_upstream_tool(
+                                            upstream.session,
                                             tool_name_original,
                                             arguments,
+                                            input_schema=tool_payload.get("input_schema"),
                                             meta=meta_data,
                                             progress_callback=progress_callback,
-                                            allow_input_required=True,
                                             input_responses=input_responses,
                                             request_state=request_state,
                                         )
@@ -6863,12 +6911,13 @@ class ToolService(BaseService):
                                             },
                                         ):
                                             with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await client.session.call_tool(
+                                                tool_call_result = await _call_upstream_tool(
+                                                    client.session,
                                                     tool_name_original,
                                                     arguments,
+                                                    input_schema=tool_payload.get("input_schema"),
                                                     meta=request_meta_data,
                                                     progress_callback=progress_callback,
-                                                    allow_input_required=True,
                                                     input_responses=input_responses,
                                                     request_state=request_state,
                                                 )
@@ -7038,12 +7087,13 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(
+                                        tool_call_result = await _call_upstream_tool(
+                                            upstream.session,
                                             tool_name_original,
                                             arguments,
+                                            input_schema=tool_payload.get("input_schema"),
                                             meta=meta_data,
                                             progress_callback=progress_callback,
-                                            allow_input_required=True,
                                             input_responses=input_responses,
                                             request_state=request_state,
                                         )
@@ -7096,12 +7146,13 @@ class ToolService(BaseService):
                                             },
                                         ):
                                             with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await client.session.call_tool(
+                                                tool_call_result = await _call_upstream_tool(
+                                                    client.session,
                                                     tool_name_original,
                                                     arguments,
+                                                    input_schema=tool_payload.get("input_schema"),
                                                     meta=request_meta_data,
                                                     progress_callback=progress_callback,
-                                                    allow_input_required=True,
                                                     input_responses=input_responses,
                                                     request_state=request_state,
                                                 )
