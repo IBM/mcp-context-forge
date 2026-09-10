@@ -97,6 +97,7 @@ def make_trusted_test_jwt(
     issuer: str | None = None,
     tenant: str | None = None,
     groups: list[str] | None = None,
+    idtyp: str | None = None,
     revocation_id: str | None = None,
     expires_in_minutes: int = 180,
     secret: str = "",
@@ -108,9 +109,11 @@ def make_trusted_test_jwt(
     The mapped claims are written under the claim names configured in
     ``settings.jwt_claim_*`` and ``settings.jwt_trust_revocation_claim`` so
     the helper stays correct when a test re-maps a claim. ``user_id`` is the
-    opaque subject. When ``revocation_id`` is omitted, a fresh ``jti`` is
-    generated. The token is signed directly (not via ``_create_jwt_token``)
-    so the ``issuer`` parameter is honored.
+    opaque subject. ``idtyp`` writes the Entra token-type claim (``"app"``
+    marks an app-only client-credentials token, #6756); when omitted the
+    claim is absent and the output is unchanged. When ``revocation_id`` is
+    omitted, a fresh ``jti`` is generated. The token is signed directly (not
+    via ``_create_jwt_token``) so the ``issuer`` parameter is honored.
     """
     # Standard
     import uuid
@@ -139,6 +142,8 @@ def make_trusted_test_jwt(
         claims["tid"] = tenant
     if groups is not None:
         claims["groups"] = groups
+    if idtyp is not None:
+        claims["idtyp"] = idtyp
     if revocation_id is not None:
         claims[settings.jwt_trust_revocation_claim] = revocation_id
     if "jti" not in claims:
