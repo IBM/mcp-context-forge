@@ -1,0 +1,50 @@
+# ===============================================================
+# Compose UI Config Check
+# ===============================================================
+#
+# Config-only smoke test for the supported 'ui' profile
+# (contextforge-web-ui BFF + web_ui_redis). Runs
+# `docker compose --profile ui config --quiet` to catch profile,
+# variable-interpolation, and Compose-schema regressions without
+# building images or starting containers — fast enough to run on
+# every PR that touches the compose file or its env defaults.
+#
+# See docs/docs/development/release-management.md #6.4.
+#
+# ===============================================================
+
+name: Compose UI Config Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main", "chore/mcp-sdk-v2"]
+    paths:
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/compose-ui-config-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose-ui-config-check:
+    name: compose-ui-config-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - name: Validate 'ui' profile compose config
+        run: make compose-ui-config-check
