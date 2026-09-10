@@ -8475,6 +8475,55 @@ class CatalogServer(BaseModel):
     oauth: Optional[CatalogOAuthMetadata] = Field(None, description="Seeded public OAuth discovery metadata for OAuth entries, when known (no secrets)")
 
 
+# oauth_credentials is a flat dict of known keys (issuer, client_id, client_secret, token_url,
+# authorization_url, redirect_uri, audience, scopes, resource) - CatalogService only ever reads a
+# scalar or a list of scalars out of it, so two levels of nesting is already generous.
+# validate_meta_data's own byte budget (4096 total, meant for a different field) would reject a
+# single legitimate 4096-char secret once JSON overhead is added, so the caps here are sized for
+# oauth_credentials specifically rather than reused wholesale.
+_OAUTH_CREDENTIALS_MAX_KEYS = 16
+_OAUTH_CREDENTIALS_MAX_DEPTH = 2
+_OAUTH_CREDENTIALS_MAX_BYTES = 65536
+
+
+def _validate_catalog_oauth_credentials(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Bound catalog ``oauth_credentials`` overrides against oversized/malicious input (CWE-400).
+
+    Shared by ``CatalogServerRegisterRequest`` (bound as the admin
+    ``POST /admin/mcp-registry/{server_id}/register`` body) and ``CatalogServerRegisterBody``
+    (the v1 ``POST /v1/catalog/{server_id}/register`` body), so both request bodies that read
+    this field get the same bound - a bespoke top-level-only string-length check here would walk
+    straight past a nested container (a list/dict value skips the ``isinstance(value, str)`` check
+    entirely), so this also enforces key-count, nesting-depth, and total serialized size, the same
+    class of check ``validate_meta_data`` applies to ``meta_data`` elsewhere.
+
+    Args:
+        v: OAuth credential overrides to validate.
+
+    Returns:
+        The validated oauth_credentials dict or None.
+
+    Raises:
+        ValueError: If any string value exceeds 4096 characters, the dict has too many keys,
+            nests too deeply, or its serialized size exceeds the bound.
+    """
+    if v is None:
+        return v
+    if len(v) > _OAUTH_CREDENTIALS_MAX_KEYS:
+        raise ValueError(f"oauth_credentials exceeds maximum key count ({_OAUTH_CREDENTIALS_MAX_KEYS}): got {len(v)}")
+    SecurityValidator.validate_json_depth(v, max_depth=_OAUTH_CREDENTIALS_MAX_DEPTH)
+    for key, value in v.items():
+        if isinstance(value, str) and len(value) > 4096:
+            raise ValueError(f"oauth_credentials.{key} exceeds maximum length of 4096 characters")
+    try:
+        size = len(orjson.dumps(v))
+    except TypeError as exc:
+        raise ValueError(f"oauth_credentials is not serializable: {exc}") from exc
+    if size > _OAUTH_CREDENTIALS_MAX_BYTES:
+        raise ValueError(f"oauth_credentials exceeds maximum size ({_OAUTH_CREDENTIALS_MAX_BYTES} bytes): got {size}")
+    return v
+
+
 class CatalogServerRegisterRequest(BaseModel):
     """Request to register a catalog server."""
 
@@ -8484,6 +8533,23 @@ class CatalogServerRegisterRequest(BaseModel):
     oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if required")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
+
+    @field_validator("oauth_credentials")
+    @classmethod
+    def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Bound ``oauth_credentials`` (see ``_validate_catalog_oauth_credentials``).
+
+        This request is bound as the admin ``POST /admin/mcp-registry/{server_id}/register``
+        body, so it needs the same cap as the v1 endpoint's ``CatalogServerRegisterBody`` -
+        without this, the admin path was the uncapped one.
+
+        Args:
+            v: OAuth credential overrides to validate.
+
+        Returns:
+            The validated oauth_credentials dict or None.
+        """
+        return _validate_catalog_oauth_credentials(v)
 
 
 class CatalogServerRegisterBody(BaseModel):
@@ -8517,23 +8583,15 @@ class CatalogServerRegisterBody(BaseModel):
     @field_validator("oauth_credentials")
     @classmethod
     def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Bound each string value the same way the sibling ``api_key`` field is bounded.
+        """Bound ``oauth_credentials`` (see ``_validate_catalog_oauth_credentials``).
 
         Args:
             v: OAuth credential overrides to validate.
 
         Returns:
             The validated oauth_credentials dict or None.
-
-        Raises:
-            ValueError: If any string value exceeds 4096 characters.
         """
-        if v is None:
-            return v
-        for key, value in v.items():
-            if isinstance(value, str) and len(value) > 4096:
-                raise ValueError(f"oauth_credentials.{key} exceeds maximum length of 4096 characters")
-        return v
+        return _validate_catalog_oauth_credentials(v)
 
 
 class CatalogServerRegisterResponse(BaseModel):

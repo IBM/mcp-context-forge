@@ -7,6 +7,7 @@ Unit Tests for Catalog Service .
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -627,6 +628,31 @@ async def test_register_oauth_invalid_config_does_not_leak_client_secret(service
     db.commit.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_register_oauth_non_string_client_secret_is_rejected(service):
+    """A dict `client_secret` (or any non-string value for a known credential key) must fail
+    registration rather than persisting unencrypted - see
+    test_build_oauth_config_from_credentials_rejects_non_string_values for the unit-level check
+    this exercises end to end."""
+    secret = {"inner": "PLAINTEXT-SECRET"}  # pragma: allowlist secret
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    request = CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials={"issuer": "https://issuer.example.com", "client_secret": secret})
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with patch("mcpgateway.services.catalog_service.select"):
+            result = await service.register_catalog_server("oauth-server", request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success is False
+    assert "PLAINTEXT-SECRET" not in (result.error or "")
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
 def test_build_oauth_config_from_credentials_carries_resource_and_audience_fields(service):
     """The catalog registration path must not drop RFC 8707 resource/audience fields that
     the equivalent admin.py OAuth form assembly accepts, otherwise a catalog-registered
@@ -648,6 +674,16 @@ def test_build_oauth_config_from_credentials_carries_resource_and_audience_field
     assert "password" not in raw
     assert raw["audience"] == "https://api.example.com"
     assert raw["resource"] == "https://api.example.com/mcp"
+
+
+def test_build_oauth_config_from_credentials_ignores_caller_supplied_grant_type(service):
+    """grant_type is always hardcoded to authorization_code, regardless of what the caller
+    submits. token-exchange is a privileged, SSRF-boundary grant type (AGENTS.md) gated to
+    platform admins by `_enforce_token_exchange_admin_only`; an unprivileged catalog
+    registration caller must never be able to reach it by supplying `grant_type` in
+    oauth_credentials, since the catalog register endpoints carry no admin-only gate."""
+    raw = service._build_oauth_config_from_credentials({"grant_type": "token-exchange", "issuer": "https://issuer.example.com"})
+    assert raw["grant_type"] == "authorization_code"
 
 
 def test_build_oauth_config_from_credentials_resource_list_preserved(service):
@@ -675,6 +711,17 @@ def test_build_oauth_config_from_credentials_scopes_list_normalized(service):
 
     raw = service._build_oauth_config_from_credentials({"scopes": "repo read:user"})
     assert raw["scopes"] == ["repo", "read:user"]
+
+
+@pytest.mark.parametrize("key", ["issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"])
+def test_build_oauth_config_from_credentials_rejects_non_string_values(service, key):
+    """A dict/list/int value for a known credential key must be rejected outright rather than
+    silently persisted. Left unchecked, `_encrypt_oauth_secret_value`'s `isinstance(value, str)`
+    guard returns a non-string value as-is (never encrypts it) and `_validate_oauth_config_urls`
+    only inspects the URL-bearing keys - so e.g. a dict `client_secret` would land in
+    `gateways.oauth_config` in plaintext (CWE-312) instead of being caught here."""
+    with pytest.raises(ValueError, match=f"oauth_credentials.{key} must be a string"):
+        service._build_oauth_config_from_credentials({key: {"inner": "not-a-string"}})
 
 
 @pytest.mark.asyncio
@@ -729,6 +776,53 @@ async def test_register_oauth_skip_init_persists_oauth_credentials(service):
 
 
 @pytest.mark.asyncio
+async def test_register_oauth_skip_init_survives_slow_discovery(service):
+    """Register-time OAuth endpoint discovery is a best-effort optimization
+    (/oauth/authorize's own DCR branch discovers again later), not a correctness requirement.
+    A slow/unreachable issuer must not pin the request worker and DB connection for up to 60s
+    (two sequential settings.oauth_request_timeout probes) - registration should still succeed,
+    with the submitted credentials persisted minus the discovered endpoints."""
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    req = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={"issuer": "https://issuer.example.com", "client_id": "client-123"},
+    )
+
+    async def _slow_discover(cfg):
+        await asyncio.sleep(10)
+        return cfg
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
+            patch("mcpgateway.services.catalog_service.CATALOG_OAUTH_DISCOVERY_TIMEOUT", 0.05),
+            patch.object(service._gateway_service, "_auto_discover_oauth_endpoints", _slow_discover),
+        ):
+            result = await service.register_catalog_server("oauth-server", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    db_gateway = db.add.call_args[0][0]
+    stored = db_gateway.oauth_config
+    assert stored["issuer"] == "https://issuer.example.com"
+    assert stored["client_id"] == "client-123"
+    assert "endpoints_discovered" not in stored
+
+
+@pytest.mark.asyncio
 async def test_register_oauth_and_api_key_without_api_key_skips_initialization(service):
     """A mixed OAuth2.1 & API Key catalog entry registered with no api_key must take the
     skip-initialization path rather than falling through to a doomed connection test."""
@@ -766,12 +860,13 @@ async def test_register_oauth_and_api_key_without_api_key_skips_initialization(s
 
 
 @pytest.mark.asyncio
-async def test_register_oauth_and_api_key_with_both_merges_bearer_and_oauth_config(service):
+async def test_register_oauth_and_api_key_with_both_uses_bearer_and_drops_oauth_config(service):
     """A mixed OAuth2.1 & API Key catalog entry registered with BOTH an api_key and
-    oauth_credentials must not silently drop the oauth_credentials just because the api_key
-    branch wins: the bearer token still drives the connection test, but oauth_config is carried
-    onto the same GatewayCreate so the caller isn't forced to resubmit issuer/client details via
-    a second PUT /gateways/{id} to switch this gateway to OAuth later."""
+    oauth_credentials takes the bearer-token path and does NOT persist oauth_config: auth_type
+    stays "bearer" while every downstream OAuth gate (tool_service token injection, vault_router's
+    visibility query, requires_oauth_config) keys off auth_type == "oauth", not oauth_config
+    presence, so a persisted-but-unused oauth_config would be a silent no-op. The caller can still
+    switch this gateway to OAuth explicitly via PUT /gateways/{id}."""
     fake_catalog = {
         "catalog_servers": [
             {"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}
@@ -797,11 +892,8 @@ async def test_register_oauth_and_api_key_with_both_merges_bearer_and_oauth_conf
     # Connection test still uses the bearer token, exactly as before.
     assert gateway.auth_type == "bearer"
     assert gateway.auth_token == "secret-key"  # pragma: allowlist secret
-    # oauth_credentials are no longer silently discarded.
-    assert gateway.oauth_config["issuer"] == "https://issuer.example.com"
-    assert gateway.oauth_config["client_id"] == "client-123"
-    assert gateway.oauth_config["scopes"] == ["read"]
-    assert gateway.oauth_config["grant_type"] == "authorization_code"
+    # oauth_credentials are not attached to a "bearer" gateway - see docstring.
+    assert gateway.oauth_config is None
 
 
 # ---------- Exception mapping in register_catalog_server ----------

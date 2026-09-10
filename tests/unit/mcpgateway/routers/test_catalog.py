@@ -412,6 +412,30 @@ def test_register_body_allows_reasonably_sized_oauth_credentials():
     assert body.oauth_credentials == {"issuer": "https://issuer.example.com", "scopes": ["repo"]}
 
 
+def test_register_body_rejects_oversized_nested_oauth_credentials():
+    """A nested container walks straight past a top-level-only `isinstance(value, str)` length
+    check, since the check simply skips non-string values. A large payload smuggled inside a
+    nested list must still be rejected on serialized size, not silently accepted."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(oauth_credentials={"client_secret": ["A" * 4096] * 5000})  # pragma: allowlist secret
+
+
+def test_register_body_rejects_deeply_nested_oauth_credentials():
+    """oauth_credentials is a flat dict of scalars/short lists; deeper nesting than that has no
+    legitimate use and is rejected outright."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(oauth_credentials={"issuer": {"nested": {"too": "deep"}}})
+
+
+def test_register_request_also_caps_oauth_credentials():
+    """CatalogServerRegisterRequest backs `POST /admin/mcp-registry/{server_id}/register`
+    (mcpgateway/admin.py) as well as the internally-constructed request the v1 router builds
+    from CatalogServerRegisterBody. Both entry points into oauth_credentials must carry the same
+    bound - without this, the admin endpoint was the uncapped one."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials={"client_secret": "x" * 5000})  # pragma: allowlist secret
+
+
 def test_register_body_allows_empty_payload():
     """Both overrides are optional."""
     body = CatalogServerRegisterBody()

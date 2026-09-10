@@ -48,7 +48,13 @@ CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
 CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
 
 # Catalog auth_type values that carry an OAuth flow (pure OAuth, or OAuth mixed with an API key).
-OAUTH_AUTH_TYPES = ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]
+OAUTH_AUTH_TYPES = frozenset({"OAuth2.1", "OAuth", "OAuth2.1 & API Key"})
+
+# Register-time OAuth endpoint discovery (RFC 8414 / OIDC probes) is a best-effort optimization,
+# not a correctness requirement - /oauth/authorize's own DCR branch discovers again later. Bound
+# it well below the two sequential settings.oauth_request_timeout (30s each) probes could otherwise
+# take, so a slow/unreachable issuer can't pin a request worker and DB connection for up to 60s.
+CATALOG_OAUTH_DISCOVERY_TIMEOUT = 5
 
 
 class CatalogRegistrationPermissionError(PermissionError):
@@ -427,6 +433,14 @@ class CatalogService:
         Returns:
             A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
             plus whichever caller-supplied fields were provided.
+
+        Raises:
+            ValueError: If a known credential key is supplied with a non-string value. Left
+                unchecked, a dict/list/int value skips `_encrypt_oauth_secret_value`'s
+                `isinstance(value, str)` guard (it returns non-strings unencrypted) and
+                `_validate_oauth_config_urls` (which only inspects the URL-bearing keys),
+                so e.g. a dict `client_secret` would persist to `gateways.oauth_config` in
+                plaintext.
         """
         oauth_credentials = oauth_credentials or {}
         raw_oauth_config: Dict[str, Any] = {
@@ -441,8 +455,11 @@ class CatalogService:
         # fields would never be read.
         for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"):
             value = oauth_credentials.get(key)
-            if value:
-                raw_oauth_config[key] = value
+            if value is None or value == "":
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"oauth_credentials.{key} must be a string")
+            raw_oauth_config[key] = value
         scopes = oauth_credentials.get("scopes")
         if scopes:
             # Comma-separated input (the shape admin.py's own OAuth form accepts, see
@@ -564,6 +581,12 @@ class CatalogService:
             auth_type = server_data.get("auth_type", "Open")
             skip_initialization = False  # Flag to skip connection test for OAuth servers without creds
 
+            if request and request.oauth_credentials and auth_type not in OAUTH_AUTH_TYPES:
+                # Catalog entry doesn't carry an OAuth flow (e.g. "API Key"/"API" or "Open") -
+                # oauth_credentials has nothing to attach to and is discarded below. Log it so
+                # the drop is observable instead of a silent 200.
+                logger.warning("Ignoring oauth_credentials submitted for catalog server %s (auth_type=%s does not use OAuth)", server_data["name"], auth_type)
+
             if request and request.api_key and auth_type != "Open":
                 # Handle all possible auth types from the catalog
                 if auth_type in ["API Key", "API"]:
@@ -571,18 +594,23 @@ class CatalogService:
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
                 elif auth_type in OAUTH_AUTH_TYPES:
-                    # OAuth servers and mixed auth may need API key as a bearer token
+                    # OAuth servers and mixed auth may need API key as a bearer token. A mixed
+                    # "OAuth2.1 & API Key" entry that also submits oauth_credentials is not
+                    # persisted here (#5967 follow-up, deliberately dropped rather than patched):
+                    # auth_type stays "bearer" while oauth_config would be set, and every
+                    # downstream OAuth gate (tool_service token injection, vault_router's
+                    # visibility query, requires_oauth_config) keys off auth_type == "oauth", not
+                    # oauth_config presence - so the token would silently never be used, unless
+                    # the caller later completes a DCR authorize flow, which flips auth_type to
+                    # "oauth" out from under the still-configured API key. Caller can still switch
+                    # this gateway to OAuth explicitly via PUT /gateways/{id}.
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
                     if request.oauth_credentials:
-                        # A mixed "OAuth2.1 & API Key" entry may submit both: the bearer
-                        # token drives the connection test below same as any API-key entry,
-                        # and oauth_config still gets persisted on the same GatewayCreate so
-                        # the caller isn't required to resubmit issuer/client details later
-                        # to switch this gateway to OAuth. register_gateway() below already
-                        # runs oauth_config through the same discovery/encryption pipeline
-                        # regardless of auth_type, so nothing else needs to change on this path.
-                        gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials)
+                        logger.warning(
+                            "Ignoring oauth_credentials submitted alongside api_key for catalog server %s (registering as bearer auth; switch to OAuth explicitly via PUT /gateways/{id} if needed)",
+                            server_data["name"],
+                        )
                 else:
                     # For any other auth types, use custom headers (as list of dicts)
                     gateway_data["auth_type"] = "authheaders"
@@ -591,7 +619,10 @@ class CatalogService:
                 # OAuth server without credentials (or a mixed-auth entry given no API key) -
                 # register but skip initialization. User will need to complete OAuth flow later.
                 skip_initialization = True
-                logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
+                if request and request.oauth_credentials:
+                    logger.info("Registering OAuth server %s with submitted OAuth credentials - authorization still required", server_data["name"])
+                else:
+                    logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
 
             # For OAuth servers without credentials, register directly without connection test
             if skip_initialization:
@@ -615,8 +646,43 @@ class CatalogService:
 
                 # Same enforce/discover/validate/encrypt pipeline register_gateway() uses
                 # (gateway_service.py) so issuer-only submissions still get usable
-                # token_url/authorization_url when the provider publishes them.
-                stored_oauth_config = await self._gateway_service.prepare_oauth_config_for_storage(db, gateway_create.oauth_config, owner_email)
+                # token_url/authorization_url when the provider publishes them. Unlike interactive
+                # gateway registration, this branch previously did zero network I/O, so the
+                # discovery probes inside prepare_oauth_config_for_storage (two sequential
+                # settings.oauth_request_timeout requests, 30s default each) are bounded here to
+                # keep a slow/unreachable issuer from pinning a request worker and DB connection
+                # for up to 60s. Discovery is an optimization, not a correctness requirement -
+                # /oauth/authorize's own DCR branch discovers again before authorization.
+                try:
+                    stored_oauth_config = await asyncio.wait_for(
+                        self._gateway_service.prepare_oauth_config_for_storage(db, gateway_create.oauth_config, owner_email),
+                        timeout=CATALOG_OAUTH_DISCOVERY_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "OAuth endpoint discovery timed out after %ss for catalog server %s; persisting submitted credentials without discovered endpoints",
+                        CATALOG_OAUTH_DISCOVERY_TIMEOUT,
+                        server_data["name"],
+                    )
+                    # First-Party
+                    from mcpgateway.services.encryption_service import protect_oauth_config_for_storage  # pylint: disable=import-outside-toplevel
+
+                    # grant_type is always "authorization_code" on this path (hardcoded in
+                    # _build_oauth_config_from_credentials), so the enforce/validate steps
+                    # prepare_oauth_config_for_storage runs around discovery are no-ops here -
+                    # encrypting the un-discovered config directly is equivalent, minus discovery.
+                    stored_oauth_config = await protect_oauth_config_for_storage(gateway_create.oauth_config)
+
+                if stored_oauth_config:
+                    # issuer/scopes only - never client_id/client_secret/token values, even
+                    # encrypted, so a successful persist is observable without risking a secret
+                    # landing in logs.
+                    logger.info(
+                        "Persisted oauth_config for catalog server %s (issuer=%s, scopes=%s)",
+                        server_data["name"],
+                        stored_oauth_config.get("issuer"),
+                        stored_oauth_config.get("scopes"),
+                    )
 
                 db_gateway = DbGateway(
                     name=gateway_data["name"],
