@@ -1275,9 +1275,11 @@ class TestOAuthRouter:
         mock_token_storage.get_token_info.assert_awaited_once_with("gateway123", "other@example.com")
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_user_token_status_lookup_failure_logs_and_reads_missing(self, mock_db, mock_gateway, mock_current_user, mock_request):
-        """A backend lookup failure (e.g. a DB error) is logged, distinguishing it from a genuinely missing token in logs,
-        while still surfacing the same safe "missing"/unauthorized shape to the client rather than a 500."""
+    async def test_get_oauth_status_user_token_status_lookup_failure_logs_and_reads_unknown(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A backend lookup failure (e.g. a DB error) is logged with a traceback, distinguishing it
+        from a genuinely missing token in logs, while surfacing "unknown"/unauthorized to the client
+        rather than a 500 - and rather than the same "missing" shape a never-authorized caller sees,
+        so a UI doesn't mistake a transient outage for "never authorized" and prompt a fresh OAuth flow."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         from mcpgateway.routers.oauth_router import get_oauth_status
@@ -1290,8 +1292,8 @@ class TestOAuthRouter:
             with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
                 result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
 
-        assert result["user_token_status"] == {"status": "missing", "authorized": False}
-        mock_logger.error.assert_called_once()
+        assert result["user_token_status"] == {"status": "unknown", "authorized": False}
+        mock_logger.exception.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_caller_token_status_unknown_identity_short_circuits(self, mock_db):
@@ -1315,7 +1317,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
             mock_token_storage = Mock()
-            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
             result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], mock_current_user, mock_db)
@@ -1334,13 +1336,14 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
             mock_token_storage = Mock()
-            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
             result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], mock_current_user, mock_db)
 
         assert mock_db.execute.call_count == 1
         mock_token_storage_class.assert_called_once()
+        mock_token_storage.get_token_info_bulk.assert_awaited_once()
         assert result["gateway123"]["oauth_enabled"] is True
 
     @pytest.mark.asyncio
@@ -1372,7 +1375,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
             mock_token_storage = Mock()
-            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
             result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
@@ -1406,7 +1409,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
             mock_token_storage = Mock()
-            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
             result = await get_oauth_status_batch(mock_request, [own_gateway.id, others_gateway.id], mock_current_user, mock_db)
@@ -1522,6 +1525,105 @@ class TestOAuthRouter:
             await get_oauth_status_batch(mock_request, too_many, mock_current_user, mock_db)
 
         assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_uses_bulk_token_lookup_not_per_id(self, mock_db, mock_current_user, mock_request):
+        """The batch endpoint calls get_token_info_bulk() once for every authorization_code
+        gateway id, not get_token_info() once per id - this is the fix for the batch endpoint's
+        N+1 token lookup (review #6620)."""
+        gw1 = Mock(spec=Gateway)
+        gw1.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        gw1.visibility = "public"
+        gw1.owner_email = None
+        gw1.team_id = None
+        gw1.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        gw2 = Mock(spec=Gateway)
+        gw2.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        gw2.visibility = "public"
+        gw2.owner_email = None
+        gw2.team_id = None
+        gw2.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock()  # must not be called
+            mock_token_storage.get_token_info_bulk = AsyncMock(return_value={gw1.id: {"scopes": ["read"], "expires_at": None, "status": "valid", "updated_at": "2026-01-01T00:00:00"}, gw2.id: None})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
+
+        mock_token_storage.get_token_info_bulk.assert_awaited_once_with([gw1.id, gw2.id], mock_current_user.email)
+        mock_token_storage.get_token_info.assert_not_called()
+        assert result[gw1.id]["user_token_status"]["status"] == "valid"
+        assert result[gw2.id]["user_token_status"]["status"] == "missing"
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_one_id_lookup_failure_reports_unknown_others_unaffected(self, mock_db, mock_current_user, mock_request):
+        """A per-id failure captured by get_token_info_bulk() (e.g. the default loop-based
+        implementation isolating one Vault lookup's failure) surfaces as "unknown" for that
+        id only - a backend outage on one gateway doesn't read as "never authorized" and
+        doesn't take down the rest of the batch."""
+        gw1 = Mock(spec=Gateway)
+        gw1.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        gw1.visibility = "public"
+        gw1.owner_email = None
+        gw1.team_id = None
+        gw1.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        gw2 = Mock(spec=Gateway)
+        gw2.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        gw2.visibility = "public"
+        gw2.owner_email = None
+        gw2.team_id = None
+        gw2.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = AsyncMock(return_value={gw1.id: None, gw2.id: RuntimeError("vault unavailable")})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
+
+        assert result[gw1.id]["user_token_status"] == {"status": "missing", "authorized": False}
+        assert result[gw2.id]["user_token_status"] == {"status": "unknown", "authorized": False}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_bulk_lookup_timeout_reports_unknown(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A get_token_info_bulk() call that exceeds OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS
+        is abandoned rather than holding the request open - every pending id reports "unknown"
+        instead of the whole batch endpoint hanging or failing (review #6620: worst case is
+        OAUTH_STATUS_BATCH_MAX_IDS sequential per-id Vault lookups, each retried with backoff)."""
+        # Standard
+        import asyncio
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        async def _never_completes(*_args, **_kwargs):
+            await asyncio.sleep(10)
+            return {}
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = _never_completes
+            mock_token_storage_class.return_value = mock_token_storage
+
+            with patch("mcpgateway.routers.oauth_router.OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS", 0.01):
+                with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                    result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+
+        assert result["gateway123"]["user_token_status"] == {"status": "unknown", "authorized": False}
+        mock_logger.error.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_success(self, mock_db, mock_current_user):

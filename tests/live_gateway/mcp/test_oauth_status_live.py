@@ -106,7 +106,8 @@ def oauth_gateway(db_session):
 def second_user(db_session):
     """A second, non-admin user distinct from the bootstrapped platform admin."""
     existing = db_session.query(EmailUser).filter_by(email=SECOND_USER_EMAIL).first()
-    if existing is None:
+    created_here = existing is None
+    if created_here:
         db_session.add(
             EmailUser(
                 email=SECOND_USER_EMAIL,
@@ -116,7 +117,45 @@ def second_user(db_session):
             )
         )
         db_session.commit()
-    return SECOND_USER_EMAIL
+
+    yield SECOND_USER_EMAIL
+
+    if created_here:
+        db_session.query(EmailUser).filter_by(email=SECOND_USER_EMAIL).delete()
+        db_session.commit()
+
+
+@pytest.fixture(scope="module")
+def private_gateway(db_session):
+    """A private, admin-owned OAuth gateway - used to exercise the deny path for a non-owner caller."""
+    name = f"oauth-status-live-private-{uuid.uuid4().hex[:8]}"
+    gateway = Gateway(
+        id=uuid.uuid4().hex,
+        name=name,
+        slug=slugify(name),
+        url="https://mcp-private.example.com",
+        capabilities={},
+        visibility="private",
+        owner_email="admin@example.com",
+        oauth_config={
+            "grant_type": "authorization_code",
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "authorization_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "redirect_uri": "http://localhost:8080/oauth/callback",
+            "scopes": ["read"],
+        },
+    )
+    db_session.add(gateway)
+    db_session.commit()
+    gateway_id = gateway.id
+
+    yield gateway_id
+
+    db_session.query(OAuthToken).filter(OAuthToken.gateway_id == gateway_id).delete()
+    db_session.query(Gateway).filter(Gateway.id == gateway_id).delete()
+    db_session.commit()
 
 
 def _seed_token(db_session, gateway_id: str, app_user_email: str, expires_in: int) -> None:
@@ -195,3 +234,25 @@ def test_batch_endpoint_omits_unknown_ids(oauth_gateway: str) -> None:
     body = response.json()
     assert oauth_gateway in body
     assert "nonexistent-id" not in body
+
+
+def test_private_gateway_denies_non_owner(private_gateway: str, second_user: str) -> None:
+    """A caller who isn't the owner of a private gateway gets 403 from the single-gateway endpoint."""
+    other_token = make_test_jwt(second_user, is_admin=False, teams=[], secret=JWT_SECRET)
+    response = _get_status(private_gateway, other_token)
+
+    assert response.status_code == 403, response.text
+
+
+def test_batch_endpoint_omits_private_gateway_for_non_owner(private_gateway: str, second_user: str) -> None:
+    """The batch endpoint silently omits a private gateway the caller doesn't own, rather than 403ing the whole batch."""
+    other_token = make_test_jwt(second_user, is_admin=False, teams=[], secret=JWT_SECRET)
+    response = httpx.get(
+        f"{BASE_URL}/oauth/status",
+        params=[("gateway_ids", private_gateway)],
+        headers={"Authorization": f"Bearer {other_token}"},
+        timeout=10.0,
+    )
+
+    assert response.status_code == 200, response.text
+    assert private_gateway not in response.json()

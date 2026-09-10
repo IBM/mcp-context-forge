@@ -315,6 +315,73 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             logger.error("Failed to get token info: %s", str(e))
             raise
 
+    async def get_token_info_bulk(
+        self,
+        gateway_ids: list[str],
+        team_id: str,  # ← Phase 1: Accepted but NOT used
+        app_user_email: str,
+    ) -> dict[str, dict | Exception | None]:
+        """Bulk-lookup non-sensitive token metadata for multiple gateways.
+
+        Overrides the loop-based default in :class:`AbstractTokenBackend` with a
+        single ``WHERE gateway_id IN (...) AND app_user_email = :email`` query, so a
+        batch status request issues one round trip regardless of how many gateway
+        ids it covers.
+
+        Phase 1: team_id parameter is IGNORED (matches get_token_info()).
+
+        Args:
+            gateway_ids: Gateway IDs to look up.
+            team_id: Team identifier (IGNORED in Phase 1).
+            app_user_email: ContextForge user email.
+
+        Returns:
+            Mapping of gateway_id to the same dict get_token_info() returns, or
+            None for ids with no stored token. Ids with no matching row are simply
+            absent from the underlying query result and mapped to None below.
+
+        Raises:
+            Exception: Propagated from the underlying database query on failure -
+                a single query backs the whole batch, so a DB error is not
+                isolated to one id the way the default per-item loop would.
+        """
+        if not gateway_ids:
+            return {}
+
+        try:
+            token_records = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id.in_(gateway_ids), OAuthToken.app_user_email == app_user_email)).scalars().all()
+        except Exception as e:
+            logger.error("Failed to get bulk token info: %s", str(e))
+            raise
+
+        records_by_gateway = {record.gateway_id: record for record in token_records}
+
+        results: dict[str, dict | Exception | None] = {}
+        for gateway_id in gateway_ids:
+            token_record = records_by_gateway.get(gateway_id)
+            if not token_record:
+                results[gateway_id] = None
+                continue
+
+            is_expired = self._is_token_expired(token_record, 0)
+            is_near_expiry = not is_expired and self._is_token_expired(token_record, 300)
+
+            if is_expired:
+                status = "expired"
+            elif is_near_expiry:
+                status = "near_expiry"
+            else:
+                status = "valid"
+
+            results[gateway_id] = {
+                "scopes": token_record.scopes,
+                "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
+                "status": status,
+                "updated_at": token_record.updated_at.isoformat(),
+            }
+
+        return results
+
     async def revoke_user_tokens(
         self,
         gateway_id: str,

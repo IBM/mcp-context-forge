@@ -622,6 +622,61 @@ async def test_get_token_info_exception(backend_with_encryption, mock_db):
         mock_logger.error.assert_called_once()
 
 
+# ---------- get_token_info_bulk ----------
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_bulk_empty_ids_short_circuits(backend_with_encryption, mock_db):
+    """An empty gateway_ids list returns {} without issuing a query."""
+    result = await backend_with_encryption.get_token_info_bulk(gateway_ids=[], team_id="team-1", app_user_email="user@test.com")
+
+    assert result == {}
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_bulk_single_query_mixed_results(backend_with_encryption, mock_db):
+    """One query answers the whole batch: ids with a stored token get metadata, ids with no
+    matching row map to None - this is the fix for the batch endpoint's N+1 token lookup."""
+    found = _make_token_record(gateway_id="gw-1", expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [found]
+
+    result = await backend_with_encryption.get_token_info_bulk(gateway_ids=["gw-1", "gw-2"], team_id="team-1", app_user_email="user@test.com")
+
+    assert mock_db.execute.call_count == 1
+    assert result["gw-2"] is None
+    assert result["gw-1"] is not None
+    assert result["gw-1"]["status"] == "valid"
+    assert "access_token" not in result["gw-1"]
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_bulk_marks_expired_and_near_expiry(backend_with_encryption, mock_db):
+    """Status classification (expired/near_expiry/valid) matches the single-item get_token_info()."""
+    expired = _make_token_record(gateway_id="gw-expired", expires_at=datetime.now(timezone.utc) - timedelta(seconds=10))
+    near_expiry = _make_token_record(gateway_id="gw-near", expires_at=datetime.now(timezone.utc) + timedelta(seconds=60))
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [expired, near_expiry]
+
+    result = await backend_with_encryption.get_token_info_bulk(gateway_ids=["gw-expired", "gw-near"], team_id="team-1", app_user_email="user@test.com")
+
+    assert result["gw-expired"]["status"] == "expired"
+    assert result["gw-near"]["status"] == "near_expiry"
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_bulk_exception(backend_with_encryption, mock_db):
+    """A query failure logs and re-raises rather than swallowing to an empty/partial result -
+    the whole batch's token status is backed by this one query, so a failure here should not
+    silently read as "no gateway in the batch has a token"."""
+    mock_db.execute.side_effect = Exception("Database error")
+
+    with patch("mcpgateway.services.token_backends.db_backend.logger") as mock_logger:
+        with pytest.raises(Exception, match="Database error"):
+            await backend_with_encryption.get_token_info_bulk(gateway_ids=["gw-1"], team_id="team-1", app_user_email="user@test.com")
+
+        mock_logger.error.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_refresh_token_with_client_secret_decrypt_failure(backend_with_encryption, mock_db):
     """Test refresh fails closed when client_secret decryption returns None (PR #5244 behavior)."""

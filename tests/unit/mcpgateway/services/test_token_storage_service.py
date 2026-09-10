@@ -834,6 +834,33 @@ async def test_get_token_info_exception(service, mock_db):
         await service.get_token_info("gw-1", "user@test.com")
 
 
+# ---------- get_token_info_bulk ----------
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_bulk_delegates_with_team_id_from_first_id(service):
+    """get_token_info_bulk resolves team_id once (from _get_team_id, which is keyed only on the
+    caller's own JWT teams claim - identical for every id in the batch) and forwards it plus all
+    gateway_ids to the backend's get_token_info_bulk in one call."""
+    service._backend.get_token_info_bulk = AsyncMock(return_value={"gw-1": {"status": "valid"}, "gw-2": None})
+
+    result = await service.get_token_info_bulk(["gw-1", "gw-2"], "user@test.com")
+
+    assert result == {"gw-1": {"status": "valid"}, "gw-2": None}
+    service._backend.get_token_info_bulk.assert_awaited_once_with(gateway_ids=["gw-1", "gw-2"], team_id="team1", app_user_email="user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_bulk_empty_ids_short_circuits(service):
+    """An empty gateway_ids list returns {} without calling the backend."""
+    service._backend.get_token_info_bulk = AsyncMock()
+
+    result = await service.get_token_info_bulk([], "user@test.com")
+
+    assert result == {}
+    service._backend.get_token_info_bulk.assert_not_called()
+
+
 # ---------- revoke_user_tokens ----------
 
 

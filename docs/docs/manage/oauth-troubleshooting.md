@@ -76,7 +76,7 @@ state_data = {
 | `/oauth/authorize/{gateway_id}` | GET | Initiates OAuth flow, redirects to provider |
 | `/vault/authorize/{server_id}` | GET | Per-user OAuth credential connection for team virtual servers (shared access control with `/oauth/authorize/{gateway_id}`) |
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
-| `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status; for `authorization_code` gateways also includes the caller's own `user_token_status` (valid/near_expiry/expired/missing) |
+| `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status; for `authorization_code` gateways also includes the caller's own `user_token_status` (valid/near_expiry/expired/missing/unknown) |
 | `/oauth/status?gateway_ids=a&gateway_ids=b` | GET | Batch equivalent of the above, keyed by gateway id, so a grid of cards issues one request instead of N |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
 | `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |
@@ -84,6 +84,34 @@ state_data = {
 | `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client. Requires `admin.oauth_clients:delete` and un-narrowed platform admin access |
 
 > **Note**: The three `/oauth/registered-clients*` endpoints manage DCR client records that are stored globally, with no team association. Because there is no team scope to narrow into, these endpoints require an un-narrowed admin token — an admin API/legacy token carrying a `token_teams` narrowing claim (or a public-only admin token) receives `403 Forbidden` with `"OAuth client management requires un-narrowed admin access"`. Admin session tokens (e.g. the interactive Admin UI) resolve their teams from the database and cannot be narrowed, so this does not change UI behavior. These routes also require a named RBAC permission — `admin.oauth_clients:read` for the two `GET` routes and `admin.oauth_clients:delete` for `DELETE` — with admin bypass disabled, so the caller's roles must actually carry the permission (the `platform_admin` role does, via `*`).
+
+### `user_token_status` shape
+
+For `authorization_code` gateways, both status endpoints attach a `user_token_status` object derived from the **authenticated caller's own identity** — never a client-supplied user — and never containing a token value:
+
+```json
+"user_token_status": {
+  "status": "valid",
+  "authorized": true,
+  "scopes": ["read", "write"],
+  "expires_at": "2026-01-01T00:00:00",
+  "updated_at": "2025-12-31T23:00:00"
+}
+```
+
+| `status` | `authorized` | Meaning |
+|----------|--------------|---------|
+| `valid` | `true` | A stored token exists and is not within the near-expiry window |
+| `near_expiry` | `true` | A stored token exists but expires within 300 seconds |
+| `expired` | `false` | A stored token exists but its expiry has already passed |
+| `missing` | `false` | No token is stored for this caller/gateway — they have never completed the OAuth flow |
+| `unknown` | `false` | The token lookup itself failed (backend error, Vault outage, or a batch request that timed out) — distinct from `missing` so a UI doesn't mistake a transient outage for "never authorized" and prompt a fresh OAuth flow with the IdP |
+
+`scopes`, `expires_at`, and `updated_at` are only present when a token record exists (`valid`/`near_expiry`/`expired`); `missing` and `unknown` return just `status` and `authorized`.
+
+### Batch endpoint limits
+
+`GET /oauth/status?gateway_ids=a&gateway_ids=b&...` accepts the `gateway_ids` query parameter repeated once per id (deduplicated server-side), caps a single request at 100 ids, and rejects an empty or over-limit request with `400 Bad Request`. Ids that don't exist or aren't visible to the caller are **silently omitted** from the response rather than failing the whole batch — a client should only render cards for ids present in the response body. The per-caller token lookup for the whole batch is bounded by an internal timeout; if it's exceeded, any gateway id still pending reports `user_token_status.status: "unknown"` rather than leaving the request hanging.
 
 ---
 

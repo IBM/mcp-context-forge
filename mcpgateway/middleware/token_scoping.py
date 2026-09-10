@@ -148,6 +148,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # permissions list does not include gateways.read is rejected at the middleware
     # layer rather than reaching the handler and failing there.
     ("GET", re.compile(r"^/vault/authorize/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth per-caller token status (oauth_router, prefix="/oauth") - single-gateway
+    # and batch variants. The handler enforces gateway-level access via
+    # _enforce_gateway_access, so this entry adds defence-in-depth only: it ensures a
+    # server-scoped API token whose permissions list does not include gateways.read is
+    # rejected at the middleware layer rather than reaching the handler and failing there.
+    ("GET", re.compile(r"^/oauth/status(?:$|/)"), Permissions.GATEWAYS_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an
