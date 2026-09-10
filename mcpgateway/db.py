@@ -5708,7 +5708,7 @@ class TokenRevocation(Base):
     Attributes:
         jti (str): JWT ID (primary key)
         revoked_at (datetime): Revocation timestamp
-        revoked_by (str): Email of user who revoked the token
+        revoked_by (str): Canonical user_id of the revoker, or a system sentinel string
         reason (str): Optional reason for revocation (logout, idle_timeout, security, token_refresh, etc.)
         token_expiry (datetime): Original token expiry for cleanup scheduling
         last_activity (datetime): Last activity timestamp for idle timeout tracking
@@ -5729,15 +5729,13 @@ class TokenRevocation(Base):
 
     # Revocation details
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
-    revoked_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    # Canonical user_id or system sentinel; no FK: trust-mode principals have no user row
+    revoked_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Token lifecycle tracking
     token_expiry: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     last_activity: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    # Relationship
-    revoker: Mapped["EmailUser"] = relationship("EmailUser")
 
     # Indexes for efficient cleanup and queries
     __table_args__ = (

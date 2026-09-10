@@ -2140,14 +2140,32 @@ async def get_current_user(
                         max_idle = timedelta(minutes=settings.token_idle_timeout)
 
                         if idle_duration > max_idle:
-                            # Revoke token due to idle timeout
-                            try:
-                                exp_ts = payload.get("exp")
-                                token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc) if exp_ts else None
+                            # Revoke token due to idle timeout. revoked_by stores
+                            # the canonical user_id, or the system sentinel when
+                            # the request has no resolvable identity.
+                            exp_ts = payload.get("exp")
+                            token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc) if exp_ts else None
 
-                                blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="idle_timeout", token_expiry=token_expiry, last_activity=last_activity)
+                            # Revocation persistence is best-effort: a failure is
+                            # logged at ERROR with the jti and the error detail,
+                            # and the request continues. Never re-raise, never
+                            # swallow silently (#5901).
+                            try:
+                                persisted = blocklist_service.revoke_token(
+                                    jti=jti, revoked_by=email or "system:idle-timeout", reason="idle_timeout", token_expiry=token_expiry, last_activity=last_activity
+                                )
                             except Exception as revoke_error:
-                                logger.warning(f"Failed to revoke idle token: {revoke_error}")
+                                logger.error(
+                                    "Idle-timeout revocation insert failed: jti=%s, error=%s",
+                                    SecurityValidator.sanitize_log_message(jti),
+                                    SecurityValidator.sanitize_log_message(str(revoke_error)),
+                                )
+                            else:
+                                if not persisted:
+                                    logger.error(
+                                        "Idle-timeout revocation was not persisted: jti=%s",
+                                        SecurityValidator.sanitize_log_message(jti),
+                                    )
 
                             logger.warning(
                                 f"Token exceeded idle timeout: jti={jti}, idle_minutes={idle_duration.total_seconds() / 60:.1f}",
