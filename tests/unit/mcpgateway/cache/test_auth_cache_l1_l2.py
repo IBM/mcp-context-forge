@@ -48,8 +48,8 @@ class TestCacheKeyNamespace:
     """Auth cache Redis keys carry a version segment for namespace isolation (issue #5891)."""
 
     def test_redis_key_contains_version_segment(self):
-        """_get_redis_key inserts the configured key version after the auth prefix."""
-        assert AuthCache()._get_redis_key("user", "test@example.com").startswith("mcpgw:auth:v1:user:")
+        """_get_redis_key inserts the configured key version and auth mode after the auth prefix."""
+        assert AuthCache()._get_redis_key("user", "test@example.com").startswith("mcpgw:auth:v1:db:user:")
 
     @pytest.mark.asyncio
     async def test_version_bump_makes_old_keys_unreachable(self):
