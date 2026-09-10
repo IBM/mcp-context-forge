@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.query_params import QueryErrorCodeSso
+from mcpgateway.common.validators import SafeIdentifier, SafeName
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -38,9 +39,9 @@ logger = logging_service.get_logger("mcpgateway.routers.sso")
 class SSOProviderCreateRequest(BaseModel):
     """Request to create SSO provider."""
 
-    id: str
-    name: str
-    display_name: str
+    id: SafeIdentifier
+    name: SafeName
+    display_name: SafeName
     provider_type: str  # oauth2, oidc
     client_id: str
     client_secret: str
@@ -75,8 +76,8 @@ class SSOProviderCreateRequest(BaseModel):
 class SSOProviderUpdateRequest(BaseModel):
     """Request to update SSO provider."""
 
-    name: Optional[str] = None
-    display_name: Optional[str] = None
+    name: Optional[SafeName] = None
+    display_name: Optional[SafeName] = None
     provider_type: Optional[str] = None
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
