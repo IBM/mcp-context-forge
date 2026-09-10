@@ -7,8 +7,11 @@ Trusted claims extraction and group-to-team resolution (issues #5899, #5976).
 
 This module maps a verified external-IdP JWT payload to a virtual principal
 per the pinned trust-mode contract. It also hosts the group-mapping resolver,
-the group-overage marker detector shared with the SSO enrichment path, and
-the overage policy dispatch (:func:`resolve_overage_groups`, issue #5977).
+the group-overage marker detector shared with the SSO enrichment path, the
+overage policy dispatch (:func:`resolve_overage_groups`, issue #5977), the
+app-only token detector (:func:`detect_app_only_token`), and the
+service-principal group dispatch (:func:`resolve_service_principal_groups`,
+issue #6756).
 
 Claim readers support dotted paths one or more levels deep (for example the
 Keycloak ``realm_access.roles`` shape). Each path segment must name a JSON
@@ -319,6 +322,23 @@ def detect_overage_marker(payload: Dict[str, Any]) -> bool:
     return isinstance(payload.get("groups"), str)
 
 
+def detect_app_only_token(payload: Dict[str, Any]) -> bool:
+    """Detect an Entra app-only (client-credentials) token in a payload.
+
+    Entra marks app-only tokens with the standard ``idtyp`` claim set to
+    ``"app"``. App-only tokens carry a ``roles`` claim (app roles) and no
+    ``groups`` claim, and Entra emits no overage markers for them. Detection
+    only — resolution behavior follows ``jwt_trust_overage_policy``.
+
+    Args:
+        payload: Token claims dict.
+
+    Returns:
+        True when the ``idtyp`` claim equals ``"app"``.
+    """
+    return payload.get("idtyp") == "app"
+
+
 def extract_revocation_id(payload: Dict[str, Any], settings: Any) -> str:
     """Extract the revocation identifier honoring the configured claim.
 
@@ -539,4 +559,56 @@ async def resolve_overage_groups(payload: Dict[str, Any], settings: Any, db: Ses
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Group overage resolution via Microsoft Graph failed for oid {oid}: {exc}",
+        ) from exc
+
+
+async def resolve_service_principal_groups(payload: Dict[str, Any], settings: Any, db: Session, graph_client: Optional[Any] = None) -> List[str]:
+    """Resolve an app-only token's service-principal group membership via Graph.
+
+    Applies under ``jwt_trust_overage_policy = "graph_lookup"`` when the token
+    is app-only (``idtyp == "app"``) and carries no ``groups`` claim. A
+    service principal is not a user, so the client posts to
+    ``/servicePrincipals/{oid}/getMemberObjects`` (never ``/users/``) with an
+    app-only client-credentials token; the inbound bearer token is never
+    used. Results are cached oid-keyed with a TTL bounded by the token's
+    ``exp``. The SSO provider record matching the token issuer supplies the
+    encrypted client credentials. The dispatch is fail-closed: any
+    acquisition failure rejects with 401.
+
+    Args:
+        payload: Verified JWT payload of an app-only trusted token (see
+            :func:`detect_app_only_token`).
+        settings: Settings object carrying ``jwt_claim_user_id``.
+        db: Database session for the SSO provider lookup.
+        graph_client: Optional EntraGraphClient override (tests).
+
+    Returns:
+        List of external group object IDs for the service principal.
+
+    Raises:
+        HTTPException: 401 when the oid claim, the provider record, or the
+            Graph resolution fails.
+    """
+    oid = payload.get("oid")
+    if not isinstance(oid, str) or not oid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="jwt_trust_overage_policy 'graph_lookup' requires the token 'oid' claim for the Graph service-principal lookup.",
+        )
+
+    issuer = payload.get("iss")
+    provider = db.query(SSOProvider).filter(SSOProvider.issuer == issuer, SSOProvider.is_enabled.is_(True)).first()
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"No enabled SSO provider matches token issuer {issuer!r}; cannot resolve the service-principal groups via Microsoft Graph.",
+        )
+
+    client = graph_client or EntraGraphClient()
+    try:
+        return await client.get_member_groups(provider, oid, token_exp=payload.get("exp"), app_only=True)
+    except EntraGraphError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Service-principal group resolution via Microsoft Graph failed for oid {oid}: {exc}",
         ) from exc
