@@ -37,17 +37,20 @@ PRINCIPAL CONTRACT (VirtualPrincipal):
   (public-only access; the principal still authenticates).
 - ``roles``: list of role names. The claim named by ``jwt_claim_roles``
   merges with role names returned by the group-mapping resolver before
-  resolution. Each name resolves scope-exactly to exactly one active row
+resolution. Each name resolves scope-exactly to exactly one active row
   in the server-side ``roles`` table via
   ``mcpgateway.services.role_resolution.resolve_mapping_role`` (team scope
   preferred, global fallback, lowest id, rows never unioned); permissions
   are never embedded in or read from the token. Names with no active row
-  are ignored with a WARNING log (fail-closed).
+  are ignored with a WARNING log (fail-closed). When the mapped admin
+  claim is true, ``"platform_admin"`` is appended by the server (atomic
+  admin mapping, #5902) after roles-table validation, so it can never be
+  dropped as unknown.
 - ``is_admin``: bool, default False. Read from the claim named by
   ``jwt_claim_admin`` and parsed strictly: only ``True``, ``1``, and the
   case-insensitive strings ``"true"``/``"1"``/``"yes"`` grant admin; every
-  other value (including the truthy-coercing strings ``"false"``/``"0"``/
-  ``"no"``) is non-admin. A present but non-canonical value logs one
+  other value (including the truthy-coercing strings ``"false"``/``"0"``
+  /``"no"``) is non-admin. A present but non-canonical value logs one
   structured warning naming the claim and its JSON type, never the value.
   A missing claim is silently non-admin (fail-closed).
 - ``auth_provider``: the token issuer (``iss``) when present, else the
@@ -365,7 +368,9 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
       exactly one active row in the server-side ``roles`` table (team scope
       preferred, global fallback, never unioned); names with no active row
       are skipped with a WARNING log (fail-closed). Permissions are never
-      read from the token.
+      read from the token. When the mapped admin claim is true, the server
+      appends ``"platform_admin"`` after roles-table validation (atomic
+      admin mapping, #5902).
     - ``is_admin`` (bool, default False): read from ``jwt_claim_admin`` and
       parsed strictly (``_parse_admin_flag``); a present but non-canonical
       value coerces False with one structured warning.
@@ -439,13 +444,24 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
 
     email = _get_claim(payload, settings.jwt_claim_email)
 
+    # ATOMIC ADMIN MAPPING (#5902): the mapped admin claim feeds both admin
+    # tracks in one mapping — ``is_admin`` and the effective-roles set. The
+    # "platform_admin" entry is server-injected from the verified admin
+    # claim (never from the token's roles claim), so it is appended after
+    # roles-table validation and cannot be dropped as unknown. No
+    # intermediate state exists where one track says admin and the other
+    # denies.
+    is_admin = _parse_admin_flag(_get_claim(payload, settings.jwt_claim_admin), settings.jwt_claim_admin)
+    if is_admin and "platform_admin" not in roles:
+        roles.append("platform_admin")
+
     return VirtualPrincipal(
         user_id=user_id,
         email=email if isinstance(email, str) else None,
         full_name=full_name if isinstance(full_name, str) else None,
         teams=teams,
         roles=roles,
-        is_admin=_parse_admin_flag(_get_claim(payload, settings.jwt_claim_admin), settings.jwt_claim_admin),
+        is_admin=is_admin,
         auth_provider=issuer,
         token_use="trusted",
     )
