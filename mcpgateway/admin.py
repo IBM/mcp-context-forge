@@ -5009,7 +5009,8 @@ async def _admin_logout(request: Request) -> Response:
 
                 payload = await verify_jwt_token_cached(token, request)
                 jti = payload.get("jti")
-                user_id = payload.get("sub") or payload.get("email", "admin")
+                # Canonical user_id from the token; sentinel when no identity resolves.
+                user_id = payload.get("sub") or payload.get("email") or "system:admin-logout"
 
                 if jti:
                     blocklist_service = get_token_blocklist_service()
