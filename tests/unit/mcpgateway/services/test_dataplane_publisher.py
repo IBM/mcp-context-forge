@@ -82,7 +82,6 @@ def _policy_payload(*context_ids):
     """Make routing data whose targets point to the requested policy contexts."""
     return {
         USER1_ID: {
-            "user_email": "user1@example.com",
             "virtual_hosts": {"server": {"backends": {"gateway": {"tool_policy_contexts": {str(i): {"context_id": context_id} for i, context_id in enumerate(context_ids)}}}}},
         }
     }
@@ -612,7 +611,7 @@ async def test_full_payload_generation_with_mock_db():
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
         assert list(user3_backend["tool_policy_contexts"]) == ["public_tool"]
         assert user3_backend["tool_policy_contexts"]["public_tool"]["context_id"] == "team1::gw1-public_tool"
-        assert payload[USER3_ID]["user_email"] == "user3@example.com"
+        assert "user_email" not in payload[USER3_ID]
 
 
 def test_build_user_data_excludes_non_object_tool_schema(caplog):
@@ -714,7 +713,6 @@ def test_create_payload_filters_empty_backends():
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
-            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
@@ -744,7 +742,6 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
-            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
@@ -778,7 +775,6 @@ def test_create_payload_normalizes_null_passthrough_headers():
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
-            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
@@ -811,7 +807,6 @@ def test_create_payload_handles_missing_references():
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
-            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",

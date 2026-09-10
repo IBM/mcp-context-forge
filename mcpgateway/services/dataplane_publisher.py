@@ -125,7 +125,6 @@ class UserConfig(TypedDict):
     """User-specific configuration mapping virtual host IDs to their configs."""
 
     virtual_hosts: dict[str, VirtualHostConfig]
-    user_email: str
 
 
 class BackendItems(TypedDict):
@@ -395,7 +394,7 @@ class DataplanePublisherService:
 
                 virtual_hosts[server["id"]] = {"backends": backends}
 
-            result[subject_key] = {"virtual_hosts": virtual_hosts, "user_email": user_data["user_email"]}
+            result[subject_key] = {"virtual_hosts": virtual_hosts}
 
         return result
 
@@ -501,7 +500,6 @@ class DataplanePublisherService:
             }
 
         return {
-            "user_email": user_email,
             "servers": [
                 {
                     "id": server.id,
