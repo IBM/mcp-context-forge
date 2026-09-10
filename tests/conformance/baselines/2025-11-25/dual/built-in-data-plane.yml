@@ -31,13 +31,37 @@ findings:
   check: server-session-terminated-returns-404
   name: SessionTerminatedReturns404
   status: FAILURE
+- scenario: tools-call-audio
+  check: tools-call-audio
+  name: ToolsCallAudio
+  status: FAILURE
 - scenario: tools-call-elicitation
   check: tools-call-elicitation
   name: ToolsCallElicitation
   status: FAILURE
+- scenario: tools-call-embedded-resource
+  check: tools-call-embedded-resource
+  name: ToolsCallEmbeddedResource
+  status: FAILURE
+- scenario: tools-call-error
+  check: tools-call-error
+  name: ToolsCallError
+  status: FAILURE
+- scenario: tools-call-image
+  check: tools-call-image
+  name: ToolsCallImage
+  status: FAILURE
+- scenario: tools-call-mixed-content
+  check: tools-call-mixed-content
+  name: ToolsCallMixedContent
+  status: FAILURE
 - scenario: tools-call-sampling
   check: tools-call-sampling
   name: ToolsCallSampling
+  status: FAILURE
+- scenario: tools-call-simple-text
+  check: tools-call-simple-text
+  name: ToolsCallSimpleText
   status: FAILURE
 - scenario: tools-call-with-logging
   check: tools-call-with-logging
