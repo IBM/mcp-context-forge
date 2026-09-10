@@ -695,7 +695,13 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
         claims, provider = await verify_external_idp_token(token, db)
         if claims is None:
             return None  # untrusted issuer / invalid sig -> fall through -> internal path 401s
-        payload = await build_external_identity(provider, claims, token, db)
+        if _external_trust_root_active(provider):
+            # Trust mode (#5903): the identity derives from the verified
+            # claims; the provisioning path (build_external_identity) is
+            # never invoked for a configured trust root.
+            payload = await build_trusted_external_identity(provider, claims, token, db)
+        else:
+            payload = await build_external_identity(provider, claims, token, db)
         if payload is not None:
             await _external_identity_cache_put(th, payload, claims.get("exp"))
         return payload
@@ -2206,12 +2212,149 @@ def _get_sso_service(db: Session):
     return SSOService(db)
 
 
+def _external_trust_root_active(provider: SSOProvider) -> bool:
+    """Check whether the external-IdP trust branch applies to this provider.
+
+    The trust branch requires trust mode ON (``jwt_trust_mode == "jwt-trust"``)
+    and a provider that is a configured trust root: ``trusted_for_api_auth``
+    set plus a non-empty ``api_audience``. The audience requirement mirrors
+    the fail-closed backstop in :func:`verify_external_idp_token`.
+
+    Args:
+        provider: The matched SSOProvider (from resolve_trusted_provider_by_issuer).
+
+    Returns:
+        True when the identity must be built from token claims alone.
+    """
+    if settings.jwt_trust_mode != "jwt-trust":
+        return False
+    if not getattr(provider, "trusted_for_api_auth", False):
+        return False
+    return bool((getattr(provider, "api_audience", None) or "").strip())
+
+
+async def build_trusted_external_identity(provider: SSOProvider, verified_claims: dict, token: str, db: Session) -> Optional[dict[str, Any]]:
+    """Build a claims-derived identity payload for a trusted external-IdP token.
+
+    Trust-mode branch of :func:`build_external_identity` (issue #5903). The
+    identity comes from the verified token claims via
+    ``extract_trusted_principal``: no local user record is read or written.
+    ``authenticate_or_create_user`` and ``get_user_by_email`` are never
+    called, and ``is_admin`` comes from the mapped claim, not a DB row.
+
+    SECURITY:
+        * A token that lacks the configured revocation claim
+          (``jwt_trust_revocation_claim``, default ``jti``) is unrevocable;
+          it is rejected (None return; the caller maps this to 401).
+        * Group-overage markers dispatch on ``jwt_trust_overage_policy``:
+          ``fail_closed`` rejects, ``graph_lookup`` resolves through the
+          app-only Graph client, ``proceed_without_groups`` continues with
+          an empty group list and a WARNING log.
+        * ``token_use="trusted"`` so downstream dispatchers route via the
+          trust branch (claim authority), NOT the session funnel.
+
+    Args:
+        provider: The matched trust-root SSOProvider.
+        verified_claims: Signature-verified claims from verify_external_idp_token.
+        token: The raw external bearer token (carried through for downstream use).
+        db: Request-scoped SQLAlchemy session (group-mapping resolver and the
+            server-side roles table only; never email_users).
+
+    Returns:
+        The claims-derived trust-semantics identity payload, or None when the
+        token is missing a required claim or the overage policy rejects it.
+    """
+    # First-Party
+    from mcpgateway.utils.trusted_claims import detect_overage_marker, extract_revocation_id, extract_trusted_principal, resolve_overage_groups  # pylint: disable=import-outside-toplevel
+
+    provider_id = getattr(provider, "id", None)
+    revocation_claim = settings.jwt_trust_revocation_claim
+
+    # Revocation guarantee (fail-closed): the configured revocation claim must
+    # be present, or the token is unrevocable and must be rejected.
+    try:
+        extract_revocation_id(verified_claims, settings)
+    except HTTPException:
+        logger.warning(
+            "external-idp trust auth denied: token is missing the configured revocation claim %r (iss=%s, provider=%s)",
+            revocation_claim,
+            sanitize_for_log(verified_claims.get("iss")),
+            sanitize_for_log(provider_id),
+        )
+        _record_external_auth_metric("denied", provider_id, reason="missing_revocation_claim")
+        return None
+
+    claims = verified_claims
+    if detect_overage_marker(verified_claims):
+        try:
+            resolved_groups = await resolve_overage_groups(verified_claims, settings, db)
+        except HTTPException as exc:
+            logger.warning(
+                "external-idp trust auth denied: group overage unresolved (iss=%s, provider=%s): %s",
+                sanitize_for_log(verified_claims.get("iss")),
+                sanitize_for_log(provider_id),
+                sanitize_for_log(str(exc.detail)),
+            )
+            _record_external_auth_metric("denied", provider_id, reason="group_overage_unresolved")
+            return None
+        # The resolved group IDs replace the overage markers in a claims copy.
+        # The inbound dict is never mutated, and the synthesized payload stays
+        # free of markers so downstream re-extraction does not resolve twice.
+        claims = {key: value for key, value in verified_claims.items() if key not in ("_claim_names", "hasgroups") and not (isinstance(key, str) and key.startswith("groups:src"))}
+        claims["groups"] = resolved_groups
+
+    # extract_trusted_principal raises 401 when a required mapped claim is
+    # absent (fail-closed). Teams and roles come from the claims plus the
+    # external-group resolver; is_admin comes from the mapped admin claim.
+    try:
+        principal = extract_trusted_principal(claims, settings, db)
+    except HTTPException as exc:
+        logger.warning(
+            "external-idp trust auth denied: %s (iss=%s, provider=%s)",
+            sanitize_for_log(str(exc.detail)),
+            sanitize_for_log(verified_claims.get("iss")),
+            sanitize_for_log(provider_id),
+        )
+        _record_external_auth_metric("denied", provider_id, reason="missing_mapped_claim")
+        return None
+
+    # The email claim is optional in trust mode. When absent, the token
+    # subject backs the email attribute (display and tracing); the canonical
+    # user_id stays the opaque mapped claim.
+    email = principal.email
+    if email is None:
+        subject = verified_claims.get("sub")
+        email = subject if isinstance(subject, str) else None
+
+    payload: dict = {
+        **claims,
+        "sub": principal.user_id,
+        "email": email,
+        "user_id": principal.user_id,
+        "token": token,
+        "token_use": "trusted",  # nosec B105 - JWT claim type, not a password
+        "source": "external_idp",  # audit/telemetry only -- never drives authz
+        "iss": verified_claims.get("iss"),
+        "auth_provider": provider_id,
+        "teams": list(principal.teams),
+        "roles": list(principal.roles),
+        "is_admin": principal.is_admin,
+    }
+    _record_external_auth_metric("success", provider_id)
+    logger.info("external-idp trust auth: claims-derived identity (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+    return payload
+
+
 async def build_external_identity(provider: SSOProvider, verified_claims: dict, token: str, db: Session) -> Optional[dict[str, Any]]:
     """Map verified external-IdP claims to a ContextForge identity payload.
 
-    Reuses browser-SSO normalization + provisioning so role/group -> team mapping
-    is identical. Team scoping uses SESSION semantics (DB authority) because an
-    external access token carries no internal ``teams`` claim.
+    Trust dispatch (issue #5903): when trust mode is ON and the provider is a
+    configured trust root, the identity is built from token claims alone by
+    :func:`build_trusted_external_identity` and this provisioning path is
+    never entered. Default mode is unchanged: browser-SSO normalization +
+    provisioning so role/group -> team mapping is identical. Team scoping
+    uses SESSION semantics (DB authority) because an external access token
+    carries no internal ``teams`` claim.
 
     SECURITY:
         * ``token_use="session"`` so downstream dispatchers route via
@@ -2233,6 +2376,9 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
         The enriched session-semantics identity payload, or None when the user
         cannot be provisioned/resolved.
     """
+    if _external_trust_root_active(provider):
+        return await build_trusted_external_identity(provider, verified_claims, token, db)
+
     # First-Party
     from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
