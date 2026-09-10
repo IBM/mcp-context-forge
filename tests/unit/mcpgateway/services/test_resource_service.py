@@ -6045,6 +6045,41 @@ class TestReadResourceCoverageEdges:
                 await svc.read_resource(db, resource_uri="reference://users/7")
 
     @pytest.mark.asyncio
+    async def test_read_local_resource_template_placeholder_raises(self):
+        """Local template placeholders must not be returned as resolved content."""
+        # First-Party
+        from mcpgateway.common.models import ResourceContent
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "local-template"
+        template_db.uri = "greeting://{name}"
+        template_db.uri_template = "greeting://{name}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = None
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = ResourceContent(type="resource", id="local-template", uri="greeting://{name}", text="greeting://Alice")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock) as invoke_resource,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            with pytest.raises(ResourceError, match="Gateway resource content could not be resolved"):
+                await svc.read_resource(db, resource_uri="greeting://Alice")
+
+        invoke_resource.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_read_resource_template_proxy_allows_empty_text_response(self):
         """Templated proxy reads preserve an intentionally empty text response."""
         # First-Party

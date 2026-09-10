@@ -6526,6 +6526,8 @@ async def test_resource_by_uri(
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ResourceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Error reading resource by URI %s: %s", resource_uri, e)
         raise

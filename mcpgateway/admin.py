@@ -192,7 +192,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -13450,6 +13450,8 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ResourceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting resource for {resource_uri}: {e}")
         raise e

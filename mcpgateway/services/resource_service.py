@@ -2753,6 +2753,15 @@ class ResourceService(BaseService):
                         # visibility scoping with user_email/token_teams before returning content.
                         gateway_fetch_allowed = True
                     if not gateway_fetch_allowed:
+                        if (
+                            resource_db is not None
+                            and getattr(resource_db, "uri_template", None)
+                            and content_id
+                            and template_value is not None
+                            and requested_uri is not None
+                            and str(template_value) == str(requested_uri)
+                        ):
+                            raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE)
                         return
                     try:
                         resource_response = await self.invoke_resource(
