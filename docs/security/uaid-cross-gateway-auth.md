@@ -63,6 +63,27 @@ UAID_FORWARD_AUTH=false
 6. Response returns through Gateway A → forwarded to user
 ```
 
+### Layer 2 and JWT Trust Mode
+
+When both gateways run JWT trust mode (`JWT_TRUST_MODE=jwt-trust`), the same
+forwarding rules apply without change:
+
+- The forwarded bearer token is the caller's inbound JWT. A trust-mode token
+  (`token_use="trusted"`) forwards verbatim; the remote gateway receives the
+  original claims (`sub`, `groups`, `teams`, the revocation claim).
+- The remote gateway re-evaluates the token against its own
+  `external_group_mappings` table. Team membership that the calling gateway
+  derived from its own mappings does NOT transfer. An agent on a team the
+  token does not map to on the remote gateway returns 404.
+- Local opaque tokens (`cf_sess_*`, `cf_pat_*`) are never forwarded. The
+  remote gateway treats the call as unauthenticated.
+- `UAID_ALLOWED_DOMAINS` semantics are unchanged: the allowlist stays
+  fail-closed. An empty allowlist blocks all cross-gateway routing unless
+  `UAID_ALLOW_ALL_DOMAINS=true` (unsafe for production).
+
+See `docs/docs/architecture/auth-token-dispatch.md` for the token dispatch
+rule the remote gateway applies to the forwarded token.
+
 **Headers:**
 
 ```http
