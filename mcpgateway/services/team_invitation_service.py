@@ -35,7 +35,7 @@ from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, Email
 from mcpgateway.schemas import EmailDeliveryStatus
 from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count, TeamManagementService
+from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count, LocalUserRecordRequiredError, TeamManagementService
 
 # Initialize logging
 logging_service = LoggingService()
@@ -286,6 +286,11 @@ class TeamInvitationService:
             # Check if inviter exists and is a team member
             inviter = self.db.query(EmailUser).filter(EmailUser.email == invited_by).first()
             if not inviter:
+                if settings.jwt_trust_mode == "jwt-trust":
+                    # B.2 matrix: invitations persist rows keyed to a local
+                    # inviter record; a trust-only principal has none (#5906).
+                    logger.warning("Invitation rejected for %s: no local user record in trust mode", SecurityValidator.sanitize_log_message(invited_by))
+                    raise LocalUserRecordRequiredError("Invitations require local user records")
                 logger.warning("Inviter %s not found", invited_by)
                 return None
 

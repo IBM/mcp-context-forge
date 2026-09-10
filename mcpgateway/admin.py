@@ -8233,6 +8233,10 @@ async def admin_create_user(
     Returns:
         HTMLResponse: Success message or error response
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: local user management is disabled in trust mode (#5906).
+        return HTMLResponse(content='<div class="text-red-500">User management disabled in trust mode</div>', status_code=403)
+
     try:
         form = await request.form()
 
@@ -8458,6 +8462,10 @@ async def admin_update_user(
     Returns:
         HTMLResponse: Success message or error response
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: local user management is disabled in trust mode (#5906).
+        return HTMLResponse(content='<div class="text-red-500">User management disabled in trust mode</div>', status_code=403, headers={"HX-Retarget": "#edit-user-error"})
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -8633,6 +8641,10 @@ async def admin_delete_user(
     Returns:
         HTMLResponse: Success/error message
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: local user management is disabled in trust mode (#5906).
+        return HTMLResponse(content='<div class="text-red-500">User management disabled in trust mode</div>', status_code=403)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 

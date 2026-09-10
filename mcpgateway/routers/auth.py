@@ -557,6 +557,11 @@ async def refresh_session(request: Request, current_user: EmailUser = Depends(ge
             absolute lifetime cap, or cannot be rotated (already refreshed or
             revocation not persisted); 403 for non-session tokens
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: session refresh is disabled in trust mode (#5906); trust
+        # deployments have no password/SSO login to mint session tokens.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session refresh disabled in trust mode")
+
     raw_token, from_cookie = _extract_raw_token(request)
     if not raw_token:
         # Non-JWT auth (basic/proxy) has no session token to refresh
