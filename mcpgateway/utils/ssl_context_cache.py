@@ -245,3 +245,66 @@ def clear_ssl_context_cache() -> None:
     """
     _ssl_context_cache.clear()
     _ssl_context_cache_timestamps.clear()
+
+
+def build_client_ssl_context(
+    url: str | None,
+    ca_certificate: str | bytes | None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+) -> ssl.SSLContext | None:
+    """Build the SSL context for an outbound connection, or None to use the caller's default.
+
+    Centralises the rule shared by every outbound HTTP client in the gateway:
+
+    * plaintext ``http://`` targets never need a context;
+    * a context is required whenever *either* a custom CA certificate *or* an
+      mTLS client cert/key pair is configured.
+
+    The second point is why this helper exists.  Gating on the CA certificate
+    alone drops the client identity whenever the peer's server certificate
+    chains to a CA already in the system trust store, so a server that requires
+    mTLS but uses a publicly trusted certificate is unreachable.  Passing
+    ``ca_certificate=None`` to :func:`get_cached_ssl_context` keeps the system
+    trust store for verification while still loading the client cert chain.
+
+    Args:
+        url: Target URL; ``http://`` targets short-circuit to None.
+        ca_certificate: Optional custom CA certificate in PEM format.
+        client_cert: Optional client certificate path or PEM for mTLS.
+        client_key: Optional client private key path or PEM for mTLS.
+
+    Returns:
+        A configured SSL context, or None when the caller's default verification
+        behaviour should apply.
+
+    Examples:
+        Plaintext targets and targets with no TLS material configured need no context:
+
+        >>> from mcpgateway.utils.ssl_context_cache import build_client_ssl_context
+        >>> url = "https://api.example.com"
+        >>> build_client_ssl_context("http://plain.example.com", "CA", "/c.pem", "/k.pem") is None
+        True
+        >>> build_client_ssl_context(url, None, None, None) is None
+        True
+
+        A client cert with no custom CA still builds a context (the regression this fixes):
+
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
+        >>> mod = "mcpgateway.utils.ssl_context_cache"
+        >>> clear_ssl_context_cache()
+        >>> with patch(f"{mod}.ssl.create_default_context") as mock_create:
+        ...     mock_create.return_value = Mock()
+        ...     with patch(f"{mod}._load_client_cert_chain") as mock_load:
+        ...         ctx = build_client_ssl_context(url, None, "/c.pem", "/k.pem")
+        ...     (ctx is mock_create.return_value, mock_load.call_count)
+        (True, 1)
+    """
+    if url and url.lower().startswith("http://"):
+        return None
+
+    if not ca_certificate and not (client_cert and client_key):
+        return None
+
+    return get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)

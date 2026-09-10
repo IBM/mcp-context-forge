@@ -25,7 +25,6 @@ import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() rais
 import logging
 import os
 import re
-import ssl
 import time
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
@@ -115,7 +114,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssl_context_cache import build_client_ssl_context
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
@@ -6252,25 +6251,6 @@ class ToolService(BaseService):
                         except Exception as _dec_exc:
                             logger.debug("client_key decryption skipped, using as-is: %s", _dec_exc)
 
-                    def create_ssl_context(
-                        ca_certificate: str,
-                        client_cert: str | None = None,
-                        client_key: str | None = None,
-                    ) -> ssl.SSLContext:
-                        """Create an SSL context with the provided CA certificate and optional mTLS credentials.
-
-                        Uses caching to avoid repeated SSL context creation for the same certificate(s).
-
-                        Args:
-                            ca_certificate: CA certificate in PEM format
-                            client_cert: Optional client cert path or PEM for mTLS
-                            client_key: Optional client key path or PEM for mTLS
-
-                        Returns:
-                            ssl.SSLContext: Configured SSL context
-                        """
-                        return get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-
                     # Capture mTLS client cert/key values for passing to nested function
                     _client_cert_value = gateway_client_cert
                     _client_key_value = gateway_client_key
@@ -6308,16 +6288,14 @@ class ToolService(BaseService):
                         from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
 
                         # For plain HTTP gateway URLs, skip SSL context entirely to avoid unnecessary SSL setup.
-                        if gateway_url and gateway_url.lower().startswith("http://"):
-                            ctx = None
-                        elif valid and gateway_ca_cert:
-                            ctx = create_ssl_context(
-                                gateway_ca_cert,
-                                client_cert=client_cert_value,
-                                client_key=client_key_value,
-                            )
-                        else:
-                            ctx = None
+                        # A client cert/key pair alone is enough to need a context: the peer may require
+                        # mTLS while its own certificate chains to the system trust store.
+                        ctx = build_client_ssl_context(
+                            gateway_url,
+                            gateway_ca_cert if valid else None,
+                            client_cert=client_cert_value,
+                            client_key=client_key_value,
+                        )
 
                         # Use effective_timeout for read operations if not explicitly overridden by caller
                         # This ensures the underlying client waits at least as long as the tool configuration requires

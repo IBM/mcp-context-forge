@@ -1632,7 +1632,7 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
     ssl_context = ssl.create_default_context()
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client) as mock_resilient:
-        with patch("mcpgateway.services.gateway_service.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
+        with patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
             with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
                 with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                     result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
