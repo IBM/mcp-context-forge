@@ -8718,3 +8718,46 @@ linting-workflow-commitlint:         ## 📝  Conventional Commits linting (togg
 .PHONY: conc-01-gateways
 conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh
+
+# Published full-stack MCP conformance harness.
+CF_INTEGRATION ?= cf-integration
+CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
+CF_CONTROLPLANE_REPO ?= $(CURDIR)
+CF_CONTROLPLANE_REF ?= $(shell git -C "$(CF_CONTROLPLANE_REPO)" rev-parse HEAD)
+CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
+CF_CONTROLPLANE_PULL_POLICY ?= never
+CF_COMPOSE_BUILD ?= true
+CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+
+# help: conformance          - Run legacy and modern MCP conformance through the built-in dataplane
+# help: conformance-bless    - Update baselines after the complete conformance matrix finishes
+.PHONY: conformance conformance-bless
+
+# Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
+conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+# Cover the SDK v2 branch's legacy and modern revisions against a dual-era fixture.
+conformance conformance-bless:
+	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git -C "$(CF_CONTROLPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
+		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
+		exit 1; \
+	fi
+	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+	"$(CF_INTEGRATION)" conformance run \
+		--client-version 2025-11-25 \
+		--client-version 2026-07-28 \
+		--server-era dual \
+		--lane builtin \
+		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+		$(if $(filter conformance-bless,$@),--bless)
