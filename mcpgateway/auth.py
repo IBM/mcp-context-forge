@@ -1751,6 +1751,105 @@ async def get_current_user(
 
         logger.debug("JWT token validated successfully")
 
+        # === TRUST DISPATCH: token_use="trusted" (#5896 dispatch rule) ===
+        # A token marked token_use="trusted" is trust-eligible only when trust
+        # mode is ON (jwt_trust_mode="jwt-trust"). With trust mode OFF the
+        # marker must never enter the default funnel: the UUID->email seam
+        # could silently re-attribute identity, and normalize_token_teams
+        # would honor the embedded teams claim without the trust-mode claim
+        # mapping and revocation rules. Reject with 401.
+        if payload.get("token_use") == "trusted" and settings.jwt_trust_mode != "jwt-trust":  # nosec B105 - Not a password; token_use is a JWT claim type
+            logger.warning(
+                "Rejected token with token_use=trusted: JWT trust mode is OFF",
+                extra={"security_event": "trust_token_rejected_mode_off"},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Trusted tokens require JWT trust mode",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if settings.jwt_trust_mode == "jwt-trust" and payload.get("token_use") == "trusted":  # nosec B105 - Not a password; token_use is a JWT claim type
+            # Trust-eligible branch for gateway-signed tokens (dispatch rule
+            # branch (a) in docs/docs/architecture/auth-token-dispatch.md).
+            # Identity, teams, and roles derive from the mapped claims via
+            # extract_trusted_principal (#5899); the external-group resolver
+            # (#5976/#6272) translates group claims into CF team IDs, and raw
+            # external group IDs never reach token_teams.
+            #
+            # SKIPPED on this path, by design: the local user-record lookup,
+            # the is_active check, the UUID->email seam, and DB team
+            # resolution. Accepted posture change: trust mode has no per-user
+            # is_active kill-switch. Access is withdrawn through token
+            # revocation (the configured revocation claim) or by removing the
+            # group mapping. See docs/docs/manage/configuration.md.
+            #
+            # The revocation check is RETAINED: the configured revocation
+            # claim (jwt_trust_revocation_claim, default jti) is checked
+            # against the revocation store on every request.
+            # First-Party
+            from mcpgateway.utils.trusted_claims import detect_overage_marker, extract_revocation_id, extract_trusted_principal, resolve_overage_groups  # pylint: disable=import-outside-toplevel
+
+            # Entra group-overage markers mean the groups claim was omitted.
+            # Dispatch on jwt_trust_overage_policy (#5977): fail_closed ->
+            # 401; graph_lookup -> app-only Graph resolution;
+            # proceed_without_groups -> continue with no groups. The resolved
+            # group IDs replace the marker in a payload copy; the inbound
+            # payload is never mutated.
+            if detect_overage_marker(payload):
+                with fresh_db_session() as overage_db:
+                    resolved_groups = await resolve_overage_groups(payload, settings, overage_db)
+                payload = {**payload, "groups": resolved_groups}
+
+            def _extract_principal_sync():
+                with fresh_db_session() as db:
+                    return extract_trusted_principal(payload, settings, db)
+
+            # extract_trusted_principal raises 401 when a required mapped
+            # claim or the configured revocation claim is absent (fail-closed).
+            principal = await asyncio.to_thread(_extract_principal_sync)
+
+            # The email claim is optional in trust mode. When absent, the
+            # token subject backs the email attribute (display and tracing);
+            # the canonical user_id stays the opaque mapped claim.
+            if principal.email is None:
+                subject = payload.get("sub")
+                principal.email = subject if isinstance(subject, str) else None
+
+            revocation_id = extract_revocation_id(payload, settings)
+            if await asyncio.to_thread(_check_token_revoked_sync, revocation_id):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            token_teams = list(principal.teams)
+            if request:
+                request.state.token_teams = token_teams
+                # Same team-context rule as default mode: a single concrete
+                # team derives request.state.team_id.
+                request.state.team_id = await derive_token_team_id(token_teams, "trusted")
+                request.state.token_use = "trusted"
+                request.state.trace_team_name = await resolve_trace_team_name(payload, token_teams)
+                # Preserve the raw JWT teams claim for OAuth storage path selection.
+                request.state.jwt_teams_claim = payload.get("teams")
+                # Store the revocation identifier for middleware (token usage logging).
+                request.state.jti = revocation_id
+                # Trust tokens are JWT-authenticated; the API-token scope layer
+                # does not apply to them.
+                request.state.auth_method = "jwt"
+
+            _inject_userinfo_instate(request, principal)
+            _propagate_tenant_id(request)
+
+            _set_trace_for_user(
+                principal,
+                teams=token_teams if request else _UNSET,
+                team_name=getattr(request.state, "trace_team_name", None) if request else None,
+            )
+            return principal
+
         # Extract user identifier (support new UUID-sub and legacy email-sub formats).
         # Signed email metadata wins; only UUID-only tokens need DB resolution.
         from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
