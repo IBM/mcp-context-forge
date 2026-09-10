@@ -75,6 +75,10 @@ Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliabili
 | [#6658](https://github.com/IBM/mcp-context-forge/pull/6658) | update Python and Node.js dependencies, rebuild the Admin UI bundle, and bump `fast-uri` to address four high-severity advisories |
 
 
+### Fixed
+
+- **SSO cross-provider relink misconfiguration and admin carryover** ([#6431](https://github.com/IBM/mcp-context-forge/issues/6431)) - Cross-provider sign-in for an already-linked email is now gated behind an explicit, fail-closed `SSO_ALLOW_PROVIDER_LINKING` setting (default `false`) instead of an always-on, misleadingly-logged auto-link. When linking is enabled, relinking now re-vets admin status against the new provider and demotes regardless of how admin was originally granted (`api`, manual, or `sso`), closing a privilege-carryover path where a manually-granted admin could relink to a provider that never vets for admin and silently keep `*` permissions. The refuse-path log message wording changed from "account-linking required" to "login refused"; update any log-based alerting that matched the old string.
+
 ## [1.0.9] - 2026-08-31 - mTLS, OAuth Quick Wins, Tool Preview, Catalog Actions, and Security Hardening
 
 ### Overview
