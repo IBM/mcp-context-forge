@@ -2789,6 +2789,40 @@ class TestGatewayService:
     # ────────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
+    @pytest.mark.parametrize("advertised", [True, False])
+    async def test_catalog_discovery_uses_capability_presence(self, gateway_service, connector, advertised):
+        """Empty capability objects enable discovery; omitted capabilities skip it."""
+        capabilities = {"resources": {}, "prompts": {}} if advertised else {}
+        client = AsyncMock()
+        client.server_capabilities = MagicMock()
+        client.server_capabilities.model_dump.return_value = capabilities
+        client.list_tools.return_value = SimpleNamespace(tools=[])
+        client.list_resources.return_value = SimpleNamespace(
+            resources=[MagicMock(model_dump=MagicMock(return_value={"uri": "test://static-text", "name": "static-text"}))]
+        )
+        client.list_resource_templates.return_value = SimpleNamespace(resource_templates=[])
+        client.list_prompts.return_value = SimpleNamespace(prompts=[MagicMock(model_dump=MagicMock(return_value={"name": "simple-prompt"}))])
+        proxy = AsyncMock()
+        proxy.__aenter__.return_value = client
+
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=proxy):
+            _, _, resources, prompts, _ = await getattr(gateway_service, connector)("https://test.example.com/mcp")
+
+        if advertised:
+            client.list_resources.assert_awaited_once_with()
+            client.list_resource_templates.assert_awaited_once_with()
+            client.list_prompts.assert_awaited_once_with()
+            assert [resource.uri for resource in resources] == ["test://static-text"]
+            assert [prompt.name for prompt in prompts] == ["simple-prompt"]
+        else:
+            client.list_resources.assert_not_awaited()
+            client.list_resource_templates.assert_not_awaited()
+            client.list_prompts.assert_not_awaited()
+            assert resources == []
+            assert prompts == []
+
+    @pytest.mark.asyncio
     async def test_initialize_gateway_with_resources_and_prompts(self, gateway_service):
         """Test _initialize_gateway with full resources and prompts support."""
         with (
