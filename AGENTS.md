@@ -168,7 +168,7 @@ ContextForge implements a **two-layer security model**:
 
 **Key behaviors:**
 
-- **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
+- **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth_context.py` is the single source of truth.
 - **Token creation defaults to the creator's personal team**: `POST /tokens` (and admin-delegated creation) with no `team_id` no longer mints a `teams: null` (public-only) token for non-admin callers. `TokenCatalogService.get_default_team_id()` resolves the caller's (or, for admin delegation, the target's) personal team and `routers/tokens.py::create_token` uses it when the caller belongs to that team; it falls back to single-team inheritance, then to `team_id=None` plus a `TokenCreateResponse.warnings` entry only when neither applies (no personal team and multiple/zero teams). Un-narrowed admins are exempt — `team_id=None` for them is a deliberate global-scope token. The permission-containment check (`_get_caller_permissions`) still uses the *requested* `team_id`, not the defaulted one, so this does not raise the ceiling on what `scope.permissions` a caller may request. Separately, `derive_token_team_id()` in `mcpgateway/auth.py` — the function that turns a single-team token's claim into `request.state.team_id` for RBAC/rate-limit/routing context — excludes personal teams, since a personal team auto-grants `team_admin`; a personal-team-scoped token instead falls through to `check_any_team`, matching how `PermissionService._get_user_roles` already treats personal teams.
 - **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
 - **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
@@ -191,7 +191,7 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
-- Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
+- Do not re-implement token team interpretation logic; use `normalize_token_teams()` in `mcpgateway/auth_context.py` for API/legacy tokens and `resolve_session_teams()` in `mcpgateway/auth.py` for session tokens.
 - Do not re-implement Layer 1 token scope semantics; use `token_scope_grants()` in `mcpgateway/middleware/rbac.py`, the single policy point shared by the RBAC decorators and `TokenScopingMiddleware`. Empty token scopes mean "inherit from RBAC at runtime" (what `TokenCatalogService._generate_token()` emits for tokens created without an explicit scope) and must never be treated as deny-all; `*` grants everything and `<category>.*` grants that category.
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
@@ -203,6 +203,10 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 - A `token-exchange` OAuth grant (RFC 8693 / On-Behalf-Of) exists for gateways; with it, the user's inbound JWT is exchanged with a trusted Authorization Server and **never forwarded upstream** — only the exchanged token is sent to the downstream MCP server.
 - `token_url` on a `token-exchange` gateway is an SSRF / egress boundary: the user's ContextForge JWT is POSTed to it as the `subject_token`, it is validated at config time, and creating or modifying token-exchange gateways is a privileged action.
 - Audit token-exchange operations via the structured logging sink with a `correlation_id`; never log raw subject tokens or exchanged tokens.
+- **Trust-mode dispatch rule**: a token is trust-eligible when (a) gateway-signed: `token_use=="trusted"` AND trust mode ON AND required mapped claims present AND configured revocation claim present; or (b) external IdP: trust mode ON AND issuer is a configured trust root (`trusted_for_api_auth` + `api_audience`) AND required mapped claims present AND configured revocation claim present. All other tokens follow the default funnel. A `token_use="trusted"` token with trust mode OFF is rejected 401 — the marker never enters the default funnel.
+- **Trust-mode revocation guarantee**: a trust-eligible token without the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`; `uti` for Entra roots) is rejected 401. Revocation is keyed by the configured claim only; there is no sid-keyed revocation for trust-mode principals.
+- **Trust-mode admin-claim posture**: `is_admin` in trust mode derives from the mapped admin claim, never from a database row. The posture is fail-closed: a missing admin claim means non-admin.
+- **Trust-mode `is_active` loss**: trust-mode principals have no `is_active` database field. Deactivation happens at the identity provider (the token is no longer issued) or through the revocation blocklist.
 
 #### UAID Cross-Gateway Security
 
