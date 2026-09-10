@@ -223,6 +223,17 @@ All defaults preserve the current behavior: trust mode defaults to `db` and the 
 
 Posture change in `jwt-trust` mode: the gateway does not read the local user record on the request path, so there is no per-user `is_active` kill-switch for trust-mode principals. To withdraw access, revoke the token through the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`) or remove the external group mapping. A token that carries `token_use="trusted"` is rejected with `401` when trust mode is `db`: the marker never enters the default funnel. The auth-cache Redis key carries the mode as a namespace segment, so a mode flip cold-starts every auth cache automatically.
 
+Surfaces disabled in `jwt-trust` mode (the full decision table lives in `docs/docs/architecture/auth-feature-mode-matrix.md`):
+
+- Password login, registration, and password reset return `401` with "Password authentication disabled in trust mode".
+- SSO browser login returns `401` with "SSO browser login disabled in trust mode".
+- Session-token refresh returns `401` with "Session refresh disabled in trust mode".
+- User management (admin UI and admin API) returns `403` with "User management disabled in trust mode".
+- Invitations and team membership writes for a principal with no local user record return `403` with "Invitations require local user records" or "Team membership writes require local user records".
+- API-token minting for a trust-only principal fails with "Token minting is disabled for trust-only principals. Create a local user account first.". Principals with a local user record mint tokens normally.
+
+Mint endpoint: `POST /admin/tokens/trust` mints a gateway-signed trust token (`token_use="trusted"`) for a local user. The endpoint is admin-only. Every claim derives from server-side authority: the database admin flag, team memberships, and role assignments. The `sub` claim is the target's canonical user_id; a body that names another subject is rejected with `403`. Trust tokens are ephemeral: the mint writes no token-catalog row, and revocation is through the jti-based blocklist only.
+
 ### UI Features
 
 For detailed guidance on embedding and section customization, see [Admin UI Customization](admin-ui-customization.md).
