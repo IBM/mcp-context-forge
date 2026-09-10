@@ -12,9 +12,8 @@ docs/docs/architecture/auth-token-dispatch.md:
   That IS the documented behavior for these rows.
 - The gateway-signed branch-(a) rows are green since #5900 landed the
   trust branch in get_current_user.
-- The external-IdP branch-(b) row carries pytest.mark.xfail(strict=True)
-  with a pointer to #5903, which lands the external IdP trust root.
-  strict=True turns any premature XPASS into a suite failure.
+- The external-IdP branch-(b) row is green since #5903 landed the
+  external IdP trust root.
 """
 
 # Standard
@@ -268,8 +267,6 @@ class TestTokenDispatchMatrix:
 
                         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
-    # Flipped by #5903 (external IdP trust root)
-    @pytest.mark.xfail(strict=True, reason="Flipped by #5903")
     @pytest.mark.asyncio
     async def test_external_idp_token_trust_mode_trust_semantics(self, monkeypatch):
         """Trust mode + external IdP token (trusted issuer) -> trust-semantics.
@@ -277,8 +274,8 @@ class TestTokenDispatchMatrix:
         The issuer is a configured trust root, so the token is
         trust-eligible via the issuer branch: the identity is built from
         token claims alone and the provisioning path
-        (build_external_identity) is not invoked. Today the external-IdP
-        path always provisions, so the no-provisioning assertion fails.
+        (build_external_identity) is not invoked. Green since #5903 landed
+        the external IdP trust root.
         """
         # Third-Party
         import jwt as pyjwt
@@ -290,6 +287,7 @@ class TestTokenDispatchMatrix:
         provider = _fake_provider("https://kc/realms/m")
 
         monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+        monkeypatch.setattr(vc.settings, "jwt_trust_mode", "jwt-trust")
         monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
 
         async def fake_verify_external(tok, db):
