@@ -404,6 +404,10 @@ class Settings(BaseSettings):
     # Trust mode "jwt-trust" accepts claims from tokens issued by trusted
     # external identity providers without a per-request database lookup.
     # Default "db" preserves the existing database-backed behavior.
+    # The auth-cache Redis key carries the mode as a namespace segment
+    # (mcpgw:auth:{version}:{mode}:...), so flipping this setting
+    # cold-starts every auth cache automatically; no manual bump of
+    # auth_cache_key_version is needed on a mode change.
     jwt_trust_mode: Literal["db", "jwt-trust"] = Field(
         default="db",
         description="JWT trust mode: 'db' (database-backed user lookup, default) or 'jwt-trust' (trust claims from tokens of trusted external identity providers)",
@@ -2504,6 +2508,10 @@ class Settings(BaseSettings):
     auth_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user teams list cache")
     auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
     auth_cache_key_version: str = Field(default="v1", description="Redis key version prefix for auth cache namespace isolation")
+    # The Redis key format is mcpgw:auth:{version}:{mode}:{key_type}:{identifier}.
+    # The mode segment comes from jwt_trust_mode: a mode flip cold-starts all
+    # auth caches automatically, so this version needs a bump only for key-shape
+    # changes within a mode.
 
     # Registry Cache Configuration (reduces DB queries for list endpoints)
     registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")

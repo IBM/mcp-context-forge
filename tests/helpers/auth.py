@@ -87,6 +87,72 @@ def make_test_jwt(
     )
 
 
+def make_trusted_test_jwt(
+    user_id: str,
+    *,
+    email: str | None = None,
+    teams: list[str] | None = None,
+    roles: list[str] | None = None,
+    is_admin: bool = False,
+    issuer: str | None = None,
+    tenant: str | None = None,
+    groups: list[str] | None = None,
+    revocation_id: str | None = None,
+    expires_in_minutes: int = 180,
+    secret: str = "",
+    algorithm: str = "",
+    extra_payload: dict[str, Any] | None = None,
+) -> str:
+    """Create a trust-mode marker token (``token_use="trusted"``) for tests.
+
+    The mapped claims are written under the claim names configured in
+    ``settings.jwt_claim_*`` and ``settings.jwt_trust_revocation_claim`` so
+    the helper stays correct when a test re-maps a claim. ``user_id`` is the
+    opaque subject. When ``revocation_id`` is omitted, a fresh ``jti`` is
+    generated. The token is signed directly (not via ``_create_jwt_token``)
+    so the ``issuer`` parameter is honored.
+    """
+    # Standard
+    import uuid
+
+    # First-Party
+    from mcpgateway.config import settings
+
+    now = datetime.now(timezone.utc)
+    claims: dict[str, Any] = {
+        settings.jwt_claim_user_id: user_id,
+        "token_use": "trusted",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=expires_in_minutes)).timestamp()),
+        "iss": issuer or settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+    }
+    if email is not None:
+        claims[settings.jwt_claim_email] = email
+    if teams is not None:
+        claims[settings.jwt_claim_teams] = teams
+    if roles is not None:
+        claims[settings.jwt_claim_roles] = roles
+    if is_admin:
+        claims[settings.jwt_claim_admin] = True
+    if tenant is not None:
+        claims["tid"] = tenant
+    if groups is not None:
+        claims["groups"] = groups
+    if revocation_id is not None:
+        claims[settings.jwt_trust_revocation_claim] = revocation_id
+    if "jti" not in claims:
+        claims["jti"] = str(uuid.uuid4())
+    if extra_payload:
+        claims.update(extra_payload)
+
+    if not secret:
+        secret = settings.jwt_secret_key.get_secret_value()
+    if not algorithm:
+        algorithm = settings.jwt_algorithm
+    return jwt.encode(claims, secret, algorithm=algorithm)
+
+
 def make_legacy_test_jwt(
     email: str = "admin@example.com",
     *,
