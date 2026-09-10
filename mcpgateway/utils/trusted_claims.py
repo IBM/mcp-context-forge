@@ -40,8 +40,13 @@ PRINCIPAL CONTRACT (VirtualPrincipal):
   resolution. Role names resolve to permission sets via the server-side
   ``roles`` table only; permissions are never embedded in or read from the
   token. Unknown role names are ignored with a WARNING log (fail-closed).
+  When the mapped admin claim is true, ``"platform_admin"`` is appended by
+  the server (atomic admin mapping, #5902) after roles-table validation, so
+  it can never be dropped as unknown.
 - ``is_admin``: bool, default False. Read from the claim named by
-  ``jwt_claim_admin``.
+  ``jwt_claim_admin``. A true value populates ``is_admin`` and the
+  ``"platform_admin"`` roles entry in ONE atomic mapping: no state exists
+  where one admin track says admin and the other denies.
 - ``auth_provider``: the token issuer (``iss``) when present, else the
   string ``"jwt-trust"``.
 - ``token_use``: the constant string ``"trusted"``.
@@ -269,7 +274,9 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
       resolver-supplied role names, then validated against the server-side
       ``roles`` table; unknown names are skipped with a WARNING log
       (fail-closed). Permissions are never read from the token.
-    - ``is_admin`` (bool, default False): read from ``jwt_claim_admin``.
+    - ``is_admin`` (bool, default False): read from ``jwt_claim_admin``. A
+      true value also adds ``"platform_admin"`` to ``roles`` in the same
+      atomic mapping (#5902).
     - ``auth_provider``: the token issuer (``iss``) when present, else
       ``"jwt-trust"``.
     - ``token_use``: the constant ``"trusted"``.
@@ -335,13 +342,24 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
 
     email = _get_claim(payload, settings.jwt_claim_email)
 
+    # ATOMIC ADMIN MAPPING (#5902): the mapped admin claim feeds both admin
+    # tracks in one mapping — ``is_admin`` and the effective-roles set. The
+    # "platform_admin" entry is server-injected from the verified admin
+    # claim (never from the token's roles claim), so it is appended after
+    # roles-table validation and cannot be dropped as unknown. No
+    # intermediate state exists where one track says admin and the other
+    # denies.
+    is_admin = bool(_get_claim(payload, settings.jwt_claim_admin))
+    if is_admin and "platform_admin" not in roles:
+        roles.append("platform_admin")
+
     return VirtualPrincipal(
         user_id=user_id,
         email=email if isinstance(email, str) else None,
         full_name=full_name if isinstance(full_name, str) else None,
         teams=teams,
         roles=roles,
-        is_admin=bool(_get_claim(payload, settings.jwt_claim_admin)),
+        is_admin=is_admin,
         auth_provider=issuer,
         token_use="trusted",
     )
