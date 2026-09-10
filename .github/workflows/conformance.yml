@@ -3,7 +3,7 @@ run-name: Conformance for PR #${{ github.event.pull_request.number || github.eve
 
 on:
   pull_request:
-    branches: [chore/mcp-sdk-v2]
+    branches: [chore/mcp-sdk-v2, user/luca/sdk-v2-capability-discovery]
     types: [opened, reopened, synchronize, ready_for_review]
   # Comment commands become available once this workflow is on the default branch.
   issue_comment:
