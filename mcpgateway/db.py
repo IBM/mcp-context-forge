@@ -5189,8 +5189,8 @@ class ExternalGroupMapping(Base):
     cf_role: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     validation_status: Mapped[str] = mapped_column(String(50), nullable=False, default="valid", server_default="valid")
     last_validated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)  # pylint: disable=not-callable  # SQLAlchemy func proxy is callable; pylint cannot infer it
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False)  # pylint: disable=not-callable  # SQLAlchemy func proxy is callable; pylint cannot infer it
 
     __table_args__ = (UniqueConstraint("issuer", "tenant", "external_group_id", name="uq_external_group_mappings_identity"),)
 

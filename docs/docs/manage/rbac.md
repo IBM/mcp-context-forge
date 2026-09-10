@@ -682,6 +682,18 @@ When `AUTH_REQUIRED=false`:
 
 ---
 
+## Trust Mode
+
+When `JWT_TRUST_MODE=jwt-trust`, a signed JWT alone proves identity, roles, and teams. The gateway does not read the local user record on the request path. RBAC inputs change source, not shape:
+
+- **Teams and roles come from mapped claims, not database rows.** The claims named by `JWT_CLAIM_TEAMS` and `JWT_CLAIM_ROLES` carry the values. External group identifiers map to ContextForge teams (and optionally one role) through the `external_group_mappings` table, keyed by `(issuer, tenant, external_group_id)`.
+- **The admin flag comes from the mapped admin claim.** `JWT_CLAIM_ADMIN` (default `is_admin`) decides platform-admin status. The posture is fail-closed: a token without the admin claim is not an admin, even when a database row for the same user says otherwise.
+- **Permission checks are unchanged.** Roles resolve to permissions through the same role table. Team-scoped checks consume the claims-derived team list the same way they consume a database-derived list.
+- **No `is_active` kill-switch exists for trust-mode principals.** Withdraw access at the identity provider (the token is no longer issued) or revoke the token through the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`).
+- **Local-record writes are disabled for trust-only principals.** Invitations, team membership writes, and token-catalog minting need a local user record and return a clear error without one. See `docs/docs/architecture/auth-feature-mode-matrix.md` for the full surface matrix.
+
+---
+
 ## Best Practices
 
 ### Token Lifecycle

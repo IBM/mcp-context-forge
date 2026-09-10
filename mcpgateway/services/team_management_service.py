@@ -157,6 +157,25 @@ class UserNotFoundError(TeamManagementError):
     """
 
 
+class LocalUserRecordRequiredError(TeamManagementError):
+    """Raised when a trust-mode write requires a local user record.
+
+    JWT trust mode (#5885) derives teams and roles from mapped token claims.
+    A trust-only principal has no ``email_users`` row, so DB writes keyed to
+    a local user record (invitations, team membership writes) cannot apply.
+    The B.2 matrix (docs/docs/architecture/auth-feature-mode-matrix.md)
+    disables these surfaces for trust-only principals with a clear error;
+    routers map this error to HTTP 403.
+
+    Examples:
+        >>> error = LocalUserRecordRequiredError("Invitations require local user records")
+        >>> str(error)
+        'Invitations require local user records'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
 class MemberAlreadyExistsError(TeamManagementError):
     """Raised when a user is already a member of the team.
 
@@ -1270,6 +1289,12 @@ class TeamManagementService:
         # Check if user exists
         user = self.db.query(EmailUser).filter(EmailUser.email == user_email).first()
         if not user:
+            if settings.jwt_trust_mode == "jwt-trust":
+                # B.2 matrix: a trust-only principal has no local user record
+                # and gets teams from mapped claims, so a membership row keyed
+                # to one would never apply. Disabled with a clear error (#5906).
+                logger.warning("Team membership write rejected for %s: no local user record in trust mode", SecurityValidator.sanitize_log_message(user_email))
+                raise LocalUserRecordRequiredError("Team membership writes require local user records")
             logger.warning("User %s not found", SecurityValidator.sanitize_log_message(user_email))
             raise UserNotFoundError("User not found")
 
