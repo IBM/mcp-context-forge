@@ -19,6 +19,7 @@ from typing import Any, TypedDict
 
 # Third-Party
 from cpex.framework.models import Config
+from cpex.framework.settings import settings as plugin_settings
 import msgpack
 from sqlalchemy import select
 
@@ -63,12 +64,14 @@ def get_publisher_ttl(publisher_interval: int | None = None) -> int:
     return publisher_interval * 2 + 10
 
 
-def _serialize_plugin_config(config: Config) -> dict[str, Any]:
+def _serialize_plugin_config(config: Config | None) -> dict[str, Any]:
     """Serialize the native contract with stable ordering for condition sets.
 
     The runtime fingerprints config bytes. Worker-specific set iteration order
     must not trigger a reload when the effective policy has not changed.
     """
+    if config is None:
+        raise ValueError("Cannot publish a plugin manager without configuration")
     document = config.model_dump(mode="json")
     for plugin, serialized in zip(config.plugins or [], document["plugins"] or []):
         for condition, serialized_condition in zip(plugin.conditions, serialized["conditions"]):
@@ -219,12 +222,18 @@ class DataplanePublisherService:
         if factory is None:
             raise RuntimeError("Cannot publish enabled plugins without an initialized plugin manager factory")
 
+        manager = await factory.get_manager()
+        executor = manager.executor
         document["settings"] = {
-            **factory.runtime_settings,
+            "plugin_timeout": executor.timeout,
+            "fail_on_plugin_error": plugin_settings.fail_on_plugin_error,
+            "execution_pool": plugin_settings.execution_pool,
+            "default_hook_policy": executor.default_hook_policy.value,
+            "hook_policies": {hook: {"writable_fields": sorted(policy.writable_fields)} for hook, policy in executor.hook_policies.items()},
             "plugins_can_override_rbac": settings.plugins_can_override_rbac,
             "plugins_can_override_auth_headers": settings.plugins_can_override_auth_headers,
         }
-        document["global"] = _serialize_plugin_config(await factory.get_config())
+        document["global"] = _serialize_plugin_config(manager.config)
         context_ids = {
             context["context_id"]
             for config in payload.values()
@@ -235,7 +244,7 @@ class DataplanePublisherService:
         if "" in context_ids:
             raise ValueError("Published tool is missing its plugin policy context")
         for context_id in sorted(context_ids):
-            document["contexts"][context_id] = _serialize_plugin_config(await factory.get_config(context_id))
+            document["contexts"][context_id] = _serialize_plugin_config((await factory.get_manager(context_id)).config)
         return document
 
     async def publish_to_redis(self) -> None:

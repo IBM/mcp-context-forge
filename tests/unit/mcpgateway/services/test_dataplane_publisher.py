@@ -23,7 +23,7 @@ def plugins_disabled_by_default(monkeypatch):
 
 
 @pytest.fixture
-def plugin_publication(tmp_path, monkeypatch):
+async def plugin_publication(tmp_path, monkeypatch):
     """Use the real config loader, binding resolver and Redis mode handling."""
     import fakeredis.aioredis
     from sqlalchemy import create_engine
@@ -74,6 +74,8 @@ def plugin_publication(tmp_path, monkeypatch):
     try:
         yield dataplane_publisher.DataplanePublisherService(), factory, session, redis
     finally:
+        await factory.shutdown()
+        await redis.aclose()
         session.close()
         engine.dispose()
 
@@ -93,13 +95,11 @@ async def test_plugin_publication_preserves_builtin_config_and_settings(plugin_p
     import msgpack
 
     service, factory, _db, _redis = plugin_publication
-    with patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager") as manager:
-        document = await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo", "server"))
-        manager.assert_not_called()
+    document = await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo", "server"))
 
     assert msgpack.unpackb(msgpack.packb(document), raw=False) == document
     assert document["enabled"] is True
-    assert document["global"] == (await factory.get_config()).model_dump(mode="json")
+    assert document["global"] == (await factory.get_manager()).config.model_dump(mode="json")
     assert document["contexts"]["server"] == document["global"]
     plugin = document["global"]["plugins"][0]
     assert plugin["name"] == "Guard"
@@ -126,10 +126,11 @@ async def test_plugin_publication_tracks_override_lifecycle_and_specificity(plug
     exact = ToolPluginBinding(team_id="team-a", tool_name="gateway-echo", plugin_id="Guard", created_by="admin@example.com", updated_by="admin@example.com", mode="enforce_ignore_error", config={"nested": {"exact": True}}, priority=0)
     db.add_all([exact, wildcard])
     db.commit()
+    await factory.invalidate_all()
 
     document = await service.fetch_plugin_config(payload)
     scoped = document["contexts"]["team-a::gateway-echo"]
-    assert scoped == (await factory.get_config("team-a::gateway-echo")).model_dump(mode="json")
+    assert scoped == (await factory.get_manager("team-a::gateway-echo")).config.model_dump(mode="json")
     assert scoped["plugins"][0]["config"] == {"words": [], "retained": "base", "nested": {"exact": True}}
     assert scoped["plugins"][0]["mode"] == "sequential"
     assert scoped["plugins"][0]["on_error"] == "ignore"
@@ -140,6 +141,7 @@ async def test_plugin_publication_tracks_override_lifecycle_and_specificity(plug
     exact.on_error = "disable"
     exact.config = {"nested": {"updated": True}}
     db.commit()
+    await factory.invalidate_all()
     document = await service.fetch_plugin_config(payload)
     assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["mode"] == "disabled"
     assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["on_error"] == "disable"
@@ -147,16 +149,19 @@ async def test_plugin_publication_tracks_override_lifecycle_and_specificity(plug
 
     # Runtime mode overrides win over DB overrides, including legacy error policy.
     await redis.set("plugin:Guard:mode", "enforce_ignore_error")
+    await factory.invalidate_all()
     document = await service.fetch_plugin_config(payload)
     assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["on_error"] == "ignore"
     await redis.delete("plugin:Guard:mode")
     db.delete(exact)
     db.commit()
+    await factory.invalidate_all()
     document = await service.fetch_plugin_config(payload)
     assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["mode"] == "transform"
     assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["config"]["nested"] == {"wildcard": True}
     db.delete(wildcard)
     db.commit()
+    await factory.invalidate_all()
     document = await service.fetch_plugin_config(payload)
     assert document["contexts"]["team-a::gateway-echo"] == document["global"]
 
@@ -165,7 +170,7 @@ async def test_plugin_publication_tracks_override_lifecycle_and_specificity(plug
 async def test_plugin_publication_uses_loaded_yaml_and_only_published_contexts(plugin_publication):
     """Publication neither rereads YAML nor leaks cached, unpublished scopes."""
     service, factory, _db, _redis = plugin_publication
-    with patch.object(factory, "get_config", wraps=factory.get_config) as resolve, patch("cpex.framework.ConfigLoader.load_config", side_effect=AssertionError("YAML reread")):
+    with patch.object(factory, "get_manager", wraps=factory.get_manager) as resolve, patch("cpex.framework.ConfigLoader.load_config", side_effect=AssertionError("YAML reread")):
         document = await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo", "team-a::gateway-echo"))
     assert list(document["contexts"]) == ["team-a::gateway-echo"]
     assert resolve.await_count == 2  # global plus one unique context
@@ -183,7 +188,7 @@ async def test_invalid_binding_config_fails_like_builtin_resolution(plugin_publi
     db.add(ToolPluginBinding(team_id="team-a", tool_name="*", plugin_id="Guard", config=["invalid"], created_by="admin@example.com", updated_by="admin@example.com"))
     db.commit()
     with pytest.raises(ValidationError, match="valid dictionary"):
-        await factory.get_config("team-a::gateway-echo")
+        await factory.get_manager("team-a::gateway-echo")
     with pytest.raises(ValidationError, match="valid dictionary"):
         await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo"))
 
