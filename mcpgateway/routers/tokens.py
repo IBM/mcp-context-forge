@@ -13,22 +13,30 @@ from typing import List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.db import get_db
+from mcpgateway.config import settings
+from mcpgateway.db import EmailUser, get_db, Role, UserRole, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
 from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail, should_expose_error_details
+from mcpgateway.utils.trusted_claims import VirtualPrincipal
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
+
+#: Admin router for the trust-token mint endpoint. Mounted at
+#: ``/admin/tokens`` by the router assembly (mcpgateway/api/v1/__init__.py).
+admin_tokens_router = APIRouter()
 
 
 def _handle_token_integrity_error(err_str: str) -> None:
@@ -323,6 +331,128 @@ async def create_token(
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
         logger.error("Token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
         _handle_token_integrity_error(err_str)
+
+
+class TrustTokenMintRequest(BaseModel):
+    """Request body for POST /admin/tokens/trust.
+
+    Only the target user identifier is honored. Extra fields are accepted
+    and ignored: every minted claim derives from server-side authority, and
+    an extra ``sub``/``user_id`` field that contradicts the target's
+    canonical user_id is rejected (no act-as).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    user_email: str = Field(min_length=3, max_length=255)
+
+
+class TrustTokenMintResponse(BaseModel):
+    """Response body for POST /admin/tokens/trust."""
+
+    access_token: str
+    token_use: str = "trusted"
+    user_email: str
+    user_id: str
+
+
+@admin_tokens_router.post("/trust", response_model=TrustTokenMintResponse)
+@require_permission("tokens.create")
+async def create_trust_token(
+    body: TrustTokenMintRequest,
+    current_user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> TrustTokenMintResponse:
+    """Mint a gateway-signed trust token (``token_use="trusted"``) for a local user.
+
+    Admin-only operational mint path (#5904). All claims derive from
+    server-side authority: the DB admin flag, DB team memberships, and DB
+    role assignments. ``sub`` is the target's canonical user_id. Trust-only
+    targets (no ``email_users`` row) are rejected with 403 per the B.2
+    matrix. The token is ephemeral: no ``email_api_tokens`` row is written,
+    and revocation is via the jti-based blocklist only.
+
+    Args:
+        body: Target user identifier. Claim fields in the body are ignored.
+        current_user: Authenticated user context (must be platform admin).
+        db: Database session.
+
+    Returns:
+        TrustTokenMintResponse: The signed trust token and target identity.
+
+    Raises:
+        HTTPException: 403 when the caller is not a platform admin, when the
+            target has no local user record, or when the body names a subject
+            other than the target's canonical user_id.
+    """
+    _require_authenticated_session(current_user)
+
+    if not current_user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required to mint trust tokens",
+        )
+
+    user = db.execute(select(EmailUser).where(EmailUser.email == body.user_email)).scalar_one_or_none()
+    if not user:
+        # B.2 matrix: trust-only principals have no local user record, so no
+        # server-side authority exists to derive claims from. Fail closed.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token minting is disabled for trust-only principals. Create a local user account first.",
+        )
+
+    # No act-as: a body that names a subject other than the target's
+    # canonical user_id is rejected. Other extra fields (claim attempts such
+    # as teams/roles/is_admin) are ignored — claims come from the DB only.
+    extras = body.model_extra or {}
+    for identity_field in ("sub", "user_id"):
+        named_subject = extras.get(identity_field)
+        if named_subject is not None and str(named_subject) != str(user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Minting a trust token for a subject other than the target user's canonical user_id is not allowed",
+            )
+
+    service = TokenCatalogService(db)
+    team_ids = await service.get_user_team_ids(user.email)
+    role_names = list(
+        db.execute(
+            select(Role.name)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .where(
+                UserRole.user_email == user.email,
+                UserRole.is_active.is_(True),
+                Role.is_active.is_(True),
+                or_(UserRole.expires_at.is_(None), UserRole.expires_at > utc_now()),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    is_admin = bool(user.is_admin)
+    # Atomic admin mapping (#5902): the DB admin flag feeds both admin tracks.
+    if is_admin and "platform_admin" not in role_names:
+        role_names.append("platform_admin")
+
+    principal = VirtualPrincipal(
+        user_id=str(user.id),
+        email=user.email,
+        full_name=user.full_name,
+        teams=team_ids,
+        roles=role_names,
+        is_admin=is_admin,
+        auth_provider="trust",
+    )
+    raw_token = await service.mint_trust_token(principal, settings)
+
+    logger.info(
+        "Admin %s minted a trust token for user %s",
+        SecurityValidator.sanitize_log_message(get_user_email(current_user)),
+        SecurityValidator.sanitize_log_message(user.email),
+    )
+    return TrustTokenMintResponse(access_token=raw_token, user_email=user.email, user_id=str(user.id))
 
 
 @router.get("", response_model=TokenListResponse)
