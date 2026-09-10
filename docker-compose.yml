@@ -21,8 +21,7 @@
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
-#  --profile experimental: Adds the ContextForge web UI (web_ui) + its Redis session store
-#                          (web_ui is also included in --profile testing)
+#  --profile ui:          Adds the ContextForge web UI (web_ui) + its Redis session store
 #
 #  Compose overlays (separate files):
 #  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
@@ -1167,8 +1166,8 @@ services:
           memory: 1G
 
 ###############################################################################
-#  CONTEXTFORGE WEB UI (enabled with --profile testing or --profile experimental)
-#  Usage: docker compose --profile experimental up -d
+#  CONTEXTFORGE WEB UI (enabled with --profile ui or --profile testing)
+#  Usage: docker compose --profile ui up -d
 #  Access: http://localhost:${WEB_UI_PORT:-3001}
 ###############################################################################
 
@@ -1189,13 +1188,18 @@ services:
       retries: 10
       start_period: 10s
     networks: [mcpnet]
-    profiles: ["testing", "experimental"]
+    profiles: ["testing", "ui"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Web UI - BFF-style frontend for the gateway API
   # ──────────────────────────────────────────────────────────────────────
   web_ui:
-    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
+    # Pinned by tag AND digest: the digest makes the supported `ui` profile
+    # reproducible even if the tag is ever retargeted on the registry - this
+    # service holds user sessions/auth, so an unexpected code swap matters.
+    # Bump both together on release (see release-management.md #6.4); get the
+    # digest with: docker buildx imagetools inspect <image>:<tag>
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.1@sha256:e2063ab012e7fe78815c5f840d517e1cc1fd484ed25c7b8e37cd78210cc3ab98}
     restart: unless-stopped
     ports:
       # Host and container port tied together on purpose - the image reads
@@ -1215,7 +1219,7 @@ services:
         condition: service_healthy
       web_ui_redis:
         condition: service_healthy
-    profiles: ["testing", "experimental"]
+    profiles: ["testing", "ui"]
 
 ###############################################################################
 #  MONITORING STACK (enabled with --profile monitoring)

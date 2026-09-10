@@ -340,17 +340,17 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 3. Create virtual server: `POST /servers`
 4. Access via SSE/WebSocket endpoints
 
-## ContextForge Web UI (Experimental)
+## ContextForge Web UI
 
 A BFF-style frontend for the gateway API, separate from the built-in Admin UI (`MCPGATEWAY_UI_ENABLED`). Source and docs: https://github.com/contextforge-org/contextforge-web-ui
 
 - Runs as `web_ui` + a dedicated `web_ui_redis` session store in `docker-compose.yml`.
-- Enabled via `--profile experimental` (or `--profile testing`, which pulls it in too).
+- Enabled via `--profile ui` (or `--profile testing`, which pulls it in too).
 - `web_ui` depends on `gateway` and `web_ui_redis` being healthy before it starts.
 
 ```bash
 # Start the gateway plus the web UI
-docker compose --profile experimental up -d
+docker compose --profile ui up -d
 
 # Access
 open http://localhost:${WEB_UI_PORT:-3001}
@@ -360,7 +360,7 @@ Configuration (see the commented `WEB_UI_*` block in `.env.example`):
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WEB_UI_IMAGE` | `ghcr.io/contextforge-org/contextforge-web-ui:latest` | Image to pull |
+| `WEB_UI_IMAGE` | see `docker-compose.yml` | Image to pull — pinned to a specific released version *and* digest, never `latest`; bumped as part of the release checklist (`docs/docs/development/release-management.md`). Kept in one place (`docker-compose.yml`) rather than duplicated here so it can't drift out of sync. |
 | `WEB_UI_PORT` | `3001` | Host **and** container port (the image reads `PORT` at startup, so both sides of the mapping stay in sync) |
 | `WEB_UI_HOST` | `0.0.0.0` | Bind address inside the container — must stay `0.0.0.0` in Docker |
 | `WEB_UI_CONTEXTFORGE_URL` | `http://gateway:4444` | Gateway API base URL the UI talks to (internal compose network) |
