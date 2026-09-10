@@ -166,10 +166,22 @@ make ibmcloud-ce-login
 make podman            # or: make docker
 make ibmcloud-tag
 make ibmcloud-push
+# First time only: create the registry pull secret (see note below)
+ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
+    --format registry \
+    --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
+    --username iamapikey --password "$IBMCLOUD_API_KEY"
 make ibmcloud-deploy
 ```
 
-!!! info "`make ibmcloud-deploy` handles env injection automatically"
+!!! info "Registry pull secret — first-time setup"
+    `make ibmcloud-deploy` **requires** a registry pull secret named `$IBMCLOUD_REGISTRY_SECRET`
+    to exist before it runs. It validates this and exits with a helpful error if the secret is
+    missing. The example above uses an IAM API key (`iamapikey`), but you can use any credential
+    type accepted by `ibmcloud ce secret create --format registry` — for example a service ID key.
+    Create the secret once; subsequent deploys reuse it.
+
+!!! info "`make ibmcloud-deploy` manages the runtime env secret automatically"
     The target creates or updates a Code Engine secret named `<app>-env` (where `<app>` is
     `$IBMCLOUD_CODE_ENGINE_APP`) from your local `.env` on every run, then passes
     `--env-from-secret <app>-env` to the app. You do not need a
@@ -201,6 +213,17 @@ ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
 ---
 
 ## 4 - Workflow B - Manual IBM Cloud CLI
+
+!!! tip "Load `.env.ce` into your shell first"
+    The CLI commands below reference `$IBMCLOUD_*` variables defined in `.env.ce`.
+    Export them once before running any step:
+
+    ```bash
+    export $(grep -v '^#' .env.ce | grep -v '^$' | xargs)
+    ```
+
+    Without this step every `$IBMCLOUD_*` reference expands to an empty string and
+    commands fail with errors such as `Required flag "name" not set`.
 
 ```bash
 # 1 - Install the IBM Cloud CLI using the official instructions:
