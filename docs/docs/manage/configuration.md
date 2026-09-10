@@ -221,6 +221,8 @@ Startup validation rules:
 
 All defaults preserve the current behavior: trust mode defaults to `db` and the new settings are inert until `jwt-trust` is enabled.
 
+Posture change in `jwt-trust` mode: the gateway does not read the local user record on the request path, so there is no per-user `is_active` kill-switch for trust-mode principals. To withdraw access, revoke the token through the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`) or remove the external group mapping. A token that carries `token_use="trusted"` is rejected with `401` when trust mode is `db`: the marker never enters the default funnel. The auth-cache Redis key carries the mode as a namespace segment, so a mode flip cold-starts every auth cache automatically.
+
 ### UI Features
 
 For detailed guidance on embedding and section customization, see [Admin UI Customization](admin-ui-customization.md).

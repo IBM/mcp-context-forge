@@ -6,11 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 Agent visibility-gate and end-to-end team-isolation tests for trust mode
 (issue #5976).
 
-Every test in this file exercises the trust branch in get_current_user, which
-lands with #5900. Until then the default funnel rejects the trust-mode token
-with 401 and each test fails, so all tests carry
-pytest.mark.xfail(strict=True, reason="Requires trust branch from #5900").
-strict=True turns a premature XPASS into a suite failure.
+Every test in this file exercises the trust branch in get_current_user,
+which landed with #5900.
 
 Visibility semantics under test (per _check_agent_access in
 mcpgateway/services/a2a_service.py):
@@ -44,7 +41,6 @@ from mcpgateway.utils.trusted_claims import resolve_external_groups_to_teams
 ISSUER = "https://login.example.com/tenant-1/v2.0"
 TENANT = "tenant-1"
 CALLER = "trust.user@example.com"
-XFAIL_REASON = "Requires trust branch from #5900"
 
 
 def _exp(hours: int = 1) -> float:
@@ -177,7 +173,6 @@ async def _drive_trust_funnel(monkeypatch: pytest.MonkeyPatch, db, groups: list[
     return user, request
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 class TestVisibilityGate:
     """AC-visibility-gate: team isolation and the public baseline."""
 
@@ -217,7 +212,6 @@ class TestVisibilityGate:
         assert await service._check_agent_access(db, agent_pub, CALLER, token_teams) is True
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 class TestE2ETeamIsolation:
     """AC-e2e-team-isolation: mapping row + trust JWT drives the gate."""
 
@@ -250,7 +244,6 @@ class TestE2ETeamIsolation:
             await service.get_agent(db, agent_b.id, user_email=CALLER, token_teams=token_teams)
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 class TestE2ENoMapping:
     """AC-e2e-no-mapping: an unmapped group fails closed."""
 

@@ -6,11 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Trust-path group-to-role merge tests (issue #6272).
 
 Every test in this file exercises the trusted-claims merge (#5899) through
-the trust branch in get_current_user (#5900). Until those land, the default
-funnel rejects the trust-mode token with 401 and each test fails, so all
-tests carry pytest.mark.xfail(strict=True). strict=True turns any premature
-XPASS into a suite failure. WO-B.8 (#5900) removes the markers when the
-trust branch lands.
+the trust branch in get_current_user (#5900).
 
 Merge semantics under test (per #6272):
 - The resolver resolve_external_groups_to_teams returns (team_ids, role_names).
@@ -47,8 +43,6 @@ from mcpgateway.utils.trusted_claims import resolve_external_groups_to_teams
 ISSUER = "https://login.example.com/tenant-1/v2.0"
 TENANT = "tenant-1"
 CALLER = "trust.user@example.com"
-XFAIL_REASON_MERGE = "Requires trusted_claims module from #5899 and trust branch from #5900"
-XFAIL_REASON_TRUST = "Requires trust branch from #5900"
 
 
 def _exp(hours: int = 1) -> float:
@@ -172,7 +166,6 @@ async def _drive_trust_funnel(monkeypatch: pytest.MonkeyPatch, db, groups: list[
     return user, request
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON_MERGE)
 class TestTrustRoleMerge:
     """Mapping cf_role merges into the principal's roles on the trust path."""
 
@@ -224,7 +217,6 @@ class TestTrustRoleMerge:
         assert "a2a.invoke" in _permissions_for_roles(db, user.roles)
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON_TRUST)
 class TestE2EGroupRoleGrant:
     """AC-e2e-group-role-grant: a mapping row drives both layers of the gate."""
 
