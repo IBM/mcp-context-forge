@@ -1718,6 +1718,18 @@ class TestResourceEndpoints:
         assert body["uri"] == "test/resource" and body["text"] == "This is test content"
         mock_read_resource.assert_called_once()
 
+    @patch("mcpgateway.main.resource_service.read_resource")
+    def test_read_resource_endpoint_fetch_error_returns_bad_request(self, mock_read_resource, test_client, auth_headers):
+        """Upstream resource failures are not reported as missing resources."""
+        from mcpgateway.services.resource_service import ResourceError
+
+        mock_read_resource.side_effect = ResourceError("Gateway resource content could not be resolved")
+
+        response = test_client.get("/resources/1", headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Gateway resource content could not be resolved"
+
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing resource."""
