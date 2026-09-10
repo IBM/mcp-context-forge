@@ -12,9 +12,11 @@ Tests will FAIL until implementation is complete.
 # Standard
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
@@ -1483,6 +1485,162 @@ class TestPublicMetadataDiscoverySafety:
             assert await second == metadata
 
         assert mock_client.get.await_count == 1
+
+
+class TestPublicMetadataDiscoveryCoverage:
+    """Cover public-discovery failure handling and cache boundaries."""
+
+    @staticmethod
+    def _stream_client(response=None, error=None):
+        """Return a client mock implementing httpx's async streaming protocol."""
+
+        class StreamContext:
+            """Minimal async context wrapper for a streamed response."""
+
+            async def __aenter__(self):
+                return response
+
+            async def __aexit__(self, *_args):
+                return False
+
+        client = MagicMock()
+        client.stream.side_effect = error if error else lambda *_args, **_kwargs: StreamContext()
+        return client
+
+    @staticmethod
+    def _stream_response(status_code=200, headers=None, chunks=()):
+        """Build a deterministic streamed metadata response."""
+        response = MagicMock(status_code=status_code, headers=headers or {})
+
+        async def aiter_bytes():
+            for chunk in chunks:
+                yield chunk
+
+        response.aiter_bytes.return_value = aiter_bytes()
+        return response
+
+    @pytest.mark.asyncio
+    async def test_public_issuer_validation_fails_closed(self):
+        """Validation blocks resolver errors, incomplete pinning data, and local targets."""
+        service = DcrService()
+        with patch(
+            "mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning",
+            new=AsyncMock(side_effect=ValueError("private address")),
+        ):
+            with pytest.raises(DcrError, match="blocked"):
+                await service._validate_public_discovery_issuer("https://issuer.example.com")
+
+        for target in (
+            {"validated_url": "https://issuer.example.com", "hostname": "issuer.example.com"},
+            {
+                "validated_url": "https://issuer.example.com",
+                "hostname": "issuer.example.com",
+                "original_authority": "issuer.example.com",
+                "resolved_ip": "127.0.0.1",
+            },
+        ):
+            with patch(
+                "mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning",
+                new=AsyncMock(return_value=target),
+            ):
+                with pytest.raises(DcrError, match="blocked"):
+                    await service._validate_public_discovery_issuer("https://issuer.example.com")
+
+    def test_cache_removes_expired_entries_before_storing_new_metadata(self):
+        """Expired issuer metadata is removed and cannot grow cache indefinitely."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        try:
+            _metadata_cache["https://expired.example.com"] = {
+                "metadata": {"issuer": "https://expired.example.com"},
+                "cached_at": datetime.now(timezone.utc) - timedelta(seconds=61),
+            }
+            assert DcrService._get_cached_metadata("https://expired.example.com", 60) is None
+
+            _metadata_cache["https://expired-again.example.com"] = {
+                "metadata": {"issuer": "https://expired-again.example.com"},
+                "cached_at": datetime.now(timezone.utc) - timedelta(seconds=61),
+            }
+            DcrService._cache_metadata("https://fresh.example.com", {"issuer": "https://fresh.example.com"}, 60)
+            assert list(_metadata_cache) == ["https://fresh.example.com"]
+        finally:
+            _metadata_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_generic_fetch_handles_transport_and_invalid_responses(self):
+        """Legacy callers retain safe transport, redirect, and JSON failure handling."""
+        service = DcrService()
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=httpx.ConnectError("unreachable"))
+        with patch.object(service, "_get_client", return_value=client):
+            assert await service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com") is None
+
+        redirect = MagicMock(status_code=302)
+        invalid_json = MagicMock(status_code=200)
+        invalid_json.json.side_effect = ValueError("bad json")
+        non_object = MagicMock(status_code=200)
+        non_object.json.return_value = []
+        for response, message in ((redirect, "redirect"), (invalid_json, "valid JSON"), (non_object, "JSON object")):
+            client.get = AsyncMock(return_value=response)
+            with patch.object(service, "_get_client", return_value=client):
+                with pytest.raises(DcrError, match=message):
+                    await service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+
+    @pytest.mark.asyncio
+    async def test_public_stream_fetch_rejects_unsafe_responses(self):
+        """Public discovery rejects redirects, unbounded bodies, invalid JSON, and unsafe fields."""
+        service = DcrService()
+        issuer = "https://issuer.example.com"
+        unsafe_responses = (
+            (self._stream_response(status_code=302), "redirects"),
+            (self._stream_response(headers={"content-length": "not-a-number"}), "invalid content length"),
+            (self._stream_response(headers={"content-length": str(256 * 1024 + 1)}), "too large"),
+            (self._stream_response(chunks=[b"x" * (256 * 1024 + 1)]), "too large"),
+            (self._stream_response(chunks=[b"not-json"]), "valid JSON"),
+            (self._stream_response(chunks=[b"[]"]), "JSON object"),
+            (
+                self._stream_response(
+                    chunks=[b'{"issuer":"https://issuer.example.com","authorization_endpoint":"http://issuer.example.com/authorize"}']
+                ),
+                "invalid authorization_endpoint",
+            ),
+        )
+        for response, message in unsafe_responses:
+            with pytest.raises(DcrError, match=message):
+                await service._fetch_public_metadata_document(self._stream_client(response), "https://issuer.example.com/metadata", issuer)
+
+    @pytest.mark.asyncio
+    async def test_public_stream_fetch_classifies_transport_failures(self):
+        """Timeouts and non-timeout HTTP failures have safe structured outcomes."""
+        service = DcrService()
+        with pytest.raises(DcrError, match="timed out") as timeout_error:
+            await service._fetch_public_metadata_document(self._stream_client(error=httpx.TimeoutException("slow")), "https://issuer.example.com/metadata", "https://issuer.example.com")
+        assert timeout_error.value.code == "timeout"
+        assert await service._fetch_public_metadata_document(
+            self._stream_client(error=httpx.ConnectError("refused")), "https://issuer.example.com/metadata", "https://issuer.example.com"
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_cached_metadata_is_revalidated_for_public_discovery(self):
+        """Cached public metadata still passes output-shape validation before return."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        issuer = "https://issuer.example.com"
+        metadata = {"issuer": issuer, "authorization_endpoint": "https://issuer.example.com/authorize"}
+        _metadata_cache.clear()
+        try:
+            DcrService._cache_metadata(issuer, metadata, 60)
+            validator = MagicMock()
+            fetch = AsyncMock()
+            result = await DcrService()._discover_metadata(issuer, fetch, validator)
+            assert result == metadata
+            validator.assert_called_once_with(metadata)
+            fetch.assert_not_awaited()
+        finally:
+            _metadata_cache.clear()
 
 
 class TestExistingDiscoveryCompatibility:
