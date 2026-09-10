@@ -39,6 +39,7 @@ from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.trusted_claims import detect_overage_marker
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -1465,14 +1466,10 @@ class SSOService:
             entra_groups_from_graph: Optional[List[str]] = None
             # Detect group overage — when user has too many groups (>200), EntraID can return
             # overage markers (e.g. _claim_names/_claim_sources, hasgroups, groups:srcN)
-            # instead of an inline groups array.
+            # instead of an inline groups array. Detection is shared with the
+            # trust-mode claims module; behavior is unchanged.
             # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
-            claim_names = verified_id_token_claims.get("_claim_names", {})
-            has_groups_src_key = any(isinstance(key, str) and key.startswith("groups:src") for key in verified_id_token_claims)
-            groups_claim_value = verified_id_token_claims.get("groups")
-            has_group_overage = (
-                (isinstance(claim_names, dict) and "groups" in claim_names) or bool(verified_id_token_claims.get("hasgroups")) or has_groups_src_key or isinstance(groups_claim_value, str)
-            )
+            has_group_overage = detect_overage_marker(verified_id_token_claims)
             if has_group_overage:
                 user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
                 logger.warning(
