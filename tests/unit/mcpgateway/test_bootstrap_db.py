@@ -279,7 +279,7 @@ class TestBootstrapAdminUser:
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_existing_with_stale_flag_cleared(self, mock_settings, mock_db_session, mock_email_auth_service, mock_conn):
-        """Existing admin with stale password_change_required and a custom password: flag cleared, password NOT overwritten."""
+        """Existing admin: custom env password + stored hash IS default → flag cleared (bootstrap recovery path)."""
         mock_settings.password_change_enforcement_enabled = True
         mock_settings.admin_require_password_change_on_bootstrap = True
         mock_settings.platform_admin_password = SecretStr("MyStr0ng$ecret!")
@@ -288,7 +288,7 @@ class TestBootstrapAdminUser:
         stale_admin = Mock()
         stale_admin.email = mock_settings.platform_admin_email
         stale_admin.password_change_required = True
-        original_hash = "original_rotated_hash"
+        original_hash = "argon2_hash_of_changeme"
         stale_admin.password_hash = original_hash
 
         mock_email_auth_service.get_user_by_email.return_value = stale_admin
@@ -300,12 +300,62 @@ class TestBootstrapAdminUser:
             patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
             patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"),
             patch("mcpgateway.bootstrap_db.logger"),
+            patch("mcpgateway.services.argon2_service.Argon2PasswordService.verify_password_async", new=AsyncMock(return_value=True)),
         ):
             await bootstrap_admin_user(mock_conn)
             assert stale_admin.password_change_required is False
-            # create_platform_admin must not be called — password must not be overwritten
             mock_email_auth_service.create_platform_admin.assert_not_called()
             assert stale_admin.password_hash == original_hash
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_flag_set_for_non_bootstrap_reason_not_cleared(self, mock_settings, mock_db_session, mock_email_auth_service, mock_conn):
+        """Existing admin: flag set by admin action/login-detector (stored hash NOT default) must survive restart."""
+        mock_settings.password_change_enforcement_enabled = True
+        mock_settings.admin_require_password_change_on_bootstrap = True
+        mock_settings.platform_admin_password = SecretStr("MyStr0ng$ecret!")
+        mock_settings.default_user_password = SecretStr("changeme")
+
+        admin = Mock()
+        admin.email = mock_settings.platform_admin_email
+        admin.password_change_required = True  # set by admin action, not bootstrap
+        admin.password_hash = "hash_of_rotated_password_not_default"
+
+        mock_email_auth_service.get_user_by_email.return_value = admin
+        mock_email_auth_service.create_platform_admin = AsyncMock(return_value=admin)
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"),
+            patch("mcpgateway.bootstrap_db.logger"),
+            # stored hash does NOT match the default password
+            patch("mcpgateway.services.argon2_service.Argon2PasswordService.verify_password_async", new=AsyncMock(return_value=False)),
+        ):
+            await bootstrap_admin_user(mock_conn)
+            assert admin.password_change_required is True  # flag must be preserved
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_non_ascii_password(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Non-ASCII PLATFORM_ADMIN_PASSWORD must not raise TypeError in hmac.compare_digest."""
+        mock_settings.password_change_enforcement_enabled = True
+        mock_settings.admin_require_password_change_on_bootstrap = True
+        mock_settings.platform_admin_password = SecretStr("P@ssw\u00f6rd\u4e2d\u6587!")
+        mock_settings.default_user_password = SecretStr("changeme")
+
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin = AsyncMock(return_value=mock_admin_user)
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"),
+            patch("mcpgateway.bootstrap_db.logger"),
+        ):
+            # Must complete without raising TypeError; flag must not be set (custom password)
+            await bootstrap_admin_user(mock_conn)
+            assert mock_admin_user.password_change_required is not True
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_rotated_password_survives_restart(self, mock_settings, mock_db_session, mock_email_auth_service, mock_conn):

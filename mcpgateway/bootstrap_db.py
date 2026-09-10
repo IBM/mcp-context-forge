@@ -275,6 +275,7 @@ async def bootstrap_admin_user(conn: Connection) -> None:
         # First-Party
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.argon2_service import Argon2PasswordService  # pylint: disable=import-outside-toplevel
 
         # Use session bound to the locked connection
         with Session(bind=conn) as db:
@@ -306,30 +307,41 @@ async def bootstrap_admin_user(conn: Connection) -> None:
                 logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} exists; re-evaluating bootstrap flag only")
                 admin_user = existing_user
 
-            # Re-evaluate the forced-change flag on every boot.
-            # This is the only mutation applied to existing admins, intentionally:
-            # - default password in env  → set flag (force change on login)
-            # - custom password in env + flag currently set by a previous default-password
-            #   boot (admin_require_password_change_on_bootstrap was True then) → clear it
-            # - flag set by login-time default-password detector (require_password_change_for_default_password)
-            #   is intentionally left untouched when _bootstrap_flag is False
             _enforcement_on = getattr(settings, "password_change_enforcement_enabled", True)
             _bootstrap_flag = getattr(settings, "admin_require_password_change_on_bootstrap", True)
-            _admin_pwd = settings.platform_admin_password.get_secret_value()
-            _default_pwd = settings.default_user_password.get_secret_value()
-            _using_default_pwd = hmac.compare_digest(_admin_pwd, _default_pwd)
 
-            if _enforcement_on and _bootstrap_flag and _using_default_pwd:
-                admin_user.password_change_required = True
-                logger.warning("Admin bootstrapped with the default password; password change required on first login.")
-            elif _enforcement_on and _bootstrap_flag and not _using_default_pwd and admin_user.password_change_required:
-                # Custom password is now in env and the bootstrap flag is on — clear the stale
-                # flag that was set by a previous default-password boot.  This is the intended
-                # "Helm recovery" path: operator sets PLATFORM_ADMIN_PASSWORD and restarts.
-                admin_user.password_change_required = False
-                logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; cleared bootstrap-set password-change flag.")
+            if not _enforcement_on or not _bootstrap_flag:
+                # Master switch or bootstrap flag disabled — never touch the flag.
+                pass
             else:
-                logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; skipping forced password-change flag.")
+                # Compare PLATFORM_ADMIN_PASSWORD against the compiled-in default using
+                # constant-time bytes comparison.  Both sides are encoded to UTF-8 so that
+                # non-ASCII passwords don't raise a TypeError inside compare_digest.
+                _admin_pwd_bytes = settings.platform_admin_password.get_secret_value().encode("utf-8")
+                _default_pwd_bytes = settings.default_user_password.get_secret_value().encode("utf-8")
+                _env_is_default = hmac.compare_digest(_admin_pwd_bytes, _default_pwd_bytes)
+
+                if _env_is_default:
+                    # The env var still holds the default — force a change on login.
+                    admin_user.password_change_required = True
+                    logger.warning("Admin bootstrapped with the default password; password change required on first login.")
+                elif admin_user.password_change_required:
+                    # A custom PLATFORM_ADMIN_PASSWORD is now in env and the flag is set.
+                    # Only clear it if the admin's *stored* hash is still the default password
+                    # (i.e. the flag was set by bootstrap, not by a deliberate admin action or
+                    # the login-time default-password detector on a rotated password).
+                    password_service = Argon2PasswordService()
+                    stored_hash = getattr(admin_user, "password_hash", None)
+                    _stored_is_default = stored_hash is not None and await password_service.verify_password_async(
+                        settings.default_user_password.get_secret_value(), stored_hash
+                    )
+                    if _stored_is_default:
+                        admin_user.password_change_required = False
+                        logger.info("Custom PLATFORM_ADMIN_PASSWORD detected and stored hash is default; cleared bootstrap-set flag.")
+                    else:
+                        logger.info("password_change_required flag left intact (stored password is not the default).")
+                else:
+                    logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; skipping forced password-change flag.")
 
             db.commit()
             logger.info(f"Platform admin user bootstrapped successfully: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
