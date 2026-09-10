@@ -222,9 +222,10 @@ class AuthCache:
             Full Redis key with prefix, version, and mode
 
         Examples:
+            >>> from mcpgateway.config import settings
             >>> cache = AuthCache()
-            >>> cache._get_redis_key("user", "test@example.com")
-            'mcpgw:auth:v1:db:user:test@example.com'
+            >>> cache._get_redis_key("user", "test@example.com") == f"mcpgw:auth:v1:{settings.jwt_trust_mode}:user:test@example.com"
+            True
         """
         return f"{self._cache_prefix}auth:{self._key_version}:{self._key_mode}:{key_type}:{identifier}"
 
