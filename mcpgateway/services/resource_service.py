@@ -150,6 +150,7 @@ class ResourceError(Exception):
 
 
 UNRESOLVED_GATEWAY_RESOURCE_MESSAGE = "Gateway resource content could not be resolved"
+DIRECT_PROXY_RESOURCE_ERROR_MESSAGE = "Direct proxy resource read failed"
 
 
 def _has_authoritative_cached_content(resource: Optional[DbResource]) -> bool:
@@ -2599,8 +2600,9 @@ class ResourceService(BaseService):
                                     # Skip the rest of the DB lookup logic
 
                         except Exception as e:
-                            logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, e)
-                            raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
+                            sanitized_error = sanitize_exception_message(str(e))
+                            logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, sanitized_error)
+                            raise ResourceError(DIRECT_PROXY_RESOURCE_ERROR_MESSAGE) from e
 
                     elif resource_db:
                         # Normal cache mode - resource found in DB

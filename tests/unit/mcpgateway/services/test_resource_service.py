@@ -6393,6 +6393,34 @@ class TestReadResourceCoverageEdges:
         assert out.text == ""
 
     @pytest.mark.asyncio
+    async def test_local_resource_without_content_is_not_found(self):
+        """Local resources without persisted content are not silently returned."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="local://missing", name="missing")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = None
+        resource_db.gateway = None
+        resource_db.text_content = None
+        resource_db.binary_content = None
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with pytest.raises(ResourceNotFoundError, match="has no content"):
+            await svc.read_resource(db, resource_uri="local://missing")
+
+    @pytest.mark.asyncio
     async def test_read_resource_resource_id_fallback_include_inactive_true_bytes_content_records_metric_failure(self):
         """Cover resource_id fallback include_inactive query (2215), set original_uri/content (2218-2219), span content attrs (2250-2253),
         bytes normalization (2311), and metric-recording exception handler (2346-2347).
@@ -8372,13 +8400,59 @@ class TestReadResourceDirectProxy:
             mock_settings.mcpgateway_direct_proxy_timeout = 30
             mock_settings.experimental_validate_io = False
 
-            with pytest.raises(ResourceError, match="Direct proxy resource read failed"):
+            with pytest.raises(ResourceError, match="^Direct proxy resource read failed$") as exc_info:
                 await resource_service.read_resource(
                     db,
                     resource_uri="http://example.com/dp-resource",
                     user="user@example.com",
                     token_teams=["team-1"],
                 )
+
+        assert "Connection refused" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_real_content_model(self, resource_service, mock_direct_proxy_resource):
+        """Successful direct-proxy reads work with the SDK content model without an id field."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        # First-Party
+        from mcpgateway.common.models import TextResourceContents
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+        first_content = MagicMock()
+        first_content.text = "hello from remote"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock(contents=[first_content])
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(resource_service, "invoke_resource", new_callable=AsyncMock) as invoke_resource,
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert isinstance(content, TextResourceContents)
+        assert content.text == "hello from remote"
+        invoke_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):
