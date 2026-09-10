@@ -4,5 +4,6 @@ nav:
   - features.md
   - ui.md
   - ui-concepts.md
+  - terminology.md
   - passthrough.md
   - tags.md
