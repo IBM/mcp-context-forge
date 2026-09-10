@@ -130,36 +130,37 @@ uv lock --upgrade
 The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` in the repository, skipping generated templates and virtual-environment directories. No hardcoded path list means newly added or deleted sub-projects are picked up automatically.
 
 ```bash
-# uv-sync + lockfile upgrade for every pyproject.toml
-# Skips: mcp-servers/templates (generated), .venv dirs, Rust crates (no uv)
+# uv sync + lockfile upgrade for every pyproject.toml
+# Skips: mcp-servers/templates (generated), .venv* dirs, Rust crates (no uv)
 find . \
   -path "./mcp-servers/templates" -prune -o \
-  -path "*/.venv" -prune -o \
+  -name "templates" -prune -o \
+  -name ".venv*" -prune -o \
   -path "*/target" -prune -o \
   -path "./.cache" -prune -o \
   -name "pyproject.toml" -type f -print \
 | while read -r toml_file; do
     dir=$(dirname "$toml_file")
     echo "==> $dir"
-    uv-upsync --project "$dir" 2>/dev/null || true
+    uv sync --project "$dir" 2>/dev/null || true
     uv lock --upgrade --exclude-newer "10 days" --project "$dir"
   done
 
-# requirements.txt files (docs, tests)
+# requirements*.txt files (docs, tests)
 find . \
-  -path "*/.venv" -prune -o \
+  -name ".venv*" -prune -o \
   -path "./.cache" -prune -o \
-  -name "requirements.txt" -type f -print \
+  -name "requirements*.txt" -type f -print \
 | while read -r req_file; do
     echo "==> $req_file"
-    python .github/tools/update_dependencies.py --file "$req_file"
+    uv run python .github/tools/update_dependencies.py --file "$req_file"
   done
 ```
 
 !!! tip "Dry-run the requirements updater first"
     Use `--dry-run` to preview changes before applying:
     ```bash
-    python .github/tools/update_dependencies.py --file docs/requirements.txt --dry-run
+    uv run python .github/tools/update_dependencies.py --file docs/requirements.txt --dry-run
     ```
 
 ### 2.3 Reinstall and verify
@@ -1093,6 +1094,17 @@ make migration-test-performance
 ```
 
 The migration test suite follows an **n-2 support policy** and tests sequential upgrades, downgrades, and skip-version jumps. See `tests/migration/README.md` for full documentation.
+
+### 13.6 Upgrade and downgrade validation with a staging data dump
+
+Repeat the upgrade and downgrade steps from 13.3 and 13.4 using a staging data instead of the synthetic-seeded data. This validates that migrations behave correctly against production-shaped data — edge-case column values, optional fields left null, legacy rows written by older schema versions — which synthetic seeds may not exercise.
+
+**Acceptance criteria:**
+
+- The gateway starts and Alembic reaches the expected single head with no errors
+- All pre-migration rows in key tables (`gateways`, `servers`, `tools`, `users`) are present and intact after upgrade
+- The downgrade step completes without errors and the gateway remains healthy
+- Re-applying the upgrade (round-trip) produces no conflicts or data loss
 
 ---
 
