@@ -6526,6 +6526,8 @@ async def test_resource_by_uri(
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ResourceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Error reading resource by URI %s: %s", resource_uri, e)
         raise
@@ -6581,9 +6583,10 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
         # Release transaction before response serialization
         db.commit()
         db.close()
-    except (ResourceNotFoundError, ResourceError) as exc:
-        # Translate to FastAPI HTTP error
+    except ResourceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ResourceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     # NOTE: Removed cache.set() - see cache removal comment above
     # Ensure a plain JSON-serializable structure

@@ -149,6 +149,25 @@ class ResourceError(Exception):
     """Base class for resource-related errors."""
 
 
+UNRESOLVED_GATEWAY_RESOURCE_MESSAGE = "Gateway resource content could not be resolved"
+DIRECT_PROXY_RESOURCE_ERROR_MESSAGE = "Direct proxy resource read failed"
+
+
+def _has_authoritative_cached_content(resource: Optional[DbResource]) -> bool:
+    """Return whether persisted content is a trustworthy resource payload.
+
+    Gateway-backed rows with an empty text or binary column are legacy
+    federation placeholders from gateway_service.py resources/list
+    registration, not fetched content. Local resources can still have
+    genuinely empty content.
+    """
+    if resource is None:
+        return False
+    if resource.gateway_id is not None and (resource.text_content == "" or resource.binary_content == b""):
+        return False
+    return resource.text_content is not None or resource.binary_content is not None
+
+
 class ResourceNotFoundError(ResourceError):
     """Raised when a requested resource is not found."""
 
@@ -1705,10 +1724,11 @@ class ResourceService(BaseService):
                 the RFC 8693 subject_token from the caller's Authorization bearer.
 
         Returns:
-            Any: The text content returned by the remote resource, or ``None`` if the
-            gateway could not be contacted or an error occurred.
+            Any: The text content returned by the remote resource, or ``None`` when
+            no resource or gateway is available.
 
         Raises:
+            ResourceError: If the gateway transport/session/read fails.
             Exception: Any unhandled internal errors (e.g., DB issues).
 
         ---
@@ -2072,9 +2092,9 @@ class ResourceService(BaseService):
                             given URI, and returns the textual content from the first item in the
                             response's `contents` list.
 
-                            If any error occurs (network failure, unexpected response format, session
-                            initialization failure, etc.), the method logs the exception and returns
-                            ``None`` instead of raising.
+                            If any error occurs before content is received (network failure,
+                            unexpected response format, session initialization failure, etc.),
+                            the method logs sanitized detail and raises ``ResourceError``.
 
                             Note:
                                 MCP SDK 1.25.0 read_resource() does not support meta parameter.
@@ -2092,8 +2112,7 @@ class ResourceService(BaseService):
 
                             Returns:
                                 str | None:
-                                    The text content returned by the remote resource, or ``None`` if the
-                                    SSE connection fails or the response is invalid.
+                                    The text content returned by the remote resource.
 
                             Notes:
                                 - This function assumes the SSE client context manager yields:
@@ -2147,7 +2166,7 @@ class ResourceService(BaseService):
                                     logger.warning("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
                                     return resource_text
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
-                                return None
+                                raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) from e
                             return resource_text
 
                         async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
@@ -2159,9 +2178,9 @@ class ResourceService(BaseService):
                             given URI, and returns the textual content from the first element in the
                             response's `contents` list.
 
-                            If any exception occurs during connection, session initialization, or
-                            resource reading, the function logs the error and returns ``None`` instead
-                            of propagating the exception.
+                            If any exception occurs before content is received during connection,
+                            session initialization, or resource reading, the function logs sanitized
+                            detail and raises ``ResourceError``.
 
                             Note:
                                 MCP SDK 1.25.0 read_resource() does not support meta parameter.
@@ -2178,8 +2197,7 @@ class ResourceService(BaseService):
 
                             Returns:
                                 str | None:
-                                    The text content returned by the StreamableHTTP resource, or ``None``
-                                    if the connection fails or the response format is invalid.
+                                    The text content returned by the StreamableHTTP resource.
 
                             Notes:
                                 - The `streamablehttp_client` context manager must yield a tuple:
@@ -2232,7 +2250,7 @@ class ResourceService(BaseService):
                                     logger.warning("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
                                     return resource_text
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
-                                return None
+                                raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) from e
                             return resource_text
 
                         if span:
@@ -2361,6 +2379,21 @@ class ResourceService(BaseService):
         _validate_meta_data(meta_data)
         content = None
         uri = resource_uri or "unknown"
+        content_resolved = False
+        has_valid_cached_fallback = False
+
+        def _resource_has_gateway(resource: Optional[DbResource]) -> bool:
+            return resource_db_gateway is not None or (resource is not None and resource.gateway_id is not None)
+
+        def _resource_content_or_placeholder(resource: DbResource) -> ResourceContent:
+            nonlocal has_valid_cached_fallback
+            if _has_authoritative_cached_content(resource):
+                has_valid_cached_fallback = True
+                return resource.content
+            if _resource_has_gateway(resource):
+                return ResourceContent(type="resource", id=str(resource.id), uri=resource.uri, mime_type=resource.mime_type, text=None)
+            raise ResourceNotFoundError(f"Resource '{resource.id}' has no content")
+
         if resource_id:
             resource_db = db.get(DbResource, resource_id, options=[joinedload(DbResource.gateway)])
             if resource_db:
@@ -2369,7 +2402,7 @@ class ResourceService(BaseService):
                 # Check enabled status in Python (avoids redundant Q3/Q4 re-fetches)
                 if not include_inactive and not resource_db.enabled:
                     raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
-                content = resource_db.content
+                content = _resource_content_or_placeholder(resource_db)
             else:
                 uri = None
 
@@ -2558,7 +2591,7 @@ class ResourceService(BaseService):
                                     else:
                                         content = TextResourceContents(uri=uri, text="")
 
-                                    success = True
+                                    content_resolved = True
                                     logger.info(
                                         "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
                                         SecurityValidator.sanitize_log_message(gateway.id),
@@ -2567,12 +2600,13 @@ class ResourceService(BaseService):
                                     # Skip the rest of the DB lookup logic
 
                         except Exception as e:
-                            logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, e)
-                            raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
+                            sanitized_error = sanitize_exception_message(str(e))
+                            logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, sanitized_error)
+                            raise ResourceError(DIRECT_PROXY_RESOURCE_ERROR_MESSAGE) from e
 
                     elif resource_db:
                         # Normal cache mode - resource found in DB
-                        content = resource_db.content
+                        content = _resource_content_or_placeholder(resource_db)
                     else:
                         # Check the inactivity first using the same server scope that
                         # governed the active lookup. Without this, duplicate URIs
@@ -2643,7 +2677,7 @@ class ResourceService(BaseService):
                     resource_db = db.execute(query).scalar_one_or_none()
                     if resource_db:
                         original_uri = resource_db.uri or None
-                        content = resource_db.content
+                        content = _resource_content_or_placeholder(resource_db)
                     else:
                         check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.enabled))).scalar_one_or_none()
                         if check_inactivity:
@@ -2673,14 +2707,6 @@ class ResourceService(BaseService):
                             raise ResourceNotFoundError(f"Resource not found: {resource_uri or resource_id}")
                         server_scoped = True
 
-                # Set success attributes on span
-                if span:
-                    set_span_attribute(span, "success", True)
-                    set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
-                    if content:
-                        set_span_attribute(span, "content.size", len(str(content)))
-
-                success = True
                 # Return standardized content without breaking callers that expect passthrough
                 # Prefer returning first-class content models or objects with content-like attributes.
                 # ResourceContent and TextContent already imported at top level
@@ -2697,9 +2723,13 @@ class ResourceService(BaseService):
                 # ResourceContent is the legacy model for backwards compatibility
 
                 def _set_gateway_content(content_obj: Any, attr_name: str, resource_response: Any) -> None:
-                    """Apply gateway content or reject unresolved template placeholders."""
+                    """Apply gateway content or keep a valid cached fallback."""
                     if resource_response is not None:
                         setattr(content_obj, attr_name, resource_response)
+                        return
+
+                    if has_valid_cached_fallback:
+                        logger.warning("Gateway resource read returned no content; serving cached content for resource '%s'", getattr(resource_db, "id", None))
                         return
 
                     template_uri = getattr(resource_db, "uri_template", None) if resource_db else None
@@ -2713,54 +2743,60 @@ class ResourceService(BaseService):
                             template_uri,
                             getattr(resource_db_gateway, "id", None) or getattr(resource_db, "gateway_id", None),
                         )
-                        raise ResourceError(f"Resource template '{template_uri}' did not resolve URI '{requested_uri}'")
+                    raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE)
 
-                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
+                async def _invoke_gateway_content(content_obj: Any, attr_name: str, template_value: Any) -> None:
+                    """Resolve gateway content, preserving only authoritative cached fallbacks."""
+                    content_id = getattr(content_obj, "id", None)
+                    gateway_fetch_allowed = _resource_has_gateway(resource_db)
+                    requested_uri = uri if uri is not None else original_uri
+                    if resource_db is None and content_id and template_value is not None and requested_uri is not None and str(template_value) == str(requested_uri):
+                        # Template fallback: _read_template_resource already applied Layer-1
+                        # visibility scoping with user_email/token_teams before returning content.
+                        gateway_fetch_allowed = True
+                    if not gateway_fetch_allowed:
+                        if (
+                            resource_db is not None
+                            and getattr(resource_db, "uri_template", None)
+                            and content_id
+                            and template_value is not None
+                            and requested_uri is not None
+                            and str(template_value) == str(requested_uri)
+                        ):
+                            raise ResourceError(UNRESOLVED_GATEWAY_RESOURCE_MESSAGE)
+                        return
+                    try:
+                        resource_response = await self.invoke_resource(
+                            db,
+                            resource_id=content_id,
+                            resource_uri=getattr(content_obj, "uri") or None,
+                            resource_template_uri=template_value or None,
+                            user_identity=user,
+                            meta_data=meta_data,
+                            resource_obj=resource_db,
+                            gateway_obj=resource_db_gateway,
+                            server_id=server_id,
+                            request_headers=request_headers,
+                        )
+                    except ResourceError:
+                        if has_valid_cached_fallback:
+                            logger.warning("Gateway resource refresh failed; serving cached content for resource '%s'", getattr(resource_db, "id", None))
+                            return
+                        raise
+                    _set_gateway_content(content_obj, attr_name, resource_response)
+
+                if content_resolved:
+                    pass
+                elif isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
-                    resource_response = await self.invoke_resource(
-                        db,
-                        resource_id=getattr(content, "id"),
-                        resource_uri=getattr(content, "uri") or None,
-                        resource_template_uri=getattr(content, "text") or None,
-                        user_identity=user,
-                        meta_data=meta_data,
-                        resource_obj=resource_db,
-                        gateway_obj=resource_db_gateway,
-                        server_id=server_id,
-                        request_headers=request_headers,
-                    )
-                    _set_gateway_content(content, "text", resource_response)
+                    await _invoke_gateway_content(content, "text", getattr(content, "text", None))
                 # If content is any object that quacks like content
                 elif hasattr(content, "text") or hasattr(content, "blob"):
                     # Metrics are recorded in read_resource finally block for all resources
                     if hasattr(content, "blob"):
-                        resource_response = await self.invoke_resource(
-                            db,
-                            resource_id=getattr(content, "id"),
-                            resource_uri=getattr(content, "uri") or None,
-                            resource_template_uri=getattr(content, "blob") or None,
-                            user_identity=user,
-                            meta_data=meta_data,
-                            resource_obj=resource_db,
-                            gateway_obj=resource_db_gateway,
-                            server_id=server_id,
-                            request_headers=request_headers,
-                        )
-                        _set_gateway_content(content, "blob", resource_response)
+                        await _invoke_gateway_content(content, "blob", getattr(content, "blob", None))
                     elif hasattr(content, "text"):
-                        resource_response = await self.invoke_resource(
-                            db,
-                            resource_id=getattr(content, "id"),
-                            resource_uri=getattr(content, "uri") or None,
-                            resource_template_uri=getattr(content, "text") or None,
-                            user_identity=user,
-                            meta_data=meta_data,
-                            resource_obj=resource_db,
-                            gateway_obj=resource_db_gateway,
-                            server_id=server_id,
-                            request_headers=request_headers,
-                        )
-                        _set_gateway_content(content, "text", resource_response)
+                        await _invoke_gateway_content(content, "text", getattr(content, "text", None))
                 # Normalize primitive types to ResourceContent
                 elif isinstance(content, bytes):
                     content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
@@ -2791,6 +2827,15 @@ class ResourceService(BaseService):
                 if span and content is not None and is_output_capture_enabled("resource.read"):
                     set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(content))
 
+                # Set success attributes on span only after gateway resolution, hooks,
+                # metadata application, and output serialization have completed.
+                if span:
+                    set_span_attribute(span, "success", True)
+                    set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
+                    if content is not None:
+                        set_span_attribute(span, "content.size", len(str(content)))
+
+                success = True
                 return content
             except Exception as e:
                 success = False
