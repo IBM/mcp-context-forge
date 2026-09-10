@@ -97,6 +97,10 @@ flowchart TD
     style N fill:#f3e5f5
 ```
 
+### Trust Mode & Cross-Tenant Group Mapping
+
+When `JWT_TRUST_MODE=jwt-trust`, no local user record exists for trust-mode principals, so team membership cannot come from `email_team_members` rows. The `external_group_mappings` table closes this gap: each row maps one external group — keyed by `(issuer, tenant, external_group_id)` — to one ContextForge team (`cf_team_id`) and, optionally, one role (`cf_role`). At authentication time the resolver reads the token's group claims, matches them against the mappings for the token's issuer and tenant, and derives the principal's team list (and mapped roles) from the result. Because the mapping key carries the issuer and tenant, two identity providers — or two tenants of one provider — can map groups with the same name to different ContextForge teams without collision. Team membership therefore follows the identity provider's group assignments: a user moved between groups at the identity provider lands in the matching ContextForge teams on the next token, with no local write.
+
 ---
 
 ## Team Architecture & Management
