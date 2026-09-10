@@ -6,8 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 Trusted claims extraction and group-to-team resolution (issues #5899, #5976).
 
 This module maps a verified external-IdP JWT payload to a virtual principal
-per the pinned trust-mode contract. It also hosts the group-mapping resolver
-and the group-overage marker detector shared with the SSO enrichment path.
+per the pinned trust-mode contract. It also hosts the group-mapping resolver,
+the group-overage marker detector shared with the SSO enrichment path, and
+the overage policy dispatch (:func:`resolve_overage_groups`, issue #5977).
 
 Claim readers support dotted paths one or more levels deep (for example the
 Keycloak ``realm_access.roles`` shape). Each path segment must name a JSON
@@ -69,8 +70,9 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import ExternalGroupMapping
+from mcpgateway.db import ExternalGroupMapping, Role, SSOProvider
 from mcpgateway.services.role_resolution import resolve_mapping_role
+from mcpgateway.utils.entra_graph_client import EntraGraphClient, EntraGraphError
 
 logger = logging.getLogger(__name__)
 
@@ -447,3 +449,78 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
         auth_provider=issuer,
         token_use="trusted",
     )
+
+
+async def resolve_overage_groups(payload: Dict[str, Any], settings: Any, db: Session, graph_client: Optional[Any] = None) -> List[str]:
+    """Apply ``jwt_trust_overage_policy`` to an overage-marked trusted token.
+
+    Dispatches on the configured policy:
+
+    - ``fail_closed`` (default): reject with 401 and an actionable detail.
+    - ``graph_lookup``: resolve the user's security groups through the
+      app-only Microsoft Graph client (oid-keyed cache). The SSO provider
+      record matching the token issuer supplies the encrypted client
+      credentials; the inbound bearer token is never used. Any acquisition
+      failure rejects with 401.
+    - ``proceed_without_groups``: continue with an empty group list and emit
+      a WARNING log carrying the user's oid on every overage-triggered
+      request.
+
+    Args:
+        payload: Verified JWT payload carrying an overage marker (see
+            :func:`detect_overage_marker`).
+        settings: Settings object carrying ``jwt_trust_overage_policy`` and
+            ``jwt_claim_user_id``.
+        db: Database session for the SSO provider lookup.
+        graph_client: Optional EntraGraphClient override (tests).
+
+    Returns:
+        List of external group object IDs. Empty under
+        ``proceed_without_groups``.
+
+    Raises:
+        HTTPException: 401 under ``fail_closed``, or under ``graph_lookup``
+            when the oid claim, the provider record, or the Graph resolution
+            fails.
+    """
+    policy = getattr(settings, "jwt_trust_overage_policy", "fail_closed")
+    oid = payload.get("oid")
+    log_id = oid if isinstance(oid, str) and oid else _get_claim(payload, settings.jwt_claim_user_id)
+
+    if policy == "fail_closed":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token carries an Entra group-overage marker (groups claim omitted) and jwt_trust_overage_policy is 'fail_closed'. "
+            "Set jwt_trust_overage_policy to 'graph_lookup' or 'proceed_without_groups' to admit overage tokens.",
+        )
+
+    if policy == "proceed_without_groups":
+        logger.warning(
+            "Entra group overage for oid %s: group resolution skipped; proceeding without groups (jwt_trust_overage_policy=proceed_without_groups).",
+            log_id,
+        )
+        return []
+
+    # graph_lookup
+    if not isinstance(oid, str) or not oid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="jwt_trust_overage_policy 'graph_lookup' requires the token 'oid' claim for the Graph user lookup.",
+        )
+
+    issuer = payload.get("iss")
+    provider = db.query(SSOProvider).filter(SSOProvider.issuer == issuer, SSOProvider.is_enabled.is_(True)).first()
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"No enabled SSO provider matches token issuer {issuer!r}; cannot resolve the group overage via Microsoft Graph.",
+        )
+
+    client = graph_client or EntraGraphClient()
+    try:
+        return await client.get_member_groups(provider, oid, token_exp=payload.get("exp"))
+    except EntraGraphError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Group overage resolution via Microsoft Graph failed for oid {oid}: {exc}",
+        ) from exc
