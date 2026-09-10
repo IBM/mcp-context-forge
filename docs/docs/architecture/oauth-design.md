@@ -328,6 +328,31 @@ This path is gated by `SSO_API_TOKEN_AUTH_ENABLED` (global) and `SSOProvider.tru
 !!! note "Revocation and role-sync caveats"
     ContextForge cannot revoke an externally-issued token before its own expiry — only local user-deactivation/team-membership changes take effect immediately. If role-sync is enabled for the provider, teams/admin status are re-derived from token claims into the local DB on each provisioning pass. See the [SSO documentation](../manage/sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for details.
 
+## JWT Trust Mode
+
+JWT trust mode (`JWT_TRUST_MODE=jwt-trust`) builds on the inbound external-token path above: a signed JWT alone proves identity, roles, and teams, and no local user record is read on the request path.
+
+### Dispatch rule (disjunctive eligibility)
+
+A token is trust-eligible when either branch holds (see `docs/docs/architecture/auth-token-dispatch.md` for the full rule and the deny matrix):
+
+- **(a) Gateway-signed:** the token carries `token_use="trusted"` AND trust mode is ON AND the required mapped claims are present AND the configured revocation claim is present. `POST /admin/tokens/trust` mints these tokens for local users from server-side authority.
+- **(b) External IdP:** trust mode is ON AND the issuer is a configured trust root (`trusted_for_api_auth` plus a non-empty `api_audience` on the `SSOProvider`) AND the required mapped claims are present AND the configured revocation claim is present.
+
+Every other token follows the default funnel, even when trust mode is ON: session tokens, API tokens, and external IdP tokens from non-trust-root issuers keep the default (database-backed) behavior, including JIT provisioning. A token that carries `token_use="trusted"` while trust mode is OFF is rejected with `401`; the marker never enters the default funnel.
+
+### Revocation guarantee
+
+A trust-eligible token that lacks the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`; Entra trust roots may use `uti`) is rejected with `401`. The claim is mandatory because it is the only revocation handle trust mode has: revoking the claim value in the blocklist denies the token on the next request. Revocation is keyed by the configured claim only; there is no sid-keyed revocation for trust-mode principals.
+
+### Overage policy
+
+Entra tokens that exceed the group-claim limit carry an overage marker instead of a `groups` array. `JWT_TRUST_OVERAGE_POLICY` selects the behavior:
+
+- `fail_closed` (default): reject the token with `401`.
+- `graph_lookup`: resolve the full group list through the app-only Microsoft Graph client and cache the result.
+- `proceed_without_groups`: authenticate the principal without group-derived teams; claims-derived roles and explicit teams still apply.
+
 ## Future Enhancements
 
 -   Wire UI toggles for token storage and auto-refresh to backend logic.

@@ -30,7 +30,7 @@ from mcpgateway.auth_context import extract_token_team_ids
 from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginationCursorGeneric
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import EmailUser, get_db
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
@@ -59,6 +59,7 @@ from mcpgateway.services.team_invitation_service import failed_invitation_delive
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
     JoinRequestNotFoundError,
+    LocalUserRecordRequiredError,
     MemberAlreadyExistsError,
     TeamManagementError,
     TeamManagementService,
@@ -672,6 +673,9 @@ async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_u
         return TeamMemberResponse.model_validate(member)
     except HTTPException:
         raise
+    except LocalUserRecordRequiredError as e:
+        # B.2 matrix: trust-mode membership writes need a local user record.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except InvalidRoleError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except TeamNotFoundError as e:
@@ -806,6 +810,14 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         if not settings.allow_team_invitations:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team invitations are currently disabled")
 
+        if settings.jwt_trust_mode == "jwt-trust":
+            # B.2 matrix: a trust-only principal has no local user record, so
+            # it cannot act as an inviter. Checked before the owner-role gate
+            # so the documented message reaches the caller (#5906).
+            inviter = db.query(EmailUser).filter(EmailUser.email == current_user["email"]).first()
+            if not inviter:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invitations require local user records")
+
         team_service = TeamManagementService(db)
         invitation_service = TeamInvitationService(db)
 
@@ -852,6 +864,9 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         )
     except HTTPException:
         raise
+    except LocalUserRecordRequiredError as e:
+        # B.2 matrix: trust-mode invitations need a local inviter record.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except (ValueError, TeamMemberLimitExceededError) as e:
         logger.error(f"Team invitation failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
