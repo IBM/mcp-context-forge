@@ -514,11 +514,13 @@
             button.onclick = () => initiateSSO(provider.id);
             button.className = `w-full flex justify-center items-center py-3 px-4 rounded-xl font-medium transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${config.bgColor} ${config.textColor} ${config.border || ""}`;
 
+            // Provider name is admin-controlled; inject via textContent (never innerHTML) to prevent stored XSS.
             button.innerHTML = `
                     <i class="${config.icon} mr-3 text-lg"></i>
-                    Continue with ${config.name}
+                    Continue with <span class="sso-provider-name"></span>
                     <i class="fas fa-arrow-right ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200"></i>
                 `;
+            button.querySelector(".sso-provider-name").textContent = config.name;
 
             button.classList.add("group");
             ssoContainer.appendChild(button);

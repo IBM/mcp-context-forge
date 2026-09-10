@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
+from mcpgateway.common.validators import SafeName
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.siem_export_service import get_siem_export_service
 
@@ -34,7 +35,7 @@ class DestinationFiltersRequest(BaseModel):
 class DestinationUpsertRequest(BaseModel):
     """Runtime SIEM destination configuration payload."""
 
-    name: str = Field(..., min_length=1)
+    name: SafeName = Field(..., min_length=1)
     type: str = Field(..., min_length=1)
     enabled: bool = True
     format: str = "json"
