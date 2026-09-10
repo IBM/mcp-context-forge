@@ -3,16 +3,20 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-App-only Microsoft Graph client for Entra group-overage resolution (issue #5977).
+App-only Microsoft Graph client for Entra group-overage resolution (issue #5977)
+and service-principal group resolution (issue #6756).
 
 Beyond the Entra group-claim limit a token carries overage markers instead
 of a groups array. Under ``jwt_trust_overage_policy = "graph_lookup"`` this
 client resolves the user's security groups with an app-only
-client-credentials token. The token is acquired from the SSO provider
-record's token endpoint with the stored encrypted client secret, decrypted
-at call time. The inbound bearer token is never used: it is audience-bound
-to ContextForge and Graph would reject it. The delegated ``/me`` flow of
-the SSO browser path is not used either.
+client-credentials token. App-only tokens (``idtyp == "app"``) carry no
+groups claim at all; under the same policy the client resolves the service
+principal's security groups through ``/servicePrincipals/{oid}/getMemberObjects``
+(a service principal is not a user). The token is acquired from the SSO
+provider record's token endpoint with the stored encrypted client secret,
+decrypted at call time. The inbound bearer token is never used: it is
+audience-bound to ContextForge and Graph would reject it. The delegated
+``/me`` flow of the SSO browser path is not used either.
 
 Group resolution results are cached in Redis keyed by the user's ``oid``
 through the shared ``AuthCache._get_redis_key`` helper (key type ``graph``),
@@ -71,8 +75,8 @@ class EntraGraphClient:
         """
         self._auth_cache = auth_cache or AuthCache()
 
-    async def get_member_groups(self, provider: Any, oid: str, token_exp: Optional[int] = None) -> List[str]:
-        """Resolve the security-group object IDs for a user's ``oid``.
+    async def get_member_groups(self, provider: Any, oid: str, token_exp: Optional[int] = None, app_only: bool = False) -> List[str]:
+        """Resolve the security-group object IDs for a user or service principal.
 
         Reads the oid-keyed Redis cache first. A cache hit returns the stored
         group list. A Redis read error is a cache miss and falls through to a
@@ -82,9 +86,13 @@ class EntraGraphClient:
         Args:
             provider: SSO provider record supplying the token endpoint and
                 the encrypted client credentials.
-            oid: Entra object ID of the user (``oid`` claim).
+            oid: Entra object ID of the user or service principal (``oid``
+                claim).
             token_exp: Expiry (epoch seconds) of the presenting token. Bounds
                 the cache TTL.
+            app_only: True when the presenting token is app-only
+                (``idtyp == "app"``): the lookup targets the service principal
+                endpoint instead of the user endpoint.
 
         Returns:
             List of security-group object IDs, de-duplicated and bounded by
@@ -112,7 +120,7 @@ class EntraGraphClient:
                         return [str(group) for group in groups]
                     logger.warning("Graph group cache entry for oid %s is not a list; falling back to live Graph lookup", oid)
 
-        groups = await self._fetch_member_groups(provider, oid)
+        groups = await self._fetch_member_groups(provider, oid, app_only=app_only)
 
         if redis is not None:
             try:
@@ -193,17 +201,21 @@ class EntraGraphClient:
             raise EntraGraphError(f"App-only token response for SSO provider {provider_id!r} carried no access_token.")
         return access_token
 
-    async def _fetch_member_groups(self, provider: Any, oid: str) -> List[str]:
-        """Call Graph getMemberObjects for the user's ``oid``.
+    async def _fetch_member_groups(self, provider: Any, oid: str, app_only: bool = False) -> List[str]:
+        """Call Graph getMemberObjects for the user or service principal ``oid``.
 
-        Posts ``{"securityEnabledOnly": true}`` to
-        ``/users/{oid}/getMemberObjects`` with the app-only token. Requests
-        are bounded by ``sso_entra_graph_api_timeout`` and results by
+        Posts ``{"securityEnabledOnly": true}`` to the getMemberObjects
+        endpoint with the app-only token. User tokens resolve through
+        ``/users/{oid}/getMemberObjects``; app-only tokens (``idtyp ==
+        "app"``) resolve through ``/servicePrincipals/{oid}/getMemberObjects``
+        because a service principal is not a user. Requests are bounded by
+        ``sso_entra_graph_api_timeout`` and results by
         ``sso_entra_graph_api_max_groups``.
 
         Args:
             provider: SSO provider record (credential source).
-            oid: Entra object ID of the user.
+            oid: Entra object ID of the user or service principal.
+            app_only: True to select the service-principal endpoint.
 
         Returns:
             De-duplicated list of security-group object IDs.
@@ -217,10 +229,11 @@ class EntraGraphClient:
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
+        entity = "servicePrincipals" if app_only else "users"
         client = await get_http_client()
         try:
             response = await client.post(
-                f"{GRAPH_BASE_URL}/users/{oid}/getMemberObjects",
+                f"{GRAPH_BASE_URL}/{entity}/{oid}/getMemberObjects",
                 headers={"Authorization": f"Bearer {app_token}"},
                 json={"securityEnabledOnly": True},
                 timeout=settings.sso_entra_graph_api_timeout,
