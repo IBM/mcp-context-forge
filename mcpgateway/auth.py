@@ -1805,7 +1805,14 @@ async def get_current_user(
             # claim (jwt_trust_revocation_claim, default jti) is checked
             # against the revocation store on every request.
             # First-Party
-            from mcpgateway.utils.trusted_claims import detect_overage_marker, extract_revocation_id, extract_trusted_principal, resolve_overage_groups  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.trusted_claims import (
+                detect_app_only_token,
+                detect_overage_marker,
+                extract_revocation_id,
+                extract_trusted_principal,
+                resolve_overage_groups,
+                resolve_service_principal_groups,
+            )  # pylint: disable=import-outside-toplevel
 
             # Entra group-overage markers mean the groups claim was omitted.
             # Dispatch on jwt_trust_overage_policy (#5977): fail_closed ->
@@ -1816,6 +1823,19 @@ async def get_current_user(
             if detect_overage_marker(payload):
                 with fresh_db_session() as overage_db:
                     resolved_groups = await resolve_overage_groups(payload, settings, overage_db)
+                payload = {**payload, "groups": resolved_groups}
+            elif detect_app_only_token(payload) and payload.get("groups") is None and settings.jwt_trust_overage_policy == "graph_lookup":
+                # App-only tokens (idtyp="app") carry no groups claim and no
+                # overage markers. Under graph_lookup (#6756) the service
+                # principal's group membership resolves through
+                # /servicePrincipals/{oid}/getMemberObjects (cached,
+                # oid-keyed, TTL bounded by exp); the resolved group IDs feed
+                # the same external-group resolver as claim groups. Under
+                # fail_closed (default) and proceed_without_groups this branch
+                # is skipped: the token authenticates with token_teams=[] and
+                # the roles claim keeps the app-role path (#5902).
+                with fresh_db_session() as sp_db:
+                    resolved_groups = await resolve_service_principal_groups(payload, settings, sp_db)
                 payload = {**payload, "groups": resolved_groups}
 
             def _extract_principal_sync():
