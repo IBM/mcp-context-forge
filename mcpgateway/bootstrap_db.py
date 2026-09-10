@@ -332,9 +332,7 @@ async def bootstrap_admin_user(conn: Connection) -> None:
                     # the login-time default-password detector on a rotated password).
                     password_service = Argon2PasswordService()
                     stored_hash = getattr(admin_user, "password_hash", None)
-                    _stored_is_default = stored_hash is not None and await password_service.verify_password_async(
-                        settings.default_user_password.get_secret_value(), stored_hash
-                    )
+                    _stored_is_default = stored_hash is not None and await password_service.verify_password_async(settings.default_user_password.get_secret_value(), stored_hash)
                     if _stored_is_default:
                         admin_user.password_change_required = False
                         logger.info("Custom PLATFORM_ADMIN_PASSWORD detected and stored hash is default; cleared bootstrap-set flag.")
