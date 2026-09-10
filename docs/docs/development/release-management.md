@@ -473,16 +473,26 @@ make embedded-down
 
 ### 6.4 Web UI verification
 
-The `web_ui` service is pinned to a specific released tag of
+The `web_ui` service is pinned to a specific released tag *and* image digest of
 [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui) via
 the `WEB_UI_IMAGE` default in `docker-compose.yml` (and the commented example in
-`.env.example`) — never `latest`. As part of each release:
+`.env.example`) — never `latest`. The digest makes the pin immutable: a tag alone
+can be retargeted on the registry, and this service handles user sessions/auth, so
+an unexpected code swap on deploy matters. As part of each release:
 
 1. Check the latest published release tag of `contextforge-web-ui` (GitHub releases
    or `ghcr.io/contextforge-org/contextforge-web-ui` tags).
-2. Update the `WEB_UI_IMAGE` default in `docker-compose.yml` and the example in
-   `.env.example` to that version.
-3. Verify the new pinned version starts and communicates with the gateway under the
+2. Resolve that tag's manifest digest:
+
+   ```bash
+   docker buildx imagetools inspect ghcr.io/contextforge-org/contextforge-web-ui:<tag>
+   ```
+
+   Use the top-level `Digest:` value (the multi-arch image index), not one of the
+   per-platform manifest digests underneath it.
+3. Update the `WEB_UI_IMAGE` default in `docker-compose.yml` and the example in
+   `.env.example` to `<tag>@<digest>`.
+4. Verify the new pinned version starts and communicates with the gateway under the
    `ui` profile:
 
 ```bash
@@ -500,6 +510,12 @@ Tear down when done:
 ```bash
 docker compose --profile ui down
 ```
+
+!!! tip "Config-only smoke test"
+    `make compose-ui-config-check` runs `docker compose --profile ui config --quiet`
+    to catch profile, variable-interpolation, and Compose-schema regressions without
+    starting containers. It also runs in CI on every PR that touches
+    `docker-compose.yml`.
 
 ### 6.5 Python package build
 

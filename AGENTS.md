@@ -360,7 +360,7 @@ Configuration (see the commented `WEB_UI_*` block in `.env.example`):
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WEB_UI_IMAGE` | `ghcr.io/contextforge-org/contextforge-web-ui:0.2.1` | Image to pull — pinned to a specific released version, never `latest`; bumped as part of the release checklist (`docs/docs/development/release-management.md`) |
+| `WEB_UI_IMAGE` | see `docker-compose.yml` | Image to pull — pinned to a specific released version *and* digest, never `latest`; bumped as part of the release checklist (`docs/docs/development/release-management.md`). Kept in one place (`docker-compose.yml`) rather than duplicated here so it can't drift out of sync. |
 | `WEB_UI_PORT` | `3001` | Host **and** container port (the image reads `PORT` at startup, so both sides of the mapping stay in sync) |
 | `WEB_UI_HOST` | `0.0.0.0` | Bind address inside the container — must stay `0.0.0.0` in Docker |
 | `WEB_UI_CONTEXTFORGE_URL` | `http://gateway:4444` | Gateway API base URL the UI talks to (internal compose network) |

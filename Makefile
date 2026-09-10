@@ -5670,7 +5670,8 @@ endef
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
 compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
-	embedded-up embedded-down embedded-clean embedded-status embedded-logs
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
+	compose-ui-config-check
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5687,6 +5688,22 @@ compose-validate:
 	fi
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
+
+# Config-only smoke test for the supported 'ui' profile (contextforge-web-ui BFF)
+# Catches profile, variable-interpolation, and Compose-schema regressions without
+# starting any containers. See docs/docs/development/release-management.md #6.4.
+compose-ui-config-check:
+	@echo "🔍 Validating 'ui' profile compose config..."
+	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
+		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile ui config --quiet
+	@echo "✅ 'ui' profile compose config is valid"
 
 compose-upgrade-pg18: compose-validate
 	@echo "⚠️  This will upgrade Postgres 17 -> 18"

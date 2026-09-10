@@ -1194,7 +1194,12 @@ services:
   # Web UI - BFF-style frontend for the gateway API
   # ──────────────────────────────────────────────────────────────────────
   web_ui:
-    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.1}
+    # Pinned by tag AND digest: the digest makes the supported `ui` profile
+    # reproducible even if the tag is ever retargeted on the registry - this
+    # service holds user sessions/auth, so an unexpected code swap matters.
+    # Bump both together on release (see release-management.md #6.4); get the
+    # digest with: docker buildx imagetools inspect <image>:<tag>
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.1@sha256:e2063ab012e7fe78815c5f840d517e1cc1fd484ed25c7b8e37cd78210cc3ab98}
     restart: unless-stopped
     ports:
       # Host and container port tied together on purpose - the image reads

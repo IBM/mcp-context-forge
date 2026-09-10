@@ -164,7 +164,7 @@ docker compose --profile ui up -d
 - **Web UI URL:** [http://localhost:3001](http://localhost:3001)
 - **Session Redis:** Dedicated Redis instance (`web_ui_redis`) on internal network
 - Configuration options: `WEB_UI_PORT`, `WEB_UI_IMAGE`, `WEB_UI_CONTEXTFORGE_URL`, `WEB_UI_COOKIE_SECURE`, `WEB_UI_REDIS_URL`
-- `WEB_UI_IMAGE` is pinned to a specific released version of `contextforge-web-ui` (never `latest`) — see [Release Management](../development/release-management.md#64-web-ui-verification) for the bump-and-verify step run on each release.
+- `WEB_UI_IMAGE` is pinned to a specific released version *and* image digest of `contextforge-web-ui` (never `latest`) — see [Release Management](../development/release-management.md#64-web-ui-verification) for the bump-and-verify step run on each release.
 
 ### Without Make
 
