@@ -30,7 +30,10 @@ def _settings(**overrides) -> Settings:
 class TestJwtTrustDefaults:
     """Default values preserve current behavior."""
 
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
+        # The process environment may set JWT_TRUST_MODE (e.g. a whole-suite
+        # trust-mode run); defaults are asserted with the ambient value removed.
+        monkeypatch.delenv("JWT_TRUST_MODE", raising=False)
         s = _settings()
         assert s.jwt_trust_mode == "db"
         assert s.jwt_claim_user_id == "sub"
