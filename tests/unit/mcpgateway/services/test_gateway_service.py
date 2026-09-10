@@ -4485,6 +4485,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     added_gateway = db.add.call_args[0][0]
     assert existing in added_gateway.resources
     assert existing.title == "Resource Title"
+    assert existing.text_content is None
+    assert existing.binary_content is None
+    assert existing.size is None
     assert existing_prompt in added_gateway.prompts
     assert existing_prompt.title == "Prompt Title"
 
@@ -4953,6 +4956,9 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     added_gateway = db.add.call_args[0][0]
     assert len(added_gateway.resources) == 1
     assert added_gateway.resources[0].title == "Resource Title"
+    assert added_gateway.resources[0].text_content is None
+    assert added_gateway.resources[0].binary_content is None
+    assert added_gateway.resources[0].size is None
     assert len(added_gateway.prompts) == 1
     assert added_gateway.prompts[0].title == "Prompt Title"
 
