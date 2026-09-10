@@ -647,6 +647,46 @@ def clear_metrics_cache():
 
 
 @pytest.fixture(autouse=True)
+def _clear_correlation_id_context():
+    """Clear the correlation-id context variable before and after each test.
+
+    ``get_or_generate_correlation_id()`` stores the id in a contextvar. A
+    sync test that triggers it (directly or through
+    ``AuditTrailService.log_action``, which generates an id even when the
+    audit trail is disabled) leaks the id into the worker's root context,
+    and every later async test in the same worker inherits it. Audit rows
+    from different tests then share one correlation id, which breaks any
+    test that looks a row up by correlation id.
+    """
+    # First-Party
+    from mcpgateway.utils.correlation_id import clear_correlation_id
+
+    clear_correlation_id()
+    yield
+    clear_correlation_id()
+
+
+
+@pytest.fixture(autouse=True)
+def _pin_default_trust_mode():
+    """Pin ``jwt_trust_mode`` to ``db`` unless a test opts into trust mode.
+
+    The suite is written against default (database-backed) mode. Tests that
+    exercise JWT trust mode set ``settings.jwt_trust_mode`` to ``jwt-trust``
+    explicitly with monkeypatch. Without this pin, exporting
+    ``JWT_TRUST_MODE=jwt-trust`` for a whole-suite trust-mode run flips the
+    ambient default and breaks every default-mode assumption (and every
+    trust-mode-disabled-surface guard) at once.
+    """
+    # First-Party
+    from mcpgateway.config import settings
+
+    original = settings.jwt_trust_mode
+    settings.jwt_trust_mode = "db"
+    yield
+    settings.jwt_trust_mode = original
+
+@pytest.fixture(autouse=True)
 def _restore_logger_state():
     """Restore root/named logger levels and handlers after every test.
 
