@@ -15,12 +15,15 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import time
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, patch
 from urllib.parse import urlparse
 
 # Third-Party
+import anyio
 import jsonschema
+from mcp.client.session import ClientSession
 import orjson
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -32,12 +35,14 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
+from mcpgateway.transports.context import request_headers_var
 
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
     _get_tool_lookup_cache,
     _get_validator_class_and_check,
+    _call_upstream_tool,
     extract_using_jq,
     ToolError,
     ToolInvocationError,
@@ -10447,3 +10452,139 @@ class TestInvokeToolLookupLogic:
             # Even though user_email matches owner, public-only token should deny access
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+
+
+_ANNOTATED_SCHEMA = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}, "query": {"type": "string"}}}
+
+
+class TestXMcpHeaderSeeding:
+    """The gateway seeds the SDK session's x-mcp-header map so annotated arguments are mirrored upstream."""
+
+    @pytest.mark.asyncio
+    async def test_wrapper_feeds_sdk_param_header_resolver(self):
+        """Calling through the wrapper on a real ClientSession makes the SDK's own resolver emit the Mcp-Param-* headers."""
+        send, receive = anyio.create_memory_object_stream(0)
+        session = ClientSession(read_stream=receive, write_stream=send)
+        session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        schema = {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string", "x-mcp-header": "Region"},
+                "count": {"type": "integer", "x-mcp-header": "Count"},
+                "flag": {"type": "boolean", "x-mcp-header": "Flag"},
+                "query": {"type": "string"},
+            },
+        }
+
+        await _call_upstream_tool(session, "routed", {}, input_schema=schema, meta=None, progress_callback=None, input_responses=None, request_state=None)
+
+        assert session._resolve_param_headers("routed", {"region": "us-west1", "count": 3, "flag": True, "query": "x"}) == {
+            "Mcp-Param-Region": "us-west1",
+            "Mcp-Param-Count": "3",
+            "Mcp-Param-Flag": "true",
+        }
+        assert session._resolve_param_headers("routed", {"query": "x"}) == {}
+        assert session._resolve_param_headers("other", {"region": "x"}) == {}
+
+        plain = {"type": "object", "properties": {"query": {"type": "string"}}}
+        await _call_upstream_tool(session, "routed", {}, input_schema=plain, meta=None, progress_callback=None, input_responses=None, request_state=None)
+        assert session._resolve_param_headers("routed", {"region": "us-west1"}) == {}
+
+    @pytest.mark.asyncio
+    async def test_call_upstream_tool_seeds_then_forwards_the_call(self):
+        """The wrapper seeds the session map first, then forwards every argument to call_tool with MRTR allowed."""
+        session = AsyncMock()
+        session._x_mcp_header_maps = {}
+        expected = ToolResult(content=[TextContent(type="text", text="ok")], is_error=False)
+        session.call_tool = AsyncMock(return_value=expected)
+        progress = AsyncMock()
+
+        result = await _call_upstream_tool(
+            session,
+            "routed",
+            {"region": "us-west1"},
+            input_schema=_ANNOTATED_SCHEMA,
+            meta={"k": "v"},
+            progress_callback=progress,
+            input_responses={"q": {"action": "accept"}},
+            request_state="state-1",
+        )
+
+        assert result is expected
+        assert session._x_mcp_header_maps == {"routed": {("region",): "Region"}}
+        session.call_tool.assert_awaited_once_with(
+            "routed",
+            {"region": "us-west1"},
+            meta={"k": "v"},
+            progress_callback=progress,
+            allow_input_required=True,
+            input_responses={"q": {"action": "accept"}},
+            request_state="state-1",
+        )
+
+    @staticmethod
+    async def _invoke_annotated_tool(tool_service, *, request_type, pooled):
+        """Run invoke_tool for an MCP tool with an annotated schema and return the session mock the call used."""
+        tp = _make_tool_payload(integration_type="MCP", request_type=request_type, gateway_id="gw-uuid-1", jsonpath_filter="")
+        tp["input_schema"] = _ANNOTATED_SCHEMA
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        session = AsyncMock()
+        session.initialize = AsyncMock()
+        session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        session.session = session
+        session._x_mcp_header_maps = {}
+
+        class _CM:
+            async def __aenter__(self):
+                return SimpleNamespace(session=session) if pooled else session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        registry = MagicMock()
+        registry.acquire = MagicMock(return_value=_CM())
+
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-xyz"} if pooled else {})
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(_setup_cache_for_invoke(tp, gp))
+                stack.enter_context(patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)))
+                stack.enter_context(patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)))
+                stack.enter_context(patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None))
+                stack.enter_context(patch.object(tool_service, "_pydantic_gateway_from_payload", return_value=None))
+                mock_gcc = stack.enter_context(patch("mcpgateway.services.tool_service.global_config_cache"))
+                mock_trace = stack.enter_context(patch("mcpgateway.services.tool_service.current_trace_id"))
+                mock_span_ctx = stack.enter_context(patch("mcpgateway.services.tool_service.create_span"))
+                mock_mbuf = stack.enter_context(patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"))
+                stack.enter_context(patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}))
+                stack.enter_context(patch("mcpgateway.services.tool_service.get_cached_ssl_context", return_value=MagicMock()))
+                stack.enter_context(patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()))
+                stack.enter_context(patch("mcpgateway.services.tool_service.mcp_proxy_client", side_effect=lambda **_kw: _CM()))
+                stack.enter_context(patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry))
+                stack.enter_context(patch.object(settings, "enable_ed25519_signing", False))
+                mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+                mock_trace.get = MagicMock(return_value=None)
+                mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+                mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+                mock_mbuf.return_value = MagicMock()
+
+                result = await tool_service.invoke_tool(MagicMock(), "test_tool", {"region": "us-west1", "query": "hi"})
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result is not None
+        assert registry.acquire.called is pooled
+        return session, tp
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_type", ["SSE", "StreamableHTTP"])
+    @pytest.mark.parametrize("pooled", [False, True], ids=["per-call-session", "pooled-session"])
+    async def test_call_sites_seed_session_before_call_tool(self, tool_service, request_type, pooled):
+        """Every upstream call path seeds the session's map from the stored schema, keyed by the upstream tool name."""
+        session, tp = await self._invoke_annotated_tool(tool_service, request_type=request_type, pooled=pooled)
+
+        upstream_name = tp.get("original_name") or tp["name"]
+        assert session._x_mcp_header_maps == {upstream_name: {("region",): "Region"}}
+        session.call_tool.assert_awaited_once()

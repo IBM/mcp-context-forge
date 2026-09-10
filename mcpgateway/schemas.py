@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
+from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
@@ -520,6 +521,13 @@ class AuthenticationValues(BaseModelWithConfigDict):
 _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
 
 
+def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject an input schema whose ``x-mcp-header`` annotations break the MCP 2026-07-28 constraints."""
+    if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
+        raise ValueError(f"invalid x-mcp-header annotation: {reason}")
+    return schema
+
+
 def _extract_rest_url_components(values: dict) -> dict:
     """Extract ``base_url`` and ``path_template`` from ``url`` for REST integration tools.
 
@@ -970,6 +978,12 @@ class ToolCreate(BaseModel):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -1528,6 +1542,12 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod

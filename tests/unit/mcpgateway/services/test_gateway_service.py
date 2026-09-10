@@ -3587,6 +3587,22 @@ class TestGatewayRefresh:
         assert len(validation_errors) == 1
         assert "invalid_tool" in validation_errors[0]
 
+    def test_validate_tools_excludes_invalid_x_mcp_header(self, gateway_service):
+        """A synced tool with an invalid x-mcp-header annotation is excluded; valid siblings federate with annotations intact."""
+        annotated = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}}}
+        tools = [
+            {"name": "routed_tool", "description": "valid annotation", "inputSchema": annotated},
+            {"name": "broken_tool", "description": "empty header token", "inputSchema": {"type": "object", "properties": {"r": {"type": "string", "x-mcp-header": ""}}}},
+        ]
+
+        valid_tools, validation_errors = gateway_service._validate_tools(tools)
+
+        assert [tool.name for tool in valid_tools] == ["routed_tool"]
+        assert valid_tools[0].input_schema["properties"]["region"]["x-mcp-header"] == "Region"
+        assert len(validation_errors) == 1
+        assert validation_errors[0].startswith("broken_tool:")
+        assert "x-mcp-header" in validation_errors[0]
+
     def test_validate_tools_preserves_mcp_apps_meta(self, gateway_service):
         """Gateway discovery should preserve upstream MCP Apps _meta.ui metadata."""
         tools = [

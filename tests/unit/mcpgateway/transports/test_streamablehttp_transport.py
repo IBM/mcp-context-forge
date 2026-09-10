@@ -33,6 +33,9 @@ from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
 from fastapi import HTTPException
 import httpx
+import httpx2
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
 from mcp_types import PromptArgument
 import mcp_types as types
 from mcp.shared.exceptions import MCPError
@@ -18201,6 +18204,71 @@ class TestDualEra:
     def test_server_discover_is_a_known_mcp_request_method(self):
         """`server/discover` must never again be classified as an unknown method."""
         assert tr._is_known_mcp_request_method("server/discover")
+
+
+_X_MCP_HEADER_SCHEMA = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}}}
+
+
+class TestXMcpHeaderServing:
+    """The gateway as a server enforces x-mcp-header annotations on modern tools/call requests."""
+
+    @staticmethod
+    def _serve_annotated_tool(monkeypatch) -> AsyncMock:
+        """Publish one annotated tool through the gateway's catalog and return the patched invoke_tool."""
+        tool = MagicMock()
+        tool.name = "routed"
+        tool.title = None
+        tool.description = "routes by region"
+        tool.input_schema = _X_MCP_HEADER_SCHEMA
+        tool.output_schema = None
+        tool.annotations = {}
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield MagicMock()
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+        monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+        invoke = AsyncMock(return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")], is_error=False))
+        monkeypatch.setattr(tool_service, "invoke_tool", invoke)
+        return invoke
+
+    @staticmethod
+    @asynccontextmanager
+    async def _modern_client(extra_headers: dict[str, str]):
+        """A 2026-07-28 SDK client talking in-process to the session manager the gateway wraps."""
+        manager = tr.StreamableHTTPSessionManager(app=tr.mcp_app, stateless=True, json_response=True)
+        token = server_id_var.set(None)
+        try:
+            async with manager.run():
+                async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=manager.handle_request), base_url="http://gateway", headers=extra_headers) as http:
+                    async with Client(streamable_http_client("http://gateway/mcp", http_client=http), mode="2026-07-28") as client:
+                        yield client
+        finally:
+            server_id_var.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_mcp_param_header_disagreeing_with_the_body_is_rejected_before_dispatch(self, monkeypatch):
+        invoke = self._serve_annotated_tool(monkeypatch)
+        async with self._modern_client({"Mcp-Param-Region": "us"}) as client:
+            with pytest.raises(MCPError) as mismatch:
+                await client.call_tool("routed", {"region": "eu"})
+            with pytest.raises(MCPError) as absent:
+                await client.call_tool("routed", {})
+        assert mismatch.value.error.code == -32020
+        assert mismatch.value.error.message == "Mcp-Param-Region header does not match the request body's 'region' argument"
+        assert absent.value.error.code == -32020
+        assert absent.value.error.message == "Mcp-Param-Region header is present but the request body's 'region' argument is absent"
+        invoke.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_client_that_listed_the_tool_mirrors_the_header_and_reaches_it(self, monkeypatch):
+        invoke = self._serve_annotated_tool(monkeypatch)
+        async with self._modern_client({}) as client:
+            await client.list_tools()
+            result = await client.call_tool("routed", {"region": "eu"})
+        assert result.is_error is False
+        assert invoke.await_args.kwargs["arguments"] == {"region": "eu"}
 
 
 class TestUnknownEntityErrors:
