@@ -43,7 +43,7 @@ def test_discover_metadata_returns_form_safe_values(monkeypatch, allow_gateway_c
         }
     )
     audit = MagicMock()
-    monkeypatch.setattr(DcrService, "discover_as_metadata", discover)
+    monkeypatch.setattr(DcrService, "discover_public_as_metadata", discover)
     monkeypatch.setattr("mcpgateway.main.get_audit_trail_service", lambda: audit)
 
     response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "https://issuer.example.com"})
@@ -58,14 +58,14 @@ def test_discover_metadata_returns_form_safe_values(monkeypatch, allow_gateway_c
         "error": None,
         "errorCode": None,
     }
-    discover.assert_awaited_once_with("https://issuer.example.com")
+    discover.assert_awaited_once_with("https://issuer.example.com/")
     assert audit.log_action.call_args.kwargs["details"] == {"outcome": "success", "error_code": None}
 
 
 def test_discover_metadata_returns_safe_nonblocking_failure(monkeypatch, allow_gateway_create):
     """Blocked issuer errors do not expose raw outbound-validation details."""
     audit = MagicMock()
-    monkeypatch.setattr(DcrService, "discover_as_metadata", AsyncMock(side_effect=DcrError("loopback host", code="blocked")))
+    monkeypatch.setattr(DcrService, "discover_public_as_metadata", AsyncMock(side_effect=DcrError("loopback host", code="blocked")))
     monkeypatch.setattr("mcpgateway.main.get_audit_trail_service", lambda: audit)
 
     response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "https://localhost.example.com"})
@@ -96,3 +96,17 @@ def test_discover_metadata_requires_gateway_create_permission(monkeypatch):
         app.dependency_overrides.pop(get_current_user_with_permissions, None)
 
     assert response.status_code == 403
+
+
+def test_discover_metadata_rejects_malformed_issuer_url(allow_gateway_create):
+    """Malformed issuer input is rejected before public discovery runs."""
+    response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "not-a-url"})
+
+    assert response.status_code == 422
+
+
+def test_discover_metadata_requires_authentication():
+    """Unauthenticated callers cannot probe issuer metadata."""
+    response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "https://issuer.example.com"})
+
+    assert response.status_code == 401

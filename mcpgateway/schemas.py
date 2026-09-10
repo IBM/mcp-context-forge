@@ -5036,7 +5036,7 @@ class OAuthMetadataDiscoveryRequest(BaseModelWithConfigDict):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    issuer_url: str = Field(..., min_length=1, max_length=2048, description="HTTPS OAuth issuer URL to discover")
+    issuer_url: AnyHttpUrl = Field(..., max_length=2048, description="HTTPS OAuth issuer URL to discover")
 
 
 class OAuthMetadataDiscoveryResponse(BaseModelWithConfigDict):

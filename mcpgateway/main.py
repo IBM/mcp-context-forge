@@ -7502,13 +7502,13 @@ async def discover_oauth_metadata(
     query strings. Provider lookup failures return a structured 200 response so
     callers can keep manual OAuth configuration available.
     """
-    issuer_for_audit = _safe_oauth_issuer_for_audit(discovery_request.issuer_url)
+    issuer_for_audit = _safe_oauth_issuer_for_audit(str(discovery_request.issuer_url))
     user_email = get_user_email(user)
     outcome = "success"
     error_code: Optional[str] = None
 
     try:
-        metadata = await DcrService().discover_as_metadata(discovery_request.issuer_url)
+        metadata = await DcrService().discover_public_as_metadata(str(discovery_request.issuer_url))
         response = OAuthMetadataDiscoveryResponse(
             discovered=True,
             authorization_url=metadata.get("authorization_endpoint"),

@@ -129,8 +129,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             "OAUTH_DISCOVERY": {
                 "pattern": r"^/(?:v1/)?gateways/discover-metadata/?$",
                 "methods": {"POST"},
-                "limit": min(10, settings.rate_limit_medium_rpm),
-                "burst": min(10, settings.rate_limit_medium_burst),
+                "limit": 10,
+                "burst": 10,
             },
             "MEDIUM": {
                 "pattern": r"^/(mcp|tools|prompts|resources|servers|gateways|llmchat)(/|$)",
