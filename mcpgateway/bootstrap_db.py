@@ -310,26 +310,15 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             _enforcement_on = getattr(settings, "password_change_enforcement_enabled", True)
             _bootstrap_flag = getattr(settings, "admin_require_password_change_on_bootstrap", True)
 
-            if not _enforcement_on or not _bootstrap_flag:
-                # Master switch or bootstrap flag disabled — never touch the flag.
-                pass
-            else:
-                # Compare PLATFORM_ADMIN_PASSWORD against the compiled-in default using
-                # constant-time bytes comparison.  Both sides are encoded to UTF-8 so that
-                # non-ASCII passwords don't raise a TypeError inside compare_digest.
+            if _enforcement_on and _bootstrap_flag:
                 _admin_pwd_bytes = settings.platform_admin_password.get_secret_value().encode("utf-8")
                 _default_pwd_bytes = settings.default_user_password.get_secret_value().encode("utf-8")
                 _env_is_default = hmac.compare_digest(_admin_pwd_bytes, _default_pwd_bytes)
 
                 if _env_is_default:
-                    # The env var still holds the default — force a change on login.
                     admin_user.password_change_required = True
                     logger.warning("Admin bootstrapped with the default password; password change required on first login.")
                 elif admin_user.password_change_required:
-                    # A custom PLATFORM_ADMIN_PASSWORD is now in env and the flag is set.
-                    # Only clear it if the admin's *stored* hash is still the default password
-                    # (i.e. the flag was set by bootstrap, not by a deliberate admin action or
-                    # the login-time default-password detector on a rotated password).
                     password_service = Argon2PasswordService()
                     stored_hash = getattr(admin_user, "password_hash", None)
                     _stored_is_default = stored_hash is not None and await password_service.verify_password_async(settings.default_user_password.get_secret_value(), stored_hash)
