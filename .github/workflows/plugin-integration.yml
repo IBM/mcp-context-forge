@@ -326,8 +326,11 @@ jobs:
         steps:
             - name: Verify all plugin E2E legs succeeded
               run: |
-                  if [ "${{ needs.plugin-e2e.result }}" != "success" ]; then
+                  if [ "${{ needs.plugin-e2e.result }}" = "success" ]; then
+                    echo "All plugin E2E legs passed."
+                  elif [ "${{ needs.plugin-e2e.result }}" = "skipped" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+                    echo "Plugin E2E matrix skipped because this PR has no plugin-related changes."
+                  else
                     echo "Plugin E2E matrix result: ${{ needs.plugin-e2e.result }}"
                     exit 1
                   fi
-                  echo "All plugin E2E legs passed."
