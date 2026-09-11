@@ -35,6 +35,7 @@ All LLM providers are configured via the Admin UI's LLM Settings. Navigate to **
 | `ollama` | Local Ollama | Base URL (default: http://localhost:11434) |
 | `watsonx` | IBM watsonx.ai | API Key, project_id in additional_config |
 | `openai_compatible` | OpenAI-compatible APIs (vLLM, LocalAI, etc.) | Base URL, optional API Key |
+| `orcarouter` | [OrcaRouter](https://www.orcarouter.ai) gateway (150+ models) | API Key, Base URL (default: https://api.orcarouter.ai/v1) |
 
 ### 🗄️ Redis Configurations for Multi Worker Environment
 
