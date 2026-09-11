@@ -2019,3 +2019,37 @@ async def test_default_session_factory_timeout_structured_logging_failure(monkey
     debug_logs = [rec for rec in caplog.records if rec.levelname == "DEBUG" and "Structured logging failed" in rec.getMessage()]
     assert len(debug_logs) >= 1, f"Expected DEBUG log for structured logging failure, got logs: {[r.getMessage() for r in caplog.records]}"
     assert any("timeout" in log.getMessage().lower() for log in debug_logs)
+
+
+# ---------------------------------------------------------------------------
+# Regression: McpError eviction (fix/dead-upstream-sessions-mcperror)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_acquire_evicts_session_on_mcperror(registry, factory_and_records):
+    """McpError raised inside acquire() must evict the cached session.
+
+    Regression: only OSError / ClosedResourceError / BrokenResourceError
+    were caught; an McpError (e.g. 'Session terminated') left the dead
+    session cached so every subsequent acquire() failed immediately.
+    """
+    from mcp import McpError
+    from mcp.types import ErrorData
+
+    _, _ = factory_and_records
+
+    error = McpError(ErrorData(code=-32000, message="Session terminated"))
+
+    with pytest.raises(McpError):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise error
+
+    # Session must have been evicted.
+    assert registry.snapshot().active_sessions == 0
