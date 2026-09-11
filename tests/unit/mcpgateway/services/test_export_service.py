@@ -818,6 +818,7 @@ async def test_export_resources_with_data(export_service, mock_db):
     # Create mock resource
     mock_resource = MagicMock()
     mock_resource.name = "test_resource"
+    mock_resource.gateway_id = None
     mock_resource.uri = "file:///workspace/test.txt"
     mock_resource.description = "Test resource file"
     mock_resource.mime_type = "text/plain"
@@ -840,6 +841,72 @@ async def test_export_resources_with_data(export_service, mock_db):
     assert resource_data["is_active"] == True
     assert resource_data["tags"] == ["file", "text"]
     assert resource_data["last_modified"] is not None
+
+
+@pytest.mark.parametrize(
+    "base,original,expected",
+    [("chosen", "Upstream", "chosen"), ("", "Upstream", "Upstream"), ("a" * 382, "Upstream", "a" * 255)],
+)
+@pytest.mark.asyncio
+async def test_resource_namespacing_export_paths_and_import(export_service, mock_db, base, original, expected):
+    """Both export paths select the same base and literal import ignores provenance."""
+    # First-Party
+    from mcpgateway.db import Resource
+    from mcpgateway.services.import_service import ImportService
+
+    resource = Resource(
+        id="namespaced",
+        gateway_id="gateway",
+        uri="test://report",
+        name="gateway-report",
+        original_name=original,
+        custom_name_slug=base,
+        description="Report",
+        mime_type="text/plain",
+        tags=[],
+        enabled=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        size=0,
+    )
+    # Use the actual response conversion: bulk export receives ResourceRead, not ORM rows.
+    # First-Party
+    from mcpgateway.services.resource_service import ResourceService
+
+    response = ResourceService().convert_resource_to_read(resource, include_metrics=False)
+    export_service._fetch_all_resources = AsyncMock(return_value=[response])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [resource]
+    bulk = await export_service._export_resources(mock_db, None, False)
+    selective = await export_service._export_selected_resources(mock_db, [resource.uri])
+    assert bulk == selective
+    assert bulk[0]["name"] == expected
+    assert bulk[0]["custom_name_slug"] == base
+    assert bulk[0]["original_name"] == original
+    importer = ImportService()
+    assert importer._convert_to_resource_create(bulk[0]).name == expected
+    assert importer._convert_to_resource_update(bulk[0]).name == expected
+
+
+def test_resource_namespacing_export_validation_policy(monkeypatch, caplog):
+    """Local names stay verbatim; invalid federated candidates fall through."""
+    # First-Party
+    from mcpgateway.common.validators import SecurityValidator
+    from mcpgateway.config import settings
+    from mcpgateway.db import Resource
+    from mcpgateway.services.export_service import _exportable_resource_base
+
+    monkeypatch.setattr(settings, "validation_max_name_length", 5)
+    monkeypatch.setattr(SecurityValidator, "MAX_NAME_LENGTH", 5)
+    local = Resource(id="local", name="My Report", uri="test://local")
+    assert _exportable_resource_base(local) == "My Report"
+    assert "Local resource" in caplog.text
+    resource = Resource(id="remote", gateway_id="gw", uri="test://remote", name="gw-choice", original_name="Valid", custom_name_slug="long-base")
+    assert _exportable_resource_base(resource) == "long-"
+    monkeypatch.setattr(SecurityValidator, "NAME_PATTERN", r"^Valid$")
+    assert _exportable_resource_base(resource) == "Valid"
+    monkeypatch.setattr(SecurityValidator, "NAME_PATTERN", r"^Never$")
+    assert _exportable_resource_base(resource) == "gw-choice"
+    assert "no importable name" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1428,6 +1495,7 @@ async def test_export_selected_resources_success_and_empty_list(export_service, 
     db_resource = MagicMock()
     db_resource.id = "r1"
     db_resource.name = "res"
+    db_resource.gateway_id = None
     db_resource.uri = "file:///x"
     db_resource.description = "desc"
     db_resource.mime_type = "text/plain"
@@ -1668,6 +1736,7 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     visible_resource = MagicMock()
     visible_resource.uri = "file:///visible.txt"
     visible_resource.name = "visible"
+    visible_resource.gateway_id = None
     visible_resource.description = "visible"
     visible_resource.mime_type = "text/plain"
     visible_resource.tags = []
