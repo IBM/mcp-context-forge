@@ -2369,6 +2369,39 @@ def test_get_for_update_postgresql_sets_lock_timeout_and_runs_query():
     assert any("SET LOCAL lock_timeout" in str(stmt) for stmt in calls)
 
 
+def test_get_for_update_first_only_returns_match_for_multiple_where_results(test_db):
+    """first_only should support existential conflict checks without cardinality errors."""
+    test_db.add_all(
+        [
+            db.Tool(id="first-only-a", original_name="first-only-a", custom_name="duplicate", custom_name_slug="first-only-a", name="first-only-a", input_schema={}, visibility="public"),
+            db.Tool(id="first-only-b", original_name="first-only-b", custom_name="duplicate", custom_name_slug="first-only-b", name="first-only-b", input_schema={}, visibility="public"),
+        ]
+    )
+    test_db.commit()
+
+    result = db.get_for_update(test_db, db.Tool, where=db.Tool.custom_name == "duplicate", first_only=True)
+
+    assert result is not None
+    assert result.id in {"first-only-a", "first-only-b"}
+
+
+def test_get_for_update_default_rejects_multiple_where_results(test_db):
+    """Default conflict lookups retain strict single-row cardinality semantics."""
+    # Third-Party
+    from sqlalchemy.exc import MultipleResultsFound
+
+    test_db.add_all(
+        [
+            db.Tool(id="strict-a", original_name="strict-a", custom_name="duplicate", custom_name_slug="strict-a", name="strict-a", input_schema={}, visibility="public"),
+            db.Tool(id="strict-b", original_name="strict-b", custom_name="duplicate", custom_name_slug="strict-b", name="strict-b", input_schema={}, visibility="public"),
+        ]
+    )
+    test_db.commit()
+
+    with pytest.raises(MultipleResultsFound):
+        db.get_for_update(test_db, db.Tool, where=db.Tool.custom_name == "duplicate")
+
+
 # --- Other slug listeners ---
 def test_set_grpc_service_slug_sets_slug(monkeypatch):
     class Target:

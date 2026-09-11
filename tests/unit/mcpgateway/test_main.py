@@ -1423,6 +1423,18 @@ class TestToolEndpoints:
         response = test_client.put("/tools/1", json=req, headers=auth_headers)
         assert response.status_code == status_code
 
+    @patch("mcpgateway.main.tool_service.update_tool")
+    def test_update_tool_name_conflict_returns_409(self, mock_update, test_client, auth_headers):
+        """Tool name conflicts from updates are returned as HTTP 409."""
+        # First-Party
+        from mcpgateway.services.tool_service import ToolNameConflictError
+
+        mock_update.side_effect = ToolNameConflictError("existing_tool")
+
+        response = test_client.put("/tools/1", json={"description": "Updated description"}, headers=auth_headers)
+
+        assert response.status_code == 409
+
     @patch("mcpgateway.main.tool_service.set_tool_state")
     def test_set_tool_state(self, mock_toggle, test_client, auth_headers):
         """Test setting tool active/inactive state."""
