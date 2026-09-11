@@ -1268,15 +1268,20 @@ redis:
   # If enabled, skips the in-cluster Redis deployment and uses these settings.
   external:
     enabled: false
-    # Secret containing REDIS_URL (recommended for auth)
+    # Secret containing REDIS_URL or REDIS_PASSWORD
     existingSecret: ""
-    urlKey: "REDIS_URL"
+    # Key in existingSecret that holds the full REDIS_URL (leave empty if secret only holds the password)
+    urlKey: ""
     # Direct Redis URL override (if not using existingSecret)
     url: ""
     # Optional host/port if building REDIS_URL automatically
     host: ""
     port: 6379
     db: 0
+    # Optional password for external Redis authentication
+    # Use passwordKey with existingSecret to load from a Kubernetes secret
+    password: ""
+    passwordKey: ""
 
   # ─── Authentication ───
   auth:
