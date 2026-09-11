@@ -2482,6 +2482,8 @@ class ResourceRead(BaseModelWithConfigDict):
     id: str = Field(description="Unique ID of the resource")
     uri: str
     name: str
+    original_name: Optional[str] = Field(None, description="Upstream name as reported by the federated server")
+    custom_name_slug: Optional[str] = Field(None, description="Slugified base used to compose the namespaced name")
     description: Optional[str]
     mime_type: Optional[str]
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
