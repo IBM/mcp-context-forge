@@ -451,19 +451,8 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
         js-build
 
 ## --- JS build ----------------------------------------------------------------
-js-build:                        ## Install npm dependencies and build CSS and JS bundles
-	@if command -v npm >/dev/null 2>&1; then \
-		if [ -f package-lock.json ]; then \
-			npm ci --no-audit --no-fund; \
-		else \
-			echo "ℹ️  package-lock.json not found — falling back to 'npm install'"; \
-			npm install --no-audit --no-fund; \
-		fi && \
-		npm run build:css && \
-		npm run vite:build; \
-	else \
-		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
-	fi
+js-build:                        ## Install npm dependencies and build CSS and JS bundles (delegates to build-ui)
+	@$(MAKE) build-ui
 
 ## --- Primary servers ---------------------------------------------------------
 serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
