@@ -1,0 +1,20 @@
+# Example only. Copy into your org workflow as needed.
+name: Optional TOA before MCP register
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "mcp-catalog.yml"
+      - "toa.json"
+
+jobs:
+  toa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tool delivery attestation
+        if: hashFiles('toa.json') != ''
+        run: |
+          pip install "git+https://github.com/Carmel-Labs-Inc/toa.git@99e2690fec24a5290d9542e58383a8bf753e8b74#subdirectory=python"
+          toa-verify toa.json --require-emitter agentstatus --require-layer functional=pass --max-age 7d
