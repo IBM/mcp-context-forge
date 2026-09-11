@@ -36,6 +36,22 @@ from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.utils.oauth_resource import derive_resource_origin
 
 
+class _AttrDict(dict):
+    """dict subclass exposing keys as attributes.
+
+    ``@require_permission`` requires ``isinstance(current_user, dict)`` (it's a real
+    dict at runtime - see ``get_current_user_with_permissions``), while some router
+    helpers and test assertions use attribute access (``user.email``). This satisfies
+    both without duplicating fixtures per access style.
+    """
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
 class TestDeriveResourceOrigin:
     """Tests for derive_resource_origin (origin-extraction fallback for auto-derived resource)."""
 
@@ -344,14 +360,14 @@ class TestOAuthRouter:
 
     @pytest.fixture
     def mock_current_user(self):
-        """Create mock current user."""
-        user = Mock(spec=EmailUserResponse)
-        user.get = Mock(return_value="test@example.com")
-        user.email = "test@example.com"
-        user.full_name = "Test User"
-        user.is_active = True
-        user.is_admin = False
-        return user
+        """Create mock current user.
+
+        A real dict (not ``Mock(spec=EmailUserResponse)``) since ``get_oauth_status``/
+        ``get_oauth_status_batch`` are RBAC-decorated (``@require_permission``), which
+        requires ``isinstance(current_user, dict)`` - matching the actual runtime type
+        returned by ``get_current_user_with_permissions``.
+        """
+        return _AttrDict(email="test@example.com", full_name="Test User", is_active=True, is_admin=False)
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_success(self, mock_db, mock_request, mock_gateway, mock_current_user):
@@ -1162,7 +1178,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute (now requires current_user for authentication)
-        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         # Assert
         assert result["oauth_enabled"] is True
@@ -1184,7 +1200,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute (now requires current_user for authentication)
-        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         # Assert
         assert result["oauth_enabled"] is False
@@ -1197,7 +1213,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == 404
 
@@ -1211,7 +1227,7 @@ class TestOAuthRouter:
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert result["grant_type"] == "client_credentials"
         assert "configured for client_credentials" in result["message"]
@@ -1223,7 +1239,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == 500
 
@@ -1248,7 +1264,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info = AsyncMock(return_value=backend_info)
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+            result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert result["user_token_status"]["status"] == expected_status
         assert result["user_token_status"]["authorized"] is expected_authorized
@@ -1259,9 +1275,7 @@ class TestOAuthRouter:
         """Each caller only ever gets their own token state - lookup is keyed by the authenticated caller's email."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        other_user = Mock(spec=EmailUserResponse)
-        other_user.email = "other@example.com"
-        other_user.is_admin = False
+        other_user = _AttrDict(email="other@example.com", is_admin=False)
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
@@ -1270,7 +1284,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info = AsyncMock(return_value=None)
             mock_token_storage_class.return_value = mock_token_storage
 
-            await get_oauth_status("gateway123", mock_request, other_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, current_user=other_user, db=mock_db)
 
         mock_token_storage.get_token_info.assert_awaited_once_with("gateway123", "other@example.com")
 
@@ -1290,7 +1304,7 @@ class TestOAuthRouter:
             mock_token_storage_class.return_value = mock_token_storage
 
             with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+                result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert result["user_token_status"] == {"status": "unknown", "authorized": False}
         mock_logger.exception.assert_called_once()
@@ -1320,7 +1334,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], mock_current_user, mock_db)
+            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], current_user=mock_current_user, db=mock_db)
 
         # Duplicate ids are deduped
         assert list(result.keys()) == ["gateway123"]
@@ -1339,7 +1353,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], mock_current_user, mock_db)
+            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], current_user=mock_current_user, db=mock_db)
 
         assert mock_db.execute.call_count == 1
         mock_token_storage_class.assert_called_once()
@@ -1378,7 +1392,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], current_user=mock_current_user, db=mock_db)
 
         assert mock_db.execute.call_count == 1
         assert set(result.keys()) == {gw1.id, gw2.id}
@@ -1412,7 +1426,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status_batch(mock_request, [own_gateway.id, others_gateway.id], mock_current_user, mock_db)
+            result = await get_oauth_status_batch(mock_request, [own_gateway.id, others_gateway.id], current_user=mock_current_user, db=mock_db)
 
         assert set(result.keys()) == {own_gateway.id}
 
@@ -1432,7 +1446,7 @@ class TestOAuthRouter:
 
         from mcpgateway.routers.oauth_router import get_oauth_status_batch
 
-        result = await get_oauth_status_batch(mock_request, [gateway.id], mock_current_user, mock_db)
+        result = await get_oauth_status_batch(mock_request, [gateway.id], current_user=mock_current_user, db=mock_db)
 
         assert result[gateway.id]["grant_type"] == "client_credentials"
         assert "user_token_status" not in result[gateway.id]
@@ -1444,7 +1458,7 @@ class TestOAuthRouter:
 
         from mcpgateway.routers.oauth_router import get_oauth_status_batch
 
-        result = await get_oauth_status_batch(mock_request, ["missing1", "missing2"], mock_current_user, mock_db)
+        result = await get_oauth_status_batch(mock_request, ["missing1", "missing2"], current_user=mock_current_user, db=mock_db)
 
         assert result == {}
 
@@ -1457,7 +1471,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=HTTPException(status_code=500, detail="boom"))):
             with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
 
         assert result == {}
         mock_logger.error.assert_called_once()
@@ -1471,7 +1485,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=HTTPException(status_code=403, detail="nope"))):
             with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
 
         assert result == {}
         mock_logger.error.assert_not_called()
@@ -1486,7 +1500,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=RuntimeError("db unavailable"))):
             with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
 
         assert result == {}
         mock_logger.exception.assert_called_once()
@@ -1501,7 +1515,7 @@ class TestOAuthRouter:
 
         with patch("mcpgateway.routers.oauth_router._build_oauth_status_payload", side_effect=RuntimeError("boom")):
             with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
 
         assert result == {}
         mock_logger.exception.assert_called_once()
@@ -1511,7 +1525,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status_batch
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status_batch(mock_request, [], mock_current_user, mock_db)
+            await get_oauth_status_batch(mock_request, [], current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == 400
 
@@ -1522,7 +1536,7 @@ class TestOAuthRouter:
         too_many = [f"gw{i}" for i in range(OAUTH_STATUS_BATCH_MAX_IDS + 1)]
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status_batch(mock_request, too_many, mock_current_user, mock_db)
+            await get_oauth_status_batch(mock_request, too_many, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == 400
 
@@ -1555,7 +1569,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info_bulk = AsyncMock(return_value={gw1.id: {"scopes": ["read"], "expires_at": None, "status": "valid", "updated_at": "2026-01-01T00:00:00"}, gw2.id: None})
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], current_user=mock_current_user, db=mock_db)
 
         mock_token_storage.get_token_info_bulk.assert_awaited_once_with([gw1.id, gw2.id], mock_current_user.email)
         mock_token_storage.get_token_info.assert_not_called()
@@ -1591,7 +1605,7 @@ class TestOAuthRouter:
             mock_token_storage.get_token_info_bulk = AsyncMock(return_value={gw1.id: None, gw2.id: RuntimeError("vault unavailable")})
             mock_token_storage_class.return_value = mock_token_storage
 
-            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], current_user=mock_current_user, db=mock_db)
 
         assert result[gw1.id]["user_token_status"] == {"status": "missing", "authorized": False}
         assert result[gw2.id]["user_token_status"] == {"status": "unknown", "authorized": False}
@@ -1620,10 +1634,47 @@ class TestOAuthRouter:
 
             with patch("mcpgateway.routers.oauth_router.OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS", 0.01):
                 with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
-                    result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+                    result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
 
         assert result["gateway123"]["user_token_status"] == {"status": "unknown", "authorized": False}
         mock_logger.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_denied_without_gateways_read_permission(self, mock_db, mock_request):
+        """A caller without gateways.read is rejected by the @require_permission decorator
+        before the handler's own ownership/visibility checks ever run (Layer 2 RBAC,
+        review #6620): Layer 1 token scoping and the per-gateway ownership check are
+        necessary but not sufficient - a visible gateway must not leak OAuth config and
+        per-caller token state to a principal who lacks gateways.read."""
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
+            mock_permission_service = Mock()
+            mock_permission_service.check_permission = AsyncMock(return_value=False)
+            mock_permission_service_class.return_value = mock_permission_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_oauth_status("gateway123", mock_request, current_user={"email": "no-perms@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_denied_without_gateways_read_permission(self, mock_db, mock_request):
+        """Same RBAC gate applies to the batch endpoint - a caller without gateways.read
+        is rejected before any per-gateway visibility check or gateway lookup runs."""
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
+            mock_permission_service = Mock()
+            mock_permission_service.check_permission = AsyncMock(return_value=False)
+            mock_permission_service_class.return_value = mock_permission_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_oauth_status_batch(mock_request, ["gateway123"], current_user={"email": "no-perms@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_success(self, mock_db, mock_current_user):
@@ -2696,7 +2747,7 @@ class TestOAuthRouterAdditionalCoverage:
             from mcpgateway.routers.oauth_router import get_oauth_status
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_oauth_status("gateway123", mock_request, {"email": "user@example.com"}, mock_db)
+                await get_oauth_status("gateway123", mock_request, current_user={"email": "user@example.com"}, db=mock_db)
 
         assert exc_info.value.status_code == 403
 

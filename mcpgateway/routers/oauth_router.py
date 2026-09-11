@@ -1447,6 +1447,7 @@ def _build_oauth_status_payload(gateway: Gateway) -> Dict[str, Any]:
 
 
 @oauth_router.get("/status/{gateway_id}")
+@require_permission(Permissions.GATEWAYS_READ)
 async def get_oauth_status(
     gateway_id: str,
     request: Request,
@@ -1506,6 +1507,7 @@ OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS = 15.0
 
 
 @oauth_router.get("/status")
+@require_permission(Permissions.GATEWAYS_READ)
 async def get_oauth_status_batch(
     request: Request,
     gateway_ids: Annotated[Optional[list[str]], Query(description="Gateway ids to look up; repeat the parameter for multiple ids")] = None,
