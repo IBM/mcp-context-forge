@@ -3934,6 +3934,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(gateway)
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="set_gateway_state",
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    resource_name=gateway.name,
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    new_values={
+                        "last_error": gateway.last_error,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                        "only_update_reachable": only_update_reachable,
+                    },
+                )
 
             return self.convert_gateway_to_read(gateway)
 
@@ -4538,13 +4554,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email=None,
         )
 
-    async def _handle_gateway_failure(self, gateway: DbGateway, error: Optional[BaseException] = None) -> None:
+    async def _handle_gateway_failure(self, gateway: DbGateway, error: Optional[BaseException] = None, auth_query_params: Optional[Dict[str, str]] = None) -> None:
         """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
 
         Args:
             gateway: The gateway object that failed its health check.
             error: The health-check failure. It is sanitized before persistence.
+            auth_query_params: Decrypted query-auth params used for sanitizing
+                embedded URLs. Falls back to the gateway's stored params when
+                absent (redaction is name-based, so both redact identically;
+                the explicit dict keeps the plaintext material visible at the
+                call site instead of reaching back to the encrypted column).
 
         Returns:
             None
@@ -4585,8 +4606,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
-            raw_error = (str(error) or type(error).__name__) if error is not None else "Unknown health-check failure"
-            sanitized_error = sanitize_exception_message(raw_error, getattr(gateway, "auth_query_params", None))
+            raw_error = (str(error).strip() or type(error).__name__) if error is not None else "Unknown health-check failure"
+            sanitized_error = sanitize_exception_message(raw_error, auth_query_params or getattr(gateway, "auth_query_params", None))
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
@@ -4934,7 +4955,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if span:
                                     set_span_attribute(span, "health.status", "unhealthy")
                                     set_span_error(span, e)
-                                await self._handle_gateway_failure(gateway, error=e)
+                                await self._handle_gateway_failure(gateway, error=e, auth_query_params=auth_query_params_decrypted)
                                 return
                     else:
                         # Handle non-OAuth authentication (existing logic)
@@ -5096,9 +5117,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             set_span_error(span, e)
 
                         # Set the logger as debug as this check happens for each interval
-                        safe_error = sanitize_exception_message(str(exc_to_inspect), gateway_auth_query_params)
+                        safe_error = sanitize_exception_message(str(exc_to_inspect), auth_query_params_decrypted or gateway_auth_query_params)
                         logger.debug("Health check failed for gateway %s: %s", gateway_name, safe_error)
-                        await self._handle_gateway_failure(gateway, error=exc_to_inspect)
+                        await self._handle_gateway_failure(gateway, error=exc_to_inspect, auth_query_params=auth_query_params_decrypted)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """

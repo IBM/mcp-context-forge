@@ -6437,6 +6437,55 @@ class TestHandleGatewayFailureThreshold:
         db.execute.assert_not_called()
         db.commit.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_threshold_prefers_decrypted_params_over_ciphertext(self, gateway_service, monkeypatch):
+        """Ciphertext at rest must never weaken URL redaction (review B-1)."""
+        gw = SimpleNamespace(id="gw-enc", name="test", enabled=True, reachable=True, auth_query_params={"api_key": "ENCRYPTED_BLOB_FIXTURE"})
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        error = RuntimeError("connection failed for https://gateway.test?api_key=live-secret-123")
+        # Health-check call sites pass the decrypted dict explicitly:
+        await gateway_service._handle_gateway_failure(gw, error, {"api_key": "live-secret-123"})
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert "REDACTED" in kwargs["last_error"]
+        assert "live-secret-123" not in kwargs["last_error"]
+
+        # Fallback path (stored ciphertext only) redacts identically,
+        # because redaction is name-based:
+        gateway_service.set_gateway_state.reset_mock()
+        await gateway_service._handle_gateway_failure(gw, error)
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert "REDACTED" in kwargs["last_error"]
+        assert "live-secret-123" not in kwargs["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_whitespace_error_falls_back_to_type_name(self, gateway_service, monkeypatch):
+        """Whitespace-only str(error) must not persist as last_error (review B-2)."""
+        gw = SimpleNamespace(id="gw-ws", name="test", enabled=True, reachable=True, auth_query_params=None)
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        class BlankError(Exception):
+            def __str__(self):
+                return "   "
+
+        await gateway_service._handle_gateway_failure(gw, BlankError())
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert kwargs["last_error"] == "BlankError"
+
 
 class TestMarkGatewayReachableErrorCleanup:
     @pytest.mark.asyncio
@@ -10274,3 +10323,4 @@ class TestGatewayImpactPreviewTeamResolution:
         assert len(result.servers) == 1
         mock_team_service.assert_not_called()
         mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)
+
