@@ -1078,6 +1078,43 @@ class TestResourceManagement:
         assert mock_resource.extension_metadata == metadata
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("submitted,expected_base", [("gateway-report", "report"), ("report", "report"), ("Chosen Name", "chosen-name"), ("---", "")])
+    async def test_resource_namespacing_admin_save(self, resource_service, mock_db, mock_resource, submitted, expected_base):
+        """Repeated Admin saves preserve the base unless the submitted name changes."""
+        mock_resource.gateway_id = "gateway"
+        mock_resource.name = "gateway-report"
+        mock_resource.original_name = "Report"
+        mock_resource.custom_name_slug = "report"
+        mock_db.get.return_value = mock_resource
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+        with (
+            patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read", return_value={"id": mock_resource.id}),
+        ):
+            for _ in range(2):
+                await resource_service.update_resource(mock_db, mock_resource.id, ResourceUpdate(name=submitted, description="Changed description"))
+                assert mock_resource.custom_name_slug == expected_base
+                assert mock_resource.original_name == "Report"
+                # The ORM listener, not this service, owns the derived name.
+                assert mock_resource.name == "gateway-report"
+
+    @pytest.mark.asyncio
+    async def test_resource_namespacing_local_rename_records_base(self, resource_service, mock_db, mock_resource):
+        """Local names remain verbatim while preserving rename intent for adoption."""
+        mock_resource.original_name = "Original Name"
+        mock_resource.custom_name_slug = "original-name"
+        mock_db.get.return_value = mock_resource
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+        with (
+            patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read", return_value={"id": mock_resource.id}),
+        ):
+            await resource_service.update_resource(mock_db, mock_resource.id, ResourceUpdate(name="My Report"))
+        assert mock_resource.name == "My Report"
+        assert mock_resource.custom_name_slug == "my-report"
+        assert mock_resource.original_name == "Original Name"
+
+    @pytest.mark.asyncio
     async def test_update_resource_rejects_ui_uri_without_policy_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
         """Updating a resource into ui:// must enforce the same policy metadata as creation."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
