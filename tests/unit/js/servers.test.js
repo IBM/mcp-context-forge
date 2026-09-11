@@ -11,10 +11,11 @@ import {
   setEditServerAssociations,
   loadServers,
 } from "../../../mcpgateway/admin_ui/servers.js";
+import { handleEditServerFormSubmit } from "../../../mcpgateway/admin_ui/formSubmitHandlers.js";
+import { getSelectedGatewayIds } from "../../../mcpgateway/admin_ui/gateways.js";
 import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
 import { openModal } from "../../../mcpgateway/admin_ui/modals";
 import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
-import { fetchWithAuth } from "../../../mcpgateway/admin_ui/tokens.js";
 
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
   AppState: {
@@ -25,6 +26,7 @@ vi.mock("../../../mcpgateway/admin_ui/configExport.js", () => ({
   getCatalogUrl: vi.fn(() => "http://localhost/catalog"),
 }));
 vi.mock("../../../mcpgateway/admin_ui/gateways.js", () => ({
+  getSelectedGatewayIds: vi.fn(() => []),
   initGatewaySelect: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/modals", () => ({
@@ -38,11 +40,16 @@ vi.mock("../../../mcpgateway/admin_ui/resources", () => ({
 }));
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
+  safeParseJsonResponse: vi.fn(() => Promise.resolve({ success: true })),
   validateInputName: vi.fn((s) => ({ valid: true, value: s })),
+  validateJson: vi.fn(() => ({ valid: true })),
   validateUrl: vi.fn(() => ({ valid: true })),
 }));
 vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
   fetchWithAuth: vi.fn(),
+}));
+vi.mock("../../../mcpgateway/admin_ui/navigation.js", () => ({
+  navigateAdmin: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
@@ -69,10 +76,14 @@ afterEach(() => {
   document.body.innerHTML = "";
   delete window.ROOT_PATH;
   delete window.Admin;
+  delete window.USER_TEAMS_DATA;
+  delete window.ALLOW_PUBLIC_VISIBILITY;
   delete window._editStoreListenersAttached;
   delete window._addStoreListenersAttached;
   // Reset AppState.editServerSelections
   AppState.editServerSelections = {};
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -216,6 +227,107 @@ describe("viewServer", () => {
 // editServer
 // ---------------------------------------------------------------------------
 describe("editServer", () => {
+  const createTeamSelectorForm = () => {
+    const form = document.createElement("form");
+    form.id = "edit-server-form";
+    form.action = "/admin/servers/s1/edit";
+
+    const nameInput = document.createElement("input");
+    nameInput.name = "name";
+    nameInput.value = "test-server";
+    form.appendChild(nameInput);
+
+    const visibilityRadios = ["public", "team", "private"].map((visibility) => {
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "visibility";
+      radio.value = visibility;
+      radio.id = `edit-server-visibility-${visibility}`;
+      form.appendChild(radio);
+      return radio;
+    });
+
+    const teamContainer = document.createElement("div");
+    teamContainer.id = "edit-server-team-container";
+    teamContainer.classList.add("hidden");
+
+    const teamLabel = document.createElement("label");
+    teamLabel.htmlFor = "edit-server-team-id";
+    teamLabel.textContent = "Team";
+    teamContainer.appendChild(teamLabel);
+
+    const teamSelect = document.createElement("select");
+    teamSelect.id = "edit-server-team-id";
+    teamSelect.name = "team_id";
+    teamContainer.appendChild(teamSelect);
+    form.appendChild(teamContainer);
+
+    const teamMessage = document.createElement("p");
+    teamMessage.id = "edit-server-team-message";
+    teamMessage.setAttribute("aria-live", "polite");
+    form.appendChild(teamMessage);
+    document.body.appendChild(form);
+
+    return {
+      form,
+      publicRadio: visibilityRadios[0],
+      teamRadio: visibilityRadios[1],
+      privateRadio: visibilityRadios[2],
+      teamContainer,
+      teamSelect,
+      teamMessage,
+    };
+  };
+
+  const mockServerForTeamSelector = ({
+    visibility = "team",
+    teamId = "team-owner-2",
+  } = {}) => {
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "s1",
+          name: "test-server",
+          visibility,
+          teamId,
+        }),
+    });
+  };
+
+  const createEditAssociationScopeElements = () => {
+    const viewPublicCheckbox = document.createElement("input");
+    viewPublicCheckbox.type = "checkbox";
+    viewPublicCheckbox.id = "edit-server-view-public";
+    document.body.appendChild(viewPublicCheckbox);
+
+    const containerIds = [
+      "associatedEditGateways",
+      "edit-server-tools",
+      "edit-server-resources",
+      "edit-server-prompts",
+    ];
+    const containers = containerIds.map((containerId, index) => {
+      const container = document.createElement("div");
+      container.id = containerId;
+      const gatewayFilter = index === 1 ? "&gateway_id=gateway-1" : "";
+      container.setAttribute(
+        "hx-get",
+        `/admin/items/${index}?page=1&team_id=team-owner-1${gatewayFilter}`
+      );
+      document.body.appendChild(container);
+      return container;
+    });
+
+    const htmx = {
+      process: vi.fn(),
+      trigger: vi.fn(),
+    };
+    window.htmx = htmx;
+
+    return { containers, htmx, viewPublicCheckbox };
+  };
+
   test("fetches server data for editing", async () => {
     window.ROOT_PATH = "";
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -365,6 +477,337 @@ describe("editServer", () => {
     expect(privateRadio.checked).toBe(false);
 
     consoleSpy.mockRestore();
+  });
+
+  test("populates only owner teams and selects the server team", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+      { id: "team-member", name: "Member Team", role: "member" },
+      { id: "team-owner-2", name: "Owner Team Two", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamContainer, teamSelect } = createTeamSelectorForm();
+    mockServerForTeamSelector();
+
+    await editServer("s1");
+
+    expect(
+      Array.from(teamSelect.options, (option) => ({
+        value: option.value,
+        text: option.textContent,
+      }))
+    ).toEqual([
+      { value: "", text: "— Select a team —" },
+      { value: "team-owner-1", text: "Owner Team One" },
+      { value: "team-owner-2", text: "Owner Team Two" },
+    ]);
+    expect(teamSelect.value).toBe("team-owner-2");
+    expect(teamSelect.disabled).toBe(false);
+    expect(teamContainer.classList.contains("hidden")).toBe(false);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("submits the selected team only for team visibility", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+      { id: "team-owner-2", name: "Owner Team Two", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const {
+      form,
+      publicRadio,
+      teamRadio,
+      privateRadio,
+      teamContainer,
+      teamSelect,
+    } = createTeamSelectorForm();
+    mockServerForTeamSelector({ visibility: "private" });
+
+    await editServer("s1");
+
+    expect(privateRadio.checked).toBe(true);
+    expect(teamSelect.disabled).toBe(true);
+    expect(teamContainer.classList.contains("hidden")).toBe(true);
+    expect(new FormData(form).has("team_id")).toBe(false);
+
+    teamRadio.checked = true;
+    teamRadio.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(teamSelect.disabled).toBe(false);
+    expect(teamContainer.classList.contains("hidden")).toBe(false);
+    expect(teamSelect.value).toBe("team-owner-2");
+    expect(new FormData(form).get("team_id")).toBe("team-owner-2");
+
+    publicRadio.checked = true;
+    publicRadio.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(teamSelect.disabled).toBe(true);
+    expect(teamContainer.classList.contains("hidden")).toBe(true);
+    expect(new FormData(form).has("team_id")).toBe(false);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("does not duplicate the team select or options when reopened", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+      { id: "team-owner-2", name: "Owner Team Two", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { form, teamSelect } = createTeamSelectorForm();
+    mockServerForTeamSelector();
+
+    await editServer("s1");
+    await editServer("s1");
+
+    expect(form.querySelectorAll("#edit-server-team-id")).toHaveLength(1);
+    expect(teamSelect.options).toHaveLength(3);
+    expect(Array.from(teamSelect.options, (option) => option.value)).toEqual([
+      "",
+      "team-owner-1",
+      "team-owner-2",
+    ]);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("keeps the placeholder selected when the current team is not owned", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-member", name: "Member Team", role: "member" },
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamSelect } = createTeamSelectorForm();
+    mockServerForTeamSelector({ teamId: "team-member" });
+
+    await editServer("s1");
+
+    expect(teamSelect.value).toBe("");
+    expect(teamSelect.selectedIndex).toBe(0);
+    expect(teamSelect.options[1].value).toBe("team-owner-1");
+    expect(teamSelect.options[1].selected).toBe(false);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("re-scopes all association selectors when the owner team changes", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+      { id: "team-owner-2", name: "Owner Team Two", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamSelect } = createTeamSelectorForm();
+    const { containers, htmx, viewPublicCheckbox } =
+      createEditAssociationScopeElements();
+    mockServerForTeamSelector({ teamId: "team-owner-1" });
+
+    await editServer("s1");
+    teamSelect.value = "team-owner-2";
+    teamSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    containers.forEach((container) => {
+      const url = new URL(container.getAttribute("hx-get"), window.location);
+      expect(url.searchParams.get("team_id")).toBe("team-owner-2");
+      expect(url.searchParams.has("include_public")).toBe(false);
+    });
+    expect(
+      new URL(
+        containers[1].getAttribute("hx-get"),
+        window.location
+      ).searchParams.get("gateway_id")
+    ).toBe("gateway-1");
+    expect(htmx.process).toHaveBeenCalledTimes(4);
+    expect(htmx.trigger).toHaveBeenCalledTimes(4);
+    containers.forEach((container) => {
+      expect(htmx.process).toHaveBeenCalledWith(container);
+      expect(htmx.trigger).toHaveBeenCalledWith(container, "load");
+    });
+
+    viewPublicCheckbox.checked = true;
+    getSelectedGatewayIds.mockReturnValueOnce(["gateway-1"]);
+    viewPublicCheckbox.dispatchEvent(new Event("change"));
+    containers.forEach((container) => {
+      const url = new URL(container.getAttribute("hx-get"), window.location);
+      expect(url.searchParams.get("team_id")).toBe("team-owner-2");
+      expect(url.searchParams.get("include_public")).toBe("true");
+    });
+    expect(
+      new URL(
+        containers[1].getAttribute("hx-get"),
+        window.location
+      ).searchParams.get("gateway_id")
+    ).toBe("gateway-1");
+
+    consoleSpy.mockRestore();
+  });
+
+  test("preserves include_public while re-scoping association selectors", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+      { id: "team-owner-2", name: "Owner Team Two", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamSelect } = createTeamSelectorForm();
+    const { containers, viewPublicCheckbox } =
+      createEditAssociationScopeElements();
+    mockServerForTeamSelector({ teamId: "team-owner-1" });
+
+    await editServer("s1");
+    viewPublicCheckbox.checked = true;
+    teamSelect.value = "team-owner-2";
+    teamSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    containers.forEach((container) => {
+      const url = new URL(container.getAttribute("hx-get"), window.location);
+      expect(url.searchParams.get("team_id")).toBe("team-owner-2");
+      expect(url.searchParams.get("include_public")).toBe("true");
+    });
+
+    consoleSpy.mockRestore();
+  });
+
+  test("keeps the current server team scope when the placeholder is selected", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-member", name: "Member Team", role: "member" },
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamSelect } = createTeamSelectorForm();
+    const { containers } = createEditAssociationScopeElements();
+    mockServerForTeamSelector({ teamId: "team-member" });
+
+    await editServer("s1");
+    expect(teamSelect.value).toBe("");
+    teamSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    containers.forEach((container) => {
+      const url = new URL(container.getAttribute("hx-get"), window.location);
+      expect(url.searchParams.get("team_id")).toBe("team-member");
+      expect(url.searchParams.get("team_id")).not.toBe("");
+    });
+
+    consoleSpy.mockRestore();
+  });
+
+  test("submits an empty team only until an owner team is explicitly selected", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-member", name: "Member Team", role: "member" },
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { form, teamSelect, teamMessage } = createTeamSelectorForm();
+    mockServerForTeamSelector({ teamId: "team-member" });
+    await editServer("s1");
+
+    const NativeFormData = globalThis.FormData;
+    const capturedFormData = [];
+    class CapturingFormData extends NativeFormData {
+      constructor(formElement) {
+        super(formElement);
+        capturedFormData.push(this);
+      }
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("FormData", CapturingFormData);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await handleEditServerFormSubmit({
+      preventDefault: vi.fn(),
+      target: form,
+    });
+
+    expect(capturedFormData[0].get("team_id")).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(teamMessage.textContent).toBe("Please select a team");
+
+    teamSelect.value = "team-owner-1";
+    teamSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    await handleEditServerFormSubmit({
+      preventDefault: vi.fn(),
+      target: form,
+    });
+
+    expect(capturedFormData[1].get("team_id")).toBe("team-owner-1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].body).toBe(capturedFormData[1]);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("disables team visibility and explains when no owner teams exist", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-member", name: "Member Team", role: "member" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamRadio, teamSelect, teamMessage } = createTeamSelectorForm();
+    mockServerForTeamSelector({ teamId: "team-member" });
+
+    await editServer("s1");
+
+    expect(teamRadio.disabled).toBe(true);
+    expect(teamSelect.disabled).toBe(true);
+    expect(teamMessage.getAttribute("aria-live")).toBe("polite");
+    expect(teamMessage.textContent).toBe(
+      "You have no teams you own; team visibility is unavailable."
+    );
+
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+    ];
+    mockServerForTeamSelector({ teamId: "team-owner-1" });
+    await editServer("s1");
+
+    expect(teamRadio.disabled).toBe(false);
+    expect(teamSelect.disabled).toBe(false);
+    expect(teamMessage.textContent).toBe("");
+
+    consoleSpy.mockRestore();
+  });
+
+  test("preserves the selected team across visibility changes without duplicate listeners", async () => {
+    window.ROOT_PATH = "";
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner Team One", role: "owner" },
+      { id: "team-owner-2", name: "Owner Team Two", role: "owner" },
+    ];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { teamRadio, privateRadio, teamContainer, teamSelect } =
+      createTeamSelectorForm();
+    mockServerForTeamSelector({ teamId: "team-owner-2" });
+
+    await editServer("s1");
+    await editServer("s1");
+
+    const toggleSpy = vi.spyOn(teamContainer.classList, "toggle");
+    privateRadio.checked = true;
+    privateRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    teamRadio.checked = true;
+    teamRadio.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(teamSelect.value).toBe("team-owner-2");
+    expect(teamSelect.disabled).toBe(false);
+    expect(teamContainer.classList.contains("hidden")).toBe(false);
+    expect(toggleSpy).toHaveBeenCalledTimes(2);
+
+    consoleSpy.mockRestore();
+  });
+
+  test("associates the team select with its label", () => {
+    const { form, teamSelect } = createTeamSelectorForm();
+    const label = form.querySelector('label[for="edit-server-team-id"]');
+
+    expect(label).not.toBeNull();
+    expect(label.control).toBe(teamSelect);
   });
 
   test("handles tags and icon fields", async () => {
