@@ -112,7 +112,7 @@ The following invariants should stay explicit and testable:
 
 Useful existing coverage already lives in:
 
-- [tests/live_gateway/mcp/test_mcp_rbac_transport.py](../../tests/live_gateway/mcp/test_mcp_rbac_transport.py)
+- [tests/live_gateway/e2e/test_e2e.py](../../tests/live_gateway/e2e/test_e2e.py)
 - [tests/integration/test_streamable_http_redis.py](../../tests/integration/test_streamable_http_redis.py)
 - [tests/e2e/test_session_pool_e2e.py](../../tests/e2e/test_session_pool_e2e.py)
 - [tests/loadtest/locustfile_mcp_protocol.py](../../tests/loadtest/locustfile_mcp_protocol.py)

@@ -11,8 +11,8 @@ plugin E2E suites (``tests/live_gateway/plugins/``) and
 used for wire-level probes.
 
 New protocol-level E2E tests should prefer the official ``mcp`` SDK
-``ClientSession`` pattern used in ``test_mcp_protocol_e2e.py`` and
-``test_mcp_rbac_transport.py`` (no subprocess, no external CLI).
+``ClientSession`` pattern used in ``e2e/test_e2e.py`` (no subprocess, no
+external CLI).
 """
 
 # Future
