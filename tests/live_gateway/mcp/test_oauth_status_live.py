@@ -29,6 +29,7 @@ from sqlalchemy.orm import sessionmaker
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, Gateway, OAuthToken
+from mcpgateway.services.role_service import RoleService
 from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
 from mcpgateway.utils.create_slug import slugify
 from tests.helpers.auth import make_test_jwt
@@ -40,6 +41,7 @@ LIVE_DB_URL = os.getenv(
 )
 
 SECOND_USER_EMAIL = "oauth-status-live-second-user@example.com"
+NO_PERMISSION_USER_EMAIL = "oauth-status-live-no-permission-user@example.com"
 
 
 def _db_reachable() -> bool:
@@ -104,7 +106,14 @@ def oauth_gateway(db_session):
 
 @pytest.fixture(scope="module")
 def second_user(db_session):
-    """A second, non-admin user distinct from the bootstrapped platform admin."""
+    """A second, non-admin user distinct from the bootstrapped platform admin.
+
+    Holds the global, system-seeded ``platform_viewer`` role so it carries
+    ``gateways.read`` - required by the ``@require_permission`` gate on both
+    OAuth status routes - without granting any gateway ownership. This lets
+    the isolation and visibility scenarios reach the per-user/private-gateway
+    logic in the handlers instead of being turned away at the RBAC gate.
+    """
     existing = db_session.query(EmailUser).filter_by(email=SECOND_USER_EMAIL).first()
     created_here = existing is None
     if created_here:
@@ -118,10 +127,48 @@ def second_user(db_session):
         )
         db_session.commit()
 
+    role_service = RoleService(db_session)
+    role = asyncio.run(role_service.get_role_by_name("platform_viewer", "global"))
+    assignment_created = False
+    if role is not None and asyncio.run(role_service.get_user_role_assignment(SECOND_USER_EMAIL, role.id, "global", None)) is None:
+        asyncio.run(role_service.assign_role_to_user(SECOND_USER_EMAIL, role.id, "global", None, granted_by="admin@example.com"))
+        assignment_created = True
+
     yield SECOND_USER_EMAIL
 
+    if assignment_created and role is not None:
+        asyncio.run(role_service.revoke_role_from_user(SECOND_USER_EMAIL, role.id, "global", None))
     if created_here:
         db_session.query(EmailUser).filter_by(email=SECOND_USER_EMAIL).delete()
+        db_session.commit()
+
+
+@pytest.fixture(scope="module")
+def no_permission_user(db_session):
+    """A role-less, non-admin user - has no ``gateways.read`` permission at all.
+
+    Used for the explicit no-permission 403 coverage on both OAuth status
+    routes, kept separate from ``second_user`` (which now holds
+    ``gateways.read`` so it can exercise per-user isolation and private-gateway
+    visibility instead of being blocked by RBAC).
+    """
+    existing = db_session.query(EmailUser).filter_by(email=NO_PERMISSION_USER_EMAIL).first()
+    created_here = existing is None
+    if created_here:
+        db_session.add(
+            EmailUser(
+                email=NO_PERMISSION_USER_EMAIL,
+                password_hash="",  # pragma: allowlist secret
+                full_name="OAuth Status Live No Permission User",
+                is_admin=False,
+            )
+        )
+        db_session.commit()
+
+    yield NO_PERMISSION_USER_EMAIL
+
+    if created_here:
+        db_session.query(EmailUser).filter_by(email=NO_PERMISSION_USER_EMAIL).delete()
         db_session.commit()
 
 
@@ -237,7 +284,7 @@ def test_batch_endpoint_omits_unknown_ids(oauth_gateway: str) -> None:
 
 
 def test_private_gateway_denies_non_owner(private_gateway: str, second_user: str) -> None:
-    """A caller who isn't the owner of a private gateway gets 403 from the single-gateway endpoint."""
+    """A caller who isn't the owner of a private gateway, but does hold ``gateways.read``, gets 403 from the single-gateway endpoint due to private-gateway visibility, not RBAC."""
     other_token = make_test_jwt(second_user, is_admin=False, teams=[], secret=JWT_SECRET)
     response = _get_status(private_gateway, other_token)
 
@@ -256,3 +303,24 @@ def test_batch_endpoint_omits_private_gateway_for_non_owner(private_gateway: str
 
     assert response.status_code == 200, response.text
     assert private_gateway not in response.json()
+
+
+def test_single_endpoint_denies_no_permission_user(oauth_gateway: str, no_permission_user: str) -> None:
+    """A caller with no ``gateways.read`` permission at all gets 403 from the single-gateway endpoint, even for a public gateway."""
+    other_token = make_test_jwt(no_permission_user, is_admin=False, teams=[], secret=JWT_SECRET)
+    response = _get_status(oauth_gateway, other_token)
+
+    assert response.status_code == 403, response.text
+
+
+def test_batch_endpoint_denies_no_permission_user(oauth_gateway: str, no_permission_user: str) -> None:
+    """A caller with no ``gateways.read`` permission at all gets 403 from the batch endpoint, even for a public gateway."""
+    other_token = make_test_jwt(no_permission_user, is_admin=False, teams=[], secret=JWT_SECRET)
+    response = httpx.get(
+        f"{BASE_URL}/oauth/status",
+        params=[("gateway_ids", oauth_gateway)],
+        headers={"Authorization": f"Bearer {other_token}"},
+        timeout=10.0,
+    )
+
+    assert response.status_code == 403, response.text
