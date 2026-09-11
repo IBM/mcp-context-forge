@@ -353,11 +353,20 @@ export const showTab = function (tabName) {
       tabName !== "observability"
     ) {
       console.log("Leaving observability tab, triggering cleanup...");
-      // Destroy all observability charts
-      window.chartRegistry.destroyByPrefix("metrics-");
-      window.chartRegistry.destroyByPrefix("tools-");
-      window.chartRegistry.destroyByPrefix("prompts-");
-      window.chartRegistry.destroyByPrefix("resources-");
+      // The registry is defined as Admin.chartRegistry in app.js, not on window
+      // directly (see events.js, which uses Admin.chartRegistry.destroyAll()).
+      // Reading window.chartRegistry threw a TypeError that propagated out of
+      // switchTab, so leaving the observability tab failed with "Failed to
+      // switch to <name> tab" and the panel never changed. It only surfaced
+      // once observability was enabled, since this block is gated on the
+      // observability panel being the visible one.
+      const chartRegistry = window.Admin && window.Admin.chartRegistry;
+      if (chartRegistry) {
+        chartRegistry.destroyByPrefix("metrics-");
+        chartRegistry.destroyByPrefix("tools-");
+        chartRegistry.destroyByPrefix("prompts-");
+        chartRegistry.destroyByPrefix("resources-");
+      }
       // Dispatch event so Alpine components can stop intervals and reset state
       document.dispatchEvent(new CustomEvent("observability:leave"));
     }
