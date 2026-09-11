@@ -67,7 +67,7 @@ export const updateSchemaPreview = function () {
     const modeRadio = document.querySelector(
       'input[name="schema_input_mode"]:checked',
     );
-    if (modeRadio && modeRadio.value === "json") {
+    if (modeRadio && modeRadio.value === "ui") {
       if (
         window.schemaEditor &&
         typeof window.schemaEditor.setValue === "function"

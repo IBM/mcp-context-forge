@@ -207,11 +207,11 @@ describe("updateSchemaPreview", () => {
     expect(() => updateSchemaPreview()).not.toThrow();
   });
 
-  test("calls schemaEditor.setValue when mode is json", () => {
+  test("calls schemaEditor.setValue when mode is ui", () => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "schema_input_mode";
-    radio.value = "json";
+    radio.value = "ui";
     radio.checked = true;
     document.body.appendChild(radio);
 
@@ -222,11 +222,11 @@ describe("updateSchemaPreview", () => {
     expect(window.schemaEditor.setValue).toHaveBeenCalled();
   });
 
-  test("does not call setValue when mode is not json", () => {
+  test("does not call setValue when mode is not ui", () => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "schema_input_mode";
-    radio.value = "form";
+    radio.value = "json";
     radio.checked = true;
     document.body.appendChild(radio);
 
@@ -239,7 +239,7 @@ describe("updateSchemaPreview", () => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "schema_input_mode";
-    radio.value = "json";
+    radio.value = "ui";
     radio.checked = true;
     document.body.appendChild(radio);
 
@@ -251,7 +251,7 @@ describe("updateSchemaPreview", () => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "schema_input_mode";
-    radio.value = "json";
+    radio.value = "ui";
     radio.checked = true;
     document.body.appendChild(radio);
 
