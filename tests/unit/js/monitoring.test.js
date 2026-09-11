@@ -3,7 +3,7 @@
  * Tests: initializeRealTimeMonitoring
  */
 
-import { describe, test, expect, vi, afterEach } from "vitest";
+import { describe, test, expect, vi, afterEach, beforeEach } from "vitest";
 
 import { initializeRealTimeMonitoring } from "../../../mcpgateway/admin_ui/monitoring.js";
 
@@ -14,10 +14,15 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
 
+beforeEach(() => {
+  window.CAN_ACCESS_ADMIN_EVENTS = true;
+});
+
 afterEach(() => {
   document.body.innerHTML = "";
   delete window.ROOT_PATH;
   delete window.EventSource;
+  delete window.CAN_ACCESS_ADMIN_EVENTS;
 });
 
 // ---------------------------------------------------------------------------
@@ -27,6 +32,16 @@ describe("initializeRealTimeMonitoring", () => {
   test("does nothing when EventSource is not available", () => {
     delete window.EventSource;
     expect(() => initializeRealTimeMonitoring()).not.toThrow();
+  });
+
+  test("does not connect without admin events permission", () => {
+    const MockEventSource = vi.fn();
+    window.EventSource = MockEventSource;
+    window.CAN_ACCESS_ADMIN_EVENTS = false;
+
+    initializeRealTimeMonitoring();
+
+    expect(MockEventSource).not.toHaveBeenCalled();
   });
 
   test("creates EventSource when available", () => {

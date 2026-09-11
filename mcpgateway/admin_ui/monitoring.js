@@ -11,7 +11,7 @@ import { safeGetElement } from  "./utils.js";
 
 
 export const initializeRealTimeMonitoring = function () {
-  if (!window.EventSource) {
+  if (!window.EventSource || window.CAN_ACCESS_ADMIN_EVENTS !== true) {
     return;
   }
 
