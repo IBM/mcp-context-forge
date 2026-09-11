@@ -734,9 +734,6 @@
             "MCPGATEWAY_BULK_IMPORT_RATE_LIMIT": {
               "type": "string"
             },
-            "MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK": {
-              "type": "string"
-            },
             "MCPGATEWAY_CATALOG_CACHE_TTL": {
               "type": "string"
             },
@@ -969,9 +966,6 @@
               "type": "string"
             },
             "PAGINATION_MIN_PAGE_SIZE": {
-              "type": "string"
-            },
-            "PERFORMANCE_TRACKING_ENABLED": {
               "type": "string"
             },
             "PERMISSION_AUDIT_ENABLED": {
@@ -2000,9 +1994,6 @@
               "type": "string"
             },
             "MIN_SECRET_LENGTH": {
-              "type": "string"
-            },
-            "OAUTH_DISCOVERY_ENABLED": {
               "type": "string"
             },
             "OAUTH_MAX_RETRIES": {

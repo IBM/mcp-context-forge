@@ -379,7 +379,6 @@ mcpContextForge:
     # ─ MCP Server Catalog Configuration ─
     MCPGATEWAY_CATALOG_ENABLED: "true"  # enable MCP server catalog feature
     MCPGATEWAY_CATALOG_FILE: "mcp-catalog.yml" # path to catalog configuration file
-    MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK: "true" # automatically health check catalog servers
     MCPGATEWAY_CATALOG_CACHE_TTL: "3600" # catalog cache TTL in seconds
     MCPGATEWAY_CATALOG_PAGE_SIZE: "100" # number of catalog servers per page
 
@@ -783,11 +782,6 @@ mcpContextForge:
     # Uncomment when enabling gRPC:
     # MCPGATEWAY_GRPC_TIMEOUT: "30"
     # MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE: "4194304"
-    # MCPGATEWAY_GRPC_REFLECTION_ENABLED: "false"  # keep false in production (exposes service definitions)
-    # MCPGATEWAY_GRPC_TLS_ENABLED: "false"
-
-    # Performance tracking (internal thresholds — config.py defaults are fine)
-    PERFORMANCE_TRACKING_ENABLED: "false" # enable performance tracking
 
     # Performance monitoring (net/host — disabled by default)
     MCPGATEWAY_PERFORMANCE_TRACKING: "false" # enable gateway performance monitoring UI tab
@@ -936,7 +930,6 @@ mcpContextForge:
     DCR_METADATA_CACHE_TTL: "3600"         # AS metadata cache TTL in seconds (RFC 8414 discovery)
     DCR_CLIENT_NAME_TEMPLATE: "ContextForge ({gateway_name})" # template for client_name in DCR requests
     DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED: "false" # request refresh_token when AS omits grant_types_supported
-    OAUTH_DISCOVERY_ENABLED: "true"        # enable AS metadata discovery (RFC 8414)
     OAUTH_PREFERRED_CODE_CHALLENGE_METHOD: "S256" # PKCE code challenge method (S256 or plain)
 
     # ─ JWT Configuration (Advanced) ─

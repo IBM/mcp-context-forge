@@ -29,9 +29,6 @@ MCPGATEWAY_CATALOG_ENABLED=true
 # Path to catalog configuration file (default: mcp-catalog.yml)
 MCPGATEWAY_CATALOG_FILE=mcp-catalog.yml
 
-# Automatically health check catalog servers (default: true)
-MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK=true
-
 # Catalog cache TTL in seconds (default: 3600)
 MCPGATEWAY_CATALOG_CACHE_TTL=3600
 
