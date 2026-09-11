@@ -435,12 +435,16 @@ class CatalogService:
             plus whichever caller-supplied fields were provided.
 
         Raises:
-            ValueError: If a known credential key is supplied with a non-string value. Left
+            ValueError: If a known credential key is supplied with a non-string value, or if
+                ``resource`` isn't a non-empty string or a list of non-empty strings. Left
                 unchecked, a dict/list/int value skips `_encrypt_oauth_secret_value`'s
                 `isinstance(value, str)` guard (it returns non-strings unencrypted) and
                 `_validate_oauth_config_urls` (which only inspects the URL-bearing keys),
                 so e.g. a dict `client_secret` would persist to `gateways.oauth_config` in
-                plaintext.
+                plaintext. ``resource`` feeds `token_validation_service`'s audience check
+                (`oauth_config["resource"]`, RFC 8707), which only ever expects a string or a
+                list of strings - an unvalidated value such as `[42]` would persist unchanged
+                and silently never match any token `aud`.
         """
         oauth_credentials = oauth_credentials or {}
         raw_oauth_config: Dict[str, Any] = {
@@ -471,7 +475,12 @@ class CatalogService:
                 raw_oauth_config["scopes"] = normalized_scopes
         resource = oauth_credentials.get("resource")
         if resource:
-            raw_oauth_config["resource"] = resource if isinstance(resource, list) else str(resource)
+            if isinstance(resource, str):
+                raw_oauth_config["resource"] = resource
+            elif isinstance(resource, list) and resource and all(isinstance(r, str) and r for r in resource):
+                raw_oauth_config["resource"] = resource
+            else:
+                raise ValueError("oauth_credentials.resource must be a non-empty string or a list of non-empty strings")
         return raw_oauth_config
 
     async def register_catalog_server(
@@ -813,7 +822,11 @@ class CatalogService:
         except Exception as e:
             logger.error("Failed to register catalog server %s: %s", catalog_id, e)
 
-            # Map common exceptions to user-friendly messages
+            # Map common exceptions to user-friendly messages. error_str is only ever matched
+            # against below (never rendered as-is): the underlying exception can originate from
+            # _build_oauth_config_from_credentials or the connection-test path and may embed
+            # caller-supplied values (e.g. a ValueError naming an offending oauth_credentials
+            # field), and this response's `error` field is rendered by the admin HTMX route.
             error_str = str(e)
             user_message = "Registration failed"
 
@@ -836,7 +849,11 @@ class CatalogService:
 
             # Don't rollback here - let FastAPI handle it
             # db.rollback()
-            return CatalogServerRegisterResponse(success=False, server_id="", message=user_message, error=error_str)
+            # error mirrors user_message rather than the raw error_str: the admin HTMX route
+            # renders this field, and error_str can originate from _build_oauth_config_from_credentials
+            # or other paths that embed caller-supplied values. Full detail is still available
+            # server-side via the logger.error call above.
+            return CatalogServerRegisterResponse(success=False, server_id="", message=user_message, error=user_message)
 
     async def check_server_availability(self, catalog_id: str) -> CatalogServerStatusResponse:
         """Check if a catalog server is available.

@@ -221,12 +221,17 @@ async def test_get_catalog_servers_requires_oauth_config_enabled(service):
 
 @pytest.mark.asyncio
 async def test_get_catalog_servers_requires_oauth_config_true_even_when_oauth_config_set(service, test_db):
-    """A disabled OAuth gateway still requires_oauth_config even once oauth_config is persisted.
+    """A disabled OAuth gateway still requires_oauth_config even once oauth_config is persisted -
+    including one that was never registered through the catalog at all.
 
     Catalog registration now persists oauth_config up front (#5967), so an unauthorized gateway
     can have a populated oauth_config and still need the caller to complete the OAuth flow.
-    requires_oauth_config must key off enabled/auth_type alone, not oauth_config presence -
-    otherwise a genuinely unauthorized gateway would look fully configured to the caller.
+    requires_oauth_config must key off enabled/auth_type alone, not oauth_config presence or
+    created_via - otherwise a genuinely unauthorized gateway would look fully configured to the
+    caller. This gateway is deliberately created without created_via (i.e. not "catalog") to
+    document that a manually-created disabled OAuth gateway sharing a catalog entry's URL is
+    intentionally flagged the same way as a catalog-registered one, matching selected_gateways_by_url's
+    URL-only matching in get_catalog_servers.
     """
     # First-Party
     from mcpgateway.db import Gateway as DbGateway
@@ -241,6 +246,7 @@ async def test_get_catalog_servers_requires_oauth_config_true_even_when_oauth_co
         auth_type="oauth",
         enabled=False,
         oauth_config={"grant_type": "authorization_code", "issuer": "https://idp.example.com"},
+        created_via=None,
     )
     test_db.add(gateway)
     test_db.commit()
@@ -691,6 +697,25 @@ def test_build_oauth_config_from_credentials_resource_list_preserved(service):
     list rather than being coerced to str or dropped for not being a plain string."""
     raw = service._build_oauth_config_from_credentials({"resource": ["https://a.example.com", "https://b.example.com"]})
     assert raw["resource"] == ["https://a.example.com", "https://b.example.com"]
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [
+        [42],
+        [""],
+        ["https://a.example.com", ""],
+        [None],
+        123,
+        {"not": "a-list"},
+    ],
+)
+def test_build_oauth_config_from_credentials_rejects_malformed_resource(service, resource):
+    """``resource`` feeds token_validation_service's RFC 8707 audience check, which only ever
+    expects a string or a list of non-empty strings. An unvalidated value such as ``[42]``
+    would otherwise persist unchanged and silently never match any token ``aud``."""
+    with pytest.raises(ValueError, match="oauth_credentials.resource must be"):
+        service._build_oauth_config_from_credentials({"resource": resource})
 
 
 def test_build_oauth_config_from_credentials_splits_comma_separated_scopes(service):
