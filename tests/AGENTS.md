@@ -57,8 +57,9 @@ make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
-make test-mcp-protocol-e2e        # MCP protocol via the official mcp SDK client (needs live gateway)
-make test-mcp-rbac                # MCP RBAC transport E2E (needs live gateway)
+make test-e2e                     # Consolidated MCP protocol and RBAC E2E (needs live gateway)
+make test-mcp-protocol-e2e        # Deprecated compatibility alias for test-e2e
+make test-mcp-rbac                # Deprecated compatibility alias for test-e2e
 make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack (requires test-specific plugin config)
 make test-mcp-access-matrix       # Rust-only MCP role/access matrix with strong sentinels
 make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
