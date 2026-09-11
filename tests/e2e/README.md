@@ -3,14 +3,14 @@
 End-to-end tests that exercise ContextForge across component boundaries,
 often requiring running services.
 
-## MCP Protocol E2E (mcp SDK client)
+## MCP Protocol and RBAC E2E
 
-**File:** `test_mcp_protocol_e2e.py`
+**File:** `tests/live_gateway/e2e/test_e2e.py`
 
 Exercises the MCP protocol against a live ContextForge instance using the
-official `mcp` SDK (`ClientSession` over Streamable HTTP) — no `mcp-cli` binary, no `mcpgateway.wrapper`
-subprocess. All tests are async and run in-pytest. No LLM provider or API key
-is required.
+official `mcp` SDK (`ClientSession` over Streamable HTTP) and Playwright API
+setup for RBAC coverage — no `mcp-cli` binary or `mcpgateway.wrapper`
+subprocess. No LLM provider or API key is required.
 
 ### Prerequisites
 
@@ -25,17 +25,18 @@ docker compose up -d          # gateway on :8080 via nginx
 
 ```bash
 # Default — tests against http://localhost:8080
-make test-mcp-protocol-e2e
+make test-e2e
 
 # Override gateway URL
-MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-protocol-e2e
+MCP_CLI_BASE_URL=http://localhost:4444 make test-e2e
 
 # Run directly with pytest
-pytest tests/live_gateway/mcp/test_mcp_protocol_e2e.py -v
+pytest tests/live_gateway/e2e/test_e2e.py -v
 ```
 
-The legacy `make test-mcp-cli` target is retained as a deprecation alias and
-invokes the new target.
+The legacy `make test-mcp-cli`, `make test-mcp-protocol-e2e`, and
+`make test-mcp-rbac` targets are retained as deprecation aliases and invoke
+the consolidated target.
 
 ### Environment Variables
 
