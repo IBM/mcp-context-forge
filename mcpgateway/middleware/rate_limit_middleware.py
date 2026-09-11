@@ -131,6 +131,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "limit": settings.rate_limit_medium_rpm,
                 "burst": settings.rate_limit_medium_burst,
             },
+            "OBSERVABILITY_METRICS": {
+                "pattern": r"^/(?:v1/)?observability/metrics(/|$)",
+                "limit": settings.rate_limit_low_rpm,
+                "burst": settings.rate_limit_low_burst,
+            },
             "LOW": {
                 "pattern": r"^/(health|metrics|docs|openapi)(/|$)",
                 "limit": settings.rate_limit_low_rpm,

@@ -28,6 +28,9 @@ async def test_admin_stats_cache_in_memory_paths(monkeypatch):
     await cache.set_observability_stats({"spans": 2}, hours=12)
     assert await cache.get_observability_stats(12) == {"spans": 2}
 
+    await cache.set_observability_stats({"values": [1]}, hours=24, cache_key="metrics:timeseries:24:60")
+    assert await cache.get_observability_stats(24, cache_key="metrics:timeseries:24:60") == {"values": [1]}
+
     await cache.set_users_list(["u1"], limit=5, offset=0)
     assert await cache.get_users_list(limit=5, offset=0) == ["u1"]
 

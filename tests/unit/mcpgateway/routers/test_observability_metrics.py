@@ -12,7 +12,7 @@ bucketing and percentile math run as actual queries rather than mocked results.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 from fastapi import FastAPI, HTTPException
@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
+from mcpgateway.cache.admin_stats_cache import AdminStatsCache
 from mcpgateway.config import settings
 from mcpgateway.db import Base, ObservabilityTrace
 from mcpgateway.middleware import rbac as rbac_module
@@ -82,6 +83,12 @@ def no_plugin_manager(monkeypatch: pytest.MonkeyPatch):
         return None
 
     monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", _no_plugin_manager)
+
+
+@pytest.fixture(autouse=True)
+def no_metrics_cache(monkeypatch: pytest.MonkeyPatch):
+    """Keep result caching from leaking data between endpoint tests."""
+    monkeypatch.setattr(observability_module, "admin_stats_cache", AdminStatsCache(enabled=False))
 
 
 @pytest.fixture
@@ -190,6 +197,50 @@ async def test_percentiles_linear_interpolation_and_null_exclusion(db_session, g
     assert response.p50 == [150.0]
     assert response.p95 == [195.0]
     assert response.p99 == [199.0]
+
+
+@pytest.mark.parametrize(
+    "service_method,trace_kwargs,expected_values",
+    [
+        ("get_execution_timeseries", {}, {"values": [1]}),
+        ("get_latency_percentiles", {"duration_ms": 100.0}, {"p50": [100.0], "p95": [100.0], "p99": [100.0]}),
+    ],
+)
+def test_sqlite_metric_queries_do_not_require_unixepoch(db_session, service_method, trace_kwargs, expected_values):
+    """SQLite metrics keep working when the newer unixepoch function is unavailable."""
+
+    def unavailable_unixepoch(_):
+        raise AssertionError("unixepoch must not be called")
+
+    db_session.connection().connection.create_function("unixepoch", 1, unavailable_unixepoch)
+    make_trace(db_session, offset_seconds=300, **trace_kwargs)
+
+    result = getattr(ObservabilityService(), service_method)(db_session, BASE_TIME - timedelta(hours=24), 60)
+
+    assert result["buckets"] == ["2025-01-01T12:00:00+00:00"]
+    for key, value in expected_values.items():
+        assert result[key] == value
+
+
+@pytest.mark.asyncio
+async def test_metrics_cache_isolated_by_metric_and_interval(db_session, grant_permissions, monkeypatch):
+    """Timeseries and percentile queries use distinct cache identities."""
+    grant_permissions()
+    monkeypatch.setattr(observability_module, "datetime", _FrozenDatetime)
+    cache = AdminStatsCache(enabled=True)
+    monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=None))
+    monkeypatch.setattr(observability_module, "admin_stats_cache", cache)
+
+    make_trace(db_session, offset_seconds=300)
+    first = await call_timeseries(db_session)
+    make_trace(db_session, offset_seconds=5400)
+    cached = await call_timeseries(db_session)
+    percentiles = await call_percentiles(db_session)
+
+    assert cached == first
+    assert percentiles.buckets == []
+    assert cache._get_redis_key("observability", "metrics:timeseries:24:60") in cache._cache
+    assert cache._get_redis_key("observability", "metrics:percentiles:24:60") in cache._cache
 
 
 @pytest.mark.asyncio
