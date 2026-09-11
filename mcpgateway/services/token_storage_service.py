@@ -155,6 +155,13 @@ class TokenStorageService:
         else:
             raise ValueError(f"Unknown OAUTH_TOKEN_BACKEND: {settings.oauth_token_backend}. Expected 'database' or 'vault'.")
 
+    @staticmethod
+    def _require_app_user_email(app_user_email: str) -> str:
+        """Reject missing user identity before it reaches a token backend."""
+        if not app_user_email:
+            raise ValueError("app_user_email is required for token operations")
+        return app_user_email
+
     def _get_team_id(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """
         Extract team_id from JWT user_context (sole source of truth).
@@ -267,6 +274,7 @@ class TokenStorageService:
         Raises:
             OAuthError: If token storage fails
         """
+        app_user_email = self._require_app_user_email(app_user_email)
         team_id = self._get_team_id(gateway_id, app_user_email)
         return await self._backend.store_tokens(
             gateway_id=gateway_id,
@@ -297,6 +305,7 @@ class TokenStorageService:
         Returns:
             Valid access token or None if no valid token available for this user
         """
+        app_user_email = self._require_app_user_email(app_user_email)
         team_id = self._get_team_id(gateway_id, app_user_email)
         return await self._backend.get_user_token(
             gateway_id=gateway_id,
@@ -325,6 +334,7 @@ class TokenStorageService:
         Returns:
             The ``{header: value}`` dict, or None.
         """
+        app_user_email = self._require_app_user_email(app_user_email)
         team_id = self._get_team_id(gateway_id, app_user_email)
         return await self._backend.get_user_auth_headers(
             gateway_id=gateway_id,
@@ -346,6 +356,7 @@ class TokenStorageService:
         Returns:
             Token information dictionary or None if not found
         """
+        app_user_email = self._require_app_user_email(app_user_email)
         team_id = self._get_team_id(gateway_id, app_user_email)
         return await self._backend.get_token_info(
             gateway_id=gateway_id,
@@ -367,6 +378,7 @@ class TokenStorageService:
         Returns:
             True if tokens were revoked successfully
         """
+        app_user_email = self._require_app_user_email(app_user_email)
         team_id = self._get_team_id(gateway_id, app_user_email)
         return await self._backend.revoke_user_tokens(
             gateway_id=gateway_id,
@@ -410,6 +422,7 @@ class TokenStorageService:
             Tuple of (learned_aud, learned_iss). Either element may be None if
             no token record exists or if the fields were never populated.
         """
+        app_user_email = self._require_app_user_email(app_user_email)
         team_id = self._get_team_id(gateway_id, app_user_email)
         return await self._backend.get_user_learned_audience(gateway_id, team_id, app_user_email)
 

@@ -604,6 +604,15 @@ class VaultTokenBackend(AbstractTokenBackend):
                 return None
 
             data = result["data"]["data"]
+            token_data = data.get("token")
+            if not isinstance(token_data, dict):
+                logger.debug(
+                    "Vault record for gateway %s, team=%s, user=%s has no 'token' field — not an OAuth record",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(team_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                )
+                return None
             expires_at_str = data.get("expires_at")
             updated_at_str = data.get("updated_at")
 
@@ -618,7 +627,7 @@ class VaultTokenBackend(AbstractTokenBackend):
                     status = "near_expiry"
 
             return {
-                "scopes": data["token"]["scopes"],
+                "scopes": token_data.get("scopes", []),
                 "expires_at": expires_at_str,
                 "status": status,
                 "updated_at": updated_at_str,
