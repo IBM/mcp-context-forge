@@ -259,6 +259,12 @@ class TestTokenScopingMiddleware:
         # A multi-segment tool name must still match (re.match is a prefix match).
         assert middleware._check_permission_restrictions("/tools/preview/gateway-slug/tool-name", "POST", [Permissions.TOOLS_PREVIEW]) is True
 
+    @pytest.mark.parametrize("path", ["/gateways/discover-metadata", "/v1/gateways/discover-metadata"])
+    def test_oauth_metadata_discovery_requires_gateways_create(self, middleware, path):
+        """Scoped gateway-create tokens reach public OAuth metadata discovery."""
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_READ]) is False
+
     def test_versioned_virtual_server_restriction_checks_alias_id(self, middleware):
         """Server-scoped tokens must enforce the ID in versioned virtual-server paths."""
         path = "/v1/virtual-servers/server-123/tools"
@@ -1750,6 +1756,8 @@ class TestTokenScopingMiddleware:
         # Test POST /gateways (exact) requires GATEWAYS_CREATE
         assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_CREATE]) is True
         assert middleware._check_permission_restrictions("/gateways/", "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/gateways/discover-metadata", "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/gateways/discover-metadata", "POST", [Permissions.GATEWAYS_UPDATE]) is False
 
         # Test POST to sub-resources requires GATEWAYS_UPDATE (not CREATE)
         assert middleware._check_permission_restrictions("/gateways/gw-123/state", "POST", [Permissions.GATEWAYS_UPDATE]) is True

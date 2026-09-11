@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from mcpgateway.services.http_client_service import (
+    SniPinningTransport,
     SharedHttpClient,
     get_admin_timeout,
     get_default_verify,
@@ -23,6 +24,7 @@ from mcpgateway.services.http_client_service import (
     get_http_limits,
     get_http_timeout,
     get_isolated_http_client,
+    get_pinned_http_client,
 )
 
 
@@ -44,6 +46,48 @@ def test_constructor():
     assert c._client is None
     assert c._initialized is False
     assert c._limits is None
+
+
+@pytest.mark.asyncio
+async def test_sni_pinning_transport_refuses_unvalidated_host():
+    """Pinned transport never follows a request to another hostname."""
+    transport = SniPinningTransport("issuer.example.com", "203.0.113.10")
+    request = httpx.Request("GET", "https://other.example.com/metadata")
+
+    with pytest.raises(httpx.UnsupportedProtocol, match="unvalidated host"):
+        await transport.handle_async_request(request)
+
+    await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sni_pinning_transport_uses_validated_address_and_sni():
+    """Pinned transport preserves SNI while dialing only validated resolved address."""
+    response = httpx.Response(200)
+    transport = SniPinningTransport("issuer.example.com", "203.0.113.10")
+    request = httpx.Request("GET", "https://issuer.example.com/metadata")
+
+    with patch.object(httpx.AsyncHTTPTransport, "handle_async_request", new=AsyncMock(return_value=response)) as send:
+        assert await transport.handle_async_request(request) is response
+
+    assert request.url.host == "203.0.113.10"
+    assert request.extensions["sni_hostname"] == "issuer.example.com"
+    send.assert_awaited_once_with(request)
+    await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_pinned_http_client_yields_short_lived_client():
+    """Pinned client uses dedicated transport with redirects disabled."""
+    async with get_pinned_http_client(
+        sni_hostname="issuer.example.com",
+        pinned_host="203.0.113.10",
+        timeout=httpx.Timeout(5),
+        verify=True,
+        limits=httpx.Limits(max_connections=2),
+    ) as client:
+        assert isinstance(client, httpx.AsyncClient)
+        assert client.follow_redirects is False
 
 
 @pytest.mark.asyncio

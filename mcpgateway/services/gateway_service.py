@@ -119,7 +119,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
-from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
+from mcpgateway.services.http_client_service import SniPinningTransport, get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -7568,51 +7568,6 @@ _HANDSHAKE_PROTOCOL_COPY = (
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
 
 
-class _SniPinningTransport(httpx.AsyncHTTPTransport):
-    """Dial a DNS-pinned address while keeping the request's hostname authority and TLS identity.
-
-    The MCP SDK compares the origin it connected to against the origin the
-    server advertises (``mcp.client.sse`` raises on a mismatch), so pinning has
-    to happen below the SDK: requests keep the validated hostname in their URL
-    and ``Host`` header, while every connection goes to the address resolved at
-    validation time and TLS is verified against that hostname.
-    """
-
-    def __init__(self, sni_hostname: str, pinned_host: str, **kwargs: Any) -> None:
-        """Record the validated hostname and the address to dial in its place.
-
-        Args:
-            sni_hostname: Validated hostname whose certificate must match.
-            pinned_host: Address resolved at validation time, dialled instead of re-resolving.
-            **kwargs: Forwarded to ``httpx.AsyncHTTPTransport``.
-        """
-        super().__init__(**kwargs)
-        self._sni_hostname = sni_hostname
-        self._pinned_host = pinned_host
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        """Send the request to the pinned address with TLS pinned to the validated hostname.
-
-        Args:
-            request: Outbound request addressed to the validated hostname.
-
-        Returns:
-            httpx.Response: The upstream response.
-
-        Raises:
-            httpx.UnsupportedProtocol: If the request targets any other host.
-        """
-        # Compare the IDNA-encoded form: httpx decodes punycode back to Unicode on `url.host`,
-        # while the validated hostname arrives punycode-encoded from the request schema.
-        if request.url.raw_host.decode("ascii") != self._sni_hostname:
-            raise httpx.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
-        request.extensions.setdefault("sni_hostname", self._sni_hostname)
-        # httpx derived the Host header from the hostname URL at construction time; rewriting the
-        # URL afterwards keeps that header while sending the bytes to the pinned address.
-        request.url = request.url.copy_with(host=self._pinned_host)
-        return await super().handle_async_request(request)
-
-
 def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
     """Build Layer-1 visibility conditions for gateway-test queries.
 
@@ -8434,7 +8389,7 @@ async def test_gateway_handshake(
             headers=headers,
             timeout=timeout if timeout else get_http_timeout(),
             auth=auth,
-            transport=_SniPinningTransport(
+            transport=SniPinningTransport(
                 sni_hostname=validated_hostname,
                 pinned_host=target["resolved_ip"],
                 verify=handshake_verify,
@@ -8551,7 +8506,7 @@ async def test_gateway_handshake(
             try:
                 # SECURITY: the SDK keeps the validated hostname (it rejects a server-advertised
                 # endpoint whose origin differs from the one it connected to), while
-                # _SniPinningTransport sends every request to the IP pinned at validation time
+                # SniPinningTransport sends every request to the IP pinned at validation time
                 # with TLS verified against that hostname, closing the same DNS rebinding window
                 # as server/discover, on the follow-up requests too.
                 if gateway and str(gateway.transport).lower() == "sse":

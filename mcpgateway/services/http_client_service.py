@@ -46,12 +46,54 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import ssl
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional
 
 # Third-Party
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+class SniPinningTransport(httpx.AsyncHTTPTransport):
+    """Dial a DNS-pinned address while keeping request hostname authority and TLS identity.
+
+    Requests retain the validated hostname in their URL and ``Host`` header,
+    while this transport dials the address resolved at validation time. This
+    prevents DNS rebinding without breaking TLS SNI or origin checks in callers.
+    """
+
+    def __init__(self, sni_hostname: str, pinned_host: str, **kwargs: Any) -> None:
+        """Initialize transport with the validated hostname and resolved address."""
+        super().__init__(**kwargs)
+        self._sni_hostname = sni_hostname
+        self._pinned_host = pinned_host
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        """Send only requests addressed to validated hostname via pinned address."""
+        # Compare the IDNA-encoded form: httpx decodes punycode in ``url.host``
+        # while request validation retains the encoded hostname.
+        if request.url.raw_host.decode("ascii") != self._sni_hostname:
+            raise httpx.UnsupportedProtocol(f"Refused a request to unvalidated host {request.url.host}", request=request)
+        request.extensions.setdefault("sni_hostname", self._sni_hostname)
+        # httpx derives Host from the original URL. Rewrite only dial address so
+        # host authority and TLS identity remain bound to the validated hostname.
+        request.url = request.url.copy_with(host=self._pinned_host)
+        return await super().handle_async_request(request)
+
+
+@asynccontextmanager
+async def get_pinned_http_client(
+    *,
+    sni_hostname: str,
+    pinned_host: str,
+    timeout: httpx.Timeout,
+    verify: bool,
+    limits: httpx.Limits,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Yield a short-lived client that cannot re-resolve its validated target."""
+    transport = SniPinningTransport(sni_hostname=sni_hostname, pinned_host=pinned_host, verify=verify, limits=limits)
+    async with httpx.AsyncClient(transport=transport, timeout=timeout, follow_redirects=False) as client:
+        yield client
 
 
 class SharedHttpClient:
