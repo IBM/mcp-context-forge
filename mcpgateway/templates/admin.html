@@ -1440,7 +1440,7 @@
       {% if performance_enabled and is_admin %}
       <div id="performance-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/performance/stats"
-           hx-trigger="revealed once"
+           hx-trigger="intersect once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
           <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1456,7 +1456,7 @@
       {% if observability_enabled and is_admin %}
       <div id="observability-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/observability/partial"
-           hx-trigger="revealed once"
+           hx-trigger="intersect once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
           <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1805,7 +1805,7 @@
             <div
               id="llm-providers-container"
               hx-get="{{ root_path }}/admin/llm/providers/html"
-              hx-trigger="revealed once"
+              hx-trigger="intersect once"
               hx-swap="innerHTML"
             >
               <div class="flex justify-center items-center py-12">
@@ -1823,7 +1823,7 @@
             <div
               id="llm-models-container"
               hx-get="{{ root_path }}/admin/llm/models/html"
-              hx-trigger="revealed once"
+              hx-trigger="intersect once"
               hx-swap="innerHTML"
             >
               <div class="flex justify-center items-center py-12">
@@ -1841,7 +1841,7 @@
             <div
               id="llm-test-container"
               hx-get="{{ root_path }}/admin/llm/api-info/html"
-              hx-trigger="revealed once"
+              hx-trigger="intersect once"
               hx-swap="innerHTML"
             >
               <div class="flex justify-center items-center py-12">
@@ -7536,7 +7536,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% if a2a_enabled and 'a2a_agent_plugin_bindings' not in hidden_sections %}
       <div id="a2a-plugin-bindings-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/a2a/plugin-bindings/partial"
-           hx-trigger="revealed once"
+           hx-trigger="intersect once"
            hx-swap="innerHTML">
         <div class="flex justify-center items-center py-8">
           <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -8051,7 +8051,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <!-- System Metrics Content (loaded via HTMX) -->
           <div
             hx-get="{{ root_path }}/admin/system/stats"
-            hx-trigger="revealed once"
+            hx-trigger="intersect once"
             hx-swap="outerHTML"
           >
             <div class="flex justify-center items-center py-8">
