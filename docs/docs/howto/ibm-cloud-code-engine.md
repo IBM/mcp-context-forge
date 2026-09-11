@@ -110,7 +110,8 @@ IBMCLOUD_API_KEY=***your-api-key***    # leave blank to use SSO flow at login
 IBMCLOUD_CPU=1                         # vCPU for the container
 IBMCLOUD_MEMORY=4G                     # Memory (must match a valid CPU/MEM pair)
 
-# Registry secret in Code Engine (first-time creation is automated)
+# Name of the registry pull secret in Code Engine.
+# Create it once before first deploy — see Workflow A / Workflow B docs.
 IBMCLOUD_REGISTRY_SECRET=my-regcred
 ```
 
@@ -176,9 +177,29 @@ make ibmcloud-deploy
 
 !!! info "Registry pull secret — first-time setup"
     `make ibmcloud-deploy` **requires** a registry pull secret named `$IBMCLOUD_REGISTRY_SECRET`
-    to exist before it runs. It validates this and exits with a helpful error if the secret is
-    missing. The example above uses an IAM API key (`iamapikey`), but you can use any credential
-    type accepted by `ibmcloud ce secret create --format registry` — for example a service ID key.
+    to exist before it runs. It validates this and exits with a clear error if the secret is
+    missing.
+
+    The example above uses `--username iamapikey` with an IAM API key as the password, which is
+    the standard credential type for IBM Container Registry. Any credential type accepted by
+    `ibmcloud ce secret create --format registry` works — for example a service ID API key.
+
+    **SSO / interactive-login users:** `IBMCLOUD_API_KEY` may be blank in `.env.ce` when you use
+    `ibmcloud login --sso`. The registry pull secret needs a **long-lived IAM API key** as its
+    password regardless of how you authenticate for deployments — Code Engine uses it to pull
+    images at runtime, not at deploy time. Create a dedicated service ID API key scoped to
+    Container Registry Reader and use that as the `--password` value:
+
+    ```bash
+    # Create a service ID and API key scoped to ICR read access
+    ibmcloud iam service-id-create contextforge-icr-reader
+    ibmcloud iam service-policy-create contextforge-icr-reader \
+        --roles Reader --service-name container-registry
+    ibmcloud iam service-api-key-create icr-reader-key contextforge-icr-reader \
+        --output json | jq -r .apikey
+    # Use the printed key as --password in the secret create command above
+    ```
+
     Create the secret once; subsequent deploys reuse it.
 
 !!! info "`make ibmcloud-deploy` manages the runtime env secret automatically"
