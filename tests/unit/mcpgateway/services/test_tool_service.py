@@ -4398,6 +4398,138 @@ class TestToolService:
             assert "Connection refused by upstream MCP server" in call_kwargs["error_message"]
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_error_empty_str_falls_back_to_class_name(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that an exception whose str() is empty still yields a usable message.
+
+        The anyio/httpx transport family (ClosedResourceError, EndOfStream,
+        BrokenResourceError, ReadTimeout) stringifies to '', so building the
+        caller-facing message as str(root_cause) produced a bare
+        "Tool invocation failed: " with no detail at all. Fall back to the
+        qualified exception class name so a caller can tell a closed stream
+        from a broken resource.
+
+        See GitHub issue #6592.
+        """
+        # Configure tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool and GlobalConfig
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Standard library import
+        import anyio
+
+        # anyio transport errors carry no message: str(ClosedResourceError()) == ''
+        root_cause_error = anyio.ClosedResourceError()
+        assert str(root_cause_error) == ""
+
+        # Mock HTTP client to raise the empty-str error
+        tool_service._http_client.request.side_effect = root_cause_error
+
+        # Mock metrics buffer at module level and decode_auth
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            # Should raise ToolInvocationError naming the exception class
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            error_str = str(exc_info.value)
+            assert "ClosedResourceError" in error_str
+            assert error_str != "Tool invocation failed: "
+
+            # Verify metrics recorded with the same non-empty message
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["success"] is False
+            assert "ClosedResourceError" in call_kwargs["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_group_wrapped_timeout_uses_timeout_vocabulary(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that a timeout arriving inside an ExceptionGroup is still reported as a timeout.
+
+        A read timeout raised inside the MCP SDK's TaskGroup is wrapped in an
+        ExceptionGroup, so it misses the per-transport
+        `except (asyncio.TimeoutError, httpx.TimeoutException)` lanes that emit the
+        typed "Tool invocation timed out after {effective_timeout}s" message. It then
+        reaches the outer handler, where its empty str() used to produce a bare
+        "Tool invocation failed: ". Callers should see the same timeout vocabulary
+        regardless of whether the timeout arrived group-wrapped.
+
+        See GitHub issue #6592.
+        """
+        # Configure tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool and GlobalConfig
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Third-Party
+        import httpx
+
+        # A read timeout carries no message either: str(ReadTimeout("")) == ''
+        root_cause_error = httpx.ReadTimeout("")
+        assert str(root_cause_error) == ""
+
+        # Wrap it the way the MCP SDK's TaskGroup does
+        tool_service._http_client.request.side_effect = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [root_cause_error])
+
+        # Mock metrics buffer at module level and decode_auth
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            error_str = str(exc_info.value)
+            assert "Tool invocation timed out after" in error_str
+            assert "ReadTimeout" in error_str
+            assert error_str != "Tool invocation failed: "
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_error_non_empty_str_is_unchanged(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that an exception with a real message is passed through untouched.
+
+        The empty-str fallback must not alter any exception that already
+        stringifies to something useful.
+
+        See GitHub issue #6592.
+        """
+        # Configure tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool and GlobalConfig
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock HTTP client to raise an error carrying a message
+        tool_service._http_client.request.side_effect = RuntimeError("upstream said no")
+
+        # Mock metrics buffer at module level and decode_auth
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            # Byte-identical to the pre-fix behaviour: no class name appended
+            assert str(exc_info.value) == "Tool invocation failed: upstream said no"
+
+    @pytest.mark.asyncio
     async def test_reset_metrics(self, tool_service, test_db):
         """Test resetting metrics."""
         # Mock DB operations
