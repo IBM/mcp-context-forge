@@ -30,6 +30,7 @@ Specific subsuites need additional services on top:
 
 | Subdir | Extra requirement | How to start |
 |---|---|---|
+| `e2e/` | gateway with the auto-registered `fast_time` gateway present | `make testing-up` (default profile) |
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
 | `sso/` | Keycloak (jwks tests) and/or Entra ID (entra tests) | `docker compose --profile sso up -d` for Keycloak; `AZURE_*` env vars for Entra |
 | `e2e_rust/` | gateway built with the Rust transport (edge or full mode) | `make testing-up` with the Rust profile, or rebuild compose images with Rust enabled |
@@ -44,6 +45,8 @@ subsuites (e.g., `BASE_URL`, `JWT_SECRET`, `skip_no_gateway`).
 make test-live-gateway
 
 # Or run a focused subsuite
+make test-e2e                      # tests/live_gateway/e2e/test_e2e.py
+make test-e2e K=TestVirtualServerLifecycle   # one class from that file
 make test-mcp-protocol-e2e         # tests/live_gateway/mcp/test_mcp_protocol_e2e.py
 make test-mcp-rbac                 # tests/live_gateway/mcp/test_mcp_rbac_transport.py
 make test-mcp-plugin-parity        # tests/live_gateway/mcp/test_mcp_plugin_parity.py
@@ -54,6 +57,29 @@ make test-e2e-sso                  # tests/live_gateway/sso/
 # Or run a specific file directly via uv
 uv run --extra plugins pytest tests/live_gateway/mcp/test_langfuse_traces.py -v
 ```
+
+## Execution order: `e2e/` and gateway-mutating suites
+
+`e2e/` reads the stack's auto-registered `fast_time` gateway and never creates,
+modifies, or deletes it. Some other suites do mutate registrations — notably
+`mcp/test_mcp_rbac_transport.py`, whose fixture deletes any gateway matching the
+upstream URL `http://fast_time_server:9080/mcp` (which is `fast_time`'s), registers
+its own, and deletes that at teardown. After such a run the stack can be left with
+no gateway at that URL.
+
+Consequences:
+
+* Run `e2e/` **before** gateway-mutating suites, or restore the auto-registration
+  in between. `make test-live-gateway` collects the whole directory in a single
+  pytest session and happens to reach `e2e/` before `mcp/` only because directory
+  names sort that way — that ordering is not an isolation guarantee.
+* Do not run `e2e/` concurrently with those suites, and do not run this directory
+  under `pytest-xdist`.
+* If the registration goes missing, `e2e/` fails at setup with an explicit message
+  rather than an empty catalog. Restore the stack's auto-registration and confirm
+  it is actually back via `GET /gateways` before rerunning — the compose
+  registration job is one-shot (`restart: "no"`), so verify rather than assume a
+  restart re-created it.
 
 ## Skip behavior
 

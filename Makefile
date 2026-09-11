@@ -864,6 +864,7 @@ clean:
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
+# help: test-e2e             - Live-gateway E2E flows, e.g. virtual-server lifecycle (K=<filter> to pick one)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
@@ -901,7 +902,7 @@ clean:
 # help: query-log-clear      - Clear database query log files
 
 .PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
-	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e test-e2e-sso \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
@@ -997,6 +998,15 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
+
+test-e2e: uv  ## Live-gateway E2E flows (virtual-server lifecycle); K=<filter> to pick one
+	@echo "🧪 Running live-gateway E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: live gateway with the auto-registered fast_time gateway ('make testing-up')."
+	@echo "   Must not run concurrently with gateway-mutating suites - see tests/live_gateway/README.md."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+		|| { echo "❌ Live-gateway E2E tests failed!"; exit 1; }
+	@echo "✅ Live-gateway E2E tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
