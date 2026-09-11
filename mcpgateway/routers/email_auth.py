@@ -241,11 +241,13 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         # Password change enforcement respects master switch and individual toggles
         needs_password_change = False
+        _change_cause: Optional[str] = None  # tracks why the change is required for hint text
 
         if settings.password_change_enforcement_enabled:
             # If flag is set on the user, always honor it (flag is cleared when password is changed)
             if getattr(user, "password_change_required", False):
                 needs_password_change = True
+                _change_cause = "flag"
                 logger.debug("User %s has password_change_required flag set", login_request.email)
 
             # Enforce expiry-based password change if configured and not already required
@@ -257,6 +259,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         max_age = getattr(settings, "password_max_age_days", 90)
                         if age_days >= max_age:
                             needs_password_change = True
+                            _change_cause = "expiry"
                             logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
                 except Exception as exc:
                     logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
@@ -275,6 +278,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                     if getattr(settings, "require_password_change_for_default_password", True):
                         user.password_change_required = True
                         needs_password_change = True
+                        _change_cause = "default_password"
                         try:
                             db.commit()
                         except Exception as exc:  # log commit failures
@@ -284,9 +288,15 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         if needs_password_change:
             logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")
+            _hint = "Use the Admin UI at /admin/change-password-required to set a new password."
+            if _change_cause == "flag":
+                _hint += " If this is a headless deployment locked out at bootstrap, set ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false and restart."
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Password change required. Please change your password before continuing."},
+                content={
+                    "detail": "Password change required. Please change your password before continuing.",
+                    "hint": _hint,
+                },
                 headers={"X-Password-Change-Required": "true"},
             )
 
