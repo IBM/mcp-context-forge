@@ -423,7 +423,7 @@ curl -X POST http://localhost:9000/message \
 
 ```dockerfile
 FROM python:3.11-slim
-RUN pip install mcpgateway mcp
+RUN pip install mcp-contextforge-gateway mcp
 EXPOSE 8000
 HEALTHCHECK CMD curl -f http://localhost:8000/healthz || exit 1
 CMD ["python", "-m", "mcpgateway.translate", \
