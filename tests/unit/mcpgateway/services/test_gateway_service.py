@@ -4418,7 +4418,9 @@ async def test_register_gateway_query_param_timeout(gateway_service, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch):
+@pytest.mark.parametrize("base,expected_base", [("old-resource", "resource"), ("chosen", "chosen"), ("", "")])
+async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch, base, expected_base):
+    """Adoption follows upstream identity while preserving an operator's base."""
     # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
@@ -4433,6 +4435,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     prompt = PromptCreate(name="Prompt", title="Prompt Title", description="Test prompt", template="Hello")
 
     existing = MagicMock()
+    existing.name = "old-gateway-old-resource"
+    existing.original_name = "Old Resource"
+    existing.custom_name_slug = base
     existing.gateway_id = None
     existing.team_id = "team-1"
     existing.owner_email = "owner@example.com"
@@ -4485,6 +4490,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     added_gateway = db.add.call_args[0][0]
     assert existing in added_gateway.resources
     assert existing.title == "Resource Title"
+    assert existing.original_name == "Resource"
+    assert existing.custom_name_slug == expected_base
+    assert existing.name == "old-gateway-old-resource"
     assert existing_prompt in added_gateway.prompts
     assert existing_prompt.title == "Prompt Title"
 
@@ -5685,7 +5693,11 @@ class TestUpdateOrCreateResources:
         result = gateway_service._update_or_create_resources(MagicMock(), [], mock_gateway, "test")
         assert result == []
 
-    def test_new_resource_created(self, gateway_service, mock_gateway):
+    def test_new_resource_created(self, gateway_service):
+        """New resources carry a real gateway relationship before persistence."""
+        from mcpgateway.db import Gateway
+
+        mock_gateway = Gateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
@@ -5704,6 +5716,8 @@ class TestUpdateOrCreateResources:
         existing = MagicMock()
         existing.uri = "file:///res"
         existing.name = "old-name"
+        existing.original_name = "old-name"
+        existing.custom_name_slug = "old-name"
         existing.description = "old"
         existing.mime_type = "text/plain"
         existing.uri_template = None
@@ -5720,7 +5734,9 @@ class TestUpdateOrCreateResources:
         mock_gateway.visibility = "public"
         result = gateway_service._update_or_create_resources(db, [resource], mock_gateway, "update")
         assert result == []
-        assert existing.name == "new-name"
+        assert existing.original_name == "new-name"
+        assert existing.custom_name_slug == "new-name"
+        assert existing.name == "old-name"  # Recomposition is owned by the ORM listener.
         assert existing.mime_type == "text/html"
 
     def test_existing_resource_title_updated(self, gateway_service, mock_gateway):
@@ -5728,6 +5744,8 @@ class TestUpdateOrCreateResources:
         existing = SimpleNamespace(
             uri="file:///res",
             name="res",
+            original_name="res",
+            custom_name_slug="res",
             description="desc",
             mime_type="text/plain",
             uri_template=None,
@@ -5749,7 +5767,11 @@ class TestUpdateOrCreateResources:
         assert result == []
         assert existing.title == "new title"
 
-    def test_none_resource_skipped(self, gateway_service, mock_gateway):
+    def test_none_resource_skipped(self, gateway_service):
+        """An invalid catalog entry does not discard valid resource entries."""
+        from mcpgateway.db import Gateway
+
+        mock_gateway = Gateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(

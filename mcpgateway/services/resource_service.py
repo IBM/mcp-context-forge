@@ -76,6 +76,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1948,7 +1949,7 @@ class ResourceService(BaseService):
                                 # For Authorization Code flow, try to get stored tokens
                                 try:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
                                     access_token = None
@@ -3202,7 +3203,14 @@ class ResourceService(BaseService):
             if resource_update.uri is not None:
                 resource.uri = resource_update.uri
             if resource_update.name is not None:
-                resource.name = resource_update.name
+                if resource.gateway_id:
+                    # Admin forms resubmit the derived name even on description-only edits.
+                    # A rename to that exact value is intentionally a no-op.
+                    if resource_update.name not in (resource.name, resource.custom_name_slug):
+                        resource.custom_name_slug = slugify(resource_update.name)
+                else:
+                    resource.name = resource_update.name
+                    resource.custom_name_slug = slugify(resource_update.name)
             if resource_update.title is not None:
                 resource.title = resource_update.title
             if resource_update.description is not None:

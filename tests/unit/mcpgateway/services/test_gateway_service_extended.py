@@ -902,6 +902,8 @@ class TestGatewayServiceExtended:
         existing_resource = MagicMock()
         existing_resource.uri = "file:///test.txt"
         existing_resource.name = "test.txt"
+        existing_resource.original_name = "test.txt"
+        existing_resource.custom_name_slug = "test-txt"
         existing_resource.description = "Old description"
         existing_resource.mime_type = "text/plain"
         existing_resource.uri_template = None
@@ -1651,6 +1653,8 @@ class TestGatewayServiceExtended:
         existing_resource1 = MagicMock()
         existing_resource1.uri = "file:///keep.txt"
         existing_resource1.name = "keep.txt"
+        existing_resource1.original_name = "keep.txt"
+        existing_resource1.custom_name_slug = "keep-txt"
         existing_resource1.description = "Keep this resource"
         existing_resource1.mime_type = "text/plain"
         existing_resource1.template = None
@@ -1659,6 +1663,8 @@ class TestGatewayServiceExtended:
         existing_resource3 = MagicMock()
         existing_resource3.uri = "file:///update.txt"
         existing_resource3.name = "update.txt"
+        existing_resource3.original_name = "update.txt"
+        existing_resource3.custom_name_slug = "update-txt"
         existing_resource3.description = "Old description"
         existing_resource3.mime_type = "text/plain"
         existing_resource3.template = None
