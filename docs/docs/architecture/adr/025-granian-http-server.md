@@ -194,18 +194,30 @@ make container-run CONTAINER_HTTP_SERVER=granian
 make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
 
 # Or pass HTTP_SERVER directly
-docker run mcpgateway/mcpgateway                         # Gunicorn (default)
-docker run -e HTTP_SERVER=granian mcpgateway/mcpgateway  # Granian
+docker run ghcr.io/ibm/mcp-context-forge:latest                         # Gunicorn (default)
+docker run -e HTTP_SERVER=granian ghcr.io/ibm/mcp-context-forge:latest  # Granian
 ```
+
+!!! note "Historical document — commands above are illustrative only"
+    This ADR is superseded by [ADR-054](054-remove-granian-http-server.md) and retained for architectural record only.
+    The `docker run` references above contained incorrect image references and have been retroactively corrected
+    for security reasons. These commands are not guaranteed to work as shown — consult the current deployment
+    documentation instead.
 
 ## Switching Servers
 
 To switch from Gunicorn to Granian:
 
-1. Install Granian: `pip install "mcpgateway[granian]"`
+1. Install Granian: `pip install "mcp-contextforge-gateway[granian]"`
 2. Test locally: `make serve-granian`
 3. Benchmark both servers with your workload
 4. If Granian performs better, set `HTTP_SERVER=granian` in your deployment
+
+!!! note "Historical document — command above is illustrative only"
+    This ADR is superseded by [ADR-054](054-remove-granian-http-server.md) and retained for architectural record only.
+    The `pip install` reference above contained an incorrect package reference and has been retroactively corrected
+    for security reasons. Note also that the `granian` extra was subsequently removed (see ADR-054); this step is
+    no longer valid for current versions of ContextForge.
 
 ## Files Changed
 
