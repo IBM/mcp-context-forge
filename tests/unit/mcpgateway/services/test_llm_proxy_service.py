@@ -16,7 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.db import LLMProviderType
-from mcpgateway.llm_schemas import ChatCompletionRequest, ChatMessage
+from mcpgateway.llm_schemas import ChatCompletionRequest, ChatMessage, FunctionDefinition, ToolDefinition
 from mcpgateway.services.llm_proxy_service import (
     LLMModelNotFoundError,
     LLMProxyRequestError,
@@ -217,6 +217,57 @@ def test_build_anthropic_request_with_system_message(service, monkeypatch: pytes
     assert body["messages"][0]["role"] == "user"
 
 
+def test_build_anthropic_request_with_tools(service):
+    """Anthropic request forwards tools in Anthropic's own shape (name/description/input_schema,
+    not OpenAI's type/function wrapper) and maps a function tool_choice by name."""
+    tool = ToolDefinition(function=FunctionDefinition(name="get_weather", description="Get the weather", parameters={"type": "object", "properties": {"city": {"type": "string"}}}))
+    request = ChatCompletionRequest(
+        model="claude-3",
+        messages=[ChatMessage(role="user", content="hi")],
+        tools=[tool],
+        tool_choice={"type": "function", "function": {"name": "get_weather"}},
+    )
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", config={})
+    model = _make_model(model_id="claude-3")
+
+    url, headers, body = service._build_anthropic_request(request, provider, model)
+
+    assert body["tools"] == [
+        {
+            "name": "get_weather",
+            "description": "Get the weather",
+            "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}},
+        }
+    ]
+    assert body["tool_choice"] == {"type": "tool", "name": "get_weather"}
+
+
+def test_build_anthropic_request_no_tools(service):
+    """No tools on the request means neither key is sent (branch coverage for the falsy path)."""
+    request = ChatCompletionRequest(model="claude-3", messages=[ChatMessage(role="user", content="hi")])
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", config={})
+    model = _make_model(model_id="claude-3")
+
+    url, headers, body = service._build_anthropic_request(request, provider, model)
+
+    assert "tools" not in body
+    assert "tool_choice" not in body
+
+
+@pytest.mark.parametrize(
+    "tool_choice,expected",
+    [
+        ("auto", {"type": "auto"}),
+        ("required", {"type": "any"}),
+        ("none", None),
+        ({"type": "function", "function": {"name": "fn"}}, {"type": "tool", "name": "fn"}),
+        ({"type": "function", "function": {}}, None),
+    ],
+)
+def test_map_tool_choice_to_anthropic(service, tool_choice, expected):
+    assert service._map_tool_choice_to_anthropic(tool_choice) == expected
+
+
 def test_build_ollama_request_openai_compat(service):
     request = ChatCompletionRequest(model="llama3", messages=[ChatMessage(role="user", content="hi")], stream=True)
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local/v1", default_temperature=0.3, default_max_tokens=77)
@@ -248,14 +299,55 @@ def test_transform_anthropic_response(service):
         "id": "resp",
         "content": [{"type": "text", "text": "hi"}, {"type": "text", "text": " there"}],
         "usage": {"input_tokens": 1, "output_tokens": 2},
-        "stop_reason": "stop",
+        "stop_reason": "end_turn",
     }
 
     result = service._transform_anthropic_response(data, "claude")
 
     assert result.choices[0].message.content == "hi there"
+    assert result.choices[0].message.tool_calls is None
+    assert result.choices[0].finish_reason == "stop"
     assert result.usage.total_tokens == 3
     assert result.model == "claude"
+
+
+def test_transform_anthropic_response_tool_use(service):
+    """A tool_use content block must surface as an OpenAI-shaped tool_calls entry
+    and the finish_reason must map to 'tool_calls', not the raw Anthropic value."""
+    data = {
+        "id": "resp",
+        "content": [{"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"city": "SF"}}],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "stop_reason": "tool_use",
+    }
+
+    result = service._transform_anthropic_response(data, "claude")
+
+    message = result.choices[0].message
+    assert message.content == ""
+    assert message.tool_calls == [
+        {
+            "id": "toolu_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city":"SF"}'},
+        }
+    ]
+    assert result.choices[0].finish_reason == "tool_calls"
+
+
+@pytest.mark.parametrize(
+    "stop_reason,finish_reason",
+    [
+        ("end_turn", "stop"),
+        ("stop_sequence", "stop"),
+        ("max_tokens", "length"),
+        ("tool_use", "tool_calls"),
+        (None, "stop"),
+        ("pause_turn", "pause_turn"),
+    ],
+)
+def test_map_anthropic_stop_reason(service, stop_reason, finish_reason):
+    assert service._map_anthropic_stop_reason(stop_reason) == finish_reason
 
 
 def test_transform_ollama_response_done(service):
@@ -269,14 +361,52 @@ def test_transform_ollama_response_done(service):
 
 def test_transform_anthropic_stream_chunk(service):
     text_delta = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}}
+    # The finish reason now comes from message_delta's stop_reason (message_stop carries
+    # no data of its own in the Anthropic protocol), so message_stop is a no-op.
+    message_delta_stop = {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
     stop_event = {"type": "message_stop"}
 
     chunk = service._transform_anthropic_stream_chunk(text_delta, "id", 1, "model")
-    stop_chunk = service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model")
+    finish_chunk = service._transform_anthropic_stream_chunk(message_delta_stop, "id", 1, "model")
 
     assert '"content":"hi"' in chunk
-    assert '"finish_reason":"stop"' in stop_chunk
+    assert '"finish_reason":"stop"' in finish_chunk
+    assert service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model") is None
     assert service._transform_anthropic_stream_chunk({"type": "other"}, "id", 1, "model") is None
+    assert service._transform_anthropic_stream_chunk({"type": "message_delta", "delta": {}}, "id", 1, "model") is None
+
+
+def test_transform_anthropic_stream_chunk_tool_use(service):
+    """A tool_use content_block_start opens an OpenAI-shaped tool_calls delta at the
+    Anthropic block's own index, and input_json_delta streams the arguments into it."""
+    start_event = {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {"type": "tool_use", "id": "toolu_1", "name": "get_weather"},
+    }
+    arg_delta = {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"city":'}}
+    tool_use_stop = {"type": "message_delta", "delta": {"stop_reason": "tool_use"}}
+
+    start_chunk = service._transform_anthropic_stream_chunk(start_event, "id", 1, "model")
+    delta_chunk = service._transform_anthropic_stream_chunk(arg_delta, "id", 1, "model")
+    finish_chunk = service._transform_anthropic_stream_chunk(tool_use_stop, "id", 1, "model")
+
+    assert '"index":1' in start_chunk
+    assert '"id":"toolu_1"' in start_chunk
+    assert '"name":"get_weather"' in start_chunk
+    assert '"arguments":""' in start_chunk
+
+    assert '"index":1' in delta_chunk
+    assert '"arguments":"{\\"city\\":"' in delta_chunk
+
+    assert '"finish_reason":"tool_calls"' in finish_chunk
+
+
+def test_transform_anthropic_stream_chunk_content_block_start_text(service):
+    """A text content_block_start (no tool_use) yields no chunk of its own; the text
+    itself arrives via subsequent content_block_delta text_delta events."""
+    start_event = {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
+    assert service._transform_anthropic_stream_chunk(start_event, "id", 1, "model") is None
 
 
 def test_transform_ollama_stream_chunk(service):
@@ -1192,7 +1322,8 @@ def test_build_ollama_openai_compat_no_defaults(service):
 
 
 def test_transform_anthropic_response_non_text_block(service):
-    """Anthropic response with non-text content block (branch 610->609 false)."""
+    """Anthropic response with a tool_use block alongside text: both must surface,
+    the tool_use as a tool_calls entry, the text as message.content."""
     data = {
         "id": "resp",
         "content": [{"type": "tool_use", "id": "t1", "name": "fn"}, {"type": "text", "text": "ok"}],
@@ -1202,15 +1333,17 @@ def test_transform_anthropic_response_non_text_block(service):
     result = service._transform_anthropic_response(data, "claude")
 
     assert result.choices[0].message.content == "ok"
+    assert result.choices[0].message.tool_calls == [{"id": "t1", "type": "function", "function": {"name": "fn", "arguments": "{}"}}]
 
 
 def test_transform_anthropic_stream_chunk_non_text_delta(service):
-    """Anthropic stream chunk with non-text-delta type (branch 692->718 false)."""
-    data = {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}}
+    """input_json_delta streams tool-call arguments rather than being dropped."""
+    data = {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{}"}}
 
     result = service._transform_anthropic_stream_chunk(data, "id", 1, "model")
 
-    assert result is None
+    assert result is not None
+    assert '"arguments":"{}"' in result
 
 
 @pytest.mark.asyncio

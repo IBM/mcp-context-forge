@@ -12,7 +12,7 @@ formats and handles streaming responses.
 
 # Standard
 import time
-from typing import Any, AsyncGenerator, Dict, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, Optional, Tuple, Union
 import uuid
 
 # Third-Party
@@ -378,10 +378,48 @@ class LLMProxyService:
         elif provider.default_temperature:
             body["temperature"] = provider.default_temperature
 
+        if request.tools:
+            body["tools"] = [
+                {
+                    "name": t.function.name,
+                    "description": t.function.description or "",
+                    "input_schema": t.function.parameters or {"type": "object", "properties": {}},
+                }
+                for t in request.tools
+            ]
+
+        if request.tool_choice:
+            anthropic_tool_choice = self._map_tool_choice_to_anthropic(request.tool_choice)
+            if anthropic_tool_choice:
+                body["tool_choice"] = anthropic_tool_choice
+
         if request.stream:
             body["stream"] = True
 
         return url, headers, body
+
+    @staticmethod
+    def _map_tool_choice_to_anthropic(tool_choice: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Map an OpenAI-shaped ``tool_choice`` to Anthropic's tool-choice object.
+
+        Args:
+            tool_choice: OpenAI-style tool choice ("auto", "required", "none",
+                or {"type": "function", "function": {"name": ...}}).
+
+        Returns:
+            The equivalent Anthropic tool-choice dict, or None when there is no
+            faithful equivalent (OpenAI's "none" cannot be expressed once tools
+            are attached to an Anthropic request; the caller omits the key so
+            Anthropic falls back to its own default of "auto").
+        """
+        if isinstance(tool_choice, dict):
+            name = tool_choice.get("function", {}).get("name")
+            return {"type": "tool", "name": name} if name else None
+        if tool_choice == "required":
+            return {"type": "any"}
+        if tool_choice == "auto":
+            return {"type": "auto"}
+        return None
 
     def _build_ollama_request(
         self,
@@ -710,9 +748,22 @@ class LLMProxyService:
             ChatCompletionResponse in OpenAI format.
         """
         content = ""
+        tool_calls = []
         for block in data.get("content", []):
-            if block.get("type") == "text":
+            block_type = block.get("type")
+            if block_type == "text":
                 content += block.get("text", "")
+            elif block_type == "tool_use":
+                tool_calls.append(
+                    {
+                        "id": block.get("id", f"call_{uuid.uuid4().hex[:24]}"),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": orjson.dumps(block.get("input", {})).decode(),
+                        },
+                    }
+                )
 
         usage_data = data.get("usage", {})
 
@@ -723,8 +774,8 @@ class LLMProxyService:
             choices=[
                 ChatChoice(
                     index=0,
-                    message=ChatMessage(role="assistant", content=content),
-                    finish_reason=data.get("stop_reason", "stop"),
+                    message=ChatMessage(role="assistant", content=content, tool_calls=tool_calls or None),
+                    finish_reason=self._map_anthropic_stop_reason(data.get("stop_reason")),
                 )
             ],
             usage=UsageStats(
@@ -733,6 +784,23 @@ class LLMProxyService:
                 total_tokens=usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0),
             ),
         )
+
+    @staticmethod
+    def _map_anthropic_stop_reason(stop_reason: Optional[str]) -> str:
+        """Map an Anthropic ``stop_reason`` to an OpenAI-compatible ``finish_reason``.
+
+        Args:
+            stop_reason: Anthropic's stop reason (e.g. "end_turn", "tool_use").
+
+        Returns:
+            The OpenAI-equivalent finish reason string.
+        """
+        return {
+            "end_turn": "stop",
+            "stop_sequence": "stop",
+            "max_tokens": "length",
+            "tool_use": "tool_calls",
+        }.get(stop_reason, stop_reason or "stop")
 
     def _transform_ollama_response(
         self,
@@ -791,9 +859,37 @@ class LLMProxyService:
         """
         event_type = data.get("type")
 
-        if event_type == "content_block_delta":
+        if event_type == "content_block_start":
+            block = data.get("content_block", {})
+            if block.get("type") == "tool_use":
+                chunk = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_id,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": data.get("index", 0),
+                                        "id": block.get("id", f"call_{uuid.uuid4().hex[:24]}"),
+                                        "type": "function",
+                                        "function": {"name": block.get("name", ""), "arguments": ""},
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                return orjson.dumps(chunk).decode()
+
+        elif event_type == "content_block_delta":
             delta = data.get("delta", {})
-            if delta.get("type") == "text_delta":
+            delta_type = delta.get("type")
+            if delta_type == "text_delta":
                 chunk = {
                     "id": response_id,
                     "object": "chat.completion.chunk",
@@ -808,16 +904,40 @@ class LLMProxyService:
                     ],
                 }
                 return orjson.dumps(chunk).decode()
+            if delta_type == "input_json_delta":
+                chunk = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_id,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": data.get("index", 0),
+                                        "function": {"arguments": delta.get("partial_json", "")},
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                return orjson.dumps(chunk).decode()
 
-        elif event_type == "message_stop":
-            chunk = {
-                "id": response_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model_id,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            }
-            return orjson.dumps(chunk).decode()
+        elif event_type == "message_delta":
+            stop_reason = data.get("delta", {}).get("stop_reason")
+            if stop_reason:
+                chunk = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_id,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": self._map_anthropic_stop_reason(stop_reason)}],
+                }
+                return orjson.dumps(chunk).decode()
 
         return None
 
