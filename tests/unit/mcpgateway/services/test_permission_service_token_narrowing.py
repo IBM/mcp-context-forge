@@ -634,7 +634,7 @@ async def test_has_admin_permission_forwards_token_teams(svc):
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value=admin_perms) as mock_get_perms:
             await svc.has_admin_permission("user@test.com", token_teams=["team-a"])
-            mock_get_perms.assert_called_once_with("user@test.com", team_id=None, token_teams=["team-a"])
+            mock_get_perms.assert_called_once_with("user@test.com", team_id=None, include_all_teams=True, token_teams=["team-a"])
 
 
 # ---------- Codex Review Findings: Regression Tests ----------

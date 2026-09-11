@@ -202,10 +202,13 @@ class PermissionService:
                 return True
 
             # Get user's permissions and check for any admin.* permission.
-            # When team_id is provided, this includes team-scoped roles for
-            # that team, allowing team members with admin.dashboard to access
-            # the admin UI in their team context.
-            user_permissions = await self.get_user_permissions(user_email, team_id=team_id, token_teams=token_teams)
+            # When team_id is provided, this includes team-scoped roles for that team.
+            # When team_id is None (e.g. the bare /admin entry point), include_all_teams
+            # pulls in the user's real (non-personal) team roles so a team-scoped
+            # team_admin/developer/viewer with admin.dashboard can reach the admin UI,
+            # matching the documented permission-based rendering. Personal teams are
+            # excluded by _get_user_roles, and token_teams narrowing still applies.
+            user_permissions = await self.get_user_permissions(user_email, team_id=team_id, include_all_teams=(team_id is None), token_teams=token_teams)
 
             # Check for wildcard or any admin permission
             if Permissions.ALL_PERMISSIONS in user_permissions:
