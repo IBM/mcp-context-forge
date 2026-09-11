@@ -289,6 +289,30 @@ The body is optional; `name` and `api_key` override the catalog defaults. Respon
 `200` with `success: false` and a descriptive `message` for connectivity or auth failures,
 `200` with `success: true` on registration (OAuth servers register disabled until configured).
 
+For catalog entries with an OAuth `auth_type`, submit `oauth_credentials` instead of `api_key`.
+Whatever isn't supplied - client ID/secret, token/authorization URLs - is filled in later,
+automatically where the provider supports discovery/DCR, via the OAuth authorization flow:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"oauth_credentials": {"issuer": "https://github.com", "scopes": ["repo", "read:user"]}}' \
+  http://localhost:4444/v1/catalog/github/register
+```
+
+`oauth_credentials` accepts `issuer`, `client_id`, `client_secret`, `token_url`,
+`authorization_url`, `redirect_uri`, `audience`, `scopes`, and `resource`; any other key is
+silently ignored. `grant_type` is always forced to `authorization_code` regardless of what is
+submitted - it cannot be overridden through this endpoint, including for the privileged
+`token-exchange` grant. Each string value is capped at 4096 characters. For an `"OAuth2.1 & API
+Key"` entry, submitting `api_key` and `oauth_credentials` together registers the gateway with the
+API key only; `oauth_credentials` is ignored (logged) rather than persisted, since a gateway can't
+correctly carry both an active bearer auth and an unused OAuth config at once - switch to OAuth
+explicitly via `PUT /gateways/{id}` afterward if needed.
+
+The admin endpoint `POST /admin/mcp-registry/{server_id}/register` accepts the same
+`oauth_credentials` field with the same validation.
+
 #### Visibility and ownership
 
 Catalog registrations default to `private` when `visibility` is omitted. To
