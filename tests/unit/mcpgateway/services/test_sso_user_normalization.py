@@ -1193,6 +1193,44 @@ class TestGenericOIDCNormalization:
 
         assert normalized["groups"] == ["Engineering"]
 
+    def test_generic_oidc_custom_email_and_username_claims(self, sso_service):
+        """Generic providers may select their stable local identity claims."""
+        provider = SSOProvider(
+            id="custom_oidc",
+            name="custom_oidc",
+            display_name="Custom OIDC",
+            provider_type="oidc",
+            provider_metadata={"email_claim": "principal", "username_claim": "login_name"},
+        )
+        user_data = {
+            "email": "contact@example.com",
+            "principal": "tenant-user@identity.example",
+            "login_name": "tenant-user",
+            "sub": "provider-subject-123",
+        }
+
+        normalized = sso_service.normalize_user_info(provider, user_data)
+
+        assert normalized["email"] == "tenant-user@identity.example"
+        assert normalized["username"] == "tenant-user"
+
+    def test_generic_oidc_missing_configured_email_claim_does_not_fallback(self, sso_service):
+        """An explicit identity mapping fails closed when its claim is absent."""
+        provider = SSOProvider(
+            id="custom_oidc",
+            name="custom_oidc",
+            display_name="Custom OIDC",
+            provider_type="oidc",
+            provider_metadata={"email_claim": "principal"},
+        )
+
+        normalized = sso_service.normalize_user_info(
+            provider,
+            {"email": "contact@example.com", "sub": "provider-subject-123"},
+        )
+
+        assert normalized["email"] is None
+
     def test_generic_oidc_groups_absent_claim(self, sso_service):
         """When no groups claim is present, groups defaults to empty list."""
         provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
