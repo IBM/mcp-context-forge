@@ -314,7 +314,7 @@ export const submitApiKeyForm = function (event) {
         // Reload the catalog
         if (window.htmx && window.htmx.ajax) {
           window.htmx.ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
-            target: "#mcp-registry-content",
+            target: "#mcp-registry-servers",
             swap: "innerHTML",
           });
         }
