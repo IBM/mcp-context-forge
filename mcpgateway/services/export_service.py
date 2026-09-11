@@ -25,6 +25,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload, Session, with_loader_criteria
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Gateway as DbGateway
@@ -32,11 +33,39 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.schemas import ResourceRead
 from mcpgateway.utils.services_auth import encode_auth
 
 # Service singletons are imported lazily in __init__ to avoid circular imports
 
 logger = logging.getLogger(__name__)
+
+
+def _exportable_resource_base(resource: DbResource | ResourceRead) -> str:
+    """Select a resource export name without changing local names.
+
+    Args:
+        resource: Resource to export.
+
+    Returns:
+        Validated base, or the unchanged name when no candidate validates.
+    """
+    if resource.gateway_id is None:
+        try:
+            SecurityValidator.validate_name(resource.name, "Resource name")
+        except ValueError:
+            logger.warning("Local resource %s (uri=%s) exports a name invalid under current validation settings", resource.id, resource.uri)
+        return resource.name
+
+    cap = min(255, settings.validation_max_name_length)
+    for candidate in (resource.custom_name_slug, resource.original_name, resource.name):
+        if candidate:
+            try:
+                return SecurityValidator.validate_name(candidate[:cap], "Resource name")
+            except ValueError:
+                continue
+    logger.warning("Federated resource %s (uri=%s) has no importable name under current validation settings; exporting derived name", resource.id, resource.uri)
+    return resource.name
 
 
 class ExportError(Exception):
@@ -635,7 +664,7 @@ class ExportService:
 
         for resource in resources:
             resource_data = {
-                "name": resource.name,
+                "name": _exportable_resource_base(resource),
                 "uri": resource.uri,
                 "description": resource.description,
                 "mime_type": resource.mime_type,
@@ -644,6 +673,8 @@ class ExportService:
                 "last_modified": resource.updated_at.isoformat() if resource.updated_at else None,
             }
 
+            if resource.gateway_id is not None:
+                resource_data.update(original_name=resource.original_name, custom_name_slug=resource.custom_name_slug)
             exported_resources.append(resource_data)
 
         return exported_resources
@@ -1125,7 +1156,7 @@ class ExportService:
         exported_resources = []
         for db_resource in db_resources:
             resource_data = {
-                "name": db_resource.name,
+                "name": _exportable_resource_base(db_resource),
                 "uri": db_resource.uri,
                 "description": db_resource.description,
                 "mime_type": db_resource.mime_type,
@@ -1134,6 +1165,8 @@ class ExportService:
                 "last_modified": db_resource.updated_at.isoformat() if db_resource.updated_at else None,
             }
 
+            if db_resource.gateway_id is not None:
+                resource_data.update(original_name=db_resource.original_name, custom_name_slug=db_resource.custom_name_slug)
             exported_resources.append(resource_data)
 
         return exported_resources

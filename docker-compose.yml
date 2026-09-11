@@ -148,6 +148,7 @@ services:
       - HOST=${GATEWAY_HOST:-0.0.0.0}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
       # High-level Rust MCP UX:
       # Deprecated as of 2026-06-11; sunsets on 2026-07-07. Prefer RUST_MCP_MODE=off and the Python MCP transport.
       #   RUST_MCP_MODE=off    -> Python MCP transport
@@ -1075,6 +1076,7 @@ services:
       dockerfile: Containerfile
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH unset here)
       # Only set these if you explicitly enable Basic auth for this container
