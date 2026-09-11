@@ -6265,7 +6265,7 @@ ibmcloud-deploy:
 	_secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); \
 	_secret_rc=$$?; \
 	if [ $$_secret_rc -ne 0 ]; then \
-		if echo "$$_secret_err" | grep -qiE "^\[FAILED\].*not found|secret.*not found|not found.*secret"; then \
+		if echo "$$_secret_err" | grep -qiE "Secret ['\"]?$(IBMCLOUD_REGISTRY_SECRET)['\"]? not found"; then \
 			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
 			echo "   Create it first (first-time setup only):"; \
 			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
