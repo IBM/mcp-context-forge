@@ -56,3 +56,38 @@ def build_server_mcp_url(server_id: str) -> str:
     if not raw:
         return ""
     return f"{raw}/servers/{server_id}/mcp"
+
+
+def build_server_display_url(server_id: str) -> str:
+    """Construct the human-facing, actually-reachable MCP endpoint URL for a virtual server.
+
+    :func:`build_server_mcp_url` deliberately omits ``settings.app_root_path``
+    because its output is also the RFC 8707/9728 OAuth resource/audience
+    identifier, whose path shape must stay stable for already-issued tokens
+    and persisted audiences. That omission makes it unusable as-is for
+    display purposes: when the gateway is reverse-proxied under a subpath
+    (``APP_ROOT_PATH=/gateway``), the URL a user is shown or copies into
+    their MCP client config must include that prefix to actually resolve.
+
+    Use this helper anywhere the URL is shown to a user or copied into
+    client config (e.g. ``ServerRead.url``); use
+    :func:`build_server_mcp_url` anywhere the value participates in OAuth
+    resource binding or audience validation.
+
+    Args:
+        server_id: Virtual-server identifier.
+
+    Returns:
+        Fully-qualified, reachable MCP endpoint URL string, or ``""`` if
+        ``settings.app_domain`` isn't a usable URL.
+    """
+    try:
+        raw = str(settings.app_domain).rstrip("/")
+    except (AttributeError, ValueError) as exc:
+        logger.warning("settings.app_domain is not a usable URL: %s: %s", type(exc).__name__, exc)
+        return ""
+    if not raw:
+        return ""
+    root_path = str(getattr(settings, "app_root_path", "") or "").strip("/")
+    base = f"{raw}/{root_path}" if root_path else raw
+    return f"{base}/servers/{server_id}/mcp"

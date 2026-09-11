@@ -3846,11 +3846,22 @@ class TestConvertServerToReadUrl:
     def test_url_derived_from_app_domain(self, server_service, monkeypatch):
         """url is APP_DOMAIN + /servers/{id}/mcp, regardless of any request context."""
         monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        monkeypatch.setattr(settings, "app_root_path", "")
         server = self._make_server(server_id="srv-42")
 
         result = server_service.convert_server_to_read(server, include_metrics=False)
 
         assert result.url == "https://gateway.example.com/servers/srv-42/mcp"
+
+    def test_url_includes_app_root_path(self, server_service, monkeypatch):
+        """url includes APP_ROOT_PATH so it's actually reachable when the gateway is mounted under a subpath."""
+        monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        monkeypatch.setattr(settings, "app_root_path", "/gateway")
+        server = self._make_server(server_id="srv-42")
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url == "https://gateway.example.com/gateway/servers/srv-42/mcp"
 
     def test_url_none_when_app_domain_unusable(self, server_service, monkeypatch):
         """url is None (not a broken string) when APP_DOMAIN can't be stringified."""
