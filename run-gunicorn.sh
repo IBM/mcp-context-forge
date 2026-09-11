@@ -225,6 +225,9 @@ cat <<'EOF'
 ╚═╝     ╚═╝ ╚═════╝╚═╝          ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝
 EOF
 
+BUILD_VERSION="$("${PYTHON}" -c 'from mcpgateway.build_info import get_build_info; print(get_build_info().display_version)' 2>/dev/null || printf 'unknown')"
+printf 'Version: %s\n' "${BUILD_VERSION}"
+
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 6: Configure Gunicorn Settings
 # Set up Gunicorn parameters with sensible defaults that can be overridden

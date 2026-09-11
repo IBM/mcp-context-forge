@@ -23,6 +23,7 @@ on:
     paths-ignore:
       - '.dockerignore'
       - 'Containerfile'
+      - 'run-gunicorn.sh'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'

@@ -33,6 +33,7 @@ on:
     paths:
       - '.dockerignore'
       - 'Containerfile'
+      - 'run-gunicorn.sh'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -45,6 +46,7 @@ on:
     paths:
       - '.dockerignore'
       - 'Containerfile'
+      - 'run-gunicorn.sh'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -100,7 +102,7 @@ jobs:
             local path="$1"
 
             case "${path}" in
-              .dockerignore|Containerfile|pyproject.toml|uv.lock|.github/workflows/docker-multiplatform.yml)
+              .dockerignore|Containerfile|run-gunicorn.sh|pyproject.toml|uv.lock|.github/workflows/docker-multiplatform.yml)
                 return 0
                 ;;
               infra/wheels/*|mcpgateway/*|plugins/*)
@@ -331,7 +333,12 @@ jobs:
         if: steps.gate.outputs.build == 'true'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Generate build provenance
+        if: steps.gate.outputs.build == 'true'
+        run: python3 -m mcpgateway.build_info --build-sha "${{ github.sha }}"
 
       - name: Set image name lowercase
         if: steps.gate.outputs.build == 'true'
