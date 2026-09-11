@@ -714,6 +714,30 @@ class TestServerInitiatedRequestCorrelation:
         assert captured["responded"].code == -32000
 
     @pytest.mark.asyncio
+    async def test_respond_with_payload_preserves_malformed_error_context(self):
+        """A downstream error that fails ``ErrorData`` validation still reaches
+        the client with its original payload attached as ``data``, instead of a
+        bare INTERNAL_ERROR that erases the downstream's actual failure."""
+        # Third-Party
+        from mcp.types import ErrorData, INTERNAL_ERROR
+
+        responder, captured = self._make_responder("req-bad-err")
+        with responder:
+            await NotificationService._respond_with_payload(
+                responder,
+                {
+                    "jsonrpc": "2.0",
+                    "id": "req-bad-err",
+                    "error": {"code": "timeout", "message": "upstream gave up"},
+                },
+            )
+        responded = captured["responded"]
+        assert isinstance(responded, ErrorData)
+        assert responded.code == INTERNAL_ERROR
+        assert responded.message == "Malformed error from downstream"
+        assert responded.data == {"code": "timeout", "message": "upstream gave up"}
+
+    @pytest.mark.asyncio
     async def test_respond_with_payload_falls_back_on_unparseable_result(self):
         """Garbage in ``result`` becomes an INTERNAL_ERROR ErrorData, not a crash."""
         # Third-Party
