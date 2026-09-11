@@ -491,8 +491,11 @@ export const serverSideSearch = async function (config, searchTerm) {
       if (urlTeamId) {
         url += `&team_id=${encodeURIComponent(urlTeamId)}`;
       }
-      if (viewPublicCb && viewPublicCb.checked) {
-        url += "&include_public=true";
+      if (viewPublicCb) {
+        // Send the unchecked state explicitly: public rows are included by default.
+        url += viewPublicCb.checked
+          ? "&include_public=true"
+          : "&include_public=false";
       }
 
       console.log(`[${config.logPrefix}] Loading defaults with URL: ${url}`);
@@ -610,8 +613,10 @@ export const serverSideSearch = async function (config, searchTerm) {
     if (selectedTeamId) {
       params.set("team_id", selectedTeamId);
     }
-    if (viewPublicCb && viewPublicCb.checked) {
-      params.set("include_public", "true");
+    if (viewPublicCb) {
+      // Team filtering includes public items by default; send the
+      // unchecked state explicitly so it still narrows.
+      params.set("include_public", viewPublicCb.checked ? "true" : "false");
     }
 
     const searchUrl = `${window.ROOT_PATH}${config.apiEndpoint}?${params.toString()}`;
