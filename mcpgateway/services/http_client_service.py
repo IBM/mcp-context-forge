@@ -55,7 +55,12 @@ logger = logging.getLogger(__name__)
 
 
 class SniPinningTransport(httpx.AsyncHTTPTransport):
-    """Dial a validated address while preserving hostname authority and TLS SNI."""
+    """Dial a DNS-pinned address while keeping request hostname authority and TLS identity.
+
+    Requests retain the validated hostname in their URL and ``Host`` header,
+    while this transport dials the address resolved at validation time. This
+    prevents DNS rebinding without breaking TLS SNI or origin checks in callers.
+    """
 
     def __init__(self, sni_hostname: str, pinned_host: str, **kwargs: Any) -> None:
         """Initialize transport with the validated hostname and resolved address."""
@@ -64,10 +69,14 @@ class SniPinningTransport(httpx.AsyncHTTPTransport):
         self._pinned_host = pinned_host
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        """Send only requests addressed to the validated hostname."""
+        """Send only requests addressed to validated hostname via pinned address."""
+        # Compare the IDNA-encoded form: httpx decodes punycode in ``url.host``
+        # while request validation retains the encoded hostname.
         if request.url.raw_host.decode("ascii") != self._sni_hostname:
             raise httpx.UnsupportedProtocol(f"Refused a request to unvalidated host {request.url.host}", request=request)
         request.extensions.setdefault("sni_hostname", self._sni_hostname)
+        # httpx derives Host from the original URL. Rewrite only dial address so
+        # host authority and TLS identity remain bound to the validated hostname.
         request.url = request.url.copy_with(host=self._pinned_host)
         return await super().handle_async_request(request)
 

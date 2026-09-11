@@ -150,7 +150,8 @@ class DcrService:
         try:
             async with client.stream("GET", url, headers={"Accept": "application/json"}, follow_redirects=False) as response:
                 if 300 <= response.status_code < 400:
-                    raise DcrError("OAuth issuer metadata redirects are not allowed", code="invalid_metadata")
+                    # Do not follow redirects: try the safe OIDC discovery path instead.
+                    return None
                 if response.status_code != 200:
                     return None
 
@@ -194,11 +195,9 @@ class DcrService:
         """Validate metadata fields that are returned to the registration UI."""
         for field_name in ("authorization_endpoint", "token_endpoint"):
             value = metadata.get(field_name)
-            if value is None:
-                continue
             parsed = urlsplit(value) if isinstance(value, str) else None
             if not parsed or parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-                raise DcrError(f"OAuth issuer metadata has invalid {field_name}", code="invalid_metadata")
+                raise DcrError(f"OAuth issuer metadata is missing or has invalid {field_name}", code="invalid_metadata")
 
         registration_endpoint = metadata.get("registration_endpoint")
         if registration_endpoint is not None:
@@ -215,42 +214,45 @@ class DcrService:
         normalized_issuer: str,
         fetch_document: Callable[[str, str], Awaitable[Dict[str, Any] | None]],
         validate_cached_metadata: Callable[[Dict[str, Any]], None] | None = None,
+        *,
+        singleflight: bool = False,
     ) -> Dict[str, Any]:
-        """Discover, singleflight, and cache metadata through caller-selected policy."""
-        cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
-        if cached is not None:
+        """Discover and cache metadata; optionally singleflight concurrent public requests."""
+
+        async def discover() -> Dict[str, Any]:
+            """Perform one cache-aware discovery attempt."""
+            cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
+            if cached is not None:
+                if validate_cached_metadata:
+                    validate_cached_metadata(cached)
+                logger.debug("Using cached AS metadata for %s", normalized_issuer)
+                return cached
+
+            parsed = urlsplit(normalized_issuer)
+            rfc8414_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server{parsed.path}"
+            metadata = await fetch_document(rfc8414_url, normalized_issuer)
+            discovery_method = "RFC 8414"
+
+            if metadata is None:
+                metadata = await fetch_document(f"{normalized_issuer}/.well-known/openid-configuration", normalized_issuer)
+                discovery_method = "OIDC Discovery"
+
+            if metadata is None:
+                raise DcrError("OAuth issuer metadata was not found", code="not_found")
+
             if validate_cached_metadata:
-                validate_cached_metadata(cached)
-            logger.debug("Using cached AS metadata for %s", normalized_issuer)
-            return cached
+                validate_cached_metadata(metadata)
+            self._cache_metadata(normalized_issuer, metadata, self.settings.dcr_metadata_cache_ttl)
+            logger.info("Discovered AS metadata for %s via %s", normalized_issuer, discovery_method)
+            return metadata
+
+        if not singleflight:
+            return await discover()
 
         metadata_lock = await self._metadata_lock(normalized_issuer)
         try:
             async with metadata_lock:
-                cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
-                if cached is not None:
-                    if validate_cached_metadata:
-                        validate_cached_metadata(cached)
-                    logger.debug("Using cached AS metadata for %s", normalized_issuer)
-                    return cached
-
-                parsed = urlsplit(normalized_issuer)
-                rfc8414_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server{parsed.path}"
-                metadata = await fetch_document(rfc8414_url, normalized_issuer)
-                discovery_method = "RFC 8414"
-
-                if metadata is None:
-                    metadata = await fetch_document(f"{normalized_issuer}/.well-known/openid-configuration", normalized_issuer)
-                    discovery_method = "OIDC Discovery"
-
-                if metadata is None:
-                    raise DcrError("OAuth issuer metadata was not found", code="not_found")
-
-                if validate_cached_metadata:
-                    validate_cached_metadata(metadata)
-                self._cache_metadata(normalized_issuer, metadata, self.settings.dcr_metadata_cache_ttl)
-                logger.info("Discovered AS metadata for %s via %s", normalized_issuer, discovery_method)
-                return metadata
+                return await discover()
         finally:
             async with _metadata_locks_guard:
                 if _metadata_locks.get(normalized_issuer) is metadata_lock and not metadata_lock.locked():
@@ -292,6 +294,7 @@ class DcrService:
                         normalized_issuer,
                         lambda url, issuer: self._fetch_public_metadata_document(client, url, issuer),
                         self._validate_metadata_shape,
+                        singleflight=True,
                     )
             except TimeoutError as exc:
                 raise DcrError("OAuth issuer metadata request timed out", code="timeout") from exc
