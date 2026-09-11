@@ -6255,12 +6255,17 @@ ibmcloud-push:
 ibmcloud-deploy:
 	@test -f .env || { echo "❌ Missing .env — run: cp .env.example .env"; exit 1; }
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
-	@# Verify the registry pull secret exists before attempting deploy.
-	@# Capture stderr so we can distinguish "secret not found" from auth/plugin/network failures.
-	@_secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); \
+	@# Verify the registry pull secret exists. Check CLI availability first so
+	@# infrastructure errors are distinguished from a genuinely absent secret.
+	@if ! command -v ibmcloud > /dev/null 2>&1; then \
+		echo "❌ ibmcloud CLI not found. Install it and the code-engine plugin first:"; \
+		echo "   make ibmcloud-cli-install"; \
+		exit 1; \
+	fi; \
+	_secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); \
 	_secret_rc=$$?; \
 	if [ $$_secret_rc -ne 0 ]; then \
-		if echo "$$_secret_err" | grep -qi "not found"; then \
+		if echo "$$_secret_err" | grep -qiE "^\[FAILED\].*not found|secret.*not found|not found.*secret"; then \
 			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
 			echo "   Create it first (first-time setup only):"; \
 			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
@@ -6275,7 +6280,7 @@ ibmcloud-deploy:
 		fi; \
 		exit 1; \
 	fi
-	@# Create the runtime env secret from .env if it does not exist yet
+	@# Sync the runtime env secret from .env — create on first deploy, update thereafter.
 	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
 		echo "🔐 Creating runtime env secret from .env..."; \
 		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
