@@ -13,6 +13,10 @@ metadata:
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+  {{- with merge (default dict .Values.mcpFastTimeServer.annotations) (default dict .Values.annotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.mcpFastTimeServer.replicaCount }}
   selector:
@@ -22,6 +26,13 @@ spec:
     metadata:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+        {{- with merge (default dict .Values.mcpFastTimeServer.podLabels) (default dict .Values.podLabels) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with merge (default dict .Values.mcpFastTimeServer.podAnnotations) (default dict .Values.podAnnotations) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       # Image pull secrets
       {{- if .Values.global.imagePullSecrets }}
@@ -34,6 +45,14 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with (coalesce .Values.mcpFastTimeServer.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.mcpFastTimeServer.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if gt (int .Values.mcpFastTimeServer.replicaCount) 1 }}
       affinity:
         podAntiAffinity:
