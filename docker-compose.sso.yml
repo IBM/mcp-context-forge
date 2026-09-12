@@ -37,3 +37,10 @@ services:
       # Keep existing local admin login alongside SSO
       - SSO_AUTO_CREATE_USERS=true
       - SSO_PRESERVE_ADMIN_AUTH=true
+      # JWT trust mode (default OFF - high-risk; enable only with a configured
+      # trust root). SSO_API_TOKEN_AUTH_ENABLED accepts external SSO access
+      # tokens as API Bearer tokens.
+      # Docs: docs/docs/manage/configuration.md (JWT Trust Mode),
+      #       docs/docs/architecture/auth-token-dispatch.md
+      # - JWT_TRUST_MODE=db
+      # - SSO_API_TOKEN_AUTH_ENABLED=false
