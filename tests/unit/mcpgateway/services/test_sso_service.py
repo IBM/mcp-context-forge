@@ -5711,12 +5711,12 @@ def test_jwks_fetch_self_signed_server_accepted_when_verification_off(monkeypatc
 # ---------------------------------------------------------------------------
 
 
-class TestSsoProvisioningCanonicalKeying:
-    """SSO provisioning with role sync and team mapping writes rows under the SSO subject."""
+class TestSsoProvisioningDualWrite:
+    """SSO provisioning with role sync and team mapping dual-writes e-mail and SSO subject."""
 
     @pytest.mark.asyncio
     async def test_provisioning_writes_roles_and_memberships_under_subject(self, test_db):
-        """sub != email: UserRole and EmailTeamMember rows are keyed by the SSO subject."""
+        """sub != email: UserRole and EmailTeamMember rows keep the e-mail in user_email and store the SSO subject in user_id."""
         # Standard
         import uuid
 
@@ -5796,7 +5796,9 @@ class TestSsoProvisioningCanonicalKeying:
         assert user.user_id == "idp-123"
 
         role_row = test_db.query(UserRole).filter(UserRole.role_id == role.id).one()
-        assert role_row.user_email == "idp-123"
+        assert role_row.user_email == email
+        assert role_row.user_id == "idp-123"
 
         member_row = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
-        assert member_row.user_email == "idp-123"
+        assert member_row.user_email == email
+        assert member_row.user_id == "idp-123"
