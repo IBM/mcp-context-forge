@@ -27,6 +27,7 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.db import Base, EmailTeam, EmailUser, ExternalGroupMapping, Role
 from mcpgateway.routers import admin_external_group_mappings as router_module
+from mcpgateway.services.role_resolution import resolve_mapping_role
 
 
 @pytest.fixture
@@ -150,7 +151,7 @@ class TestScopeExactRoleResolution:
         db.add(Role(name="developer", scope="global", permissions=["admin.system_config"], created_by="admin@example.com", is_system_role=True, is_active=True))
         db.commit()
 
-        resolved = router_module._resolve_mapping_role(db, "developer", cf_team_id="team-a")
+        resolved = resolve_mapping_role(db, "developer", cf_team_id="team-a")
 
         assert isinstance(resolved, Role)
         assert resolved.scope == "team"
@@ -161,7 +162,7 @@ class TestScopeExactRoleResolution:
         db.add(Role(name="ops", scope="global", permissions=["a2a.invoke"], created_by="admin@example.com", is_system_role=True, is_active=True))
         db.commit()
 
-        resolved = router_module._resolve_mapping_role(db, "ops", cf_team_id="team-a")
+        resolved = resolve_mapping_role(db, "ops", cf_team_id="team-a")
 
         assert isinstance(resolved, Role)
         assert resolved.scope == "global"
@@ -179,7 +180,7 @@ class TestScopeExactRoleResolution:
         for rows in ([row_high, row_low], [row_low, row_high]):
             stub_db = MagicMock()
             stub_db.query.return_value.filter.return_value.all.return_value = rows
-            resolved = router_module._resolve_mapping_role(stub_db, "developer", cf_team_id="team-a")
+            resolved = resolve_mapping_role(stub_db, "developer", cf_team_id="team-a")
             assert resolved is row_low
 
     def test_inactive_team_scoped_row_ignored_active_global_resolves(self, db):
@@ -188,7 +189,7 @@ class TestScopeExactRoleResolution:
         db.add(Role(name="ops", scope="global", permissions=["a2a.invoke"], created_by="admin@example.com", is_system_role=True, is_active=True))
         db.commit()
 
-        resolved = router_module._resolve_mapping_role(db, "ops", cf_team_id="team-a")
+        resolved = resolve_mapping_role(db, "ops", cf_team_id="team-a")
 
         assert isinstance(resolved, Role)
         assert resolved.scope == "global"
@@ -196,7 +197,7 @@ class TestScopeExactRoleResolution:
 
     def test_unknown_role_resolves_none(self, db):
         """A name with no active row resolves to None (fail-closed)."""
-        assert router_module._resolve_mapping_role(db, "nonexistent", cf_team_id="team-a") is None
+        assert resolve_mapping_role(db, "nonexistent", cf_team_id="team-a") is None
 
     @pytest.mark.asyncio
     async def test_group_role_create_inactive_role_400(self, allow_admin, db, admin_user, request_stub):
