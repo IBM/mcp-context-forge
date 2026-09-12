@@ -307,6 +307,14 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
             # only CSRF control these routes get.
             target_router.include_router(admin_external_group_mappings_router, prefix="/admin/external-group-mappings", tags=["External Group Mappings"], dependencies=[Depends(enforce_admin_csrf)])
 
+            # First-Party
+            from mcpgateway.routers.tokens import admin_tokens_router  # pylint: disable=import-outside-toplevel
+
+            # Same enforce_admin_csrf rationale as runtime_admin_router above:
+            # /admin is in settings.csrf_exempt_paths, so this dependency is the
+            # only CSRF control these routes get.
+            target_router.include_router(admin_tokens_router, prefix="/admin/tokens", tags=["JWT Token Catalog"], dependencies=[Depends(enforce_admin_csrf)])
+
             # Only the /admin/well-known status endpoint belongs in the versioned
             # router.  The full well_known router (which owns /.well-known/* paths)
             # is mounted on app directly in main.py so those paths stay at server

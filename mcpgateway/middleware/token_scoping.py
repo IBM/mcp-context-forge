@@ -1321,6 +1321,21 @@ class TokenScopingMiddleware:
 
             # Resolve teams based on token_use claim
             token_use = payload.get("token_use")
+            # Trusted tokens in jwt-trust mode: the teams claim was derived
+            # from the external group-mapping resolver at authentication time
+            # (auth.py trust branch / TokenCatalogService.mint_trust_token),
+            # so the resolver mapping IS the server-side membership authority
+            # — per the AGENTS.md security invariant, authorization derives
+            # from authenticated identity and server-side state, and
+            # trust-only principals have no email_team_members rows to check.
+            # Everything else stays enforced for trusted tokens: revocation
+            # (keyed by the configured jwt_trust_revocation_claim, checked by
+            # the auth layer on every request), expiry/signature (token
+            # verification above), resource team ownership, server/IP/time/
+            # permission restrictions, and usage limits (all below).
+            skip_team_membership_check = token_use == "session" or (  # nosec B105 - Not a password; token_use is a JWT claim type
+                token_use == "trusted" and settings.jwt_trust_mode == "jwt-trust"  # nosec B105 - Not a password; token_use is a JWT claim type
+            )
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 user_email = await self._resolve_user_email_from_payload(payload)
                 # Session token: resolve teams from DB/cache directly
@@ -1354,9 +1369,11 @@ class TokenScopingMiddleware:
                     # the DB; re-checking the raw JWT claim here would conflict with
                     # the intersection semantics (stale JWT teams would cause a 403
                     # even though the user has valid DB teams).
+                    # Trusted tokens skip it because the resolver mapping is the
+                    # membership authority (see skip_team_membership_check above).
                     # NOTE: session-token membership staleness is bounded by the
                     # auth_cache TTL (see _resolve_teams_from_db).
-                    if token_use != "session" and not self._check_team_membership(payload, db=db):  # nosec B105 - Not a password; token_use is a JWT claim type
+                    if not skip_team_membership_check and not self._check_team_membership(payload, db=db):
                         logger.warning("Token rejected: User no longer member of associated team(s)")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
@@ -1377,9 +1394,10 @@ class TokenScopingMiddleware:
             else:
                 # Public-only token (or session token with empty intersection):
                 # skip _check_team_membership for session tokens — the empty
-                # intersection already means no team-scoped access.
+                # intersection already means no team-scoped access; trusted
+                # tokens skip it per the resolver-mapping authority above.
                 # Membership staleness bounded by auth_cache TTL.
-                if token_use != "session" and not self._check_team_membership(payload):  # nosec B105 - Not a password; token_use is a JWT claim type
+                if not skip_team_membership_check and not self._check_team_membership(payload):
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
