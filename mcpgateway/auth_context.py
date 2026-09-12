@@ -285,10 +285,11 @@ def get_user_id(user: Any) -> str:
 def resolve_canonical_user_id(email: str, db: Session) -> str:
     """Resolve an e-mail address to the canonical user ID for writer paths.
 
-    Writer sites call this resolver once and store the result in the
-    ``user_email``-keyed columns of ``UserRole`` and ``EmailTeamMember``.
-    The input e-mail is stripped and lowered, the same rule
-    ``EmailAuthService.create_user`` applies. When a user row exists and
+    Writer sites call this resolver once and dual-write the result: the
+    ``user_email`` columns of ``UserRole`` and ``EmailTeamMember`` keep the
+    FK-valid e-mail, while the resolver output goes into their nullable
+    ``user_id`` columns. The input e-mail is stripped and lowered, the same
+    rule ``EmailAuthService.create_user`` applies. When a user row exists and
     carries a non-empty string ``user_id``, that value wins. Otherwise the
     input e-mail is returned unchanged, so callers stay safe for users not
     yet provisioned.
