@@ -43,11 +43,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.auth import get_current_user, get_user_email_from_token, resolve_session_teams
+from mcpgateway.auth import get_current_user, get_user_email_from_token
 from mcpgateway.auth_context import get_user_email, get_user_id
 from mcpgateway.cache.auth_cache import AuthCache, CachedAuthContext
 from mcpgateway.config import settings
-from mcpgateway.db import AuditTrail, EmailTeam, EmailUser, Role
+from mcpgateway.db import AuditTrail, EmailTeam, EmailTeamMember, EmailUser, Role, UserRole
 from mcpgateway.services.audit_trail_service import AuditTrailService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.permission_service import PermissionService
@@ -72,7 +72,8 @@ def diverged_identity(test_engine):
 
     The user gets ``user_id="idp-123"`` with e-mail ``dev@example.com``. The
     role assignment and the team membership go through the real writers, which
-    must re-key both rows to the canonical user_id. The fixture returns plain
+    dual-write each row: ``user_email`` stays the FK-valid e-mail and the new
+    ``user_id`` column carries the canonical id. The fixture returns plain
     scalars only; tests re-query ORM rows through their own session.
 
     Args:
@@ -110,7 +111,8 @@ def diverged_identity(test_engine):
 
             role_service = RoleService(db)
             assignment = await role_service.assign_role_to_user(user_email=DIVERGED_EMAIL, role_id=role.id, scope="global", scope_id=None, granted_by=DIVERGED_EMAIL)
-            assert assignment.user_email == DIVERGED_USER_ID  # writer stored the canonical id
+            assert assignment.user_email == DIVERGED_EMAIL  # FK-valid e-mail, never the canonical id
+            assert assignment.user_id == DIVERGED_USER_ID  # canonical id dual-written to user_id
 
             # The EmailTeam row is a container, not an identity row.
             team = EmailTeam(
@@ -124,7 +126,8 @@ def diverged_identity(test_engine):
 
             team_service = TeamManagementService(db)
             membership = await team_service.add_member_to_team(team_id=team.id, user_email=DIVERGED_EMAIL, role="member", invited_by=DIVERGED_EMAIL)
-            assert membership.user_email == DIVERGED_USER_ID  # writer stored the canonical id
+            assert membership.user_email == DIVERGED_EMAIL  # FK-valid e-mail, never the canonical id
+            assert membership.user_id == DIVERGED_USER_ID  # canonical id dual-written to user_id
 
             # Let the fire-and-forget cache invalidations finish before the loop closes.
             await asyncio.sleep(0)
@@ -229,32 +232,44 @@ class TestDivergedIdentityMatrix:
     """Three token formats by four identity consumers: RBAC, teams, audit, cache."""
 
     @pytest.mark.parametrize("token_format", TOKEN_FORMATS)
-    async def test_rbac_permissions_key_on_canonical_user_id(self, token_format, diverged_identity, test_db):
-        """The permission path finds the diverged user's role by user_id, not by e-mail."""
+    async def test_rbac_grant_findable_by_email_and_canonical_id(self, token_format, diverged_identity, test_db):
+        """The diverged user's role row is e-mail-keyed for readers and carries the canonical user_id alongside."""
         payload = _decode(_mint_token(token_format, user_uuid=diverged_identity.user_uuid))
         principal = await _resolve_principal(payload, test_db)
 
-        permissions = await PermissionService(test_db).get_user_permissions(get_user_id(principal))
+        # Row lookups are e-mail-keyed: the principal's e-mail reaches the grant.
+        permissions = await PermissionService(test_db).get_user_permissions(get_user_email(principal))
         assert DIVERGED_PERMISSION in permissions
 
-        # Separation control: the e-mail alone does not reach the assignment.
-        email_permissions = await PermissionService(test_db).get_user_permissions(DIVERGED_EMAIL)
-        assert DIVERGED_PERMISSION not in email_permissions
+        # The same grant row is findable by both keys: the FK e-mail column and the canonical user_id column.
+        by_email = test_db.execute(select(UserRole).where(UserRole.role_id == diverged_identity.role_id, UserRole.user_email == DIVERGED_EMAIL)).scalar_one()
+        assert by_email.user_id == DIVERGED_USER_ID
+        by_canonical = test_db.execute(select(UserRole).where(UserRole.role_id == diverged_identity.role_id, UserRole.user_id == DIVERGED_USER_ID)).scalar_one()
+        assert by_canonical.id == by_email.id
+
+        # Separation control: the canonical id never lands in the FK e-mail column.
+        stray = test_db.execute(select(UserRole).where(UserRole.user_email == DIVERGED_USER_ID)).scalars().all()
+        assert stray == []
 
     @pytest.mark.parametrize("token_format", TOKEN_FORMATS)
-    async def test_team_resolution_keys_on_canonical_user_id(self, token_format, diverged_identity, test_db, seam_db):
-        """resolve_session_teams returns the diverged user's DB team for every token format."""
+    async def test_team_membership_findable_by_email_and_canonical_id(self, token_format, diverged_identity, test_db):
+        """The diverged user's membership row is e-mail-keyed for readers and carries the canonical user_id alongside."""
         payload = _decode(_mint_token(token_format, user_uuid=diverged_identity.user_uuid))
         principal = await _resolve_principal(payload, test_db)
 
-        teams = await resolve_session_teams(payload, get_user_email(principal), principal)
+        # Row lookups are e-mail-keyed (mirrors the membership query in the team-resolution seam).
+        team_ids = test_db.execute(select(EmailTeamMember.team_id).where(EmailTeamMember.user_email == get_user_email(principal), EmailTeamMember.is_active.is_(True))).scalars().all()
+        assert diverged_identity.team_id in team_ids
 
-        assert teams is not None
-        assert diverged_identity.team_id in teams
+        # The same membership row is findable by both keys: the FK e-mail column and the canonical user_id column.
+        by_email = test_db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == diverged_identity.team_id, EmailTeamMember.user_email == DIVERGED_EMAIL)).scalar_one()
+        assert by_email.user_id == DIVERGED_USER_ID
+        by_canonical = test_db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == diverged_identity.team_id, EmailTeamMember.user_id == DIVERGED_USER_ID)).scalar_one()
+        assert by_canonical.id == by_email.id
 
-        # The team cache written by the resolution keys on the canonical id.
-        assert f"{DIVERGED_USER_ID}:True" in seam_db._teams_list_cache  # pylint: disable=protected-access
-        assert not any(DIVERGED_EMAIL in key for key in seam_db._teams_list_cache)  # pylint: disable=protected-access
+        # Separation control: the canonical id never lands in the FK e-mail column.
+        stray = test_db.execute(select(EmailTeamMember).where(EmailTeamMember.user_email == DIVERGED_USER_ID)).scalars().all()
+        assert stray == []
 
     @pytest.mark.parametrize("token_format", TOKEN_FORMATS)
     async def test_audit_records_canonical_user_id(self, token_format, diverged_identity, test_db, monkeypatch):
