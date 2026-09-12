@@ -11,7 +11,7 @@ to the layer that resolves the value and to the canonical user ID.
 | Session token (`token_use="session"`) | UUID (`EmailUser.id`) | `_get_email_by_id_sync` and `get_user_email_from_token` in `mcpgateway/auth.py`, plus `resolve_jwt_user_email_from_payload` in `mcpgateway/auth_context.py` | e-mail |
 | API token | UUID; signed metadata carries the e-mail | `resolve_jwt_user_email_from_payload` in `mcpgateway/auth_context.py` | e-mail |
 | Legacy token (no `token_use`) | e-mail | none (direct) | e-mail |
-| Future trust token | opaque | trusted-claims module (not built yet, epic #5885) | to be defined by Stack B |
+| Trust token (`token_use="trusted"`) | opaque mapped claim (`jwt_claim_user_id`, default `sub`) | `mcpgateway/utils/trusted_claims.py` (`extract_trusted_principal`, VirtualPrincipal contract) — external IdP-verified and gateway-minted trust tokens | opaque principal ID (not e-mail) |
 
 ## Accessors
 
