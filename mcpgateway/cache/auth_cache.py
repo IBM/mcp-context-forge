@@ -157,6 +157,9 @@ class AuthCache:
             self._enabled = enabled if enabled is not None else getattr(settings, "auth_cache_enabled", True)
             self._cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
             self._key_version = getattr(settings, "auth_cache_key_version", "v1")
+            # Auth mode is a key segment: a mode flip (db <-> jwt-trust)
+            # changes every key, cold-starting all auth caches automatically.
+            self._key_mode = getattr(settings, "jwt_trust_mode", "db")
         except ImportError:
             self._user_ttl = user_ttl or 60
             self._revocation_ttl = revocation_ttl or 30
@@ -167,6 +170,7 @@ class AuthCache:
             self._enabled = enabled if enabled is not None else True
             self._cache_prefix = "mcpgw:"
             self._key_version = "v1"
+            self._key_mode = "db"
 
         # In-memory cache (fallback when Redis unavailable)
         self._user_cache: Dict[str, CacheEntry] = {}
@@ -201,25 +205,28 @@ class AuthCache:
         )
 
     def _get_redis_key(self, key_type: str, identifier: str) -> str:
-        """Generate Redis key with prefix and namespace version.
+        """Generate Redis key with prefix, namespace version, and auth mode.
 
-        The version segment isolates keys across auth modes: bumping
+        The version segment isolates keys across key-shape changes: bumping
         ``auth_cache_key_version`` makes every key written under the old
-        version unreachable (cold start) without flushing Redis.
+        version unreachable (cold start) without flushing Redis. The mode
+        segment isolates keys across auth modes: flipping ``jwt_trust_mode``
+        (``db`` <-> ``jwt-trust``) cold-starts all auth caches automatically,
+        so no manual version bump is needed on a mode change.
 
         Args:
             key_type: Type of cache entry (user, team, revoke, ctx)
             identifier: Unique identifier (canonical user_id, jti, etc.)
 
         Returns:
-            Full Redis key with prefix and version
+            Full Redis key with prefix, version, and mode
 
         Examples:
             >>> cache = AuthCache()
             >>> cache._get_redis_key("user", "test@example.com")
-            'mcpgw:auth:v1:user:test@example.com'
+            'mcpgw:auth:v1:db:user:test@example.com'
         """
-        return f"{self._cache_prefix}auth:{self._key_version}:{key_type}:{identifier}"
+        return f"{self._cache_prefix}auth:{self._key_version}:{self._key_mode}:{key_type}:{identifier}"
 
     async def _get_redis_client(self):
         """Get Redis client if available.
