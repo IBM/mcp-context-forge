@@ -401,6 +401,14 @@ services:
       - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
       - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
+      # JWT trust mode (default OFF - high-risk; enable only with a configured
+      # trust root). Trust mode accepts claims from trusted external IdP tokens
+      # without a per-request DB lookup; SSO_API_TOKEN_AUTH_ENABLED accepts
+      # external SSO access tokens as API Bearer tokens.
+      # Docs: docs/docs/manage/configuration.md (JWT Trust Mode),
+      #       docs/docs/architecture/auth-token-dispatch.md
+      # - JWT_TRUST_MODE=db
+      # - SSO_API_TOKEN_AUTH_ENABLED=false
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
