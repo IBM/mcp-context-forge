@@ -13822,7 +13822,27 @@ async def test_normalize_jwt_payload_api_token(monkeypatch):
 
     raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"], "exp": 1_800_000_000}
     result = await _normalize_jwt_payload(raw)
-    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True, "token_use": "api", "exp": 1_800_000_000}
+    assert result == {"email": "user@example.com", "user_id": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True, "token_use": "api", "exp": 1_800_000_000}
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_carries_user_id(monkeypatch):
+    """Contract: the normalized user context carries user_id equal to the e-mail (issue #5887)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync.return_value = True
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
+
+    raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"], "exp": 1_800_000_000}
+    user_ctx = await _normalize_jwt_payload(raw)
+    assert user_ctx["user_id"] == user_ctx["email"]
 
 
 @pytest.mark.asyncio
@@ -13834,7 +13854,7 @@ async def test_normalize_jwt_payload_session_token_admin():
     raw = {"sub": "admin@example.com", "token_use": "session", "is_admin": True}
     with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
         result = await _normalize_jwt_payload(raw)
-    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True, "token_use": "session"}
+    assert result == {"email": "admin@example.com", "user_id": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True, "token_use": "session"}
 
 
 @pytest.mark.asyncio
@@ -13846,7 +13866,7 @@ async def test_normalize_jwt_payload_session_token_non_admin():
     raw = {"sub": "dev@example.com", "token_use": "session"}
     with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=["team-x"]):
         result = await _normalize_jwt_payload(raw)
-    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True, "token_use": "session"}
+    assert result == {"email": "dev@example.com", "user_id": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 @pytest.mark.asyncio
@@ -13884,7 +13904,7 @@ async def test_normalize_jwt_payload_session_no_email():
     # resolve_session_teams returns [] for no-email
     with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=[]):
         result = await _normalize_jwt_payload(raw)
-    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True, "token_use": "session"}
+    assert result == {"email": None, "user_id": None, "teams": [], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 @pytest.mark.asyncio

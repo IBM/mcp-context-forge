@@ -26,6 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import get_user_id
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -535,6 +536,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # Add request context for permission auditing
         return {
             "email": user.email,
+            "user_id": get_user_id(user),  # Canonical identity for RBAC checks
             "full_name": user.full_name,
             "is_admin": user.is_admin,
             "ip_address": request.client.host if request.client else None,
