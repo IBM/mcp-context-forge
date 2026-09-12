@@ -101,6 +101,8 @@ class MockPermissionService:
         resource_id: Optional[str] = None,
         team_id: Optional[str] = None,
         token_teams: Optional[list] = None,
+        token_roles: Optional[list] = None,
+        token_is_admin: bool = False,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         allow_admin_bypass: bool = True,
@@ -115,6 +117,8 @@ class MockPermissionService:
             resource_id: Optional resource ID
             team_id: Optional team context
             token_teams: Normalized token team scope from auth context
+            token_roles: Claims-derived role names (trust mode)
+            token_is_admin: Claims-derived admin flag (trust mode)
             ip_address: Optional IP address
             user_agent: Optional user agent
             allow_admin_bypass: Whether to allow admin bypass
@@ -127,11 +131,13 @@ class MockPermissionService:
             return True
         return self.custom_permissions.get(permission, False)
 
-    async def check_admin_permission(self, user_email: str) -> bool:
+    async def check_admin_permission(self, user_email: str, token_teams: Optional[list] = None, token_is_admin: bool = False) -> bool:
         """Mock admin permission check.
 
         Args:
             user_email: User email
+            token_teams: Normalized token team scope from auth context
+            token_is_admin: Claims-derived admin flag (trust mode)
 
         Returns:
             bool: Admin permission result
