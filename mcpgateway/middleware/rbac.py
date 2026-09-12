@@ -575,6 +575,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
             "token_teams": token_teams,  # Include token teams for query-level scoping
+            "token_use": token_use,  # Include token_use for RBAC team derivation
             "roles": claims_roles,  # Claims-derived role names (trust path); [] for non-trust
             "token_is_admin": token_is_admin,  # Claims-derived admin flag (trust path); False for non-trust
             "token_scopes": token_scopes,  # Include token scopes for API token permission checking
