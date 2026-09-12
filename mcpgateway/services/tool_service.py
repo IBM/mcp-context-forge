@@ -4391,6 +4391,9 @@ class ToolService(BaseService):
             tool_lookup_cache = _get_tool_lookup_cache()
             cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
 
+            if server_id and cached_payload and (cached_payload.get("tool") or {}).get("name") != name:
+                cached_payload = None
+
             if cached_payload:
                 status = cached_payload.get("status", "active")
                 if status == "missing":
@@ -4403,47 +4406,28 @@ class ToolService(BaseService):
                 gateway_payload = cached_payload.get("gateway")
 
         if not tool_payload:
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tool, multiple_found = await self._select_invocable_tool(
+                db,
+                name,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+            )
             tool_selected_from_server_scope = bool(server_id)
-
-            if not tools:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-            multiple_found = len(tools) > 1
-            if not multiple_found:
-                tool = tools[0]
-            else:
-                visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
-                for candidate in tools:
-                    tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
-                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
-                        priority = visibility_priority.get(candidate.visibility, 99)
-                        accessible_tools.append((name_priority, priority, candidate))
-
-                if not accessible_tools:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                accessible_tools.sort(key=lambda item: (item[0], item[1]))
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [candidate for name_priority, priority, candidate in accessible_tools if name_priority == best_name_priority and priority == best_visibility_priority]
-                if len(best_tools) > 1:
-                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-                tool = best_tools[0]
 
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if tool.name == name:
+                    await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            if not multiple_found:
+            if not multiple_found and tool_payload.get("name") == name:
                 await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
 
         if tool_payload.get("enabled") is False:
@@ -4927,24 +4911,95 @@ class ToolService(BaseService):
             False,
         )
 
-    def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
-        """Load candidate tools for invocation, narrowing to a virtual server when possible.
+    def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None, *, match_original_name: bool = False) -> List[DbTool]:
+        """Load exact-name or original-name candidates for invocation.
 
         Args:
             db: Active database session.
             name: Tool name to resolve.
             server_id: Optional virtual server identifier used to constrain results.
+            match_original_name: Match ``DbTool.original_name`` instead of
+                ``DbTool.name``. Used only for server-scoped fallback resolution.
 
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
-        if server_id:
-            name_filter = or_(name_filter, DbTool.original_name == name)
+        name_filter = DbTool.original_name == name if match_original_name else DbTool.name == name  # pylint: disable=comparison-with-callable
         query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
-        return db.execute(query).scalars().all()
+        return list(db.execute(query).scalars().all())
+
+    async def _select_invocable_tool(
+        self,
+        db: Session,
+        name: str,
+        *,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+    ) -> Tuple[DbTool, bool]:
+        """Select an accessible invocation target using exact then scoped fallback lookup.
+
+        Exact-name candidates retain the existing visibility-priority behavior. A
+        server-scoped ``original_name`` fallback is valid only when exactly one
+        accessible attached tool matches, because visibility cannot disambiguate
+        tools exposed by different gateways under the same upstream name.
+
+        Args:
+            db: Active database session.
+            name: Tool name requested by the caller.
+            user_email: Effective requester email for visibility checks.
+            token_teams: Team scope from the caller token.
+            server_id: Optional virtual server identifier restricting candidates.
+
+        Returns:
+            The selected tool and whether its lookup contained multiple raw candidates.
+
+        Raises:
+            ToolNotFoundError: If no accessible candidate exists.
+            ToolInvocationError: If the highest-priority exact match or the scoped
+                original-name fallback is ambiguous.
+        """
+
+        async def accessible_tools(candidates: List[DbTool]) -> List[DbTool]:
+            accessible: List[DbTool] = []
+            for candidate in candidates:
+                tool_dict = {
+                    "visibility": candidate.visibility,
+                    "team_id": candidate.team_id,
+                    "owner_email": candidate.owner_email,
+                }
+                if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                    accessible.append(candidate)
+            return accessible
+
+        exact_candidates = self._load_invocable_tools(db, name, server_id=server_id)
+        if not server_id and len(exact_candidates) == 1:
+            # Preserve direct invocation's existing state-check and access-check
+            # ordering. The access-first behavior below is required specifically
+            # to decide whether scoped original-name fallback may run.
+            return exact_candidates[0], False
+
+        accessible_exact = await accessible_tools(exact_candidates)
+        if accessible_exact:
+            multiple_found = len(exact_candidates) > 1
+            visibility_priority = {"team": 0, "private": 1, "public": 2}
+            best_priority = min(visibility_priority.get(candidate.visibility, 99) for candidate in accessible_exact)
+            best_tools = [candidate for candidate in accessible_exact if visibility_priority.get(candidate.visibility, 99) == best_priority]
+            if len(best_tools) > 1:
+                raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
+            return best_tools[0], multiple_found
+
+        if server_id:
+            fallback_candidates = self._load_invocable_tools(db, name, server_id=server_id, match_original_name=True)
+            accessible_fallback = await accessible_tools(fallback_candidates)
+            if len(accessible_fallback) > 1:
+                raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
+            if accessible_fallback:
+                return accessible_fallback[0], len(fallback_candidates) > 1
+
+        raise ToolNotFoundError(f"Tool not found: {name}")
 
     # ------------------------------------------------------------------
     # Retry helpers (used by invoke_tool)
@@ -5185,6 +5240,9 @@ class ToolService(BaseService):
             tool_lookup_cache = _get_tool_lookup_cache()
             cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
 
+            if server_id and cached_payload and (cached_payload.get("tool") or {}).get("name") != name:
+                cached_payload = None
+
             if cached_payload:
                 status = cached_payload.get("status", "active")
                 if status == "missing":
@@ -5197,50 +5255,22 @@ class ToolService(BaseService):
                 gateway_payload = cached_payload.get("gateway")
 
         if not tool_payload:
-            # Eager load tool WITH gateway in single query to prevent lazy load N+1
-            # Use a single query to avoid a race between separate enabled/inactive lookups.
-            # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
-            # tool names across teams without crashing on MultipleResultsFound.
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
-
-            if not tools:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-            multiple_found = len(tools) > 1
-            if not multiple_found:
-                tool = tools[0]
-            else:
-                # Multiple tools found with same name — filter by access using
-                # _check_tool_access (same rules as list_tools) and prioritize.
-                # Priority (lower is better): team (0) > private (1) > public (2)
-                visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
-                for t in tools:
-                    tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
-                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(t, "name", None) == name else 1
-                        priority = visibility_priority.get(t.visibility, 99)
-                        accessible_tools.append((name_priority, priority, t))
-
-                if not accessible_tools:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                accessible_tools.sort(key=lambda x: (x[0], x[1]))
-
-                # Check for ambiguity at the highest priority level
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [t for name_priority, p, t in accessible_tools if name_priority == best_name_priority and p == best_visibility_priority]
-
-                if len(best_tools) > 1:
-                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-
-                tool = best_tools[0]
+            # Each resolution stage eager-loads the gateway and uses scalars().all()
+            # so duplicate names across teams remain deterministic.
+            tool, multiple_found = await self._select_invocable_tool(
+                db,
+                name,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+            )
 
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if tool.name == name:
+                    await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
@@ -5249,7 +5279,7 @@ class ToolService(BaseService):
             gateway_payload = cache_payload.get("gateway")
             # Skip caching when multiple tools share a name — resolution is
             # user-dependent, so a cached result could be wrong for other users.
-            if not multiple_found:
+            if not multiple_found and tool_payload.get("name") == name:
                 await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
 
         if tool_payload.get("enabled") is False:
@@ -5269,7 +5299,8 @@ class ToolService(BaseService):
             # Check deprecated status after RBAC to avoid leaking tool existence
             if tool_payload.get("deprecated") is True:
                 # Cache the deprecated status to avoid repeated DB queries
-                await tool_lookup_cache.set_negative(name, "deprecated")
+                if tool_payload.get("name") == name:
+                    await tool_lookup_cache.set_negative(name, "deprecated")
                 raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════
