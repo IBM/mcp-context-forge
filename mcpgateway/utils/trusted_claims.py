@@ -36,11 +36,19 @@ PRINCIPAL CONTRACT (VirtualPrincipal):
   (public-only access; the principal still authenticates).
 - ``roles``: list of role names. The claim named by ``jwt_claim_roles``
   merges with role names returned by the group-mapping resolver before
-  resolution. Role names resolve to permission sets via the server-side
-  ``roles`` table only; permissions are never embedded in or read from the
-  token. Unknown role names are ignored with a WARNING log (fail-closed).
+  resolution. Each name resolves scope-exactly to exactly one active row
+  in the server-side ``roles`` table via
+  ``mcpgateway.services.role_resolution.resolve_mapping_role`` (team scope
+  preferred, global fallback, lowest id, rows never unioned); permissions
+  are never embedded in or read from the token. Names with no active row
+  are ignored with a WARNING log (fail-closed).
 - ``is_admin``: bool, default False. Read from the claim named by
-  ``jwt_claim_admin``.
+  ``jwt_claim_admin`` and parsed strictly: only ``True``, ``1``, and the
+  case-insensitive strings ``"true"``/``"1"``/``"yes"`` grant admin; every
+  other value (including the truthy-coercing strings ``"false"``/``"0"``/
+  ``"no"``) is non-admin. A present but non-canonical value logs one
+  structured warning naming the claim and its JSON type, never the value.
+  A missing claim is silently non-admin (fail-closed).
 - ``auth_provider``: the token issuer (``iss``) when present, else the
   string ``"jwt-trust"``.
 - ``token_use``: the constant string ``"trusted"``.
@@ -61,12 +69,99 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import ExternalGroupMapping, Role
+from mcpgateway.db import ExternalGroupMapping
+from mcpgateway.services.role_resolution import resolve_mapping_role
 
 logger = logging.getLogger(__name__)
 
 #: Sentinel written on the AuditTrail path when the token carries no email.
 AUDIT_UNKNOWN_SENTINEL = "unknown"
+
+#: Case-insensitive string values of the admin claim that mean True.
+_ADMIN_CLAIM_TRUE_STRINGS = frozenset({"true", "1", "yes"})
+
+#: Case-insensitive string values of the admin claim that are recognized
+#: explicit denials; they coerce False without a warning.
+_ADMIN_CLAIM_FALSE_STRINGS = frozenset({"false", "0", "no"})
+
+
+def _json_type_name(value: Any) -> str:
+    """Return the JSON type name for a claim value (for logs, never the value).
+
+    Args:
+        value: Claim value to classify.
+
+    Returns:
+        str: One of "boolean", "string", "number", "array", "object", or
+            the Python type name for exotica.
+
+    Examples:
+        >>> _json_type_name(True)
+        'boolean'
+        >>> _json_type_name([1])
+        'array'
+    """
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def _parse_admin_flag(value: Any, claim_name: str) -> bool:
+    """Strictly parse the admin claim to a boolean (finding NB1).
+
+    ``bool()`` coercion is unsafe here: the strings ``"false"``, ``"0"``,
+    and ``"no"`` are all truthy, so an issuer emitting string claims would
+    silently grant admin. The only values accepted as True are ``True``,
+    ``1``, and the case-insensitive strings ``"true"``/``"1"``/``"yes"``.
+    Every other present value — including ``False``, ``0``, the recognized
+    denial strings, empty strings, floats, arrays, and objects — coerces
+    False. A present value that is neither a boolean, nor integer 0/1, nor
+    a recognized string logs one structured warning naming the claim and
+    the observed JSON type (never the value). A missing claim (None) is
+    silently non-admin: fail-closed.
+
+    Args:
+        value: Raw claim value (None when the claim is absent).
+        claim_name: Configured claim name, used in the warning log.
+
+    Returns:
+        bool: True only for canonical true values; False otherwise.
+
+    Examples:
+        >>> _parse_admin_flag("true", "is_admin")
+        True
+        >>> _parse_admin_flag("false", "is_admin")
+        False
+        >>> _parse_admin_flag(None, "is_admin")
+        False
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in (0, 1):
+            return value == 1
+    elif isinstance(value, str):
+        lowered = value.lower()
+        if lowered in _ADMIN_CLAIM_TRUE_STRINGS:
+            return True
+        if lowered in _ADMIN_CLAIM_FALSE_STRINGS:
+            return False
+    logger.warning(
+        "Admin claim %r is present with a non-canonical %s value; treating the principal as non-admin.",
+        claim_name,
+        _json_type_name(value),
+    )
+    return False
 
 
 def resolve_external_groups_to_teams(issuer: str, tenant: Optional[str], groups: List[str], db: Session) -> Tuple[List[str], List[str]]:
@@ -264,10 +359,14 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
       directly. All groups unmapped and no teams claim yields ``[]``
       (public-only access; the principal still authenticates).
     - ``roles`` (list of strings): the ``jwt_claim_roles`` claim merged with
-      resolver-supplied role names, then validated against the server-side
-      ``roles`` table; unknown names are skipped with a WARNING log
-      (fail-closed). Permissions are never read from the token.
-    - ``is_admin`` (bool, default False): read from ``jwt_claim_admin``.
+      resolver-supplied role names, each name resolved scope-exactly to
+      exactly one active row in the server-side ``roles`` table (team scope
+      preferred, global fallback, never unioned); names with no active row
+      are skipped with a WARNING log (fail-closed). Permissions are never
+      read from the token.
+    - ``is_admin`` (bool, default False): read from ``jwt_claim_admin`` and
+      parsed strictly (``_parse_admin_flag``); a present but non-canonical
+      value coerces False with one structured warning.
     - ``auth_provider``: the token issuer (``iss``) when present, else
       ``"jwt-trust"``.
     - ``token_use``: the constant ``"trusted"``.
@@ -320,10 +419,15 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
             if role_name not in role_names:
                 role_names.append(role_name)
 
-    known_roles = {row[0] for row in db.query(Role.name).filter(Role.is_active.is_(True)).all()}
+    # Names resolve scope-exactly to exactly one active Role row each via
+    # the shared mapping resolver (team scope preferred, global fallback,
+    # lowest id, never union). A name-only lookup could match several
+    # active rows across scopes and union more permissions than intended.
+    # cf_team_id is not threaded here: Role.scope is a scope type, not a
+    # per-team id, so the team context does not change the resolution.
     roles: List[str] = []
     for role_name in role_names:
-        if role_name in known_roles:
+        if resolve_mapping_role(db, role_name) is not None:
             if role_name not in roles:
                 roles.append(role_name)
         else:
@@ -339,7 +443,7 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
         full_name=full_name if isinstance(full_name, str) else None,
         teams=teams,
         roles=roles,
-        is_admin=bool(_get_claim(payload, settings.jwt_claim_admin)),
+        is_admin=_parse_admin_flag(_get_claim(payload, settings.jwt_claim_admin), settings.jwt_claim_admin),
         auth_provider=issuer,
         token_use="trusted",
     )
