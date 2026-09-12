@@ -341,6 +341,8 @@ A token is trust-eligible when either branch holds (see `docs/docs/architecture/
 
 Every other token follows the default funnel, even when trust mode is ON: session tokens, API tokens, and external IdP tokens from non-trust-root issuers keep the default (database-backed) behavior, including JIT provisioning. A token that carries `token_use="trusted"` while trust mode is OFF is rejected with `401`; the marker never enters the default funnel.
 
+At ingress, `get_current_user()` dispatches external-issuer bearers to the trusted-issuer JWKS verifier when trust mode is ON: a trust-root token that verifies becomes the claims-derived principal; a trust-root token that fails definitively (bad signature, wrong audience, expiry, missing revocation claim) is rejected with `401` and never falls through to the internal funnel; any other issuer keeps the default-funnel behavior above. The observable result semantics (`200` mapped+authorized, `401` untrusted-issuer fall-through or definitive failure, `403` authenticated but unmapped/RBAC-denied, `404` authorized with the agent absent) are pinned by the live matrix in `tests/live_gateway/test_trust_mode_external_ingress_e2e.py`.
+
 ### Revocation guarantee
 
 A trust-eligible token that lacks the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`; Entra trust roots may use `uti`) is rejected with `401`. The claim is mandatory because it is the only revocation handle trust mode has: revoking the claim value in the blocklist denies the token on the next request. Revocation is keyed by the configured claim only; there is no sid-keyed revocation for trust-mode principals.
