@@ -16,6 +16,8 @@ on the stack's default non-enforcing test database.
 
 # Standard
 import uuid
+from contextlib import contextmanager
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -25,6 +27,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
+from mcpgateway.auth import resolve_session_teams
 from mcpgateway.db import Base, EmailTeam, EmailTeamMember, EmailUser, Role, UserRole
 from mcpgateway.services.role_service import RoleService
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -55,6 +58,24 @@ def _seed_diverged_user(db):
     """Insert a user whose canonical user_id diverges from their e-mail."""
     db.add(EmailUser(email=DIVERGED_EMAIL, user_id=DIVERGED_USER_ID, password_hash=None, is_active=True))
     db.commit()
+
+
+@contextmanager
+def _pinned_session(db):
+    """Yield the fixture session where auth.py would open a fresh one."""
+    yield db
+
+
+def _seed_team_with_member(db, *, email, user_id):
+    """Insert a non-personal team and an active membership row for the user."""
+    suffix = uuid.uuid4().hex[:8]
+    team = EmailTeam(name=f"Team {suffix}", slug=f"team-{suffix}", created_by=email, is_personal=False, visibility="private", is_active=True)
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    db.add(EmailTeamMember(team_id=team.id, user_email=email, user_id=user_id, role="member", invited_by=email, is_active=True))
+    db.commit()
+    return team
 
 
 def test_fk_fixture_enforces_foreign_keys(fk_db):
@@ -105,3 +126,45 @@ async def test_membership_writer_keeps_fk_valid_and_stores_canonical_id(fk_db):
     row = fk_db.execute(select(EmailTeamMember)).scalar_one()
     assert row.user_email == DIVERGED_EMAIL  # FK-valid (F7 contract)
     assert row.user_id == DIVERGED_USER_ID  # canonical preserved (#5884 intent)
+
+
+@pytest.mark.asyncio
+async def test_session_teams_resolve_for_diverged_user(fk_db):
+    """resolve_session_teams matches a dual-written membership row via either identity key."""
+    _seed_diverged_user(fk_db)
+    team = _seed_team_with_member(fk_db, email=DIVERGED_EMAIL, user_id=DIVERGED_USER_ID)
+
+    payload = {"sub": DIVERGED_USER_ID, "token_use": "session"}
+    with patch("mcpgateway.auth.fresh_db_session", lambda: _pinned_session(fk_db)):
+        teams = await resolve_session_teams(payload, DIVERGED_EMAIL, {"is_admin": False})
+
+    assert teams == [team.id]
+
+
+@pytest.mark.asyncio
+async def test_session_teams_resolve_for_legacy_user(fk_db):
+    """Legacy user (user_id == e-mail in both columns) resolves unchanged."""
+    legacy_email = "legacy@example.com"
+    fk_db.add(EmailUser(email=legacy_email, user_id=legacy_email, password_hash=None, is_active=True))
+    fk_db.commit()
+    team = _seed_team_with_member(fk_db, email=legacy_email, user_id=legacy_email)
+
+    payload = {"sub": legacy_email, "token_use": "session"}
+    with patch("mcpgateway.auth.fresh_db_session", lambda: _pinned_session(fk_db)):
+        teams = await resolve_session_teams(payload, legacy_email, {"is_admin": False})
+
+    assert teams == [team.id]
+
+
+@pytest.mark.asyncio
+async def test_session_teams_admin_bypass_unchanged(fk_db):
+    """Admin bypass (is_admin resolved from DB) still returns None."""
+    admin_email = "admin@example.com"
+    fk_db.add(EmailUser(email=admin_email, user_id=admin_email, password_hash=None, is_active=True, is_admin=True))
+    fk_db.commit()
+
+    payload = {"sub": admin_email, "token_use": "session"}
+    with patch("mcpgateway.auth.fresh_db_session", lambda: _pinned_session(fk_db)):
+        teams = await resolve_session_teams(payload, admin_email, {})  # no is_admin key -> DB lookup
+
+    assert teams is None
