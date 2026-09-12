@@ -73,7 +73,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import ExternalGroupMapping, Role, SSOProvider
+from mcpgateway.db import ExternalGroupMapping, SSOProvider
 from mcpgateway.services.role_resolution import resolve_mapping_role
 from mcpgateway.utils.entra_graph_client import EntraGraphClient, EntraGraphError
 

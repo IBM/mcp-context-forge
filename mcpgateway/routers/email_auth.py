@@ -228,6 +228,10 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
               "password": "secure_password"  # pragma: allowlist secret
             }
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: password authentication is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Password authentication disabled in trust mode")
+
     auth_service = EmailAuthService(db)
     ip_address = get_client_ip(request)
     user_agent = get_user_agent(request)
@@ -364,6 +368,10 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
               "full_name": "New User"
             }
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: password authentication is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Password authentication disabled in trust mode")
+
     # Check if public registration is allowed
     if not settings.public_registration_enabled:
         logger.warning(f"Registration attempt rejected - public registration disabled: {SecurityValidator.sanitize_log_message(registration_request.email)}")
@@ -469,6 +477,10 @@ async def forgot_password(reset_request: ForgotPasswordRequest, request: Request
     Raises:
         HTTPException: If password reset is disabled or the request is rate limited.
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: password authentication is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Password authentication disabled in trust mode")
+
     if not getattr(settings, "password_reset_enabled", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
 
@@ -498,6 +510,10 @@ async def validate_password_reset_token(token: str, request: Request, db: Sessio
     Raises:
         HTTPException: If password reset is disabled or token validation fails.
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: password authentication is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Password authentication disabled in trust mode")
+
     if not getattr(settings, "password_reset_enabled", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
 
@@ -531,6 +547,10 @@ async def complete_password_reset(token: str, reset_request: ResetPasswordReques
     Raises:
         HTTPException: If password reset is disabled or reset validation fails.
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: password authentication is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Password authentication disabled in trust mode")
+
     if not getattr(settings, "password_reset_enabled", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
 
@@ -714,6 +734,10 @@ async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: di
               "is_admin": false
             }
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: local user management is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User management disabled in trust mode")
+
     auth_service = EmailAuthService(db)
 
     try:
@@ -805,6 +829,10 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     Raises:
         HTTPException: If user not found or update fails
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: local user management is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User management disabled in trust mode")
+
     auth_service = EmailAuthService(db)
 
     try:
@@ -853,6 +881,10 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
     Raises:
         HTTPException: If user not found or deletion fails
     """
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: local user management is disabled in trust mode (#5906).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User management disabled in trust mode")
+
     auth_service = EmailAuthService(db)
 
     try:
