@@ -218,10 +218,15 @@ Startup validation rules:
 
 - When `JWT_TRUST_MODE=jwt-trust`, every claim-mapping setting and `JWT_TRUST_REVOCATION_CLAIM` must be a non-empty string. The gateway refuses to start with an error naming the offending setting.
 - A trust-eligible token that lacks the configured revocation claim is rejected with `401`. The revocation claim is mandatory because trust mode relies on it for token revocation.
+- In trust mode, `JWT_CLAIM_TEAMS` must not name the same claim as the provider's groups claim (`SSO_ENTRA_GROUPS_CLAIM` / `SSO_GENERIC_GROUPS_CLAIM`), which the external group-mapping resolver consumes; an aliased value would place raw external group IDs into native ContextForge team memberships before mapping. The gateway refuses to start with a remediation message naming both variables.
 
 All defaults preserve the current behavior: trust mode defaults to `db` and the new settings are inert until `jwt-trust` is enabled.
 
 Posture change in `jwt-trust` mode: the gateway does not read the local user record on the request path, so there is no per-user `is_active` kill-switch for trust-mode principals. To withdraw access, revoke the token through the configured revocation claim (`JWT_TRUST_REVOCATION_CLAIM`, default `jti`) or remove the external group mapping. A token that carries `token_use="trusted"` is rejected with `401` when trust mode is `db`: the marker never enters the default funnel. The auth-cache Redis key carries the mode as a namespace segment, so a mode flip cold-starts every auth cache automatically.
+
+Compose wiring: `docker-compose.yml` and `docker-compose.sso.yml` carry both flags as commented, default-off entries (`# JWT_TRUST_MODE=db`, `# SSO_API_TOKEN_AUTH_ENABLED=false`) in the gateway environment block, with a pointer to this page and `docs/docs/architecture/auth-token-dispatch.md`. Uncomment to enable.
+
+Provider setup: an external issuer becomes a trust root when its `SSOProvider` row sets `trusted_for_api_auth=true` plus a non-empty `api_audience` (the request to enable it is rejected otherwise). The full provider setup — including Entra audience notes and the confused-deputy rationale — is in [SSO: Machine-to-Machine API auth with external IdP tokens](sso.md#machine-to-machine-api-auth-with-external-idp-tokens). The Entra E2E suite additionally needs `TESTS_DNS_PASSTHROUGH_HOSTS` (e.g. `login.microsoftonline.com,graph.microsoft.com`) so test runs can reach real Entra/Graph endpoints through the deterministic-DNS stub in `tests/conftest.py`; see `docs/testing/entra-id-e2e.md`. The ingress dispatch contract and the 200/401/403/404 result semantics are pinned in [Token Dispatch Rule](../architecture/auth-token-dispatch.md).
 
 Surfaces disabled in `jwt-trust` mode (the full decision table lives in `docs/docs/architecture/auth-feature-mode-matrix.md`):
 
