@@ -2615,3 +2615,64 @@ class TestUnifiedSearchPathScoping:
 
         assert client.get("/v1/search", headers=headers).status_code == 200  # middleware lets it through
         assert client.get("/v1/other", headers=headers).status_code == 403  # control: default-deny still enforced
+
+
+class TestUserIdKeyedTeamResolution:
+    """Team resolution keys on the canonical user_id (#5890).
+
+    Duplicates the session-token truth-table cases with user_id-keyed
+    payloads: the identity passed to the DB layer comes from
+    ``get_user_id(payload)``, with the e-mail argument as fallback.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resolve_session_teams_uses_canonical_user_id(self):
+        """An explicit user_id claim wins over sub/e-mail for DB team resolution."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"user_id": "u-1", "sub": "e@x.test", "token_use": "session"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["t1"])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("u-1", {"is_admin": False})
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_revoked_membership_fails_closed(self):
+        """Revoked membership (empty DB teams) yields public-only, never admin bypass."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"user_id": "u-1", "sub": "e@x.test", "token_use": "session"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=[])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("u-1", {"is_admin": False})
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_intersect(self):
+        """A JWT teams claim narrows the user_id-keyed DB teams to the intersection."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"user_id": "u-1", "sub": "e@x.test", "token_use": "session", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["t1", "t2"])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("u-1", {"is_admin": False})
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_missing_identity_falls_back_to_email_param(self):
+        """A payload without user_id/email/sub uses the e-mail argument (unchanged behavior)."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"token_use": "session"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["t1"])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("e@x.test", {"is_admin": False})
+        assert result == ["t1"]
