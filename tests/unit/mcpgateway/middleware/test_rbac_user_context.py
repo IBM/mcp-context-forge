@@ -3,12 +3,17 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Tests that the RBAC user context carries the canonical user_id.
+Tests that the RBAC user context carries the canonical user_id and the
+claims-derived identity.
 
 The authenticated context built by get_current_user_with_permissions must
 expose the canonical user_id (resolving user_id -> email -> sub -> "unknown"
 via mcpgateway.auth_context.get_user_id), not only the e-mail attribute, so
-live RBAC checks can key on the stable identity.
+live RBAC checks can key on the stable identity. On the JWT-trust path it
+must additionally carry the VirtualPrincipal's claims-derived roles, the
+claims-derived admin flag (token_is_admin), and the claims-derived teams;
+non-trust authenticated paths expose the same keys with neutral defaults so
+downstream consumers can rely on key presence.
 """
 
 # Standard
@@ -20,6 +25,7 @@ import pytest
 
 # First-Party
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.utils.trusted_claims import VirtualPrincipal
 
 
 def _mock_request():
@@ -83,3 +89,85 @@ async def test_user_context_user_id_falls_back_to_email():
         )
 
     assert ctx["user_id"] == "bob@example.com"
+
+
+@pytest.mark.asyncio
+async def test_trust_principal_claims_reach_user_context():
+    """The trust-path context must carry the principal's claims-derived identity."""
+    principal = VirtualPrincipal(
+        user_id="entra-sub-123",
+        email="alice@example.com",
+        full_name="Alice",
+        teams=["team-a"],
+        roles=["developer"],
+        is_admin=False,
+    )
+    request = _mock_request()
+    request.state.token_use = "trusted"  # Set by get_current_user on the trust branch
+
+    with patch("mcpgateway.auth.validate_token_user", new_callable=AsyncMock) as mock_validate:
+        mock_validate.return_value = principal
+
+        ctx = await get_current_user_with_permissions(
+            request=request,
+            credentials=None,
+            jwt_token="test-token",
+        )
+
+    assert ctx["user_id"] == "entra-sub-123"
+    assert ctx["roles"] == ["developer"]
+    assert ctx["token_is_admin"] is False
+    assert ctx["token_teams"] == ["team-a"]
+
+
+@pytest.mark.asyncio
+async def test_internal_jwt_context_has_neutral_claims_defaults():
+    """A non-trust authenticated context exposes the claims keys with neutral defaults."""
+    principal = SimpleNamespace(
+        email="carol@example.com",
+        user_id="carol-uuid-456",
+        full_name="Carol",
+        is_admin=True,  # DB-derived admin must NOT leak into token_is_admin
+        teams=["team-x"],
+    )
+
+    with patch("mcpgateway.auth.validate_token_user", new_callable=AsyncMock) as mock_validate:
+        mock_validate.return_value = principal
+
+        ctx = await get_current_user_with_permissions(
+            request=_mock_request(),
+            credentials=None,
+            jwt_token="test-token",
+        )
+
+    assert ctx["roles"] == []
+    assert ctx["token_is_admin"] is False
+    assert ctx["is_admin"] is True
+    assert "token_teams" in ctx
+
+
+@pytest.mark.asyncio
+async def test_trust_principal_admin_flag_reaches_user_context():
+    """A trust principal with the mapped admin claim sets token_is_admin True."""
+    principal = VirtualPrincipal(
+        user_id="entra-sub-admin",
+        email="root@example.com",
+        full_name="Root",
+        teams=[],
+        roles=["platform_admin"],
+        is_admin=True,
+    )
+    request = _mock_request()
+    request.state.token_use = "trusted"
+
+    with patch("mcpgateway.auth.validate_token_user", new_callable=AsyncMock) as mock_validate:
+        mock_validate.return_value = principal
+
+        ctx = await get_current_user_with_permissions(
+            request=request,
+            credentials=None,
+            jwt_token="test-token",
+        )
+
+    assert ctx["token_is_admin"] is True
+    assert ctx["roles"] == ["platform_admin"]
