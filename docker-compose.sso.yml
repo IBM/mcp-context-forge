@@ -39,3 +39,9 @@ services:
       - SSO_PRESERVE_ADMIN_AUTH=true
       # Accept external IdP access tokens as API bearer tokens (see make compose-sso-seed-audience)
       - SSO_API_TOKEN_AUTH_ENABLED=true
+      # JWT trust mode (default OFF - high-risk; enable only with a configured
+      # trust root). SSO_API_TOKEN_AUTH_ENABLED above accepts external SSO
+      # access tokens as API Bearer tokens.
+      # Docs: docs/docs/manage/configuration.md (JWT Trust Mode),
+      #       docs/docs/architecture/auth-token-dispatch.md
+      # - JWT_TRUST_MODE=db
