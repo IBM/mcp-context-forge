@@ -3026,8 +3026,8 @@ class TestTransientTeamFromDict:
         assert rebuilt.updated_at is not None
 
 
-class TestMembershipCanonicalKeying:
-    """Writer re-keying: membership writers store the canonical user_id (#5893)."""
+class TestMembershipDualWrite:
+    """Dual-write: membership writers store the e-mail in user_email and the canonical user_id alongside (#5893)."""
 
     @staticmethod
     async def _create_diverged_user(db, email: str, user_id: str):
@@ -3056,7 +3056,7 @@ class TestMembershipCanonicalKeying:
 
     @pytest.mark.asyncio
     async def test_add_member_stores_canonical_user_id(self, test_db):
-        """add_member_to_team keys the membership by user_id; re-adding reactivates the same row."""
+        """add_member_to_team keeps the e-mail in user_email, stores user_id; re-adding reactivates the same row."""
         suffix = uuid4().hex[:8]
         email = f"dev-{suffix}@example.com"
         await self._create_diverged_user(test_db, email, "idp-123")
@@ -3065,22 +3065,22 @@ class TestMembershipCanonicalKeying:
         service = TeamManagementService(test_db)
         member = await service.add_member_to_team(team_id=team.id, user_email=email, role="member", invited_by=email)
 
-        assert member.user_email == "idp-123"
+        assert member.user_email == email
+        assert member.user_id == "idp-123"
 
-        # Deactivate the row, then re-add: the same canonical-keyed row is
+        # Deactivate the row, then re-add: the same e-mail-keyed row is
         # reactivated, no duplicate. (remove_member_from_team is a reader
-        # outside this story's five writer sites, so flip the flag directly.)
         member.is_active = False
         test_db.commit()
 
         readded = await service.add_member_to_team(team_id=team.id, user_email=email, role="member", invited_by=email)
         assert readded.id == member.id
-        assert readded.user_email == "idp-123"
+        assert readded.user_email == email
         assert test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).count() == 1
 
     @pytest.mark.asyncio
     async def test_approve_join_request_stores_canonical_user_id(self, test_db):
-        """approve_join_request keys the new membership by user_id."""
+        """approve_join_request keeps the e-mail in user_email and stores the canonical user_id."""
         suffix = uuid4().hex[:8]
         email = f"joiner-{suffix}@example.com"
         await self._create_diverged_user(test_db, email, "idp-123")
@@ -3090,6 +3090,8 @@ class TestMembershipCanonicalKeying:
         join_request = await service.create_join_request(team_id=team.id, user_email=email)
         member = await service.approve_join_request(team_id=team.id, request_id=join_request.id, approved_by=email)
 
-        assert member.user_email == "idp-123"
+        assert member.user_email == email
+        assert member.user_id == "idp-123"
         stored = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
-        assert stored.user_email == "idp-123"
+        assert stored.user_email == email
+        assert stored.user_id == "idp-123"
