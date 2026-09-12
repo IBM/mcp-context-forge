@@ -593,7 +593,14 @@ class TestAssignRoleToUser:
                     )
 
                     MockUserRole.assert_called_once_with(
-                        user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at, grant_source=None
+                        user_email="user@example.com",
+                        user_id="user@example.com",
+                        role_id="role-123",
+                        scope="team",
+                        scope_id="team-789",
+                        granted_by="admin@example.com",
+                        expires_at=expires_at,
+                        grant_source=None,
                     )
 
     @pytest.mark.asyncio
@@ -1041,8 +1048,8 @@ class TestComplexScenarios:
                     mock_db.add.assert_called_once()
 
 
-class TestAssignRoleCanonicalKeying:
-    """Writer re-keying: assign_role_to_user stores the canonical user_id (#5893)."""
+class TestAssignRoleDualWrite:
+    """Dual-write: assign_role_to_user stores the e-mail in user_email and the canonical user_id alongside (#5893)."""
 
     @staticmethod
     async def _create_diverged_user(db, email: str, user_id: str):
@@ -1055,7 +1062,7 @@ class TestAssignRoleCanonicalKeying:
 
     @pytest.mark.asyncio
     async def test_assign_role_stores_canonical_user_id(self, test_db):
-        """A diverged user's role assignment is keyed by user_id, and a second call dedupes against that row."""
+        """A diverged user's role assignment keeps the e-mail in user_email, stores user_id, and a second call dedupes against that row."""
         suffix = uuid.uuid4().hex[:8]
         email = f"dev-{suffix}@example.com"
         await self._create_diverged_user(test_db, email, "idp-123")
@@ -1075,9 +1082,10 @@ class TestAssignRoleCanonicalKeying:
         service = RoleService(test_db)
         assignment = await service.assign_role_to_user(user_email=email, role_id=role.id, scope="global", scope_id=None, granted_by=email)
 
-        assert assignment.user_email == "idp-123"
+        assert assignment.user_email == email
+        assert assignment.user_id == "idp-123"
 
-        # Second call dedupes against the canonical-keyed row: no duplicate insert.
+        # Second call dedupes against the e-mail-keyed row: no duplicate insert.
         with pytest.raises(ValueError, match="already has this role"):
             await service.assign_role_to_user(user_email=email, role_id=role.id, scope="global", scope_id=None, granted_by=email)
 
