@@ -77,7 +77,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import ExternalGroupMapping, SSOProvider
-from mcpgateway.services.role_resolution import resolve_mapping_role
 from mcpgateway.utils.entra_graph_client import EntraGraphClient, EntraGraphError
 
 logger = logging.getLogger(__name__)
@@ -452,6 +451,11 @@ def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Sessio
     # active rows across scopes and union more permissions than intended.
     # cf_team_id is not threaded here: Role.scope is a scope type, not a
     # per-team id, so the team context does not change the resolution.
+    # First-Party
+    from mcpgateway.services.role_resolution import (  # lazy: module-level import cycles via mcpgateway.services.__init__ -> gateway_service -> sso_service
+        resolve_mapping_role,
+    )
+
     roles: List[str] = []
     for role_name in role_names:
         if resolve_mapping_role(db, role_name) is not None:
