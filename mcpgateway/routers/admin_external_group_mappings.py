@@ -11,9 +11,12 @@ used by sibling admin routers such as runtime_admin_router.
 
 Write-time validation:
 - cf_team_id must exist in the email_teams table (400 otherwise).
-- cf_role, when provided, must match a row in the roles table by name (400
-  otherwise). cf_role carries no foreign key: roles.name has only a partial
-  unique index, so existence is validated here at the application level.
+- cf_role, when provided, must resolve to an active row in the roles
+  table (400 otherwise). Resolution is scope-exact: roles.name is unique
+  only per (name, scope) among active rows, so the team-scoped row wins
+  over a global row of the same name and rows are never unioned. cf_role
+  carries no foreign key: roles.name has only a partial unique index, so
+  existence is validated here at the application level.
 - The injectable group_exists_validator seam checks that the external group
   exists in the IdP. It ships disabled by default: the stub always returns
   "valid". The real Microsoft Graph validator lands with the app-only Graph
@@ -124,20 +127,67 @@ def _validate_team_exists(db: Session, cf_team_id: str) -> None:
         raise HTTPException(status_code=400, detail=f"Team not found: {cf_team_id}")
 
 
-def _validate_role_exists(db: Session, cf_role: Optional[str]) -> None:
-    """Raise 400 when cf_role is set but matches no row in the roles table.
+#: Scope preference for cf_role resolution: a mapping's context is a team,
+#: so a team-scoped role wins over a global-scoped role of the same name.
+_MAPPING_ROLE_SCOPE_PREFERENCE = ("team", "global")
+
+
+def _resolve_mapping_role(db: Session, cf_role: str, cf_team_id: Optional[str] = None) -> Optional[Role]:
+    """Resolve a mapping's cf_role to exactly one active Role row.
+
+    roles.name is unique only per (name, scope) among active rows (partial
+    unique index uq_roles_name_scope_active), so a name-only lookup can
+    match several active rows across scopes and union more permissions
+    than intended (or pick arbitrarily). Resolution is scope-exact and
+    deterministic:
+
+    1. The active team-scoped row wins: the mapping's context is a team
+       (cf_team_id).
+    2. Otherwise the active global-scoped row.
+    3. Otherwise the lowest-id active row of any other scope.
+
+    Duplicate active rows within one scope are impossible via the unique
+    index; defended anyway by taking the lowest role id. Rows are never
+    unioned. Inactive rows never resolve.
+
+    Args:
+        db: Database session.
+        cf_role: Role name to resolve.
+        cf_team_id: Team context of the mapping (recorded for the scope
+            preference; Role.scope is a scope type, not a per-team id).
+
+    Returns:
+        Optional[Role]: The single resolved row, or None when no active
+            row matches the name.
+    """
+    rows = db.query(Role).filter(Role.name == cf_role, Role.is_active.is_(True)).all()
+    if not rows:
+        return None
+    for scope in _MAPPING_ROLE_SCOPE_PREFERENCE:
+        scoped = [row for row in rows if row.scope == scope]
+        if scoped:
+            return min(scoped, key=lambda row: row.id)
+    return min(rows, key=lambda row: row.id)
+
+
+def _validate_role_exists(db: Session, cf_role: Optional[str], cf_team_id: Optional[str] = None) -> None:
+    """Raise 400 when cf_role is set but resolves to no active Role row.
+
+    Resolution is scope-exact via _resolve_mapping_role: exactly one
+    active row, team scope preferred over global, never a union of rows.
+    An inactive role does not pass validation.
 
     Args:
         db: Database session.
         cf_role: Role name to check. None skips the check.
+        cf_team_id: Team context of the mapping being validated.
 
     Raises:
-        HTTPException: 400 when the role name does not exist.
+        HTTPException: 400 when the role name resolves to no active row.
     """
     if cf_role is None:
         return
-    role = db.query(Role).filter(Role.name == cf_role).first()
-    if not role:
+    if _resolve_mapping_role(db, cf_role, cf_team_id) is None:
         raise HTTPException(status_code=400, detail=f"Role not found: {cf_role}")
 
 
@@ -235,7 +285,7 @@ async def create_external_group_mapping(
             (issuer, tenant, external_group_id).
     """
     _validate_team_exists(db, body.cf_team_id)
-    _validate_role_exists(db, body.cf_role)
+    _validate_role_exists(db, body.cf_role, body.cf_team_id)
     if body.tenant is None:
         _check_null_tenant_duplicate(db, body.issuer, body.external_group_id)
 
@@ -311,7 +361,7 @@ async def update_external_group_mapping(
     if "cf_team_id" in updates:
         _validate_team_exists(db, updates["cf_team_id"])
     if "cf_role" in updates:
-        _validate_role_exists(db, updates["cf_role"])
+        _validate_role_exists(db, updates["cf_role"], updates.get("cf_team_id", mapping.cf_team_id))
     # Pre-check the effective identity before mutating the row: applying the
     # updates first would let query autoflush hit the partial unique index
     # with a raw IntegrityError instead of the 409 below.
