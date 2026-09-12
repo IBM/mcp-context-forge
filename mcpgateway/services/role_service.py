@@ -637,9 +637,10 @@ class RoleService:
             ...         'not found or inactive' in str(e)
             True
         """
-        # Resolve the canonical user ID once: both the existing-assignment
-        # lookups and the stored row key on it, so diverged users
-        # (user_id != email) never lose or duplicate rows.
+        # Resolve the canonical user ID once for the dual-write: user_email
+        # keeps the FK-valid e-mail (existing-row lookups key on it), while
+        # the stored row also carries the canonical ID in user_id so diverged
+        # users (user_id != email) stay joinable.
         canonical = resolve_canonical_user_id(user_email, self.db)
 
         # Validate role exists and is active
@@ -658,7 +659,7 @@ class RoleService:
             raise ValueError(f"scope_id not allowed for {scope} assignments")
 
         # Check for existing active assignment
-        existing = await self.get_user_role_assignment(canonical, role_id, scope, scope_id)
+        existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
         if existing and existing.is_active:
             if not existing.is_expired():
                 # Active and not expired - reject the new assignment
@@ -677,7 +678,7 @@ class RoleService:
                 logger.info("Concurrent modification detected during expired assignment soft-delete - refetching")
 
                 # Refetch to see the current state
-                existing = await self.get_user_role_assignment(canonical, role_id, scope, scope_id)
+                existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
                 if existing and existing.is_active and not existing.is_expired():
                     # Another process already created a fresh assignment
                     return existing
@@ -687,7 +688,7 @@ class RoleService:
         # Create the assignment with savepoint to handle race conditions
         # If another process created the same assignment concurrently, we'll catch IntegrityError
         # and return the existing assignment instead of failing
-        user_role = UserRole(user_email=canonical, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
+        user_role = UserRole(user_email=user_email, user_id=canonical, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
         try:
             # Use nested transaction (savepoint) to allow rollback on conflict
@@ -720,7 +721,7 @@ class RoleService:
             logger.info("Role assignment for %s to role %s (scope: %s, scope_id: %s) was created concurrently - refetching existing assignment", user_email, role_id, scope, scope_id)
 
             # Refetch the winner's row
-            existing = await self.get_user_role_assignment(canonical, role_id, scope, scope_id)
+            existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
             if existing:
                 # CRITICAL: Check if the refetched assignment is expired
                 # This handles the race where another process created an expired assignment

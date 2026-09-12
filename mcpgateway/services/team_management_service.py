@@ -1195,13 +1195,14 @@ class TeamManagementService:
             Tuple[EmailTeamMember, str]: The membership row, and the history action
             describing it ('added' for a new row, 'reactivated' for a revived one).
         """
-        # Resolve the canonical user ID once: the lookup and the stored row
-        # both key on it, so diverged users (user_id != email) never lose or
-        # duplicate membership rows.
+        # Resolve the canonical user ID once for the dual-write: user_email
+        # keeps the FK-valid e-mail (the lookup below keys on it), while the
+        # stored row also carries the canonical ID in user_id so diverged
+        # users (user_id != email) stay joinable.
         canonical = resolve_canonical_user_id(user_email, self.db)
 
         if isinstance(existing, _Unset):
-            existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == canonical).first()
+            existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
 
         if existing:
             existing.is_active = True  # pylint: disable=attribute-defined-outside-init
@@ -1213,7 +1214,7 @@ class TeamManagementService:
             self.db.flush()
             return existing, "reactivated"
 
-        membership = EmailTeamMember(team_id=team_id, user_email=canonical, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
+        membership = EmailTeamMember(team_id=team_id, user_email=user_email, user_id=canonical, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
         self.db.add(membership)
         self.db.flush()
         return membership, "added"
@@ -1275,10 +1276,9 @@ class TeamManagementService:
 
         self._check_user_team_limit(user_email)
 
-        # Check if user is already a member. The lookup keys on the canonical
-        # user ID, the same value _upsert_membership stores.
-        canonical = resolve_canonical_user_id(user_email, self.db)
-        existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == canonical).first()
+        # Check if user is already a member. The lookup keys on the e-mail,
+        # the same FK-valid value _upsert_membership stores in user_email.
+        existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
 
         if existing_membership and existing_membership.is_active:
             logger.warning("User %s is already a member of team %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id))
@@ -2232,10 +2232,12 @@ class TeamManagementService:
                 raise ValueError(f"Team {team_id} not found or inactive")
             check_team_member_capacity(self.db, team)
 
-            # Add user to team. Resolve the canonical user ID once; the stored
-            # membership keys on it.
+            # Add user to team. Dual-write: user_email keeps the FK-valid
+            # e-mail; user_id carries the canonical ID.
             canonical = resolve_canonical_user_id(join_request.user_email, self.db)
-            member = EmailTeamMember(team_id=team_id, user_email=canonical, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
+            member = EmailTeamMember(
+                team_id=team_id, user_email=join_request.user_email, user_id=canonical, role="member", invited_by=approved_by, joined_at=utc_now()
+            )  # New joiners are always members
 
             self.db.add(member)
             # Update join request status

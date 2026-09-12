@@ -1261,6 +1261,10 @@ class UserRole(Base):
 
     # Assignment details
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    # Canonical user ID (dual-write, #5893): the opaque IdP subject when it
+    # diverges from the e-mail, else the e-mail. user_email stays the FK-valid
+    # e-mail; nullable for rows written before this column existed.
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
     scope: Mapped[str] = mapped_column(String(20), nullable=False)  # 'global', 'team', 'personal'
     scope_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)  # Team ID if team-scoped
@@ -2101,6 +2105,7 @@ class EmailTeamMember(Base):
         id (str): Primary key UUID
         team_id (str): Foreign key to email_teams
         user_email (str): Foreign key to email_users
+        user_id (str): Canonical user ID (dual-write; opaque IdP subject when it diverges)
         role (str): Member role (owner, member)
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
@@ -2126,6 +2131,11 @@ class EmailTeamMember(Base):
     # Foreign keys
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+
+    # Canonical user ID (dual-write, #5893): the opaque IdP subject when it
+    # diverges from the e-mail, else the e-mail. user_email stays the FK-valid
+    # e-mail; nullable for rows written before this column existed.
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
 
     # Membership details
     role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)

@@ -126,10 +126,11 @@ class PersonalTeamService:
             self.db.add(team)
             self.db.flush()  # Get the team ID
 
-            # Add the user as the owner of their personal team. Resolve the
-            # canonical user ID once; the owner membership keys on it.
+            # Add the user as the owner of their personal team. Dual-write:
+            # user_email keeps the FK-valid e-mail; user_id carries the
+            # canonical ID.
             canonical = resolve_canonical_user_id(user.email, self.db)
-            membership = EmailTeamMember(team_id=team.id, user_email=canonical, role="owner", joined_at=utc_now(), is_active=True)
+            membership = EmailTeamMember(team_id=team.id, user_email=user.email, user_id=canonical, role="owner", joined_at=utc_now(), is_active=True)
 
             self.db.add(membership)
             self.db.flush()  # Get the membership ID
