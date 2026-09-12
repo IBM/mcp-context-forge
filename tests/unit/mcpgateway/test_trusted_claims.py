@@ -28,6 +28,7 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import AuditTrail, Base, EmailTeam, EmailUser, ExternalGroupMapping, ObservabilityTrace, Role
+from mcpgateway.services.role_resolution import resolve_mapping_role
 from mcpgateway.utils.trusted_claims import detect_overage_marker, extract_revocation_id, extract_trusted_principal
 
 ISSUER = "https://login.example.com/tenant-1/v2.0"
@@ -53,11 +54,13 @@ def _permissions_for_roles(db, role_names) -> set:
     """Resolve role names to the permission set via the server-side roles table.
 
     Mirrors the trust-mode resolution rule: permissions come from the roles
-    table only; unknown role names contribute nothing.
+    table only; each name resolves scope-exactly to exactly one active row
+    (team scope preferred, global fallback, never unioned); unknown role
+    names contribute nothing.
     """
     permissions = set()
     for name in role_names:
-        role = db.query(Role).filter(Role.name == name, Role.is_active.is_(True)).first()
+        role = resolve_mapping_role(db, name)
         if role is None:
             continue
         permissions.update(role.get_effective_permissions())
@@ -252,3 +255,146 @@ class TestRevocationExtractor:
         with pytest.raises(HTTPException) as exc_info:
             extract_revocation_id({"sub": "oid-1"}, settings)
         assert exc_info.value.status_code == 401
+
+
+class TestAdminClaimStrictTyping:
+    """The admin claim is parsed strictly (NB1).
+
+    bool() coercion treats the strings "false", "0", and "no" as truthy,
+    which would grant admin to any principal whose issuer emits string
+    claims. Only True, 1, and the case-insensitive strings
+    "true"/"1"/"yes" are admin; every other present value coerces False.
+    A missing claim is silently non-admin (fail-closed).
+    """
+
+    @pytest.mark.parametrize(
+        "claim,expected",
+        [
+            (True, True),
+            ("true", True),
+            ("True", True),
+            ("1", True),
+            (1, True),
+            (False, False),
+            ("false", False),
+            ("0", False),
+            (0, False),
+            ("no", False),
+            ("", False),
+            (None, False),
+            ([], False),
+            ({"x": 1}, False),
+        ],
+    )
+    def test_admin_claim_strict_typing(self, db, claim, expected):
+        """Only canonical true values grant admin; malformed types are non-admin."""
+        payload = _base_payload(is_admin=claim)
+        principal = extract_trusted_principal(payload, settings, db)
+        assert principal.is_admin is expected
+
+    def test_noncanonical_admin_claim_logs_one_warning_without_value(self, db, caplog):
+        """A present-but-non-canonical admin claim logs one structured warning.
+
+        The warning names the claim and the observed JSON type, never the
+        claim value.
+        """
+        payload = _base_payload(is_admin="maybe")
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.trusted_claims"):
+            principal = extract_trusted_principal(payload, settings, db)
+        assert principal.is_admin is False
+        warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert settings.jwt_claim_admin in warnings[0].message
+        assert "string" in warnings[0].message
+        assert "maybe" not in warnings[0].message
+
+    def test_noncanonical_admin_claim_array_warns_with_json_type(self, db, caplog):
+        """A structured (array) admin claim coerces False and warns with its JSON type."""
+        payload = _base_payload(is_admin=["true"])
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.trusted_claims"):
+            principal = extract_trusted_principal(payload, settings, db)
+        assert principal.is_admin is False
+        warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "array" in warnings[0].message
+
+    def test_explicit_false_admin_claim_is_silent(self, db, caplog):
+        """Recognized explicit denials (False, 0, "false", "0", "no") do not warn."""
+        for claim in (False, 0, "false", "0", "no"):
+            caplog.clear()
+            payload = _base_payload(is_admin=claim)
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.trusted_claims"):
+                principal = extract_trusted_principal(payload, settings, db)
+            assert principal.is_admin is False
+            assert [record for record in caplog.records if record.levelno == logging.WARNING] == []
+
+    def test_absent_admin_claim_is_silently_non_admin(self, db, caplog):
+        """A missing admin claim coerces False without any log (fail-closed)."""
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.trusted_claims"):
+            principal = extract_trusted_principal(_base_payload(), settings, db)
+        assert principal.is_admin is False
+        assert [record for record in caplog.records if record.levelno == logging.WARNING] == []
+
+
+class TestScopeExactRoleMerge:
+    """Mapping-supplied role names resolve scope-exactly at the merge (NB6).
+
+    roles.name is unique only per (name, scope) among active rows, so one
+    name can span a team-scoped and a global-scoped row. The merge
+    resolves each name to exactly ONE active row via the shared
+    resolve_mapping_role rule: team scope wins, global is the fallback,
+    rows are never unioned.
+    """
+
+    @pytest.fixture
+    def scoped_db(self):
+        """In-memory session with same-name roles in global and team scope.
+
+        The global row is inserted FIRST, so a name-only .first() lookup
+        picks it (the NB6 defect shape). Seeding order must not matter to
+        the scope-exact merge.
+        """
+        engine = sa.create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(bind=engine)
+        session = sessionmaker(bind=engine)()
+
+        owner = EmailUser(
+            email="owner@example.com",
+            password_hash="hash",  # pragma: allowlist secret
+            full_name="Owner",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(owner)
+        session.add(EmailTeam(id="team-a", name="Team A", slug="team-a", created_by=owner.email, is_personal=False, visibility="private"))
+        # Global row first: a name-only lookup would resolve it over the team row.
+        session.add(Role(name="developer", scope="global", permissions=["admin.system_config"], created_by=owner.email, is_system_role=True, is_active=True))
+        session.add(Role(name="developer", scope="team", permissions=["a2a.invoke"], created_by=owner.email, is_system_role=True, is_active=True))
+        session.add(ExternalGroupMapping(issuer=ISSUER, tenant=TENANT, external_group_id="entra-group-guid-1", cf_team_id="team-a", cf_role="developer"))
+        session.commit()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def test_mapping_role_derives_from_team_row_only(self, scoped_db):
+        """A group mapping to a name spanning global+team scope derives from the team row only."""
+        payload = _base_payload(groups=["entra-group-guid-1"])
+        principal = extract_trusted_principal(payload, settings, scoped_db)
+        assert principal.roles == ["developer"]
+        permissions = _permissions_for_roles(scoped_db, principal.roles)
+        assert "a2a.invoke" in permissions
+        assert "admin.system_config" not in permissions  # global row never unioned
+
+    def test_global_fallback_when_no_team_scoped_row(self, scoped_db):
+        """A name that exists only in global scope resolves to the global row."""
+        scoped_db.add(Role(name="ops", scope="global", permissions=["a2a.invoke"], created_by="owner@example.com", is_system_role=True, is_active=True))
+        scoped_db.add(ExternalGroupMapping(issuer=ISSUER, tenant=TENANT, external_group_id="entra-group-guid-3", cf_team_id="team-a", cf_role="ops"))
+        scoped_db.commit()
+        payload = _base_payload(groups=["entra-group-guid-3"])
+        principal = extract_trusted_principal(payload, settings, scoped_db)
+        assert principal.roles == ["ops"]
+        assert _permissions_for_roles(scoped_db, principal.roles) == {"a2a.invoke"}
