@@ -4689,7 +4689,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_stores_sso_subject_as_user_id(self, sso_service, mock_db):
         """Provisioning with sub != email stores the IdP subject as user_id (#5893)."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         new_user = SimpleNamespace(
             email="a@b.c",
             full_name="New User",
