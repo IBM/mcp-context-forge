@@ -133,3 +133,78 @@ class TestGroupRoleCrudValidation:
         assert exc.value.status_code == 400
         assert exc.value.detail == "Role not found: nonexistent"
         assert db.query(ExternalGroupMapping).filter(ExternalGroupMapping.id == created.id).one().cf_role == "developer"
+
+
+class TestScopeExactRoleResolution:
+    """cf_role resolves to exactly one active Role row, scope-exact (NB6).
+
+    roles.name is unique only per (name, scope) among active rows
+    (partial unique index uq_roles_name_scope_active), so two active roles
+    can share a name across scopes. Resolution prefers the team-scoped row
+    (the mapping's context is a team), falls back to the global-scoped row
+    only when no team-scoped row exists, and never unions multiple rows.
+    """
+
+    def test_team_scoped_role_wins_over_global_same_name(self, db):
+        """A team-scoped row beats a global row of the same name; permissions are not unioned."""
+        db.add(Role(name="developer", scope="global", permissions=["admin.system_config"], created_by="admin@example.com", is_system_role=True, is_active=True))
+        db.commit()
+
+        resolved = router_module._resolve_mapping_role(db, "developer", cf_team_id="team-a")
+
+        assert isinstance(resolved, Role)
+        assert resolved.scope == "team"
+        assert resolved.permissions == ["a2a.invoke"]
+
+    def test_global_role_resolves_when_no_team_scoped_row(self, db):
+        """The global row is the fallback when the name exists only in global scope."""
+        db.add(Role(name="ops", scope="global", permissions=["a2a.invoke"], created_by="admin@example.com", is_system_role=True, is_active=True))
+        db.commit()
+
+        resolved = router_module._resolve_mapping_role(db, "ops", cf_team_id="team-a")
+
+        assert isinstance(resolved, Role)
+        assert resolved.scope == "global"
+
+    def test_duplicate_team_scoped_rows_resolve_by_lowest_id(self):
+        """Two active rows with the same (name, scope) are impossible via the partial unique index.
+
+        If a query ever returns both, resolution stays deterministic: the
+        row with the lowest role id wins regardless of result order; the
+        rows are never unioned.
+        """
+        row_low = Role(id="00000000-0000-0000-0000-000000000001", name="developer", scope="team", permissions=["a2a.invoke"], created_by="admin@example.com", is_active=True)
+        row_high = Role(id="00000000-0000-0000-0000-000000000002", name="developer", scope="team", permissions=["admin.system_config"], created_by="admin@example.com", is_active=True)
+
+        for rows in ([row_high, row_low], [row_low, row_high]):
+            stub_db = MagicMock()
+            stub_db.query.return_value.filter.return_value.all.return_value = rows
+            resolved = router_module._resolve_mapping_role(stub_db, "developer", cf_team_id="team-a")
+            assert resolved is row_low
+
+    def test_inactive_team_scoped_row_ignored_active_global_resolves(self, db):
+        """An inactive team-scoped row is filtered out; the active global row resolves."""
+        db.add(Role(name="ops", scope="team", permissions=["admin.system_config"], created_by="admin@example.com", is_system_role=True, is_active=False))
+        db.add(Role(name="ops", scope="global", permissions=["a2a.invoke"], created_by="admin@example.com", is_system_role=True, is_active=True))
+        db.commit()
+
+        resolved = router_module._resolve_mapping_role(db, "ops", cf_team_id="team-a")
+
+        assert isinstance(resolved, Role)
+        assert resolved.scope == "global"
+        assert resolved.permissions == ["a2a.invoke"]
+
+    def test_unknown_role_resolves_none(self, db):
+        """A name with no active row resolves to None (fail-closed)."""
+        assert router_module._resolve_mapping_role(db, "nonexistent", cf_team_id="team-a") is None
+
+    @pytest.mark.asyncio
+    async def test_group_role_create_inactive_role_400(self, allow_admin, db, admin_user, request_stub):
+        """POST with a cf_role that exists only as an inactive row answers 400."""
+        db.add(Role(name="retired", scope="team", permissions=[], created_by="admin@example.com", is_system_role=True, is_active=False))
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            await router_module.create_external_group_mapping(_create_body(cf_role="retired"), request=request_stub, user=admin_user, db=db)
+        assert exc.value.status_code == 400
+        assert exc.value.detail == "Role not found: retired"
+        assert db.query(ExternalGroupMapping).count() == 0
