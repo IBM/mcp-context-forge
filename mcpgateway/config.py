@@ -1738,7 +1738,9 @@ class Settings(BaseSettings):
 
         Raises:
             SecurityConfigurationError: If a secret or feature-gated password
-                fails its strength checks.
+                fails its strength checks, or if trust mode aliases
+                ``jwt_claim_teams`` onto the ``sso_entra_groups_claim`` claim
+                consumed by the external group-mapping resolver.
         """
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
@@ -1861,6 +1863,26 @@ class Settings(BaseSettings):
                 "Please set ENABLE_HEADER_PASSTHROUGH=true in your environment or disable ENABLE_SENSITIVE_HEADER_PASSTHROUGH. "
                 "See .env.example for configuration examples."
             )
+
+        # Claim-collision guard (trust mode only). In trust mode the external
+        # group-mapping resolver consumes the claim named by
+        # ``sso_entra_groups_claim`` for external group IDs. If
+        # ``jwt_claim_teams`` names the same claim, raw external group IDs
+        # land in native ContextForge team memberships before mapping.
+        # Outside trust mode ``jwt_claim_teams`` is not consumed, so an
+        # aliased value is dead config and does not fail startup.
+        if self.jwt_trust_mode == "jwt-trust":
+            teams_claim = self.jwt_claim_teams.strip()
+            groups_claim = self.sso_entra_groups_claim.strip()
+            if teams_claim and teams_claim == groups_claim:
+                raise SecurityConfigurationError(
+                    f"JWT_CLAIM_TEAMS and SSO_ENTRA_GROUPS_CLAIM both name the {teams_claim!r} claim. "
+                    "In trust mode the external group-mapping resolver consumes SSO_ENTRA_GROUPS_CLAIM for "
+                    "external group IDs; aliasing it with JWT_CLAIM_TEAMS places raw external group IDs into "
+                    "native ContextForge team memberships before mapping. "
+                    "Remediation: point JWT_CLAIM_TEAMS at a distinct claim (default 'teams') while "
+                    "SSO_ENTRA_GROUPS_CLAIM keeps naming the provider's groups claim (default 'groups')."
+                )
 
         return self
 
