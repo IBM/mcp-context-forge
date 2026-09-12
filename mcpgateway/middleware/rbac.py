@@ -347,6 +347,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                     "auth_method": "proxy",
                     "request_id": getattr(request.state, "request_id", None),
                     "team_id": getattr(request.state, "team_id", None),
+                    "token_teams": None,  # Key presence only; None preserves the implicit .get() value (admin bypass)
+                    "roles": [],  # Neutral default; no claims identity on the proxy path
+                    "token_is_admin": False,  # Neutral default; no claims identity on the proxy path
                     "plugin_context_table": plugin_context_table,
                     "plugin_global_context": plugin_global_context,
                 }
@@ -380,6 +383,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 "auth_method": "anonymous",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+                "token_teams": [],  # Neutral default for key presence
+                "roles": [],  # Neutral default for key presence
+                "token_is_admin": False,  # Neutral default for key presence
                 "plugin_context_table": plugin_context_table,
                 "plugin_global_context": plugin_global_context,
             }
@@ -412,6 +418,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "auth_method": "anonymous",
             "request_id": getattr(request.state, "request_id", None),
             "team_id": getattr(request.state, "team_id", None),
+            "token_teams": [],  # Neutral default for key presence
+            "roles": [],  # Neutral default for key presence
+            "token_is_admin": False,  # Neutral default for key presence
             "plugin_context_table": plugin_context_table,
             "plugin_global_context": plugin_global_context,
         }
@@ -488,6 +497,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 "auth_method": "disabled",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+                "token_teams": None,  # Key presence only; None preserves the implicit .get() value (admin bypass)
+                "roles": [],  # Neutral default for key presence
+                "token_is_admin": False,  # Neutral default for key presence
             }
 
         if not settings.auth_required:
@@ -502,6 +514,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 "auth_method": "anonymous",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+                "token_teams": [],  # Neutral default for key presence
+                "roles": [],  # Neutral default for key presence
+                "token_is_admin": False,  # Neutral default for key presence
                 "plugin_context_table": getattr(request.state, "plugin_context_table", None),
                 "plugin_global_context": getattr(request.state, "plugin_global_context", None),
             }
@@ -533,6 +548,20 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # Get token_use from request.state (set by get_current_user)
         token_use = getattr(request.state, "token_use", None)
 
+        # Claims-derived identity (F2): a trust principal (VirtualPrincipal,
+        # token_use="trusted") carries mapped role names, the claims-derived
+        # admin flag, and mapped teams; carry them so the permission layer can
+        # consume claims identity. Non-trust principals (EmailUser) get neutral
+        # defaults so downstream consumers can rely on key presence.
+        if token_use == "trusted" or getattr(user, "token_use", None) == "trusted":
+            claims_roles = list(getattr(user, "roles", None) or [])
+            token_is_admin = bool(getattr(user, "is_admin", False))
+            if token_teams is None:
+                token_teams = list(getattr(user, "teams", None) or [])
+        else:
+            claims_roles = []
+            token_is_admin = False
+
         # Add request context for permission auditing
         return {
             "email": user.email,
@@ -546,7 +575,8 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
             "token_teams": token_teams,  # Include token teams for query-level scoping
-            "token_use": token_use,  # Include token_use for RBAC team derivation
+            "roles": claims_roles,  # Claims-derived role names (trust path); [] for non-trust
+            "token_is_admin": token_is_admin,  # Claims-derived admin flag (trust path); False for non-trust
             "token_scopes": token_scopes,  # Include token scopes for API token permission checking
             "jwt_teams_claim": jwt_teams_claim,  # Raw JWT claim for OAuth Vault path selection
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
