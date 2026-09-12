@@ -3704,7 +3704,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
-            last_error: Optional sanitized failure reason persisted atomically with the state change.
+            last_error: Optional sanitized failure reason to persist. Written
+            atomically with the state change when reachability changes; written
+            in a standalone commit when only the error text differs (no state
+            transition occurred).
 
         Returns:
             The updated GatewayRead object
@@ -4608,9 +4611,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
             raw_error = (str(error).strip() or type(error).__name__) if error is not None else "Unknown health-check failure"
             sanitized_error = sanitize_exception_message(raw_error, auth_query_params or getattr(gateway, "auth_query_params", None))
+            # Reset before the DB call: if set_gateway_state raises, a stale
+            # count would retry the deactivation (and its audit entry) forever.
+            self._gateway_failure_counts[gateway.id] = 0
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
-                self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
         """Check health of a batch of gateways.
