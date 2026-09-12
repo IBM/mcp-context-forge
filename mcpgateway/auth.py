@@ -78,7 +78,7 @@ from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeader
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import redis
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -253,8 +253,10 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
     Matches the behavior of user.get_teams() which returns all active memberships.
 
     Args:
-        email: Canonical user_id for the membership query. Phase-1 value =
-            e-mail, so the ``EmailTeamMember.user_email`` query is unchanged.
+        email: Canonical user_id for the membership query. Matches both the
+            FK-valid ``user_email`` column and the dual-written ``user_id``
+            column so legacy rows (e-mail in both) and diverged rows
+            (canonical ID in ``user_id``) both resolve.
 
     Returns:
         List of team ID strings
@@ -266,7 +268,7 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         result = db.execute(
             select(EmailTeamMember.team_id)
             .where(
-                EmailTeamMember.user_email == email,
+                or_(EmailTeamMember.user_email == email, EmailTeamMember.user_id == email),
                 EmailTeamMember.is_active.is_(True),
             )
             .order_by(EmailTeamMember.id)  # Stable ordering: teams[0] used as Vault path key
@@ -595,9 +597,9 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     For non-admin users, returns the full list of team IDs from DB/cache.
 
     Args:
-        email: Canonical user_id for the DB/cache lookup. Phase-1 value =
-            e-mail, so the ``EmailTeamMember.user_email`` queries are
-            unchanged.
+        email: Canonical user_id for the DB/cache lookup. Membership rows
+            match on either ``user_email`` or the dual-written ``user_id``
+            (see :func:`_get_user_team_ids_sync`).
         user_info: User dict or EmailUser instance
 
     Returns:
