@@ -134,7 +134,9 @@ class TestPersonalTeamService:
             assert mock_db.flush.call_count == 2
 
             # Verify membership creation
-            MockMember.assert_called_once_with(team_id="new-team-id", user_email="testuser@example.com", role="owner", joined_at=mock_utc_now.return_value, is_active=True)
+            MockMember.assert_called_once_with(
+                team_id="new-team-id", user_email="testuser@example.com", user_id="testuser@example.com", role="owner", joined_at=mock_utc_now.return_value, is_active=True
+            )
 
             # Verify commit
             mock_db.commit.assert_called_once()
@@ -489,12 +491,12 @@ class TestPersonalTeamService:
             mock_db.rollback.assert_called_once()
 
 
-class TestPersonalTeamCanonicalKeying:
-    """Writer re-keying: create_personal_team stores the canonical user_id (#5893)."""
+class TestPersonalTeamDualWrite:
+    """Dual-write: create_personal_team stores the e-mail in user_email and the canonical user_id alongside (#5893)."""
 
     @pytest.mark.asyncio
     async def test_create_personal_team_stores_canonical_user_id(self, test_db):
-        """The owner membership row is keyed by the diverged user's user_id."""
+        """The owner membership row keeps the diverged user's e-mail in user_email and stores user_id."""
         # First-Party
         from mcpgateway.db import EmailTeamMember
         from mcpgateway.services.email_auth_service import EmailAuthService
@@ -508,5 +510,6 @@ class TestPersonalTeamCanonicalKeying:
         team = await service.create_personal_team(user)
 
         membership = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
-        assert membership.user_email == "idp-123"
+        assert membership.user_email == email
+        assert membership.user_id == "idp-123"
         assert membership.role == "owner"

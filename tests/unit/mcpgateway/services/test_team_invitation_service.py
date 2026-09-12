@@ -1280,12 +1280,12 @@ class TestTeamInvitationService:
         assert results[2].warning == "Invitation created, but the email could not be delivered."
 
 
-class TestAcceptInvitationCanonicalKeying:
-    """Writer re-keying: accept_invitation stores the canonical user_id (#5893)."""
+class TestAcceptInvitationDualWrite:
+    """Dual-write: accept_invitation stores the e-mail in user_email and the canonical user_id alongside (#5893)."""
 
     @pytest.mark.asyncio
     async def test_accept_invitation_stores_canonical_user_id(self, test_db):
-        """The membership row created on invitation acceptance is keyed by user_id."""
+        """The membership row created on invitation acceptance keeps the e-mail in user_email and stores user_id."""
         # Standard
         import uuid
 
@@ -1325,6 +1325,8 @@ class TestAcceptInvitationCanonicalKeying:
 
         member = await service.accept_invitation(invitation.token)
 
-        assert member.user_email == "idp-123"
+        assert member.user_email == email
+        assert member.user_id == "idp-123"
         stored = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
-        assert stored.user_email == "idp-123"
+        assert stored.user_email == email
+        assert stored.user_id == "idp-123"

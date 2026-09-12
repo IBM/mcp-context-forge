@@ -438,13 +438,16 @@ class TeamInvitationService:
                 logger.warning("Team %s not found or inactive", invitation.team_id)
                 raise ValueError("Team not found or inactive")
 
-            # Resolve the canonical user ID once: both membership lookups and
-            # the stored row key on it, so diverged users (user_id != email)
-            # never lose or duplicate membership rows.
+            # Resolve the canonical user ID once for the dual-write: user_email
+            # keeps the FK-valid e-mail (membership lookups key on it), while
+            # the stored row also carries the canonical ID in user_id so
+            # diverged users (user_id != email) stay joinable.
             canonical = resolve_canonical_user_id(invitation.email, self.db)
 
             # Check if user is already a member
-            existing_member = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == canonical, EmailTeamMember.is_active.is_(True)).first()
+            existing_member = (
+                self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email, EmailTeamMember.is_active.is_(True)).first()
+            )
 
             if existing_member:
                 logger.warning("User %s is already a member of team %s", invitation.email, invitation.team_id)
@@ -472,7 +475,7 @@ class TeamInvitationService:
             # closes the race on every backend: only one of two racing callers can flip is_active from
             # False to True, the other gets rowcount 0 and is turned into the same "already a member"
             # error used for the commit-time IntegrityError race on the insert path below.
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == canonical).with_for_update().first()
+            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email).with_for_update().first()
 
             reactivated = membership is not None
             if membership:
@@ -499,7 +502,9 @@ class TeamInvitationService:
                 membership.invited_by = invitation.invited_by
                 membership.is_active = True
             else:
-                membership = EmailTeamMember(team_id=invitation.team_id, user_email=canonical, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
+                membership = EmailTeamMember(
+                    team_id=invitation.team_id, user_email=invitation.email, user_id=canonical, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True
+                )
                 self.db.add(membership)
 
             # Deactivate the invitation
