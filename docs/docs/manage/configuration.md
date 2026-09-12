@@ -218,7 +218,7 @@ Startup validation rules:
 
 - When `JWT_TRUST_MODE=jwt-trust`, every claim-mapping setting and `JWT_TRUST_REVOCATION_CLAIM` must be a non-empty string. The gateway refuses to start with an error naming the offending setting.
 - A trust-eligible token that lacks the configured revocation claim is rejected with `401`. The revocation claim is mandatory because trust mode relies on it for token revocation.
-- In trust mode, `JWT_CLAIM_TEAMS` must not name the same claim as the provider's groups claim (`SSO_ENTRA_GROUPS_CLAIM` / `SSO_GENERIC_GROUPS_CLAIM`), which the external group-mapping resolver consumes; an aliased value would place raw external group IDs into native ContextForge team memberships before mapping. The gateway refuses to start with a remediation message naming both variables.
+- In trust mode, `JWT_CLAIM_TEAMS` must not name the same claim as the provider's groups claim (`SSO_ENTRA_GROUPS_CLAIM` / `SSO_KEYCLOAK_GROUPS_CLAIM` / `SSO_GENERIC_GROUPS_CLAIM`), which the external group-mapping resolver consumes; an aliased value would place raw external group IDs into native ContextForge team memberships before mapping. The gateway refuses to start with a remediation message naming both variables.
 
 All defaults preserve the current behavior: trust mode defaults to `db` and the new settings are inert until `jwt-trust` is enabled.
 

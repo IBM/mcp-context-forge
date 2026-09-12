@@ -31,6 +31,7 @@ from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.utils.entra_graph_client import ENTRA_ISSUER_HOSTS
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
@@ -126,14 +127,8 @@ class OAuthManager:
     """
 
     # Known Microsoft Entra login hosts (global + sovereign clouds).
-    _ENTRA_HOSTS: frozenset[str] = frozenset(
-        {
-            "login.microsoftonline.com",
-            "login.microsoftonline.us",
-            "login.microsoftonline.de",
-            "login.partner.microsoftonline.cn",
-        }
-    )
+    # Single-sourced in mcpgateway.utils.entra_graph_client.
+    _ENTRA_HOSTS: frozenset[str] = ENTRA_ISSUER_HOSTS
 
     def __init__(self, request_timeout: int = 30, max_retries: int = 3, token_storage: Optional[Any] = None):
         """Initialize OAuth Manager.
