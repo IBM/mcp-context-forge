@@ -29,6 +29,7 @@ a live Graph lookup; a Redis write error is logged and skipped.
 import logging
 import time
 from typing import Any, List, Optional
+from urllib.parse import urlparse
 
 # Third-Party
 import orjson
@@ -47,6 +48,33 @@ GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 #: Cache TTL fallback in seconds when the presenting token carries no exp.
 DEFAULT_CACHE_TTL = 300
+
+#: Microsoft Entra issuer/login hosts (global + sovereign clouds). Single
+#: source of truth for "is this issuer Microsoft Entra";
+#: ``OAuthManager._ENTRA_HOSTS`` aliases this set.
+ENTRA_ISSUER_HOSTS: frozenset[str] = frozenset(
+    {
+        "login.microsoftonline.com",
+        "login.microsoftonline.us",
+        "login.microsoftonline.de",
+        "login.partner.microsoftonline.cn",
+    }
+)
+
+
+def is_entra_issuer(issuer: str) -> bool:
+    """Return True when the issuer URL belongs to a Microsoft Entra host.
+
+    Args:
+        issuer: Token issuer URL (e.g.
+            ``https://login.microsoftonline.com/<tenant>/v2.0``).
+
+    Returns:
+        True when the URL hostname is a known Entra host. Non-URL issuers
+        (no parseable hostname) return False.
+    """
+    hostname = urlparse(issuer).hostname
+    return hostname is not None and hostname in ENTRA_ISSUER_HOSTS
 
 
 class EntraGraphError(Exception):
@@ -129,6 +157,47 @@ class EntraGraphClient:
                 logger.warning("Graph group cache write failed for oid %s: %s", oid, exc)
 
         return groups
+
+    async def group_exists(self, provider: Any, group_id: str) -> bool:
+        """Check whether a group object exists in Entra via ``GET /groups/{id}``.
+
+        Uses an app-only client-credentials token from the SSO provider
+        record, exactly like :meth:`get_member_groups`; the inbound bearer
+        token is never used.
+
+        Args:
+            provider: SSO provider record supplying the token endpoint and
+                the encrypted client credentials.
+            group_id: Entra object ID of the group to look up.
+
+        Returns:
+            True when Graph answers 200, False when it answers 404.
+
+        Raises:
+            EntraGraphError: When token acquisition fails or Graph returns
+                any status other than 200/404 (fail-closed: callers must
+                distinguish "missing" from "could not check").
+        """
+        app_token = await self._acquire_app_token(provider)
+
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        client = await get_http_client()
+        try:
+            response = await client.get(
+                f"{GRAPH_BASE_URL}/groups/{group_id}",
+                headers={"Authorization": f"Bearer {app_token}"},
+                params={"$select": "id"},
+                timeout=settings.sso_entra_graph_api_timeout,
+            )
+        except Exception as exc:
+            raise EntraGraphError(f"Graph group lookup for id {group_id} failed: {exc}") from exc
+        if response.status_code == 200:
+            return True
+        if response.status_code == 404:
+            return False
+        raise EntraGraphError(f"Graph group lookup for id {group_id} returned HTTP {response.status_code}.")
 
     @staticmethod
     def _cache_ttl(token_exp: Optional[int]) -> int:
