@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from sqlalchemy.pool import StaticPool
 
 REVISION = "bf2998718ea1"  # pragma: allowlist secret
-DOWN_REVISION = "12d4a0c7789c"  # pragma: allowlist secret
+DOWN_REVISION = "5e211ec89cad"  # pragma: allowlist secret
 MODULE_NAME = f"mcpgateway.alembic.versions.{REVISION}_add_user_id_to_email_users"
 TABLE_NAME = "email_users"
 COLUMN_NAME = "user_id"
