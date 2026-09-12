@@ -30,7 +30,7 @@ from mcpgateway.db import Role
 MAPPING_ROLE_SCOPE_PREFERENCE = ("team", "global")
 
 
-def resolve_mapping_role(db: Session, cf_role: str, cf_team_id: Optional[str] = None) -> Optional[Role]:
+def resolve_mapping_role(db: Session, cf_role: str, cf_team_id: Optional[str] = None) -> Optional[Role]:  # pylint: disable=unused-argument
     """Resolve a mapping's cf_role to exactly one active Role row.
 
     roles.name is unique only per (name, scope) among active rows (partial
