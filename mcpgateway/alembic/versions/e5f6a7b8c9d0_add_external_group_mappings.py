@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 add_external_group_mappings
 
 Revision ID: e5f6a7b8c9d0
-Revises: bf2998718ea1
+Revises: a824749abd27
 Create Date: 2026-09-10 09:00:00.000000
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "e5f6a7b8c9d0"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "bf2998718ea1"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "a824749abd27"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
