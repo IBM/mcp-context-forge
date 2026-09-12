@@ -106,6 +106,33 @@ class TestClaimTeamsGroupClaimCollision:
         s = _settings(jwt_trust_mode="db", jwt_claim_teams="groups", sso_entra_groups_claim="groups")
         assert s.jwt_trust_mode == "db"
 
+    def test_claim_teams_cannot_alias_keycloak_group_mapping_source(self):
+        # Non-Entra trust roots are live (#5903): the Keycloak groups claim
+        # feeds the same resolver, so the collision guard must cover it.
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            _settings(jwt_trust_mode="jwt-trust", jwt_claim_teams="groups", sso_entra_groups_claim="entra-groups", sso_keycloak_groups_claim="groups")
+        message = str(exc_info.value)
+        assert "JWT_CLAIM_TEAMS" in message
+        assert "SSO_KEYCLOAK_GROUPS_CLAIM" in message
+
+    def test_claim_teams_cannot_alias_generic_group_mapping_source(self):
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            _settings(jwt_trust_mode="jwt-trust", jwt_claim_teams="groups", sso_entra_groups_claim="entra-groups", sso_keycloak_groups_claim="kc-groups", sso_generic_groups_claim="groups")
+        message = str(exc_info.value)
+        assert "JWT_CLAIM_TEAMS" in message
+        assert "SSO_GENERIC_GROUPS_CLAIM" in message
+
+    def test_collision_detection_is_case_insensitive(self):
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            _settings(jwt_trust_mode="jwt-trust", jwt_claim_teams="Groups", sso_entra_groups_claim="groups")
+        message = str(exc_info.value)
+        assert "JWT_CLAIM_TEAMS" in message
+        assert "SSO_ENTRA_GROUPS_CLAIM" in message
+
+    def test_case_insensitive_match_across_providers_rejected(self):
+        with pytest.raises(SecurityConfigurationError):
+            _settings(jwt_trust_mode="jwt-trust", jwt_claim_teams="GROUPS", sso_entra_groups_claim="entra-groups", sso_keycloak_groups_claim="groups")
+
 
 class TestComposeDeclaresTrustFlags:
     """The supported Compose stacks declare the trust flags, commented and default-off."""
