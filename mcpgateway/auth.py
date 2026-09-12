@@ -1450,6 +1450,75 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
     return user
 
 
+async def _try_external_verification(token: str, request: Optional[Request]) -> Optional[dict]:
+    """Dispatch a bearer token to the external-IdP (trusted OIDC issuer) verifier.
+
+    Trust-mode ingress dispatch (#5903): reads the token's ``iss`` claim
+    UNVERIFIED (``verify_signature: False``) solely to choose the
+    verification path — no other claim from this peek is ever trusted —
+    then delegates to the existing external verification chain
+    (``_maybe_verify_external`` -> ``verify_external_idp_token`` ->
+    ``build_trusted_external_identity``).
+
+    Dispatch contract (mirrors docs/5896 and the AGENTS.md trust-mode rule):
+
+    - Issuer is a configured trust root and verification succeeds -> the
+      claims-derived identity payload (``token_use="trusted"``).
+    - Issuer is a configured trust root but verification fails definitively
+      (bad signature, wrong audience, expiry, missing revocation claim) ->
+      401 fail-closed; the internal JWT funnel is NEVER consulted for that
+      token.
+    - Issuer is NOT a configured trust root (or is the internal issuer) ->
+      None; the caller falls through to the internal verifier exactly as
+      before.
+
+    Args:
+        token: The raw bearer token string.
+        request: Optional request object; the external payload is cached on
+            ``request.state._jwt_verified_payload`` for downstream consumers,
+            mirroring ``verify_credentials_cached``.
+
+    Returns:
+        The verified external identity payload, or None when the token is
+        not external-issuer material.
+
+    Raises:
+        HTTPException: 401 when a trust-root token fails external
+            verification (fail-closed).
+    """
+    # Third-Party
+    import jwt  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc  # pylint: disable=import-outside-toplevel
+
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None  # not even a JWT -> internal funnel handles the 401
+    iss = unverified.get("iss")
+    if not isinstance(iss, str) or not iss or iss.rstrip("/") == (settings.jwt_issuer or "").rstrip("/"):
+        return None  # internal issuer (or no iss) -> internal funnel, zero JWKS cost
+
+    try:
+        external_payload = await vc._maybe_verify_external(token, request, fail_closed=True)  # pylint: disable=protected-access
+    except vc.ExternalIssuerVerificationError as exc:
+        logger.warning(
+            "Rejected bearer from a configured trust root at ingress (fail-closed): %s",
+            SecurityValidator.sanitize_log_message(str(exc)),
+            extra={"security_event": "trust_root_token_rejected_ingress"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    if external_payload is not None and request is not None and hasattr(request, "state"):
+        request.state._jwt_verified_payload = (token, external_payload)  # pylint: disable=protected-access
+    return external_payload
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
@@ -1754,18 +1823,23 @@ async def get_current_user(
     email = None
 
     try:
-        # Dispatch to the shared verifier, which tries a trusted external-IdP
-        # bearer token first (SSO_API_TOKEN_AUTH_ENABLED + per-provider
-        # trusted_for_api_auth, see resolve_trusted_provider_by_issuer) and
-        # falls back to internal-only verify_jwt_token_cached() when the
-        # token isn't from a trusted issuer. Without this, every
-        # Depends(get_current_user_with_permissions) call site — /rpc,
-        # /tools, /gateways, /servers, etc. — rejects external-IdP tokens
-        # even when trusted_for_api_auth and SSO_API_TOKEN_AUTH_ENABLED are
-        # both on, because verify_jwt_token_cached() only ever checks the
-        # internal JWT secret. See #6396.
-        logger.debug("Attempting JWT token validation")
-        payload = await verify_credentials_cached(credentials.credentials, request)
+        # Trust-mode ingress dispatch (#5903): when JWT trust mode is ON,
+        # external-issuer bearers go to the JWKS verifier BEFORE the shared
+        # verifier. The helper returns None only for "not an external-issuer
+        # token" (fall through below); a trust-root token that fails
+        # verification raises 401 fail-closed.
+        payload = None
+        if settings.jwt_trust_mode == "jwt-trust":
+            payload = await _try_external_verification(credentials.credentials, request)
+
+        if payload is None:
+            # Shared verifier: tries a trusted external-IdP bearer token first
+            # (SSO_API_TOKEN_AUTH_ENABLED + per-provider trusted_for_api_auth,
+            # see resolve_trusted_provider_by_issuer) and falls back to
+            # internal-only verify_jwt_token_cached() when the token isn't
+            # from a trusted issuer (#6396).
+            logger.debug("Attempting JWT token validation")
+            payload = await verify_credentials_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
 
