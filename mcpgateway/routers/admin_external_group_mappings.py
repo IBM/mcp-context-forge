@@ -42,6 +42,7 @@ from mcpgateway.db import EmailTeam, ExternalGroupMapping, Role
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.security_logger import get_security_logger
+from mcpgateway.utils.verify_credentials import invalidate_external_identity_cache
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -140,6 +141,35 @@ def _validate_role_exists(db: Session, cf_role: Optional[str]) -> None:
         raise HTTPException(status_code=400, detail=f"Role not found: {cf_role}")
 
 
+def _check_null_tenant_duplicate(db: Session, issuer: str, external_group_id: str, exclude_id: Optional[int] = None) -> None:
+    """Raise 409 when a NULL-tenant mapping already exists for (issuer, external_group_id).
+
+    The plain unique constraint on (issuer, tenant, external_group_id) treats
+    NULL tenants as distinct on SQLite and PostgreSQL, so the tenant-IS-NULL
+    case is pre-checked here at the application level (and backstopped by the
+    uq_external_group_mappings_null_tenant partial unique index).
+
+    Args:
+        db: Database session.
+        issuer: Token issuer of the mapping being written.
+        external_group_id: External group ID of the mapping being written.
+        exclude_id: Mapping primary key to exclude (the row being updated).
+
+    Raises:
+        HTTPException: 409 when another NULL-tenant row already maps this
+            (issuer, external_group_id) pair.
+    """
+    query = db.query(ExternalGroupMapping).filter(
+        ExternalGroupMapping.issuer == issuer,
+        ExternalGroupMapping.tenant.is_(None),
+        ExternalGroupMapping.external_group_id == external_group_id,
+    )
+    if exclude_id is not None:
+        query = query.filter(ExternalGroupMapping.id != exclude_id)
+    if query.first() is not None:
+        raise HTTPException(status_code=409, detail="Mapping already exists for (issuer, tenant, external_group_id)")
+
+
 def _run_group_validation(mapping: ExternalGroupMapping, user, db: Session) -> None:
     """Run the group-existence validator and record the outcome on the row.
 
@@ -206,6 +236,8 @@ async def create_external_group_mapping(
     """
     _validate_team_exists(db, body.cf_team_id)
     _validate_role_exists(db, body.cf_role)
+    if body.tenant is None:
+        _check_null_tenant_duplicate(db, body.issuer, body.external_group_id)
 
     mapping = ExternalGroupMapping(
         issuer=body.issuer,
@@ -222,6 +254,7 @@ async def create_external_group_mapping(
         db.rollback()
         raise HTTPException(status_code=409, detail="Mapping already exists for (issuer, tenant, external_group_id)") from exc
     db.refresh(mapping)
+    await invalidate_external_identity_cache()
     return mapping
 
 
@@ -279,6 +312,11 @@ async def update_external_group_mapping(
         _validate_team_exists(db, updates["cf_team_id"])
     if "cf_role" in updates:
         _validate_role_exists(db, updates["cf_role"])
+    # Pre-check the effective identity before mutating the row: applying the
+    # updates first would let query autoflush hit the partial unique index
+    # with a raw IntegrityError instead of the 409 below.
+    if updates.get("tenant", mapping.tenant) is None:
+        _check_null_tenant_duplicate(db, updates.get("issuer", mapping.issuer), updates.get("external_group_id", mapping.external_group_id), exclude_id=mapping.id)
     for field, value in updates.items():
         setattr(mapping, field, value)
 
@@ -289,6 +327,7 @@ async def update_external_group_mapping(
         db.rollback()
         raise HTTPException(status_code=409, detail="Mapping already exists for (issuer, tenant, external_group_id)") from exc
     db.refresh(mapping)
+    await invalidate_external_identity_cache()
     return mapping
 
 
@@ -319,4 +358,5 @@ async def delete_external_group_mapping(
         raise HTTPException(status_code=404, detail=f"External group mapping not found: {mapping_id}")
     db.delete(mapping)
     db.commit()
+    await invalidate_external_identity_cache()
     return {"detail": "deleted", "id": mapping_id}

@@ -5202,7 +5202,13 @@ class ExternalGroupMapping(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False)
 
-    __table_args__ = (UniqueConstraint("issuer", "tenant", "external_group_id", name="uq_external_group_mappings_identity"),)
+    __table_args__ = (
+        UniqueConstraint("issuer", "tenant", "external_group_id", name="uq_external_group_mappings_identity"),
+        # Plain unique constraints treat NULL tenants as distinct on both SQLite
+        # and PostgreSQL, so the (issuer, external_group_id) pair gets its own
+        # partial unique index for the tenant-IS-NULL case.
+        Index("uq_external_group_mappings_null_tenant", "issuer", "external_group_id", unique=True, postgresql_where=text("tenant IS NULL"), sqlite_where=text("tenant IS NULL")),
+    )
 
     def __repr__(self) -> str:
         """Return a string representation of the ExternalGroupMapping instance."""
