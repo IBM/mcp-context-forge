@@ -22,6 +22,7 @@ from sqlalchemy.orm import contains_eager, Session
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
+from mcpgateway.services.role_resolution import resolve_mapping_role
 
 logger = logging.getLogger(__name__)
 
@@ -310,15 +311,19 @@ class PermissionService:
             logger.debug("[RBAC] Role '%s' (scope=%s, scope_id=%s) has permissions: %s", user_role.role.name, user_role.scope, user_role.scope_id, role_permissions)
             permissions.update(role_permissions)
 
-        # Claims-derived roles (JWT-trust mode, #5902): resolve role names
-        # against the server-side roles table; permissions never come from
-        # the token, and unknown names grant nothing. Public-only tokens
-        # (token_teams=[]) get no claims-derived role permissions: strict
-        # isolation mirrors the admin-bypass suppression in check_permission.
+        # Claims-derived roles (JWT-trust mode, #5902): resolve each role name
+        # scope-exact via resolve_mapping_role (NB6): exactly ONE active row —
+        # team scope preferred, global as fallback, lowest id as tie-break —
+        # never a union of same-name rows across scopes. Permissions never
+        # come from the token, and unknown names grant nothing. Public-only
+        # tokens (token_teams=[]) get no claims-derived role permissions:
+        # strict isolation mirrors the admin-bypass suppression in
+        # check_permission.
         if token_roles and not (token_teams is not None and len(token_teams) == 0):
-            claim_role_rows = self.db.execute(select(Role).where(and_(Role.name.in_(sorted(set(token_roles))), Role.is_active.is_(True)))).scalars().all()
-            for claim_role in claim_role_rows:
-                permissions.update(claim_role.get_effective_permissions())
+            for role_name in sorted(set(token_roles)):
+                claim_role = resolve_mapping_role(self.db, role_name)
+                if claim_role is not None:
+                    permissions.update(claim_role.get_effective_permissions())
 
         # Cache both permissions and roles
         self._permission_cache[cache_key] = permissions
@@ -440,12 +445,17 @@ class PermissionService:
 
         return False
 
-    async def check_admin_permission(self, user_email: str, token_teams: Optional[List[str]] = None) -> bool:
+    async def check_admin_permission(self, user_email: str, token_teams: Optional[List[str]] = None, token_is_admin: bool = False) -> bool:
         """Check if user has any admin permissions.
 
         Args:
             user_email: Email of the user
             token_teams: Optional list of team IDs to scope the permission check (Layer 1 narrowing)
+            token_is_admin: Claims-derived admin flag (JWT-trust mode, #5902).
+                           Honored without a DB user row, mirroring the
+                           admin-claim parity in check_permission. The
+                           public-only suppression still applies:
+                           token_teams=[] gets no bypass.
 
         Returns:
             bool: True if user has admin permissions
@@ -458,15 +468,17 @@ class PermissionService:
             >>> asyncio.iscoroutinefunction(service.check_admin_permission)
             True
         """
-        # SECURITY: Public-only tokens (token_teams=[]) suppress admin bypass
+        # SECURITY: Public-only tokens (token_teams=[]) suppress admin bypass,
+        # for the DB admin flag and the claims-derived admin claim alike.
         if token_teams is not None and len(token_teams) == 0:
             # Public-only token: check permissions without admin bypass
             admin_permissions = [Permissions.ADMIN_SYSTEM_CONFIG, Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SECURITY_AUDIT, Permissions.ALL_PERMISSIONS]
             user_permissions = await self.get_user_permissions(user_email, token_teams=token_teams)
             return any(perm in user_permissions for perm in admin_permissions)
 
-        # First check if user is admin (handles platform admin virtual user)
-        if await self._is_user_admin(user_email):
+        # First check if user is admin (DB flag, platform admin virtual user,
+        # or the claims-derived admin claim in trust mode, #5902)
+        if token_is_admin or await self._is_user_admin(user_email):
             return True
 
         admin_permissions = [Permissions.ADMIN_SYSTEM_CONFIG, Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SECURITY_AUDIT, Permissions.ALL_PERMISSIONS]
