@@ -13,8 +13,10 @@ pattern used by test_runtime_admin_router.py.
 """
 
 # Standard
+import contextlib
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+import logging
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 from fastapi import HTTPException
@@ -24,8 +26,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import Base, EmailTeam, EmailUser, ExternalGroupMapping, Role
+from mcpgateway.db import Base, EmailTeam, EmailUser, ExternalGroupMapping, Role, SSOProvider
 from mcpgateway.routers import admin_external_group_mappings as router_module
+from mcpgateway.utils.entra_graph_client import EntraGraphError
 
 
 @pytest.fixture
@@ -225,3 +228,102 @@ class TestGraphValidatorSeam:
         created = await router_module.create_external_group_mapping(_create_body(), request=request_stub, user=admin_user, db=db)
         assert created.validation_status == "unknown"
         assert created.last_validated_at is not None
+
+
+ENTRA_ISSUER = "https://login.microsoftonline.com/tenant-1/v2.0"
+
+
+def _seed_entra_provider(db) -> SSOProvider:
+    """Insert an enabled SSO provider record for the Entra test issuer."""
+    provider = SSOProvider(
+        id="entra-test",
+        name="entra-test",
+        display_name="Entra Test",
+        provider_type="oidc",
+        is_enabled=True,
+        client_id="client-1",
+        client_secret_encrypted="encrypted-secret",  # pragma: allowlist secret
+        authorization_url="https://login.microsoftonline.com/tenant-1/oauth2/v2.0/authorize",
+        token_url="https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token",
+        userinfo_url="https://login.microsoftonline.com/oidc/userinfo",
+        issuer=ENTRA_ISSUER,
+    )
+    db.add(provider)
+    db.commit()
+    return provider
+
+
+@pytest.fixture
+def graph_client_factory(monkeypatch: pytest.MonkeyPatch):
+    """Patch the router's EntraGraphClient seam with a mock; returns (factory, client)."""
+    client = MagicMock()
+    client.group_exists = AsyncMock(return_value=True)
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(router_module, "EntraGraphClient", factory)
+    return factory, client
+
+
+@pytest.fixture
+def validator_db(monkeypatch: pytest.MonkeyPatch, db):
+    """Point the validator's fresh_db_session at the in-memory test session."""
+
+    @contextlib.contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(router_module, "fresh_db_session", _session)
+    return db
+
+
+class TestGraphBackedValidator:
+    """The Graph-backed default group-existence validator (issue #5977)."""
+
+    @pytest.mark.asyncio
+    async def test_entra_group_exists_valid(self, allow_admin, db, admin_user, request_stub, validator_db, graph_client_factory):
+        _seed_entra_provider(db)
+        _, client = graph_client_factory
+        created = await router_module.create_external_group_mapping(_create_body(issuer=ENTRA_ISSUER), request=request_stub, user=admin_user, db=db)
+        assert created.validation_status == "valid"
+        client.group_exists.assert_awaited_once()
+        provider_arg, group_arg = client.group_exists.await_args.args
+        assert provider_arg.issuer == ENTRA_ISSUER
+        assert group_arg == "guid-1"
+
+    @pytest.mark.asyncio
+    async def test_entra_group_not_found_recorded(self, allow_admin, db, admin_user, request_stub, validator_db, graph_client_factory):
+        _seed_entra_provider(db)
+        _, client = graph_client_factory
+        client.group_exists.return_value = False
+        # A missing group is recorded with a reason status, not rejected by
+        # the CRUD: the resolver fails closed at read time, so the row can
+        # never grant access.
+        created = await router_module.create_external_group_mapping(_create_body(issuer=ENTRA_ISSUER), request=request_stub, user=admin_user, db=db)
+        assert created.validation_status == "graph_group_not_found"
+
+    @pytest.mark.asyncio
+    async def test_entra_graph_error_unknown_warn_and_allow(self, allow_admin, db, admin_user, request_stub, validator_db, graph_client_factory):
+        _seed_entra_provider(db)
+        _, client = graph_client_factory
+        client.group_exists.side_effect = EntraGraphError("boom")
+        created = await router_module.create_external_group_mapping(_create_body(issuer=ENTRA_ISSUER), request=request_stub, user=admin_user, db=db)
+        assert created.validation_status == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_non_entra_issuer_skips_graph(self, allow_admin, db, admin_user, request_stub, validator_db, graph_client_factory):
+        factory, client = graph_client_factory
+        created = await router_module.create_external_group_mapping(_create_body(), request=request_stub, user=admin_user, db=db)
+        assert created.validation_status == "valid"
+        factory.assert_not_called()
+        client.group_exists.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_entra_issuer_without_credentials_warns(self, allow_admin, db, admin_user, request_stub, validator_db, graph_client_factory, caplog):
+        # No SSO provider row for the Entra issuer: Graph is unconfigured, so
+        # the validator keeps the disabled-stub posture ("valid") and warns.
+        factory, client = graph_client_factory
+        with caplog.at_level(logging.WARNING):
+            created = await router_module.create_external_group_mapping(_create_body(issuer=ENTRA_ISSUER), request=request_stub, user=admin_user, db=db)
+        assert created.validation_status == "valid"
+        factory.assert_not_called()
+        client.group_exists.assert_not_called()
+        assert any("credentials" in record.getMessage() and ENTRA_ISSUER in record.getMessage() for record in caplog.records)
