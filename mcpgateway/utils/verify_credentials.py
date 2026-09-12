@@ -646,17 +646,44 @@ def _record_external_auth_metric(outcome: str, provider_id, reason: str = "") ->
         logger.debug("external-idp auth metric skipped: %s", exc)
 
 
-async def _maybe_verify_external(token: str, request: Optional[Request]) -> Optional[dict]:
+class ExternalIssuerVerificationError(Exception):
+    """Definitive verification failure for a token from a configured trust root.
+
+    Raised only on the fail-closed dispatch path
+    (``_maybe_verify_external(..., fail_closed=True)``) when the token's
+    issuer matched a configured trust root (``trusted_for_api_auth``) but
+    external verification failed definitively: bad signature, wrong audience,
+    expiry, missing revocation claim, or identity-build rejection. The caller
+    must map this to 401 and MUST NOT fall through to the internal JWT
+    funnel for that token.
+    """
+
+
+async def _maybe_verify_external(token: str, request: Optional[Request], *, fail_closed: bool = False) -> Optional[dict]:
     """Attempt external-IdP (trusted OIDC issuer) verification for a bearer token.
 
     Args:
         token: The raw bearer token string.
         request: Optional FastAPI/Starlette request, used for a request-scoped DB session.
+        fail_closed: Trust-mode ingress dispatch semantics (#5903). When True
+            and the token's issuer IS a configured trust root, every
+            definitive verification failure raises
+            :class:`ExternalIssuerVerificationError` instead of returning
+            None, so the caller can reject with 401 without falling through
+            to the internal JWT funnel. ``None`` is still returned when the
+            issuer is NOT a configured trust root (fall-through is correct).
+            Default False preserves the legacy fall-through-on-any-failure
+            behavior for all existing callers.
 
     Returns:
         A session-semantics identity payload (see build_external_identity) if the
         token's issuer matches a trusted external provider and verification succeeds,
         or None to fall through to internal JWT verification.
+
+    Raises:
+        ExternalIssuerVerificationError: Only with ``fail_closed=True``: the
+            issuer is a configured trust root but verification failed
+            definitively.
     """
     if not getattr(settings, "sso_api_token_auth_enabled", False):
         return None
@@ -691,9 +718,19 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
     if own_session:
         db = SessionLocal()
         db.info["external_owned"] = True  # M1: signals build_external_identity to commit provisioning
+    trust_root = None
     try:
+        if fail_closed:
+            # Decide the dispatch contract up front: when the issuer is a
+            # configured trust root, every failure below is definitive and
+            # must raise (fail-closed); when it is not, None means
+            # "not ours" and the caller falls through to the internal funnel.
+            trust_root = resolve_trusted_provider_by_issuer(iss, db)
+
         claims, provider = await verify_external_idp_token(token, db)
         if claims is None:
+            if trust_root is not None:
+                raise ExternalIssuerVerificationError("token from a configured trust root failed external verification")
             return None  # untrusted issuer / invalid sig -> fall through -> internal path 401s
         if _external_trust_root_active(provider):
             # Trust mode (#5903): the identity derives from the verified
@@ -702,10 +739,17 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
             payload = await build_trusted_external_identity(provider, claims, token, db)
         else:
             payload = await build_external_identity(provider, claims, token, db)
-        if payload is not None:
-            await _external_identity_cache_put(th, payload, claims.get("exp"))
+        if payload is None:
+            if trust_root is not None:
+                raise ExternalIssuerVerificationError("identity resolution rejected a token from a configured trust root")
+            return None
+        await _external_identity_cache_put(th, payload, claims.get("exp"))
         return payload
+    except ExternalIssuerVerificationError:
+        raise
     except Exception as exc:  # pylint: disable=broad-except
+        if trust_root is not None:
+            raise ExternalIssuerVerificationError(f"external verification error for a configured trust root: {sanitize_for_log(str(exc))}") from exc
         logger.warning("external-idp auth error, falling through to internal (401): %s", sanitize_for_log(str(exc)))
         return None
     finally:
