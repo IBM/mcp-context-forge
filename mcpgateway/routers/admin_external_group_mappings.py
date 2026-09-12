@@ -41,9 +41,10 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth_context import get_user_email
-from mcpgateway.db import EmailTeam, ExternalGroupMapping, Role
+from mcpgateway.db import EmailTeam, ExternalGroupMapping
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.role_resolution import resolve_mapping_role
 from mcpgateway.services.security_logger import get_security_logger
 from mcpgateway.utils.verify_credentials import invalidate_external_identity_cache
 
@@ -127,53 +128,10 @@ def _validate_team_exists(db: Session, cf_team_id: str) -> None:
         raise HTTPException(status_code=400, detail=f"Team not found: {cf_team_id}")
 
 
-#: Scope preference for cf_role resolution: a mapping's context is a team,
-#: so a team-scoped role wins over a global-scoped role of the same name.
-_MAPPING_ROLE_SCOPE_PREFERENCE = ("team", "global")
-
-
-def _resolve_mapping_role(db: Session, cf_role: str, cf_team_id: Optional[str] = None) -> Optional[Role]:
-    """Resolve a mapping's cf_role to exactly one active Role row.
-
-    roles.name is unique only per (name, scope) among active rows (partial
-    unique index uq_roles_name_scope_active), so a name-only lookup can
-    match several active rows across scopes and union more permissions
-    than intended (or pick arbitrarily). Resolution is scope-exact and
-    deterministic:
-
-    1. The active team-scoped row wins: the mapping's context is a team
-       (cf_team_id).
-    2. Otherwise the active global-scoped row.
-    3. Otherwise the lowest-id active row of any other scope.
-
-    Duplicate active rows within one scope are impossible via the unique
-    index; defended anyway by taking the lowest role id. Rows are never
-    unioned. Inactive rows never resolve.
-
-    Args:
-        db: Database session.
-        cf_role: Role name to resolve.
-        cf_team_id: Team context of the mapping (recorded for the scope
-            preference; Role.scope is a scope type, not a per-team id).
-
-    Returns:
-        Optional[Role]: The single resolved row, or None when no active
-            row matches the name.
-    """
-    rows = db.query(Role).filter(Role.name == cf_role, Role.is_active.is_(True)).all()
-    if not rows:
-        return None
-    for scope in _MAPPING_ROLE_SCOPE_PREFERENCE:
-        scoped = [row for row in rows if row.scope == scope]
-        if scoped:
-            return min(scoped, key=lambda row: row.id)
-    return min(rows, key=lambda row: row.id)
-
-
 def _validate_role_exists(db: Session, cf_role: Optional[str], cf_team_id: Optional[str] = None) -> None:
     """Raise 400 when cf_role is set but resolves to no active Role row.
 
-    Resolution is scope-exact via _resolve_mapping_role: exactly one
+    Resolution is scope-exact via resolve_mapping_role: exactly one
     active row, team scope preferred over global, never a union of rows.
     An inactive role does not pass validation.
 
@@ -187,7 +145,7 @@ def _validate_role_exists(db: Session, cf_role: Optional[str], cf_team_id: Optio
     """
     if cf_role is None:
         return
-    if _resolve_mapping_role(db, cf_role, cf_team_id) is None:
+    if resolve_mapping_role(db, cf_role, cf_team_id) is None:
         raise HTTPException(status_code=400, detail=f"Role not found: {cf_role}")
 
 
