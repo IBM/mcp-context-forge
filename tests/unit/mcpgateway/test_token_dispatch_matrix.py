@@ -303,3 +303,190 @@ class TestTokenDispatchMatrix:
 
         # Trust-semantics: claims-derived identity, no local provisioning.
         mock_build.assert_not_called()
+
+
+def _external_payload() -> dict:
+    """Claims-derived identity payload as build_trusted_external_identity returns it.
+
+    Carries the original token claims (sub/email/groups/jti) plus the derived
+    trust markers, exactly the shape ``_maybe_verify_external`` yields on the
+    trust-root branch.
+    """
+    return {
+        "iss": "https://idp.example.test",
+        "sub": "ext-subject-0001",
+        "email": "ext.user@example.com",
+        "user_id": "ext-subject-0001",
+        "groups": ["external-group-1"],
+        "teams": [],
+        "roles": [],
+        "is_admin": False,
+        "jti": "ext-jti-ingress-1",
+        "exp": _exp(),
+        "token_use": "trusted",
+        "source": "external_idp",
+        "auth_provider": "local-oidc-test",
+    }
+
+
+class TestIngressExternalDispatch:
+    """get_current_user() trust-mode ingress dispatch (#5903 / Task 9).
+
+    Dispatch contract pinned here (mirrors docs/5896 and AGENTS.md):
+
+    - Trust mode ON + issuer is a configured trust root + verification
+      succeeds -> external principal (token_use="trusted" branch).
+    - Trust mode ON + issuer is a configured trust root + definitive
+      verification failure -> 401 fail-closed; the internal verifier is
+      NEVER consulted for that token.
+    - Trust mode ON + issuer NOT a trust root -> fall through to the
+      internal funnel exactly as before.
+    - Trust mode OFF (db) -> external path is never entered.
+    - No credentials -> 401 (pre-existing behavior, pinned).
+    """
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_invoke_401(self):
+        """No bearer credentials -> 401 (existing behavior, pinned)."""
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(credentials=None, request=None)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    @pytest.mark.asyncio
+    async def test_db_mode_external_token_stays_on_internal_funnel(self, monkeypatch):
+        """Trust mode OFF + external-issuer token -> 401 via the internal funnel.
+
+        The external dispatch must never run: with jwt_trust_mode="db" the
+        internal verifier alone decides, and it rejects externally-signed
+        tokens.
+        """
+        # Third-Party
+        import jwt as pyjwt
+
+        # First-Party
+        from mcpgateway.utils import verify_credentials as vc
+
+        token = pyjwt.encode({"iss": "https://idp.example.test", "sub": "ext", "exp": _exp()}, "k", algorithm="HS256")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)  # pragma: allowlist secret
+
+        monkeypatch.setattr(settings, "jwt_trust_mode", "db")
+        external_dispatch = AsyncMock(side_effect=AssertionError("external path entered in db mode"))
+        monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials, request=None)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        external_dispatch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trust_mode_external_token_authenticates_via_external_path(self, monkeypatch):
+        """Trust mode ON + trust-root token -> claims-derived principal.
+
+        The internal verifier would reject this RS256-style external token
+        (mocked to 401); the request still authenticates because the ingress
+        dispatch consults the external verifier FIRST and its payload flows
+        into the token_use="trusted" branch.
+        """
+        # Third-Party
+        import jwt as pyjwt
+
+        # First-Party
+        from mcpgateway.utils import verify_credentials as vc
+
+        token = pyjwt.encode({"iss": "https://idp.example.test", "sub": "ext-subject-0001", "exp": _exp()}, "k", algorithm="HS256")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)  # pragma: allowlist secret
+
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+        _repoint_funnel_sessions(monkeypatch)
+
+        external_dispatch = AsyncMock(return_value=_external_payload())
+        monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
+        internal_verifier = AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))
+
+        request = SimpleNamespace(state=SimpleNamespace())
+        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+            with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "ext.user@example.com"
+        assert request.state.token_use == "trusted"
+        external_dispatch.assert_awaited_once()
+        internal_verifier.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trust_mode_trust_root_invalid_token_fails_closed(self, monkeypatch):
+        """Trust mode ON + trust-root token that fails verification -> 401.
+
+        Fail-closed: a definitive external-verification failure (bad
+        signature, wrong audience, expired, missing revocation claim) must
+        NOT fall through to the internal funnel for that token.
+        """
+        # Third-Party
+        import jwt as pyjwt
+
+        # First-Party
+        from mcpgateway.utils import verify_credentials as vc
+
+        token = pyjwt.encode({"iss": "https://idp.example.test", "sub": "ext", "exp": _exp()}, "k", algorithm="HS256")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)  # pragma: allowlist secret
+
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        external_dispatch = AsyncMock(side_effect=vc.ExternalIssuerVerificationError("trust-root token failed verification"))
+        monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
+        internal_verifier = AsyncMock(return_value={"sub": "internal@example.com", "exp": _exp(), "jti": "internal-jti"})
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials, request=SimpleNamespace(state=SimpleNamespace()))
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        external_dispatch.assert_awaited_once()
+        internal_verifier.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trust_mode_non_trust_root_token_falls_through_to_internal(self, monkeypatch):
+        """Trust mode ON + issuer NOT a trust root -> internal funnel as today.
+
+        The external dispatch returns None (not external-issuer material) and
+        the internal verifier decides; a gateway-signed JWT still
+        authenticates with trust mode ON (no regression).
+        """
+        # Third-Party
+        import jwt as pyjwt
+
+        # First-Party
+        from mcpgateway.utils import verify_credentials as vc
+
+        token = pyjwt.encode({"iss": "mcpgateway", "sub": "api@example.com", "exp": _exp()}, "k", algorithm="HS256")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)  # pragma: allowlist secret
+
+        jwt_payload = {
+            "sub": "api@example.com",
+            "token_use": "api",
+            "teams": ["api-team-1"],
+            "exp": _exp(),
+            "user": {"auth_provider": "api_token"},
+        }
+
+        request = SimpleNamespace(state=SimpleNamespace())
+        monkeypatch.setattr(settings, "jwt_trust_mode", "jwt-trust")
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        external_dispatch = AsyncMock(return_value=None)
+        monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
+        internal_verifier = AsyncMock(return_value=jwt_payload)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=_make_user("api@example.com")):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "api@example.com"
+        assert request.state.token_use == "api"
+        internal_verifier.assert_awaited_once()
