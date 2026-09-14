@@ -49,9 +49,11 @@ the consolidated target.
 
 ### What's Tested
 
-Organized into five classes — `TestConnectivity`, `TestTools`, `TestDiscovery`,
-`TestToolCalls`, plus raw-HTTP probes (`TestRawJsonRpc`,
-`TestRawHttpTransportParity`). Coverage includes:
+15 classes across two coverage areas.
+
+**MCP protocol (async MCP SDK)** — `TestConnectivity`, `TestTools`,
+`TestDiscovery`, `TestToolCalls`, plus raw-HTTP probes (`TestRawJsonRpc`,
+`TestRawHttpTransportParity`):
 
 - Connectivity: `ping`, `initialize` fields, core-capability advertisement,
   multi-call-in-one-session.
@@ -64,14 +66,35 @@ Organized into five classes — `TestConnectivity`, `TestTools`, `TestDiscovery`
 - Raw-HTTP probes: invalid-method error envelope, Rust-runtime header parity
   on `initialize` + `DELETE` (skipped when the Rust transport isn't mounted).
 
+**RBAC (Playwright `APIRequestContext` + sync MCP helpers)** —
+`TestServerVisibilityViaAPI`, `TestMcpToolsVisibilityByRole`,
+`TestMcpResourcesPromptsByRole`, `TestMcpToolCallByRole`,
+`TestMcpScopedTokenPermissions`, `TestMcpStreamableHttpTransport`,
+`TestMcpPerServerEndpoint`, `TestDenyPaths`, `TestCrossTransportConsistency`:
+
+- Server visibility: REST API scoping of servers by team/public.
+- Tool/resource/prompt visibility by role: admin, developer, team admin,
+  outsider.
+- Role-gated tool execution: which roles can call vs. only list tools.
+- Scoped-token permissions: `tools.read`/`tools.execute` combinations and
+  `servers.use` auto-injection.
+- Streamable HTTP transport and per-server MCP endpoint routing.
+- Deny paths: unauthenticated and cross-team access rejected.
+- Cross-transport consistency: same visibility/behavior across transports.
+
 ### Architecture
 
 ```
 pytest
-  └── MCP SDK ClientSession (async, Streamable HTTP)
+  ├── MCP SDK ClientSession (async, Streamable HTTP)
+  │     └── Authorization: Bearer <jwt>
+  │           └── HTTP → ContextForge gateway /mcp (MCP_CLI_BASE_URL)
+  └── Playwright APIRequestContext (sync, via _run_async thread-pool)
         └── Authorization: Bearer <jwt>
-              └── HTTP → ContextForge gateway /mcp (MCP_CLI_BASE_URL)
+              └── HTTP → ContextForge gateway /mcp, /servers, /tokens (MCP_CLI_BASE_URL)
 ```
 
-No subprocess, no settle delays, no stdin-close plumbing. Sessions are
-established by the `streamablehttp_client` / `ClientSession` async context managers.
+No subprocess, no settle delays, no stdin-close plumbing. Async sessions are
+established by the `streamablehttp_client` / `ClientSession` async context
+managers; RBAC classes drive the sync Playwright API client from the same
+pytest-asyncio module via a thread-pool helper (`_run_async`).

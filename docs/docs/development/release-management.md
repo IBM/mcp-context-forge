@@ -383,10 +383,9 @@ Requires the compose stack to be running with SSE transport enabled.
 make test-e2e
 ```
 
-| Target | What it tests |
-|--------|---------------|
-| `test-mcp-rbac` | RBAC enforcement and multi-transport MCP protocol compliance |
-| `test-mcp-protocol-e2e` | MCP protocol via the official mcp SDK client against the gateway |
+`test-e2e` runs the consolidated suite covering both RBAC enforcement and
+MCP protocol compliance. `test-mcp-rbac` and `test-mcp-protocol-e2e` are
+deprecated aliases for `test-e2e`, removed in v1.3.0.
 
 ### 5.5 Load testing
 
