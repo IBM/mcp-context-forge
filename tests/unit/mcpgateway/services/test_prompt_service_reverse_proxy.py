@@ -49,7 +49,11 @@ PROXIED_RESULT = {
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger:
+    with (
+        patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit,
+        patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger,
+        patch("mcpgateway.services.reverse_proxy_dispatch.structured_logger", mock_logger),
+    ):
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -154,7 +158,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
         manager.resolve_connection_id.assert_called_once_with("proxied-gw-1")
@@ -185,7 +189,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"}, _meta_data={"traceparent": "00-abc"})
 
         sent_request = manager.send_request.await_args.args[1]
@@ -198,7 +202,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         upstream_result = {"messages": [{"role": "user", "content": {"type": "text", "text": "body"}}]}
         manager = _manager_mock(send_return=_success_response("req-1", upstream_result))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {})
 
         sent_request = manager.send_request.await_args.args[1]
@@ -213,7 +217,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(connection_id=None)
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             with pytest.raises(PromptError, match=r"No active reverse-proxy connection for gateway 'proxied-gw-1'"):
                 await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
@@ -226,7 +230,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         manager = _manager_mock(send_side_effect=TimeoutError("slow downstream"))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError, match="Prompt fetch timed out after"),
         ):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
@@ -251,7 +255,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         manager = _manager_mock(send_side_effect=connection_error)
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError, match=r"Reverse-proxy connection for gateway 'proxied-gw-1' failed"),
         ):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
@@ -270,7 +274,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError, match=r"MCP error -32001") as exc_info,
         ):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
@@ -289,7 +293,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError) as exc_info,
         ):
             await prompt_service._get_reverse_proxied_prompt("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"question": "what"}, None, proxied_prompt)
@@ -302,7 +306,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", {"description": "no messages member"}))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ValidationError),
         ):
             await prompt_service._get_reverse_proxied_prompt("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"question": "what"}, None, proxied_prompt)
@@ -345,7 +349,7 @@ class TestFetchGatewayPromptResultReverseProxied:
         with (
             patch(f"mcpgateway.services.prompt_service.{client_patch}", mock_client),
             patch("mcpgateway.services.prompt_service.ClientSession", return_value=client_session_cm),
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager") as manager_factory,
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
         ):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
@@ -368,7 +372,7 @@ class TestFetchGatewayPromptResultReverseProxied:
 
         with (
             patch.object(prompt_service, "_apply_access_control", side_effect=mock_apply_access_control),
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager") as manager_factory,
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
             pytest.raises(PromptNotFoundError, match="Prompt not found"),
         ):
             await prompt_service.get_prompt(
@@ -394,7 +398,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
         assert isinstance(result, PromptResult)
@@ -410,7 +414,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
         assert isinstance(result, PromptResult)
@@ -428,7 +432,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="unauthorized downstream"))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError, match=r"MCP error -32001") as exc_info,
         ):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
@@ -453,7 +457,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
         assert isinstance(result, PromptResult)
@@ -471,7 +475,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         _stub_lookup(prompt_service, test_db, proxied_prompt)
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
-        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
 
         assert isinstance(result, PromptResult)
@@ -490,7 +494,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError) as exc_info,
         ):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
@@ -511,7 +515,7 @@ class TestFetchGatewayPromptResultReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(PromptError) as exc_info,
         ):
             await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
