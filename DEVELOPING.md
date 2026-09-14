@@ -64,7 +64,7 @@ The old hook ran `lint-staged`; the replacement installs the pre-commit framewor
 
 ### Prerequisites
 
-- **Python 3.11+** (3.10 minimum)
+- **Python 3.12+**
 - **uv** (recommended) or pip/virtualenv
 - **Make** for automation
 - **Docker/Podman** (optional, for container development)
@@ -298,6 +298,8 @@ volumes:
   - Classes: `PascalCase`
   - Constants: `UPPER_SNAKE_CASE`
 
+Readability follows *Clean Code*: [Coding Standards](docs/docs/development/coding-standards.md). Prose in comments, commits, and PRs follows the [Agent Prose Standard](docs/docs/development/agent-prose.md).
+
 ### Quality Tools
 
 ```bash
@@ -395,7 +397,7 @@ app.include_router(router, tags=["my-feature"])
 
 ```python
 # mcpgateway/schemas.py
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 class MySchema(BaseModel):
     """Schema for my feature."""
@@ -403,7 +405,7 @@ class MySchema(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     value: int = Field(..., gt=0, le=100)
 
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         """Custom validation logic."""
         if not v.isalnum():
@@ -463,13 +465,13 @@ logger = logging.getLogger(__name__)
 
 async def pre_request_hook(request: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Process request before handling."""
-    logger.info(f"Pre-request hook: {request.get('method')}")
+    logger.info("Pre-request hook: %s", request.get("method"))
     # Modify request if needed
     return request
 
 async def post_response_hook(response: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Process response before sending."""
-    logger.info(f"Post-response hook: {response.get('result')}")
+    logger.info("Post-response hook: %s", response.get("result"))
     # Modify response if needed
     return response
 ```
@@ -592,7 +594,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def my_function():
-    logger.debug(f"Debug info: {variable}")
+    logger.debug("Debug info: %s", variable)
     logger.info("Operation started")
     logger.warning("Potential issue")
     logger.error("Error occurred", exc_info=True)
