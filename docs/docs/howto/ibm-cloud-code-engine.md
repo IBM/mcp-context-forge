@@ -110,7 +110,8 @@ IBMCLOUD_API_KEY=***your-api-key***    # leave blank to use SSO flow at login
 IBMCLOUD_CPU=1                         # vCPU for the container
 IBMCLOUD_MEMORY=4G                     # Memory (must match a valid CPU/MEM pair)
 
-# Registry secret in Code Engine (first-time creation is automated)
+# Name of the registry pull secret in Code Engine.
+# Create it once before first deploy — see Workflow A / Workflow B docs.
 IBMCLOUD_REGISTRY_SECRET=my-regcred
 ```
 
@@ -166,10 +167,42 @@ make ibmcloud-ce-login
 make podman            # or: make docker
 make ibmcloud-tag
 make ibmcloud-push
+# First time only: create the registry pull secret (see note below)
+ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
+    --format registry \
+    --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
+    --username iamapikey --password "$IBMCLOUD_API_KEY"
 make ibmcloud-deploy
 ```
 
-!!! info "`make ibmcloud-deploy` handles env injection automatically"
+!!! info "Registry pull secret — first-time setup"
+    `make ibmcloud-deploy` **requires** a registry pull secret named `$IBMCLOUD_REGISTRY_SECRET`
+    to exist before it runs. It validates this and exits with a clear error if the secret is
+    missing.
+
+    The example above uses `--username iamapikey` with an IAM API key as the password, which is
+    the standard credential type for IBM Container Registry. Any credential type accepted by
+    `ibmcloud ce secret create --format registry` works — for example a service ID API key.
+
+    **SSO / interactive-login users:** `IBMCLOUD_API_KEY` may be blank in `.env.ce` when you use
+    `ibmcloud login --sso`. The registry pull secret needs a **long-lived IAM API key** as its
+    password regardless of how you authenticate for deployments — Code Engine uses it to pull
+    images at runtime, not at deploy time. Create a dedicated service ID API key scoped to
+    Container Registry Reader and use that as the `--password` value:
+
+    ```bash
+    # Create a service ID and API key scoped to ICR read access
+    ibmcloud iam service-id-create contextforge-icr-reader
+    ibmcloud iam service-policy-create contextforge-icr-reader \
+        --roles Reader --service-name container-registry
+    ibmcloud iam service-api-key-create icr-reader-key contextforge-icr-reader \
+        --output json | jq -r .apikey
+    # Use the printed key as --password in the secret create command above
+    ```
+
+    Create the secret once; subsequent deploys reuse it.
+
+!!! info "`make ibmcloud-deploy` manages the runtime env secret automatically"
     The target creates or updates a Code Engine secret named `<app>-env` (where `<app>` is
     `$IBMCLOUD_CODE_ENGINE_APP`) from your local `.env` on every run, then passes
     `--env-from-secret <app>-env` to the app. You do not need a
@@ -201,6 +234,17 @@ ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
 ---
 
 ## 4 - Workflow B - Manual IBM Cloud CLI
+
+!!! tip "Load `.env.ce` into your shell first"
+    The CLI commands below reference `$IBMCLOUD_*` variables defined in `.env.ce`.
+    Export them once before running any step:
+
+    ```bash
+    export $(grep -v '^#' .env.ce | grep -v '^$' | xargs)
+    ```
+
+    Without this step every `$IBMCLOUD_*` reference expands to an empty string and
+    commands fail with errors such as `Required flag "name" not set`.
 
 ```bash
 # 1 - Install the IBM Cloud CLI using the official instructions:
