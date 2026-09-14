@@ -13,7 +13,7 @@ The reverse-proxy service lets an external, separately maintained client ([conte
 Key pieces:
 
 - **Typed wire protocol** (`mcpgateway/services/reverse_proxy_protocol.py`): the message contract between client and gateway. Registration, invocation, heartbeat, and teardown frames are validated against this protocol.
-- **Session manager** (`mcpgateway/services/reverse_proxy_sessions.py`): process-local and the sole authority for session routing. It owns the mapping from session to client WebSocket inside one worker.
+- **Session manager** (`mcpgateway/services/reverse_proxy_sessions.py`): process-local and the sole authority for the four HTTP session endpoints. It owns the mapping from session to client WebSocket inside one worker.
 - **PROXIED dispatch**: `tools/call`, `resources/read`, and `prompts/get` against a reverse-proxied server are dispatched over the owning WebSocket rather than an outbound HTTP connection. Stored downstream credentials are decrypted at dispatch time and forwarded to the downstream server; they are never logged.
 - **Heartbeat freshness and reaper**: client heartbeats keep a session fresh. A reaper evicts sessions that go silent past `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT`, which drives the reachability state of the catalog gateway.
 - **Distributed relay** (`mcpgateway/services/reverse_proxy_relay*.py`): optional Redis-backed relay for multi-worker deployments. When `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED=true`, a call landing on a non-owner worker is routed to the worker that owns the client WebSocket. Redis holds short-lived owner generations, worker heartbeats, and signed request/response envelopes; the WebSocket itself stays local to its owner worker.
@@ -47,7 +47,7 @@ The reverse-proxy code is covered by focused unit tests:
 
 | Path | Covers |
 | ---- | ------ |
-| `tests/unit/mcpgateway/routers/test_reverse_proxy.py` | WebSocket endpoint admission and lifecycle |
+| `tests/unit/mcpgateway/routers/test_reverse_proxy.py` | WebSocket endpoint and the four HTTP session endpoints |
 | `tests/unit/mcpgateway/services/test_reverse_proxy_*.py` | Protocol, sessions, catalog, discovery, and relay services (`test_reverse_proxy_relay.py` pins the Redis lease fencing, owner claims, and signed-envelope relay) |
 | `tests/unit/mcpgateway/services/test_{tool,resource,prompt}_service_reverse_proxy.py` | PROXIED dispatch from the tool, resource, and prompt services |
 | `tests/unit/mcpgateway/middleware/test_token_scoping.py` | Layer-1 token scoping on the reverse-proxy routes |
@@ -58,7 +58,7 @@ The distributed lifecycle also has deterministic race and compensation regressio
 
 ## Live end-to-end harness
 
-The harness in `tests/live_gateway/reverse_proxy/` runs the real maintained client against a containerized multi-worker gateway and executes 11 live scenarios. It is **not** part of `make test` or CI. It is a manually invoked live verification for when you change the reverse-proxy service, the protocol, or the dispatch path.
+The harness in `tests/live_gateway/reverse_proxy/` runs the real maintained client against a containerized multi-worker gateway and executes 12 live scenarios. It is **not** part of `make test` or CI. It is a manually invoked live verification for when you change the reverse-proxy service, the protocol, or the dispatch path.
 
 ### Prerequisites
 
@@ -93,7 +93,7 @@ The script brings up the repo's `docker-compose.yml` stack plus the `tests/live_
 
 It then runs two pytest modules:
 
-- `test_reverse_proxy_e2e.py` (10 scenarios)
+- `test_reverse_proxy_e2e.py` (11 scenarios)
 - `test_reverse_proxy_feature_flag_e2e.py` (1 scenario)
 
 The scenarios cover:
@@ -105,10 +105,11 @@ The scenarios cover:
 5. Cross-worker relay invocation
 6. Server-owned authority on discovered catalog rows
 7. Stored bearer token forwarding without exposure in logs
-8. Redis-outage fail-closed behavior plus recovery
-9. Client-stop unreachable state plus fail-closed dispatch
-10. Heartbeat-timeout eviction
-11. Feature-flag-off route absence
+8. Downstream-restart re-registration recovery
+9. Redis-outage fail-closed behavior plus recovery
+10. Client-stop unreachable state plus fail-closed dispatch
+11. Heartbeat-timeout eviction
+12. Feature-flag-off route absence
 
 ### Isolation
 
