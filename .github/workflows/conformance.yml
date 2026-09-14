@@ -52,13 +52,13 @@ jobs:
             type=gha,scope=cf-integration-conformance
           cache-to: type=gha,mode=max,scope=cf-integration-conformance
 
-      - name: Install cf-integration 0.3.3 binary
+      - name: Install cf-integration 0.4.0 binary
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           archive=cf-integration-x86_64-unknown-linux-gnu.tgz
           download_dir=$(mktemp -d)
-          gh release download v0.3.3 --repo contextforge-org/contextforge-dev-tools \
+          gh release download v0.4.0 --repo contextforge-org/contextforge-dev-tools \
             --pattern "$archive" --pattern "$archive.sha256" --dir "$download_dir"
           (cd "$download_dir" && sha256sum --check "$archive.sha256")
           tar -xzf "$download_dir/$archive" -C "$download_dir"
