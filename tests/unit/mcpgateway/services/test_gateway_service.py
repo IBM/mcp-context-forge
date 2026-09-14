@@ -10340,3 +10340,81 @@ class TestGatewayImpactPreviewTeamResolution:
         assert len(result.servers) == 1
         mock_team_service.assert_not_called()
         mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)
+
+
+# ---------------------------------------------------------------------------
+# test_gateway_handshake: legacy-mode discover skip (finding #4)
+# ---------------------------------------------------------------------------
+
+
+class TestGatewayHandshakeLegacyDiscoverSkip:
+    """Verify server/discover probe is skipped when MCP_CLIENT_CONNECT_MODE=legacy."""
+
+    _FAKE_TARGET = {
+        "validated_base_url": "http://example.com",
+        "validated_hostname": "example.com",
+        "pinned_base_url": "http://127.0.0.1",
+        "resolved_ip": "127.0.0.1",
+        "original_authority": "example.com",
+    }
+
+    @pytest.mark.asyncio
+    async def test_legacy_mode_skips_discover_probe(self, monkeypatch):
+        """ResilientHttpClient must NOT be entered for discover when mode is legacy."""
+        from mcpgateway.schemas import GatewayHandshakeRequest  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.gateway_service import test_gateway_handshake  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr("mcpgateway.config.settings.mcp_client_connect_mode", "legacy")
+
+        with (
+            patch("mcpgateway.services.gateway_service._validate_gateway_test_target", new=AsyncMock(return_value=self._FAKE_TARGET)),
+            patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_resilient,
+            # Let the SDK fallback path raise so we don't need full session mocking
+            patch("mcpgateway.services.gateway_service.streamable_http_client", side_effect=ConnectionError("expected")),
+        ):
+            db = MagicMock()
+            db.execute.return_value.scalars.return_value.first.return_value = None
+
+            result = await test_gateway_handshake(
+                request=GatewayHandshakeRequest(base_url="http://example.com"),
+                team_id=None,
+                user={"email": "test@example.com"},
+                db=db,
+            )
+
+        # Discover probe uses ResilientHttpClient — must not be instantiated in legacy mode
+        mock_resilient.assert_not_called()
+        assert result.success is False  # SDK fallback failed as expected
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_attempts_discover_probe(self, monkeypatch):
+        """ResilientHttpClient MUST be entered for discover when mode is auto."""
+        from mcpgateway.schemas import GatewayHandshakeRequest  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.gateway_service import test_gateway_handshake  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr("mcpgateway.config.settings.mcp_client_connect_mode", "auto")
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(side_effect=httpx.ConnectError("expected"))
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.services.gateway_service._validate_gateway_test_target", new=AsyncMock(return_value=self._FAKE_TARGET)),
+            patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_ctx) as mock_resilient,
+            # SDK fallback also fails — we just need to confirm discover was tried
+            patch("mcpgateway.services.gateway_service.streamable_http_client", side_effect=ConnectionError("expected")),
+        ):
+            db = MagicMock()
+            db.execute.return_value.scalars.return_value.first.return_value = None
+
+            result = await test_gateway_handshake(
+                request=GatewayHandshakeRequest(base_url="http://example.com"),
+                team_id=None,
+                user={"email": "test@example.com"},
+                db=db,
+            )
+
+        # Discover probe was attempted (ResilientHttpClient was instantiated)
+        mock_resilient.assert_called_once()
