@@ -149,12 +149,12 @@ from mcpgateway.validation.tags import validate_tags_field
 
 
 class MCPMethod(Enum):
-    """Auxiliary enum for mcp methods"""
+    """MCP list method suffixes and response collection attributes."""
 
-    TOOLS = "tools"
-    PROMPTS = "prompts"
-    RESOURCES = "resources"
-    RESOURCE_TEMPLATES = "resource_templates"
+    TOOLS = ("tools", "tools")
+    PROMPTS = ("prompts", "prompts")
+    RESOURCES = ("resources", "resources")
+    RESOURCE_TEMPLATES = ("resource_templates", "resourceTemplates")
 
 
 async def get_list_paginated(session: Any, mcp_method: MCPMethod):
@@ -165,14 +165,15 @@ async def get_list_paginated(session: Any, mcp_method: MCPMethod):
         mcp_method: mcp method to call list_*
 
     Returns:
-        list of mcp method names
+        list of MCP objects across all pages
     """
-    list_method = getattr(session, f"list_{mcp_method.value}")
+    method_suffix, response_attribute = mcp_method.value
+    list_method = getattr(session, f"list_{method_suffix}")
     response = await list_method()
-    mcp_responses = getattr(response, mcp_method.value)
+    mcp_responses = getattr(response, response_attribute)
     while getattr(response, "nextCursor", None) is not None:
         response = await list_method(cursor=response.nextCursor)
-        mcp_responses.extend(getattr(response, mcp_method.value))
+        mcp_responses.extend(getattr(response, response_attribute))
     return mcp_responses
 
 

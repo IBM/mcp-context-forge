@@ -1568,11 +1568,21 @@ async def test_get_list_paginated_single_page():
 
 
 @pytest.mark.asyncio
-async def test_get_list_paginated_multi_page():
+@pytest.mark.parametrize(
+    "mcp_method,method_name,response_attribute",
+    [
+        (MCPMethod.TOOLS, "list_tools", "tools"),
+        (MCPMethod.PROMPTS, "list_prompts", "prompts"),
+        (MCPMethod.RESOURCES, "list_resources", "resources"),
+        (MCPMethod.RESOURCE_TEMPLATES, "list_resource_templates", "resourceTemplates"),
+    ],
+)
+async def test_get_list_paginated_multi_page(mcp_method, method_name, response_attribute):
     session = AsyncMock()
-    session.list_tools.side_effect = [
-        SimpleNamespace(tools=["t1"], nextCursor="cur"),
-        SimpleNamespace(tools=["t2", "t3"], nextCursor=None),
+    list_method = getattr(session, method_name)
+    list_method.side_effect = [
+        SimpleNamespace(**{response_attribute: ["t1"], "nextCursor": "cur"}),
+        SimpleNamespace(**{response_attribute: ["t2", "t3"], "nextCursor": None}),
     ]
-    assert await get_list_paginated(session, MCPMethod.TOOLS) == ["t1", "t2", "t3"]
-    session.list_tools.assert_awaited_with(cursor="cur")
+    assert await get_list_paginated(session, mcp_method) == ["t1", "t2", "t3"]
+    list_method.assert_awaited_with(cursor="cur")
