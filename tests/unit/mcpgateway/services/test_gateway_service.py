@@ -10329,4 +10329,3 @@ class TestGatewayImpactPreviewTeamResolution:
         assert len(result.servers) == 1
         mock_team_service.assert_not_called()
         mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)
-
