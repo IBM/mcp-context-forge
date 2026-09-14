@@ -258,6 +258,32 @@ async def test_register_with_api_key_builds_request(monkeypatch, allow_permissio
 
 
 @pytest.mark.asyncio
+async def test_register_with_oauth_credentials_builds_request(monkeypatch, allow_permission):
+    """oauth_credentials on the body reach the service request in the same single call
+    (#5967) - no separate PUT /gateways/{id} for OAuth configuration."""
+    monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.routers.catalog.get_scoped_resource_access_context", MagicMock(return_value=("user@example.com", [])))
+    mock_register = AsyncMock(return_value=CatalogServerRegisterResponse(success=True, server_id="gw-1", message="Successfully registered OAuth server", error=None, oauth_required=True))
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", mock_register)
+    db = MagicMock()
+    request = MagicMock(spec=Request)
+    oauth_credentials = {"issuer": "https://issuer.example.com", "scopes": ["read"]}
+
+    await register_catalog_server(
+        "github",
+        request,
+        body=CatalogServerRegisterBody(oauth_credentials=oauth_credentials),
+        db=db,
+        user={"email": "user@example.com", "db": db},
+    )
+
+    service_request = mock_register.await_args.kwargs["request"]
+    assert isinstance(service_request, CatalogServerRegisterRequest)
+    assert service_request.server_id == "github"
+    assert service_request.oauth_credentials == oauth_credentials
+
+
+@pytest.mark.asyncio
 async def test_register_duplicate_returns_409(monkeypatch, allow_permission):
     """An already-registered catalog server maps to HTTP 409."""
     monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
@@ -370,6 +396,44 @@ def test_register_body_rejects_oversized_api_key():
     """The register body caps api_key length."""
     with pytest.raises(pydantic.ValidationError):
         CatalogServerRegisterBody(api_key="x" * 5000)  # pragma: allowlist secret
+
+
+def test_register_body_rejects_oversized_oauth_credentials():
+    """oauth_credentials string values are capped the same way api_key is, so a caller can't
+    smuggle a multi-megabyte client_secret past validation."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(oauth_credentials={"client_secret": "x" * 5000})  # pragma: allowlist secret
+
+
+def test_register_body_allows_reasonably_sized_oauth_credentials():
+    """Normal-sized oauth_credentials values pass through unchanged."""
+    body = CatalogServerRegisterBody(oauth_credentials={"issuer": "https://issuer.example.com", "scopes": ["repo"]})
+
+    assert body.oauth_credentials == {"issuer": "https://issuer.example.com", "scopes": ["repo"]}
+
+
+def test_register_body_rejects_oversized_nested_oauth_credentials():
+    """A nested container walks straight past a top-level-only `isinstance(value, str)` length
+    check, since the check simply skips non-string values. A large payload smuggled inside a
+    nested list must still be rejected on serialized size, not silently accepted."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(oauth_credentials={"client_secret": ["A" * 4096] * 5000})  # pragma: allowlist secret
+
+
+def test_register_body_rejects_deeply_nested_oauth_credentials():
+    """oauth_credentials is a flat dict of scalars/short lists; deeper nesting than that has no
+    legitimate use and is rejected outright."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(oauth_credentials={"issuer": {"nested": {"too": "deep"}}})
+
+
+def test_register_request_also_caps_oauth_credentials():
+    """CatalogServerRegisterRequest backs `POST /admin/mcp-registry/{server_id}/register`
+    (mcpgateway/admin.py) as well as the internally-constructed request the v1 router builds
+    from CatalogServerRegisterBody. Both entry points into oauth_credentials must carry the same
+    bound - without this, the admin endpoint was the uncapped one."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials={"client_secret": "x" * 5000})  # pragma: allowlist secret
 
 
 def test_register_body_allows_empty_payload():

@@ -104,7 +104,7 @@ async def register_catalog_server(
     Args:
         catalog_id: Catalog server ID to register.
         request: FastAPI request object.
-        body: Optional overrides (custom name, API key).
+        body: Optional overrides (custom name, API key, OAuth credentials).
         db: Database session.
         user: Authenticated user.
 
@@ -124,6 +124,7 @@ async def register_catalog_server(
             server_id=catalog_id,
             name=body.name if body else None,
             api_key=body.api_key if body else None,
+            oauth_credentials=body.oauth_credentials if body else None,
             visibility=body.visibility if body else None,
             team_id=body.team_id if body else None,
         )
