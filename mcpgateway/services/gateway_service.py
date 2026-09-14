@@ -3687,7 +3687,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
-    async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def set_gateway_state(
+        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, last_error: Optional[str] = None
+    ) -> GatewayRead:
         """
         Set the activation status of a gateway.
 
@@ -3698,6 +3700,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            last_error: Optional sanitized failure reason to persist. Written
+            atomically with the state change when reachability changes; written
+            in a standalone commit when only the error text differs (no state
+            transition occurred).
 
         Returns:
             The updated GatewayRead object
@@ -3737,6 +3743,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
+                if last_error is not None:
+                    gateway.last_error = last_error
                 # Update tracking
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
@@ -3917,6 +3925,28 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "gateway_name": gateway.name,
                         "enabled": gateway.enabled,
                         "reachable": gateway.reachable,
+                    },
+                )
+
+            elif last_error is not None and gateway.last_error != last_error:
+                gateway.last_error = last_error
+                gateway.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(gateway)
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="set_gateway_state",
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    resource_name=gateway.name,
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    new_values={
+                        "last_error": gateway.last_error,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                        "only_update_reachable": only_update_reachable,
                     },
                 )
 
@@ -4523,12 +4553,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email=None,
         )
 
-    async def _handle_gateway_failure(self, gateway: DbGateway) -> None:
+    async def _handle_gateway_failure(self, gateway: DbGateway, error: Optional[BaseException] = None, auth_query_params: Optional[Dict[str, str]] = None) -> None:
         """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
 
         Args:
             gateway: The gateway object that failed its health check.
+            error: The health-check failure. It is sanitized before persistence.
+            auth_query_params: Decrypted query-auth params used for sanitizing
+                embedded URLs. Falls back to the gateway's stored params when
+                absent (redaction is name-based, so both redact identically;
+                the explicit dict keeps the plaintext material visible at the
+                call site instead of reaching back to the encrypted column).
 
         Returns:
             None
@@ -4569,9 +4605,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
+            raw_error = (str(error).strip() or type(error).__name__) if error is not None else "Unknown health-check failure"
+            sanitized_error = sanitize_exception_message(raw_error, auth_query_params or getattr(gateway, "auth_query_params", None))
+            # Reset before the DB call: if set_gateway_state raises, a stale
+            # count would retry the deactivation (and its audit entry) forever.
+            self._gateway_failure_counts[gateway.id] = 0
             with cast(Any, SessionLocal)() as db:
-                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
-                self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
+                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
         """Check health of a batch of gateways.
@@ -4661,7 +4701,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except asyncio.TimeoutError:
                     logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
-                    await self._handle_gateway_failure(gateway)
+                    await self._handle_gateway_failure(gateway, error=asyncio.TimeoutError(f"health check timed out after {settings.gateway_health_check_timeout}s"))
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
@@ -4713,6 +4753,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if db_gateway:
                     db_gateway.last_seen = datetime.now(timezone.utc)
+                    # Only clear the outage reason for enabled gateways. Disabled
+                    # gateways are still probed (include_inactive=True), and a
+                    # successful probe must not silently wipe why the operator
+                    # sees the gateway as down (its recorded outage reason).
+                    # NOTE: read enabled from the freshly-loaded row, not the
+                    # gateway_enabled snapshot captured before the probe, which
+                    # can be stale if the gateway was disabled mid-probe.
+                    if db_gateway.enabled:
+                        db_gateway.last_error = None
                     update_db.commit()
         except Exception as update_error:
             logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
@@ -4907,7 +4956,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if span:
                                     set_span_attribute(span, "health.status", "unhealthy")
                                     set_span_error(span, e)
-                                await self._handle_gateway_failure(gateway)
+                                await self._handle_gateway_failure(gateway, error=e, auth_query_params=auth_query_params_decrypted)
                                 return
                     else:
                         # Handle non-OAuth authentication (existing logic)
@@ -5069,8 +5118,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             set_span_error(span, e)
 
                         # Set the logger as debug as this check happens for each interval
-                        logger.debug("Health check failed for gateway %s: %s", gateway_name, e)
-                        await self._handle_gateway_failure(gateway)
+                        safe_error = sanitize_exception_message(str(exc_to_inspect), auth_query_params_decrypted or gateway_auth_query_params)
+                        logger.debug("Health check failed for gateway %s: %s", gateway_name, safe_error)
+                        await self._handle_gateway_failure(gateway, error=exc_to_inspect, auth_query_params=auth_query_params_decrypted)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """
