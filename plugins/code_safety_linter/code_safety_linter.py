@@ -98,8 +98,27 @@ class CodeSafetyLinterPlugin(Plugin):
         text: str | None = None
         if isinstance(payload.result, str):
             text = payload.result
-        elif isinstance(payload.result, dict) and isinstance(payload.result.get("text"), str):
-            text = payload.result.get("text")
+        elif isinstance(payload.result, dict):
+            # MCP tool results are commonly one of:
+            #   {"text": "..."}                                   (legacy/simple shape)
+            #   {"content": [{"type": "text", "text": "..."}], ...} (standard MCP content blocks)
+            #   {"structuredContent": {"result": "..."}}           (structured tool output)
+            if isinstance(payload.result.get("text"), str):
+                text = payload.result.get("text")
+            else:
+                parts: list[str] = []
+                content = payload.result.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and isinstance(block.get("text"), str):
+                            parts.append(block["text"])
+                structured = payload.result.get("structuredContent")
+                if isinstance(structured, dict):
+                    result_val = structured.get("result")
+                    if isinstance(result_val, str):
+                        parts.append(result_val)
+                if parts:
+                    text = "\n".join(parts)
         if not text:
             return ToolPostInvokeResult(continue_processing=True)
 
