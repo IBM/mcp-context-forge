@@ -181,6 +181,33 @@ class TestGatewayCreateErrorHandlers:
             assert response.status_code == 400
             assert "Unable to process input" in response.json()["message"]
 
+    def test_register_gateway_validation_error_keeps_422(self, test_client, auth_headers):
+        """A Pydantic ValidationError reaching the endpoint must not be re-labelled 400.
+
+        ``ValidationError`` subclasses ``ValueError``, so it only stays on the 422 path
+        while the ``isinstance(ex, ValidationError)`` branch is tested first.
+        """
+        # Third-Party
+        from pydantic import ValidationError
+
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as excinfo:
+            GatewayCreate(name="test-gateway", url="not-a-url")
+
+        with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
+            mock_register.side_effect = excinfo.value
+
+            gateway_data = {
+                "name": "test-gateway",
+                "url": "http://localhost:9000",
+                "description": "Test gateway",
+            }
+            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 422
+            assert "Unable to process input" not in response.text
+
     def test_register_gateway_name_conflict_error(self, test_client, auth_headers):
         """Test GatewayNameConflictError handling in register_gateway."""
         with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
@@ -332,6 +359,29 @@ class TestGatewayUpdateErrorHandlers:
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 400
+
+    def test_update_gateway_validation_error_keeps_422(self, test_client, auth_headers):
+        """Same ordering guarantee as registration: a ValidationError is not a plain ValueError."""
+        # Third-Party
+        from pydantic import ValidationError
+
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError) as excinfo:
+            GatewayUpdate(name="updated-gateway", url="not-a-url")
+
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = excinfo.value
+
+            gateway_data = {
+                "name": "updated-gateway",
+                "url": "http://localhost:9000",
+                "description": "Updated gateway",
+            }
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 422
+            assert "Unable to process input" not in response.text
 
     def test_update_gateway_name_conflict_error(self, test_client, auth_headers):
         """Test GatewayNameConflictError handling in update_gateway."""
