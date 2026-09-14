@@ -166,6 +166,9 @@ def get_user_email(user: Any) -> str:
         >>> user_dict_both = {'email': 'admin@example.com', 'sub': 'ignored@example.com'}
         >>> get_user_email(user_dict_both)
         'admin@example.com'
+        >>> user_dict_nested = {'sub': '11111111-1111-1111-1111-111111111111', 'user': {'email': 'nested@example.com'}}
+        >>> get_user_email(user_dict_nested)
+        'nested@example.com'
         >>> user_dict_no_email = {'other': 'value'}
         >>> get_user_email(user_dict_no_email)
         'unknown'
@@ -208,6 +211,12 @@ def get_user_email(user: Any) -> str:
         if isinstance(email, str) and email:
             return email
         sub = user.get("sub")
+        if isinstance(sub, str) and sub and not _is_uuid_string(sub):
+            return sub
+        nested_user = user.get("user")
+        nested_email = nested_user.get("email") if isinstance(nested_user, dict) else None
+        if isinstance(nested_email, str) and nested_email:
+            return nested_email
         if isinstance(sub, str) and sub:
             return sub
         return "unknown"
@@ -702,8 +711,10 @@ def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     # SECURITY: prefer request.state.token_teams (already normalized by auth.py).
     _not_set = object()
     token_teams = getattr(request.state, "token_teams", _not_set)
-    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
-        return token_teams
+    if token_teams is None:
+        return None
+    if isinstance(token_teams, list):
+        return [team for team in token_teams if isinstance(team, str)]
 
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:

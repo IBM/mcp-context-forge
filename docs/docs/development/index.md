@@ -16,6 +16,7 @@ Welcome! This guide is for developers contributing to ContextForge. Whether you'
 | [Coding Standards](coding-standards.md)                                           | Clean Code rules for readable, self-documenting Python, Rust, and TypeScript   |
 | [Agent Prose Standard](agent-prose.md)                                            | ASD-STE100 prose rules for code comments, commits, PRs, reviews, and issues    |
 | [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Development setup, project architecture, workflow, and debugging              |
+| [Reverse Proxy Service](reverse-proxy.md) | Developer guide for the reverse-proxy service |
 
 ---
 
