@@ -7,7 +7,7 @@ This guide documents the CPU spin loop issue affecting ContextForge and the mult
 **Issue**: [#2360](https://github.com/IBM/mcp-context-forge/issues/2360) - Gunicorn workers consume 100% CPU after load tests
 **Root Cause**: [anyio#695](https://github.com/agronholm/anyio/issues/695) - `_deliver_cancellation` infinite loop
 **Affected Versions**: All versions using anyio with MCP SDK
-**Status**: Mitigated via configuration; awaiting upstream fix
+**Status**: Upstream fix shipped in anyio 4.15.0 (pinned as `anyio>=4.15.0`); residual mitigations retained for defense in depth
 
 ## Problem Description
 
@@ -46,7 +46,7 @@ When tasks don't properly handle cancellation (e.g., MCP SDK's `post_writer` wai
 
 ## Mitigation Strategy
 
-We implement a **defense-in-depth** approach with three layers:
+The upstream root cause was fixed in anyio 4.15.0 (anyio#1111), and this project pins `anyio>=4.15.0`. We retain a **defense-in-depth** pair of layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -56,17 +56,17 @@ We implement a **defense-in-depth** approach with three layers:
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                    Layer 2: Containment                      │
-│         Limit cleanup wait time for stuck tasks              │
-│   MCP_SESSION_POOL_CLEANUP_TIMEOUT, SSE_TASK_GROUP_...      │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│                    Layer 3: Recovery                         │
+│                    Layer 2: Recovery                         │
 │         Worker recycling cleans up orphaned tasks            │
 │   GUNICORN_MAX_REQUESTS, GUNICORN_MAX_REQUESTS_JITTER       │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+> **Removed (anyio ≥ 4.15.0):** the containment layer — the SSE task-group cancel
+> deadline (`SSE_TASK_GROUP_CLEANUP_TIMEOUT`), the session-pool cleanup timeout
+> (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`), and the experimental anyio monkey-patch
+> (`ANYIO_CANCEL_DELIVERY_*`). Cleanup waits remain bounded internally (fixed
+> 5-second windows).
 
 ---
 
@@ -109,59 +109,18 @@ SSE_RAPID_YIELD_MAX=25
 
 ---
 
-## Layer 2: Cleanup Timeouts
+## Bounded Cleanup (built in)
 
-Limit how long the gateway waits for stuck tasks during connection cleanup.
-
-### Configuration Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | `5.0` | Timeout in seconds for `session.__aexit__()` when closing pooled MCP sessions. |
-| `SSE_TASK_GROUP_CLEANUP_TIMEOUT` | `5.0` | Timeout in seconds for SSE task group cleanup when connections are cancelled. |
-
-### How It Works
-
-Instead of waiting indefinitely for tasks to respond to cancellation:
-
-```python
-# Before (could spin forever)
-await pooled.session.__aexit__(None, None, None)
-
-# After (bounded wait)
-with anyio.move_on_after(cleanup_timeout) as scope:
-    await pooled.session.__aexit__(None, None, None)
-if scope.cancelled_caught:
-    logger.warning("Session cleanup timed out after %s seconds", cleanup_timeout)
-```
-
-### Recommended Settings
-
-```bash
-# Default (reliable cleanup)
-MCP_SESSION_POOL_CLEANUP_TIMEOUT=5.0
-SSE_TASK_GROUP_CLEANUP_TIMEOUT=5.0
-
-# Aggressive (faster recovery from spin loops)
-MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5
-SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5
-
-# Conservative (for slow MCP servers)
-MCP_SESSION_POOL_CLEANUP_TIMEOUT=10.0
-SSE_TASK_GROUP_CLEANUP_TIMEOUT=10.0
-```
-
-### Trade-offs
-
-| Setting | Pros | Cons |
-|---------|------|------|
-| Low (0.5-2s) | Fast spin loop recovery | May interrupt legitimate cleanup |
-| Default (5s) | Balanced | Spin loops persist for 5s before timeout |
-| High (10s+) | Reliable cleanup | Longer CPU waste during spin loops |
+Connection cleanup no longer waits indefinitely for stuck tasks: the session-pool
+and streamable-HTTP shutdown paths wrap `__aexit__()` in a fixed 5-second
+`anyio.move_on_after` window and log a warning if it expires. This is not
+operator-tunable — the former `MCP_SESSION_POOL_CLEANUP_TIMEOUT` and
+`SSE_TASK_GROUP_CLEANUP_TIMEOUT` knobs were removed (no deployment tuned them in
+practice, and the upstream anyio fix removed the need).
 
 ---
 
-## Layer 3: Worker Recycling
+## Layer 2: Worker Recycling
 
 Gunicorn worker recycling provides a safety net for any orphaned tasks.
 
@@ -196,11 +155,7 @@ SSE_SEND_TIMEOUT=30.0
 SSE_RAPID_YIELD_WINDOW_MS=1000
 SSE_RAPID_YIELD_MAX=50
 
-# Layer 2: Cleanup Timeouts
-MCP_SESSION_POOL_CLEANUP_TIMEOUT=5.0
-SSE_TASK_GROUP_CLEANUP_TIMEOUT=5.0
-
-# Layer 3: Worker Recycling
+# Layer 2: Worker Recycling
 GUNICORN_MAX_REQUESTS=5000
 GUNICORN_MAX_REQUESTS_JITTER=500
 ```
@@ -213,11 +168,7 @@ SSE_SEND_TIMEOUT=10.0
 SSE_RAPID_YIELD_WINDOW_MS=500
 SSE_RAPID_YIELD_MAX=25
 
-# Layer 2: Short timeouts
-MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5
-SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5
-
-# Layer 3: Frequent recycling
+# Layer 2: Frequent recycling
 GUNICORN_MAX_REQUESTS=2000
 GUNICORN_MAX_REQUESTS_JITTER=200
 ```
@@ -230,11 +181,7 @@ SSE_SEND_TIMEOUT=60.0
 SSE_RAPID_YIELD_WINDOW_MS=2000
 SSE_RAPID_YIELD_MAX=100
 
-# Layer 2: Allow time for cleanup
-MCP_SESSION_POOL_CLEANUP_TIMEOUT=10.0
-SSE_TASK_GROUP_CLEANUP_TIMEOUT=10.0
-
-# Layer 3: Standard recycling
+# Layer 2: Standard recycling
 GUNICORN_MAX_REQUESTS=5000
 GUNICORN_MAX_REQUESTS_JITTER=500
 ```
@@ -283,19 +230,18 @@ The following files were modified to implement this mitigation:
 
 | File | Changes |
 |------|---------|
-| `mcpgateway/config.py` | Added configuration variables for all layers |
-| `mcpgateway/transports/sse_transport.py` | Added SSE connection protection and cleanup timeouts |
-| `mcpgateway/services/mcp_session_pool.py` | Added cleanup timeout (Layer 2) |
-| `mcpgateway/translate.py` | Added cleanup timeout for streamable HTTP |
+| `mcpgateway/config.py` | SSE connection protection settings (Layer 1) |
+| `mcpgateway/transports/sse_transport.py` | SSE connection protection (send timeout, rapid-yield detection) |
+| `mcpgateway/services/mcp_session_pool.py` | Bounded session-pool cleanup (fixed 5s window) |
+| `mcpgateway/translate.py` | Bounded streamable-HTTP cleanup (fixed 5s window) |
 
 ### Configuration Files
 
 | File | Changes |
 |------|---------|
-| `.env.example` | Documented all mitigation variables |
-| `docker-compose.yml` | Added mitigation section with all variables |
-| `charts/mcp-stack/values.yaml` | Added mitigation section with all variables |
-| `README.md` | Added "CPU Spin Loop Mitigation" section |
+| `.env.example` | Documented the SSE protection variables |
+| `docker-compose.yml` | Added the mitigation section (SSE protection) |
+| `charts/mcp-stack/values.yaml` | Added the mitigation section (SSE protection) |
 
 ---
 
@@ -304,12 +250,13 @@ The following files were modified to implement this mitigation:
 - **PR #XXXX**: Initial cleanup timeout implementation
 - **PR #XXXX**: Added SSE rapid yield detection
 - **PR #XXXX**: Consolidated documentation
+- **PR #5427**: Removed the anyio monkey-patch and the SSE cancel-deadline override after the upstream anyio 4.15.0 fix
 
 ---
 
 ## Future Work
 
-1. **Upstream Fix**: Monitor [anyio#695](https://github.com/agronholm/anyio/issues/695) for resolution
+1. **Upstream Fix**: Shipped — anyio 4.15.0 fixes the `_deliver_cancellation` spin (anyio#1111). This project pins `anyio>=4.15.0`; the containment workarounds were removed in #5427
 2. **MCP SDK**: Consider contributing fix to MCP SDK for proper task cancellation handling
 
 ---
