@@ -36,6 +36,7 @@ from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelo
 from mcpgateway.services import reverse_proxy_relay_io
 from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
 from mcpgateway.services.reverse_proxy_relay import RelayTarget, RelayUnavailableError, ReverseProxyRelay
+from mcpgateway.services.reverse_proxy_relay import _RedisLease
 from mcpgateway.services.reverse_proxy_relay_models import RelayOwner
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 
@@ -412,6 +413,112 @@ def _signed_response(request_id: str, correlation_id: str) -> bytes:
     }
     envelope[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(envelope)
     return orjson.dumps(envelope)
+
+class TestRedisLease:
+    """The parameterized fenced Redis lease behind the registration and owner wrappers."""
+
+    @pytest.mark.asyncio
+    async def test_claim_is_single_writer_per_key(self) -> None:
+        redis = _FakeRedis()
+        first = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-a", 30)
+        contender = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-b", 30)
+        other_key = _RedisLease(redis, "mcpgw:rp_lease:b", "owner-b", 30)
+
+        assert await first.claim()
+        assert not await contender.claim()
+        assert await other_key.claim()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_and_release_are_fenced_to_the_exact_holder_value(self) -> None:
+        redis = _FakeRedis()
+        holder = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-a", 30)
+        intruder = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-b", 30)
+        assert await holder.claim()
+
+        assert not await intruder.heartbeat()
+        assert not await intruder.release()
+        assert redis.store["mcpgw:rp_lease:a"] == b"owner-a"
+        assert await holder.heartbeat()
+        assert redis.store["mcpgw:rp_lease:a"] == b"owner-a"
+        assert await holder.release()
+        assert "mcpgw:rp_lease:a" not in redis.store
+
+    @pytest.mark.asyncio
+    async def test_promote_moves_only_the_matching_value_into_the_target_key(self) -> None:
+        redis = _FakeRedis()
+        holder = _RedisLease(redis, "mcpgw:rp_registration:a", "owner-a", 30)
+        intruder = _RedisLease(redis, "mcpgw:rp_registration:a", "owner-b", 30)
+        assert await holder.claim()
+
+        assert not await intruder.promote("mcpgw:rp_owner:a")
+        assert "mcpgw:rp_owner:a" not in redis.store
+        assert await holder.promote("mcpgw:rp_owner:a")
+        assert redis.store["mcpgw:rp_owner:a"] == b"owner-a"
+
+    @pytest.mark.asyncio
+    async def test_claim_reclaims_a_contended_key_only_through_the_stale_holder_hook(self) -> None:
+        redis = _FakeRedis()
+        assert await _RedisLease(redis, "mcpgw:rp_lease:a", "stale-owner", 30).claim()
+
+        assert not await _RedisLease(redis, "mcpgw:rp_lease:a", "owner-b", 30).claim()
+
+        hook_calls = 0
+
+        async def reclaim() -> bool:
+            nonlocal hook_calls
+            hook_calls += 1
+            redis.store.pop("mcpgw:rp_lease:a", None)
+            return True
+
+        reclaimed = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-b", 30, reclaim_stale=reclaim)
+        assert await reclaimed.claim()
+        assert hook_calls == 1
+        assert redis.store["mcpgw:rp_lease:a"] == b"owner-b"
+
+    @pytest.mark.asyncio
+    async def test_claim_without_successful_reclaim_does_not_retry_acquire(self) -> None:
+        redis = _FakeRedis()
+        assert await _RedisLease(redis, "mcpgw:rp_lease:a", "owner-a", 30).claim()
+
+        lease = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-b", 30, reclaim_stale=AsyncMock(return_value=False))
+        assert not await lease.claim()
+        assert redis.store["mcpgw:rp_lease:a"] == b"owner-a"
+
+    @pytest.mark.asyncio
+    async def test_maintain_raises_the_parameterized_message_once_the_lease_is_lost(self) -> None:
+        redis = _FakeRedis()
+        lease = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-a", 1)
+        assert await lease.claim()
+        redis.store["mcpgw:rp_lease:a"] = b"owner-b"
+
+        with pytest.raises(RuntimeError, match="reverse-proxy registration authority was lost"):
+            await lease.maintain("reverse-proxy registration authority was lost")
+
+    @pytest.mark.asyncio
+    async def test_maintain_refreshes_until_cancelled(self) -> None:
+        redis = _FakeRedis()
+        lease = _RedisLease(redis, "mcpgw:rp_lease:a", "owner-a", 1)
+        assert await lease.claim()
+
+        with anyio.move_on_after(0.8):
+            await lease.maintain("reverse-proxy registration authority was lost")
+
+        assert redis.store["mcpgw:rp_lease:a"] == b"owner-a"
+
+    @pytest.mark.asyncio
+    async def test_redis_failure_maps_to_code_only_relay_unavailable(self) -> None:
+        secret = "redis://user:lease-secret@cache.invalid/0"  # pragma: allowlist secret
+
+        class _UnavailableRedis(_FakeRedis):
+            async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:
+                del key, value, nx, ex
+                raise RedisConnectionError(secret)
+
+        lease = _RedisLease(_UnavailableRedis(), "mcpgw:rp_lease:a", "owner-a", 30)
+        with pytest.raises(RelayUnavailableError) as caught:
+            await lease.claim()
+        assert "lease-secret" not in repr(caught.value)
+
 
 
 @pytest.mark.asyncio
