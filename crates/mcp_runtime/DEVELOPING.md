@@ -37,7 +37,7 @@ Use the smallest set that matches your change.
 | --- | --- |
 | Pure Rust refactor in `src/` or `tests/` | `make -C crates/mcp_runtime fmt-check clippy-all test test-rmcp` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
-| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-protocol-e2e test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
+| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-e2e`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
 | Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
 | Packaging / release readiness | `make verify` |
 | Performance-sensitive hot path | relevant tests plus benchmark and profiling targets |
@@ -180,8 +180,7 @@ make testing-down
 make compose-clean
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make testing-up
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-access-matrix
 PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up
 MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity
@@ -190,8 +189,7 @@ MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity
 Expected outcome:
 
 - `/health` reports Python MCP mode
-- `make test-mcp-protocol-e2e` passes, with the Rust-only raw-header assertion skipped
-- `make test-mcp-rbac` passes
+- `make test-e2e` passes, with the Rust-only raw-header assertion skipped
 - `make test-mcp-access-matrix` passes and verifies scoped-user access with
   strong tool/resource/prompt sentinels
 - `make test-mcp-plugin-parity` passes with the Python runtime header and proves
@@ -205,8 +203,7 @@ path.
 
 ```bash
 make testing-rebuild-rust-shadow
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-access-matrix
 ```
 
@@ -222,8 +219,7 @@ session/event-store stack.
 
 ```bash
 make testing-rebuild-rust
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-access-matrix
 ```
 
@@ -234,8 +230,7 @@ stream/auth reuse changes.
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-access-matrix
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
@@ -247,8 +242,7 @@ MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity
 Expected outcome:
 
 - `/health` reports Rust-managed runtime and Rust-mounted public transport
-- `make test-mcp-protocol-e2e` passes
-- `make test-mcp-rbac` passes
+- `make test-e2e` passes
 - `make test-mcp-access-matrix` passes on the Rust path
 - `make test-mcp-session-isolation` passes on the Rust path
 - `make test-mcp-session-isolation-load` validates owner traffic and hijack
@@ -450,8 +444,7 @@ make -C crates/mcp_runtime fmt-check clippy-all test-rmcp
 make doctest test htmlcov
 make bandit interrogate pylint
 make testing-rebuild-rust-full
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-access-matrix
 make test-mcp-session-isolation
 ```
@@ -494,8 +487,7 @@ If the change affects fallback behavior or public MCP mounting:
 
 ```bash
 make testing-up
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 ```
 
 ## What "Good" Looks Like
@@ -518,8 +510,7 @@ make autoflake isort black pre-commit
 make test-js-coverage lint-web bandit interrogate pylint verify
 make doctest test htmlcov
 make testing-rebuild-rust-full
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-access-matrix
 make test-mcp-session-isolation
 cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml

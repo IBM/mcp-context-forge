@@ -64,8 +64,7 @@ Recommended Rust MCP validation sequence:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-protocol-e2e
-make test-mcp-rbac
+make test-e2e
 make test-mcp-session-isolation
 make benchmark-mcp-tools-300
 ```

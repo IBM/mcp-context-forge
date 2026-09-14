@@ -530,7 +530,7 @@ Run from the worktree root, in order. Each command must pass, or the PR must doc
 | `make test` | Full pytest suite |
 | `make coverage diff-cover` | Coverage of changed lines vs. base |
 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
-| `make test-mcp-protocol-e2e test-mcp-rbac` | MCP protocol E2E and RBAC against the live gateway |
+| `make test-e2e` | MCP protocol E2E and RBAC against the live gateway |
 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 
 Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
