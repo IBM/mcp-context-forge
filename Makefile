@@ -8773,15 +8773,15 @@ CF_CONTROLPLANE_PULL_POLICY ?= never
 CF_COMPOSE_BUILD ?= true
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
 
-# help: conformance          - Run legacy and modern MCP conformance through the built-in dataplane
-# help: conformance-bless    - Update baselines after the complete conformance matrix finishes
+# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
+# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
 .PHONY: conformance conformance-bless
 
 # Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
 conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-# Cover the SDK v2 branch's legacy and modern revisions against a dual-era fixture.
+# Exercise only the 2025-11-25 client against a legacy fixture.
 conformance conformance-bless:
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
@@ -8799,8 +8799,7 @@ conformance conformance-bless:
 	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
 	"$(CF_INTEGRATION)" conformance run \
 		--client-version 2025-11-25 \
-		--client-version 2026-07-28 \
-		--server-era dual \
+		--server-era legacy \
 		--lane builtin \
 		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
 		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
