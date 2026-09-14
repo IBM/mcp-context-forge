@@ -43,6 +43,23 @@ from tests.live_gateway.reverse_proxy.helpers.live_helpers import (
 )
 
 
+def _session_ids_for_server(response: JsonObject | list[JsonObject], server_name: str) -> set[str]:
+    """Extract live connection IDs for one registered server."""
+    assert isinstance(response, dict)
+    sessions = response.get("sessions")
+    assert isinstance(sessions, list)
+    session_ids: set[str] = set()
+    for session in sessions:
+        assert isinstance(session, dict)
+        server_info = session.get("server_info")
+        if not isinstance(server_info, dict) or server_info.get("name") != server_name:
+            continue
+        session_id = session.get("session_id")
+        assert isinstance(session_id, str)
+        session_ids.add(session_id)
+    return session_ids
+
+
 @pytest.mark.e2e
 def test_websocket_auth_denials_preserve_http_status() -> None:
     async def verify() -> None:
@@ -201,6 +218,25 @@ def test_stored_bearer_auth_is_forwarded_without_exposure() -> None:
             return
         time.sleep(1)
     pytest.fail("stored bearer authorization did not reach downstream probe")
+
+
+@pytest.mark.e2e
+def test_downstream_restart_recovers_after_client_reregistration() -> None:
+    original_session_ids = _session_ids_for_server(_json_request("/reverse-proxy/sessions"), FAST_SERVER_NAME)
+    assert len(original_session_ids) == 1
+    original_session_id = next(iter(original_session_ids))
+    subprocess.run(["docker", "stop", f"{COMPOSE_PROJECT}-fast_test_server-1"], check=True, capture_output=True, text=True)
+    subprocess.run(["docker", "start", f"{COMPOSE_PROJECT}-fast_test_server-1"], check=True, capture_output=True, text=True)
+    _wait_for_tool()
+    deadline = time.monotonic() + 30
+    recovered_session_ids: set[str] = set()
+    while time.monotonic() < deadline:
+        recovered_session_ids = _session_ids_for_server(_json_request("/reverse-proxy/sessions"), FAST_SERVER_NAME)
+        if recovered_session_ids - {original_session_id}:
+            break
+        time.sleep(1)
+    else:
+        pytest.fail(f"downstream restart did not create a fresh reverse-proxy session: {recovered_session_ids}")
 
 
 @pytest.mark.e2e
