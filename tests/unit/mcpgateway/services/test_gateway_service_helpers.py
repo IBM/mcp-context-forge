@@ -1568,6 +1568,14 @@ async def test_get_list_paginated_single_page():
 
 
 @pytest.mark.asyncio
+async def test_get_list_no_cursor():
+    session = AsyncMock()
+    session.list_tools.return_value = SimpleNamespace(tools=["t1", "t2"])
+    assert await get_list_paginated(session, MCPListMethod.TOOLS) == ["t1", "t2"]
+    session.list_tools.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mcp_method,method_name,response_attribute",
     [
