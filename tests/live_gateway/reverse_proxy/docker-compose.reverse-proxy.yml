@@ -1,0 +1,42 @@
+services:
+  gateway:
+    environment:
+      MCPGATEWAY_REVERSE_PROXY_ENABLED: ${RP_ENABLED:-true}
+      MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED: ${RP_DISTRIBUTED_ENABLED:-true}
+      MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT: ${RP_HEARTBEAT_TIMEOUT:-3}
+      GUNICORN_WORKERS: "2"
+      LOG_LEVEL: INFO
+    deploy:
+      replicas: 1
+
+  # Self-contained fast-test backend for the harness. main (#6192) removed this
+  # service from the base compose; the override re-declares it so run.sh's
+  # `up -d gateway nginx fast_test_server` resolves without touching the base
+  # stack. Same pinned image, healthcheck, sysctls, and ulimits as the retired
+  # base-compose block, published on a per-run host port.
+  fast_test_server:
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "${FAST_TEST_PORT:-8880}:8880"
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8880
+      - RUST_LOG=info
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15
+      - net.ipv4.ip_local_port_range=1024 65535
+      - net.core.somaxconn=65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
