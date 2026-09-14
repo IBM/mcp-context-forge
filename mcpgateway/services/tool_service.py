@@ -94,8 +94,9 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_proxied_transport, JsonRpcErrorResponse, JsonRpcRequest
-from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
+from mcpgateway.services.reverse_proxy_dispatch import dispatch_proxied_rpc, ProxiedCallTelemetry
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_proxied_transport, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_sessions import StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
@@ -5121,12 +5122,6 @@ class ToolService(BaseService):
                 JSON-RPC error.
             ToolTimeoutError: If the downstream call exceeds ``effective_timeout``.
         """
-        stable_id = StableGatewayId(gateway_id_str)
-        session_manager = await get_reverse_proxy_session_manager()
-        connection_id = session_manager.resolve_connection_id(stable_id)
-        if connection_id is None:
-            raise ToolInvocationError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
-
         params: Dict[str, Any] = {"name": tool_name_original, "arguments": arguments}
         if meta_data is not None:
             params["_meta"] = meta_data
@@ -5134,52 +5129,20 @@ class ToolService(BaseService):
 
         correlation_id = get_correlation_id()
         mcp_start_time = time.time()
-        structured_logger.log(
-            level="INFO",
-            message=f"MCP tool call started: {tool_name_original}",
-            component="tool_service",
-            correlation_id=correlation_id,
-            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
-        )
+        telemetry = ProxiedCallTelemetry(component="tool_service", noun="tool", name=tool_name_original, gateway_id=gateway_id_str)
         try:
-            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+            # Timeout policy: tool invocations use the per-request effective_timeout
+            # computed by invoke_tool (settings.tool_timeout unless overridden).
+            response = await dispatch_proxied_rpc(
+                StableGatewayId(gateway_id_str),
+                request_payload,
+                timeout_seconds=effective_timeout,
+                error_factory=ToolInvocationError,
+                telemetry=telemetry,
+                auth=downstream_auth,
+            )
         except TimeoutError as timeout_err:
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="WARNING",
-                message=f"MCP proxied tool invocation timed out: {tool_name_original}",
-                component="tool_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                metadata={"event": "tool_timeout", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "timeout_seconds": effective_timeout},
-            )
             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
-        except (ConnectionClosedError, ConnectionNotFoundError) as conn_err:
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="ERROR",
-                message=f"MCP tool call failed: {tool_name_original}",
-                component="tool_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                error_details={"error_type": type(conn_err).__name__, "error_message": str(conn_err)},
-                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
-            )
-            raise ToolInvocationError(f"Reverse-proxy connection for gateway '{gateway_id_str}' failed: {conn_err}") from conn_err
-
-        if isinstance(response.payload, JsonRpcErrorResponse):
-            mcp_error = response.payload.error
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="ERROR",
-                message=f"MCP tool call failed: {tool_name_original}",
-                component="tool_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}"},
-                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
-            )
-            raise ToolInvocationError(f"MCP error {mcp_error.code}")
 
         try:
             validated_result = types.CallToolResult.model_validate(response.payload.result)
