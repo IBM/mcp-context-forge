@@ -92,6 +92,8 @@ async def dispatch_proxied_rpc(
             the gateway, the connection drops mid-call, the distributed relay
             is unavailable, or the peer answers with a JSON-RPC error
             (surfaced as the MCP error code only).
+        TimeoutError: Re-raised when the call exceeds ``timeout_seconds`` (after
+            a ``{noun}_timeout`` WARNING); the caller maps it to its typed error.
     """
     session_manager = None
     connection_id = None
