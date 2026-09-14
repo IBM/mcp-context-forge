@@ -49,6 +49,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # ---------------------------------------------------------------------------
@@ -411,6 +412,12 @@ class ServerService(BaseService):
             "description": server.description,
             "icon": server.icon,
             "enabled": server.enabled,
+            # Same APP_DOMAIN-derived base URL OAuth's redirect_uri default and
+            # the RFC 8707/9728 resource URL already use, plus APP_ROOT_PATH so
+            # the URL is actually reachable when the gateway is mounted under a
+            # subpath — see build_server_display_url's docstring for why this
+            # must come from settings rather than the request's Host header.
+            "url": build_server_display_url(server.id) or None,
             "created_at": server.created_at,
             "updated_at": server.updated_at,
             "team_id": server.team_id,
