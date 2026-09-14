@@ -12,6 +12,7 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 """
 
 # Standard
+import asyncio
 from html import escape
 import json
 import logging
@@ -539,6 +540,7 @@ async def _enforce_gateway_access(
                 token_teams,
                 db=db,
                 _user_email=requester_email,
+                preloaded_gateway=gateway,
             )
             is not ResourceOwnershipResult.ALLOWED
         ):
@@ -1333,7 +1335,119 @@ def custom_redirect_after_callback(url: str, status_code: int) -> RedirectRespon
     return RedirectResponse(url=url, status_code=status_code, headers={"Referrer-Policy": "no-referrer"})
 
 
+def _token_info_to_status_payload(info: Any) -> Dict[str, Any]:
+    """Convert a ``get_token_info()``/``get_token_info_bulk()`` result into the public ``user_token_status`` shape.
+
+    Three input shapes are distinguished so a backend outage never reads the same as a
+    caller who genuinely never authorized:
+
+    * ``dict`` - a stored token record; its ``status`` field is surfaced as-is.
+    * ``None`` - no token stored for this caller/gateway -> ``"missing"``.
+    * ``Exception`` - the lookup itself failed (DB error, Vault outage, batch timeout)
+      -> ``"unknown"``, so a UI doesn't mistake a transient outage for "never authorized"
+      and prompt a fresh OAuth flow with the IdP.
+
+    Args:
+        info: A token-info dict, ``None``, or a caught ``Exception`` instance.
+
+    Returns:
+        Dict with ``status`` and ``authorized``, plus ``scopes``/``expires_at``/``updated_at``
+        when ``info`` is a dict.
+    """
+    if isinstance(info, BaseException):
+        return {"status": "unknown", "authorized": False}
+    if info is None:
+        return {"status": "missing", "authorized": False}
+    status = info.get("status", "missing")
+    return {
+        "status": status,
+        "authorized": status in ("valid", "near_expiry"),
+        "scopes": info.get("scopes"),
+        "expires_at": info.get("expires_at"),
+        "updated_at": info.get("updated_at"),
+    }
+
+
+async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: str, *, token_storage: Optional[TokenStorageService] = None) -> Dict[str, Any]:
+    """Look up the caller's own OAuth token state for a gateway.
+
+    Wires the already-implemented ``TokenStorageService.get_token_info`` into
+    the status endpoints. Never returns token values - only metadata about
+    whether a token exists and its freshness.
+
+    Args:
+        db: Active database session.
+        current_user: Authenticated requester context (dict or EmailUserResponse).
+        gateway_id: Gateway identifier to look up.
+        token_storage: Optional pre-built ``TokenStorageService`` to reuse across
+            multiple lookups (batch endpoint) instead of constructing a new one
+            per gateway.
+
+    Returns:
+        Dict with ``authorized`` (bool) and ``status`` (one of "missing",
+        "valid", "near_expiry", "expired", "unknown"), plus ``scopes``,
+        ``expires_at`` and ``updated_at`` when a token is stored.
+    """
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
+        return {"status": "missing", "authorized": False}
+
+    if token_storage is None:
+        token_storage = TokenStorageService(db, _build_user_context(current_user))
+
+    try:
+        info = await token_storage.get_token_info(gateway_id, requester_email)
+    except Exception as e:
+        # The backend already logs its own failure; this ties it to the caller/gateway with a
+        # traceback so a transient lookup failure is distinguishable in logs from a genuinely
+        # missing token - and, via "unknown" below, distinguishable to the client too.
+        logger.exception("OAuth token status lookup failed for gateway=%s user=%s: %s", gateway_id, requester_email, str(e))
+        return _token_info_to_status_payload(e)
+
+    return _token_info_to_status_payload(info)
+
+
+def _build_oauth_status_payload(gateway: Gateway) -> Dict[str, Any]:
+    """Build the OAuth config portion of a gateway's status payload (no I/O).
+
+    Shared by the single-gateway and batch status endpoints so the two never
+    drift. Caller is responsible for gateway lookup, access enforcement, and
+    attaching ``user_token_status`` for ``authorization_code`` grants.
+
+    Args:
+        gateway: Gateway record with ``oauth_config`` already loaded.
+
+    Returns:
+        Dict describing OAuth enablement and, when configured, grant details.
+    """
+    if not gateway.oauth_config:
+        return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
+
+    oauth_config = gateway.oauth_config
+    grant_type = oauth_config.get("grant_type")
+
+    if grant_type == "authorization_code":
+        return {
+            "oauth_enabled": True,
+            "grant_type": grant_type,
+            "client_id": oauth_config.get("client_id"),
+            "scopes": oauth_config.get("scopes", []),
+            "authorization_url": oauth_config.get("authorization_url"),
+            "redirect_uri": oauth_config.get("redirect_uri"),
+            "message": "Gateway configured for Authorization Code flow",
+        }
+
+    return {
+        "oauth_enabled": True,
+        "grant_type": grant_type,
+        "client_id": oauth_config.get("client_id"),
+        "scopes": oauth_config.get("scopes", []),
+        "message": f"Gateway configured for {grant_type} flow",
+    }
+
+
 @oauth_router.get("/status/{gateway_id}")
+@require_permission(Permissions.GATEWAYS_READ)
 async def get_oauth_status(
     gateway_id: str,
     request: Request,
@@ -1344,6 +1458,10 @@ async def get_oauth_status(
 
     Requires authentication and authorization to prevent information disclosure
     about gateway OAuth configuration (client IDs, scopes, etc.).
+
+    For the authorization_code grant, also reports the *caller's own* token
+    state (``user_token_status``), derived from authenticated identity - never
+    a client-supplied user. This is per-caller and never shared across users.
 
     Args:
         gateway_id: ID of the gateway
@@ -1366,39 +1484,134 @@ async def get_oauth_status(
 
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
-        if not gateway.oauth_config:
-            return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
-
-        # Get OAuth configuration info
-        oauth_config = gateway.oauth_config
-        grant_type = oauth_config.get("grant_type")
-
-        if grant_type == "authorization_code":
-            # For now, return basic info - in a real implementation you might want to
-            # show authorized users, token status, etc.
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "authorization_url": oauth_config.get("authorization_url"),
-                "redirect_uri": oauth_config.get("redirect_uri"),
-                "message": "Gateway configured for Authorization Code flow",
-            }
-        else:
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "message": f"Gateway configured for {grant_type} flow",
-            }
+        payload = _build_oauth_status_payload(gateway)
+        if payload.get("grant_type") == "authorization_code":
+            payload["user_token_status"] = await _get_caller_token_status(db, current_user, gateway_id)
+        return payload
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get OAuth status: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
+
+
+OAUTH_STATUS_BATCH_MAX_IDS = 100
+
+# Upper bound on how long the batch endpoint will wait for the whole
+# get_token_info_bulk() call, so a slow/unresponsive backend (worst case:
+# OAUTH_STATUS_BATCH_MAX_IDS sequential per-id Vault lookups, each retried
+# with exponential backoff) can't hold the request open indefinitely. On
+# timeout every pending id reports "unknown" rather than failing the batch.
+OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS = 15.0
+
+
+@oauth_router.get("/status")
+@require_permission(Permissions.GATEWAYS_READ)
+async def get_oauth_status_batch(
+    request: Request,
+    gateway_ids: Annotated[Optional[list[str]], Query(description="Gateway ids to look up; repeat the parameter for multiple ids")] = None,
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> Dict[str, Dict[str, Any]]:
+    """Get OAuth status for multiple gateways in a single call.
+
+    Batched equivalent of ``GET /oauth/status/{gateway_id}`` so a grid of
+    cards (catalog, gateways list) can render caller-scoped OAuth state
+    without issuing one request per card.
+
+    Args:
+        request: Incoming request with token-scoping context.
+        gateway_ids: Gateway identifiers to look up (repeated query param).
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+
+    Returns:
+        Mapping of gateway_id to the same payload ``GET /oauth/status/{gateway_id}``
+        returns. Gateway ids that don't exist or aren't visible to the caller
+        are omitted rather than failing the whole batch.
+
+    Raises:
+        HTTPException: If no gateway ids are supplied, or more than
+            ``OAUTH_STATUS_BATCH_MAX_IDS`` are requested at once.
+    """
+    if not gateway_ids:
+        raise HTTPException(status_code=400, detail="gateway_ids is required")
+
+    deduped_ids = list(dict.fromkeys(gateway_ids))  # gateway_ids is non-empty here (checked above)
+    if len(deduped_ids) > OAUTH_STATUS_BATCH_MAX_IDS:
+        raise HTTPException(status_code=400, detail=f"Too many gateway_ids requested (max {OAUTH_STATUS_BATCH_MAX_IDS})")
+
+    # Single query for all requested gateways - the batch route exists specifically
+    # to avoid N+1 round trips.
+    gateways_by_id = {gw.id: gw for gw in db.execute(select(Gateway).where(Gateway.id.in_(deduped_ids))).scalars().all()}
+
+    accessible: Dict[str, Gateway] = {}
+    for gateway_id in deduped_ids:
+        gateway = gateways_by_id.get(gateway_id)
+        if not gateway:
+            # Not found - omit rather than failing the batch.
+            continue
+
+        try:
+            await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                logger.error("OAuth status batch: access check failed for gateway=%s: %s", gateway_id, exc.detail)
+            # Not accessible to this caller (or a lookup failure, logged above) - omit rather than failing the batch.
+            continue
+        except Exception:
+            logger.exception("OAuth status batch: access check raised for gateway=%s", gateway_id)
+            continue
+
+        accessible[gateway_id] = gateway
+
+    results: Dict[str, Dict[str, Any]] = {}
+    auth_code_ids: list[str] = []
+    for gateway_id, gateway in accessible.items():
+        try:
+            payload = _build_oauth_status_payload(gateway)
+        except Exception:
+            logger.exception("OAuth status batch: failed to build status for gateway=%s", gateway_id)
+            continue
+        results[gateway_id] = payload
+        if payload.get("grant_type") == "authorization_code":
+            auth_code_ids.append(gateway_id)
+
+    if not auth_code_ids:
+        return results
+
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
+        for gateway_id in auth_code_ids:
+            results[gateway_id]["user_token_status"] = {"status": "missing", "authorized": False}
+        return results
+
+    # One bulk token-info lookup for the whole batch instead of one per gateway id -
+    # the DB backend answers this with a single query; other backends fall back to
+    # AbstractTokenBackend's default per-id loop. Bounded by a timeout so a slow or
+    # unresponsive backend can't hold the request open indefinitely (see constant docstring).
+    token_storage = TokenStorageService(db, _build_user_context(current_user))
+    try:
+        bulk_token_info = await asyncio.wait_for(
+            token_storage.get_token_info_bulk(auth_code_ids, requester_email),
+            timeout=OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "OAuth status batch: token lookup timed out after %.0fs for %d gateway(s)",
+            OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS,
+            len(auth_code_ids),
+        )
+        bulk_token_info = {gateway_id: TimeoutError("OAuth status batch token lookup timed out") for gateway_id in auth_code_ids}
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("OAuth status batch: bulk token lookup failed")
+        bulk_token_info = {gateway_id: exc for gateway_id in auth_code_ids}
+
+    for gateway_id in auth_code_ids:
+        results[gateway_id]["user_token_status"] = _token_info_to_status_payload(bulk_token_info.get(gateway_id))
+
+    return results
 
 
 async def _fetch_tools_via_token_exchange(

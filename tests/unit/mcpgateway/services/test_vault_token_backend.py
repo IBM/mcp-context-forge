@@ -2313,20 +2313,20 @@ async def test_r7_get_user_auth_headers_vault_auth_error():
 
 @pytest.mark.asyncio
 async def test_r7_get_token_info_vault_connection_error():
-    """get_token_info returns None on VaultConnectionError (lines 563-564,570)."""
+    """get_token_info re-raises VaultConnectionError so a Vault outage is distinguishable from a missing token."""
     backend, _ = _make_backend_r7()
     with patch.object(backend, "_vault_request", side_effect=VaultConnectionError("Vault down")):
-        result = await backend.get_token_info("gw-1", "team-1", "alice@example.com")
-    assert result is None
+        with pytest.raises(VaultConnectionError):
+            await backend.get_token_info("gw-1", "team-1", "alice@example.com")
 
 
 @pytest.mark.asyncio
 async def test_r7_get_token_info_vault_auth_error():
-    """get_token_info returns None on VaultAuthError (lines 563-564,570)."""
+    """get_token_info re-raises VaultAuthError so a Vault outage is distinguishable from a missing token."""
     backend, _ = _make_backend_r7()
     with patch.object(backend, "_vault_request", side_effect=VaultAuthError("Token invalid")):
-        result = await backend.get_token_info("gw-1", "team-1", "alice@example.com")
-    assert result is None
+        with pytest.raises(VaultAuthError):
+            await backend.get_token_info("gw-1", "team-1", "alice@example.com")
 
 
 @pytest.mark.asyncio
