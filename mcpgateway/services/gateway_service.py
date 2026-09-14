@@ -7206,7 +7206,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     resources = []
-                    if capabilities.get("resources"):
+                    if "resources" in capabilities:
                         try:
                             response = await session.list_resources()
                             raw_resources = response.resources
@@ -7263,7 +7263,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Fetch prompts if supported
                     prompts = []
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
+                    if "prompts" in capabilities:
                         try:
                             response = await session.list_prompts()
                             raw_prompts = response.prompts
@@ -7386,7 +7386,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resources = []
                 if include_resources:
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
+                    if "resources" in capabilities:
                         try:
                             response = await session.list_resources()
                             raw_resources = response.resources
@@ -7444,7 +7444,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 prompts = []
                 if include_prompts:
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
+                    if "prompts" in capabilities:
                         try:
                             response = await session.list_prompts()
                             raw_prompts = response.prompts
@@ -7558,7 +7558,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resources = []
                 if include_resources:
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
+                    if "resources" in capabilities:
                         try:
                             response = await session.list_resources()
                             raw_resources = response.resources
@@ -7616,7 +7616,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 prompts = []
                 if include_prompts:
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
+                    if "prompts" in capabilities:
                         try:
                             response = await session.list_prompts()
                             raw_prompts = response.prompts
