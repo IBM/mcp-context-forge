@@ -1922,6 +1922,42 @@ def test_reverse_proxy_feature_default_false():
     assert s.mcpgateway_reverse_proxy_enabled is False
 
 
+def test_reverse_proxy_distributed_feature_default_false():
+    """Distributed reverse-proxy routing remains opt-in."""
+    settings = Settings(environment="development", _env_file=None)
+
+    assert settings.mcpgateway_reverse_proxy_distributed_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("reverse_proxy_enabled", "cache_type"),
+    [(False, "redis"), (True, "memory"), (True, "database"), (True, "none")],
+)
+def test_reverse_proxy_distributed_feature_requires_reverse_proxy_and_redis(reverse_proxy_enabled, cache_type):
+    """Distributed routing rejects every unsupported startup matrix."""
+    with pytest.raises(ValidationError, match="distributed reverse proxy requires"):
+        Settings(
+            mcpgateway_reverse_proxy_enabled=reverse_proxy_enabled,
+            mcpgateway_reverse_proxy_distributed_enabled=True,
+            cache_type=cache_type,
+            environment="development",
+            _env_file=None,
+        )
+
+
+def test_reverse_proxy_distributed_feature_accepts_enabled_reverse_proxy_with_redis():
+    """Distributed routing accepts its sole supported configuration."""
+    settings = Settings(
+        mcpgateway_reverse_proxy_enabled=True,
+        mcpgateway_reverse_proxy_distributed_enabled=True,
+        cache_type="redis",
+        environment="development",
+        _env_file=None,
+    )
+
+    assert settings.mcpgateway_reverse_proxy_distributed_enabled is True
+
+
 def test_reverse_proxy_heartbeat_timeout_defaults_to_90_seconds():
     """The reverse-proxy heartbeat timeout defaults to the maintained client's documented tolerance."""
     s = Settings(environment="development", _env_file=None)
