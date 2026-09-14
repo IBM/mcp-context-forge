@@ -1540,6 +1540,8 @@ class TestCrossTransportConsistency:
 # Virtual server lifecycle (#6519)
 # ---------------------------------------------------------------------------
 LIFECYCLE_PREFIX = "e2e-lifecycle"
+# Distinct from _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS above: that one retries
+# only on exceptions, this one also retries while the catalog contents converge.
 _LIFECYCLE_CONVERGENCE_DEADLINE = float(os.getenv("MCP_E2E_CONVERGENCE_DEADLINE", "30.0"))
 _LIFECYCLE_MAX_PAGES = 50
 
@@ -1912,8 +1914,15 @@ class TestVirtualServerLifecycle:
         """
         # Both expectations come from the gateway catalog. Deriving one view
         # from the other lets a correlated REST and MCP defect pass.
-        expected_ids = {tool["id"] for tool in lifecycle_tools}
-        expected_names = {tool["name"] for tool in lifecycle_tools}
+        assert len(lifecycle_tools) >= 2, "scoping check needs at least two tools on the gateway"
+
+        # Hold one tool back. A server that served the global catalog instead of
+        # its own would surface the held-back tool, and every assertion below
+        # would otherwise pass on a stack whose whole catalog is this gateway's.
+        held_back = lifecycle_tools[0]["name"]
+        associated = lifecycle_tools[1:]
+        expected_ids = {tool["id"] for tool in associated}
+        expected_names = {tool["name"] for tool in associated}
 
         resp = create_server(tool_ids=sorted(expected_ids))
         assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
@@ -1928,8 +1937,11 @@ class TestVirtualServerLifecycle:
         assert rest_ids == expected_ids, f"per-server REST tool ids mismatch: missing={sorted(expected_ids - rest_ids)} unexpected={sorted(rest_ids - expected_ids)}"
         assert rest_names == expected_names, f"per-server REST tool names mismatch: missing={sorted(expected_names - rest_names)} unexpected={sorted(rest_names - expected_names)}"
 
+        assert held_back not in rest_names, f"held-back tool {held_back} appears in the per-server REST listing"
+
         observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, expected_names)
         assert observed == expected_names, f"MCP tools/list mismatch: missing={sorted(expected_names - observed)} unexpected={sorted(observed - expected_names)}"
+        assert held_back not in observed, f"held-back tool {held_back} leaked into the scoped MCP catalog"
 
     def test_associated_resources_reachable_via_mcp(self, admin_api: APIRequestContext, create_server: Any, create_resource: Any, admin_token: str) -> None:
         """The per-server REST records and the MCP catalog both report the associated resource.
@@ -1943,6 +1955,13 @@ class TestVirtualServerLifecycle:
         resource_resp = create_resource()
         assert resource_resp.status in (200, 201), f"POST /resources returned {resource_resp.status}: {resource_resp.text()[:500]}"
         resource = _json_or_fail(resource_resp, "POST /resources")
+
+        # A second resource stays unassociated. Without it the assertions below
+        # pass even when the endpoint serves the global catalog, because the
+        # stack carries no other resources and the two sets coincide.
+        unassociated_resp = create_resource()
+        assert unassociated_resp.status in (200, 201), f"POST /resources returned {unassociated_resp.status}: {unassociated_resp.text()[:500]}"
+        unassociated_uri = _json_or_fail(unassociated_resp, "POST /resources")["uri"]
 
         # The id and the URI both come from the creation response, so each view
         # is checked against the resource as created.
@@ -1962,9 +1981,12 @@ class TestVirtualServerLifecycle:
         assert rest_ids == {expected_id}, f"per-server REST resource ids mismatch: got {sorted(rest_ids)}, expected {[expected_id]}"
         assert rest_uris == expected_uris, f"per-server REST resource uris mismatch: got {sorted(rest_uris)}, expected {sorted(expected_uris)}"
 
+        assert unassociated_uri not in rest_uris, f"unassociated resource {unassociated_uri} appears in the per-server REST listing"
+
         # MCP exposes resources by URI. The protocol carries no id.
         observed = _names_when_ready(lambda: {str(resource_record.uri) for resource_record in _mcp_resources_list(admin_token, server_url=_server_mcp_base(server_id))}, expected_uris)
         assert observed == expected_uris, f"MCP resources/list mismatch: missing={sorted(expected_uris - observed)} unexpected={sorted(observed - expected_uris)}"
+        assert unassociated_uri not in observed, f"unassociated resource {unassociated_uri} leaked into the scoped MCP catalog"
 
     def test_delete_removes_from_list(self, admin_api: APIRequestContext, create_server: Any, lifecycle_tools: list[dict[str, Any]]) -> None:
         """Deletion removes the server from the list and from the detail endpoint.
@@ -1988,6 +2010,49 @@ class TestVirtualServerLifecycle:
 
         detail = admin_api.get(f"/servers/{server_id}")
         assert detail.status == 404, f"GET /servers/{server_id} returned {detail.status} after deletion. Expected 404."
+
+    def test_deleted_server_denies_narrowed_token_before_existence(
+        self,
+        admin_api: APIRequestContext,
+        playwright: Playwright,
+        create_server: Any,
+        lifecycle_tools: list[dict[str, Any]],
+    ) -> None:
+        """A narrowed token is refused before the gateway checks server existence.
+
+        The RBAC check for ``servers.use`` runs ahead of ``_validate_server_id``,
+        so a caller without that permission never learns whether the server
+        exists. This pins the order that the admin-only 404 above depends on.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            playwright: Playwright entrypoint fixture.
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+        """
+        user = _create_user_with_token(admin_api, playwright, f"{LIFECYCLE_PREFIX}-deny-{uuid.uuid4().hex[:8]}@test.com")
+        try:
+            resp = create_server(tool_ids=[tool["id"] for tool in lifecycle_tools])
+            assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+            server_id = _json_or_fail(resp, "POST /servers")["id"]
+
+            deleted = admin_api.delete(f"/servers/{server_id}")
+            assert deleted.status == 200, f"DELETE /servers/{server_id} returned {deleted.status}: {deleted.text()[:500]}"
+
+            with httpx.Client(timeout=10.0) as client:
+                probe = client.post(
+                    f"{_server_mcp_base(server_id)}/mcp/",
+                    headers={
+                        "Authorization": f"Bearer {user['access_token']}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json=build_initialize(1),
+                )
+
+            assert probe.status_code == 403, f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
+        finally:
+            _cleanup_user(admin_api, user)
 
     def test_mcp_endpoint_gone_after_delete(self, admin_api: APIRequestContext, create_server: Any, lifecycle_tools: list[dict[str, Any]], admin_token: str) -> None:
         """The per-server MCP endpoint stops serving after deletion.
