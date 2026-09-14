@@ -104,6 +104,7 @@ from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
@@ -987,14 +988,7 @@ def _build_server_resource_url(scope: Scope, server_id: str) -> str:
         Fully-qualified resource URL string, or ``""`` if construction fails.
     """
     del scope  # intentionally ignored — see docstring
-    try:
-        raw = str(settings.app_domain).rstrip("/")
-    except (AttributeError, ValueError) as exc:
-        logger.warning("settings.app_domain is not a usable URL: %s: %s", type(exc).__name__, exc)
-        return ""
-    if not raw:
-        return ""
-    return f"{raw}/servers/{server_id}/mcp"
+    return build_server_mcp_url(server_id)
 
 
 def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
