@@ -22,6 +22,8 @@
 # Safety:
 #   - All lookups and validation complete before any file is written; a
 #     failed or malformed API response means zero files modified.
+#   - The wheels UBI_MINIMAL pin is validated (present and identical to the
+#     root pin) before any write; a missing or divergent pin aborts the run.
 #   - Both UBI_MINIMAL pins are always updated together.
 #
 # Requires: curl, jq.
@@ -89,6 +91,17 @@ main() {
             || die "${arg} image '${image}' is not on registry.access.redhat.com; Pyxis lookup is only defined for that registry"
         repo="${image#registry.access.redhat.com/}"
 
+        # UBI_MINIMAL must be pinned identically in the wheels Containerfile.
+        # Validate it now: sed no-ops (exit 0) on a missing match, so without
+        # this check apply would report success while the pins silently diverge.
+        if [ "$arg" = "UBI_MINIMAL" ]; then
+            local wheels_line wheels_value
+            wheels_line=$(grep -E "^ARG ${arg}=" "$WHEELS_CONTAINERFILE_PATH") \
+                || die "no '^ARG ${arg}=' line in $WHEELS_CONTAINERFILE_PATH; both UBI_MINIMAL pins must exist"
+            wheels_value="${wheels_line#ARG "${arg}"=}"
+            [ "$wheels_value" = "$value" ] \
+                || die "UBI_MINIMAL pins differ between the Containerfiles ('${value}' vs '${wheels_value}'); reconcile them before bumping"
+        fi
         tags=$(fetch_tags "$repo") \
             || die "tag lookup failed for ${arg} (${repo}); no files modified"
         latest=$(printf '%s\n' "$tags" | latest_tag_in_minor "$minor") \

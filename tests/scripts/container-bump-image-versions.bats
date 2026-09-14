@@ -130,6 +130,34 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$root_pin" = "$wheels_pin" ]
 }
 
+@test "dies when the wheels Containerfile lacks the UBI_MINIMAL pin" {
+    # sed no-ops on a missing match; the script must still detect the missing
+    # pin during planning and refuse to write anything.
+    sed -i.bak 's|^ARG UBI_MINIMAL=.*|ARG BASE_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369|' "$WHEELS_CONTAINERFILE_PATH"
+    rm -f "${WHEELS_CONTAINERFILE_PATH}.bak"
+    write_tags ubi10.json        "10.2-1784669000"
+    write_tags nodejs.json       "10.2-1784669001"
+    write_tags ubi-minimal.json  "10.2-1784669047"
+
+    run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no '^ARG UBI_MINIMAL=' line in"* ]]
+    cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
+}
+
+@test "dies when the two UBI_MINIMAL pins have diverged" {
+    sed -i.bak 's|^ARG UBI_MINIMAL=.*|ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581368|' "$WHEELS_CONTAINERFILE_PATH"
+    rm -f "${WHEELS_CONTAINERFILE_PATH}.bak"
+    write_tags ubi10.json        "10.2-1784669000"
+    write_tags nodejs.json       "10.2-1784669001"
+    write_tags ubi-minimal.json  "10.2-1784669047"
+
+    run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"pins differ between the Containerfiles"* ]]
+    cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
+}
+
 @test "no-op when every pin is already the latest in its minor line" {
     write_tags ubi10.json        "10.2-1784581466" "10.2-1000"
     write_tags nodejs.json       "10.2-1784624696" "10.2"
