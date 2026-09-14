@@ -118,8 +118,14 @@ class TestVirtualServerLifecycle:
             shared_gateway: The stack's read-only ``fast_time`` gateway and catalog.
             mcp: MCP probe bound to the admin identity.
         """
-        tool_ids = [tool["id"] for tool in shared_gateway["tools"]]
-        resp = create_server(tool_ids=tool_ids)
+        # Expectations come from the gateway's own catalog, never from the
+        # per-server views under test: deriving them from one view and comparing
+        # the other against it would let a correlated REST/MCP defect pass.
+        expected_ids = {tool["id"] for tool in shared_gateway["tools"]}
+        expected_names = {tool["name"] for tool in shared_gateway["tools"]}
+        assert expected_ids, "shared gateway fixture must supply at least one tool"
+
+        resp = create_server(tool_ids=sorted(expected_ids))
         assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
         server_id = json_or_fail(resp, "POST /servers")["id"]
 
@@ -128,9 +134,9 @@ class TestVirtualServerLifecycle:
         rest_tools = json_or_fail(rest, f"GET /servers/{server_id}/tools")
 
         rest_ids = {tool["id"] for tool in rest_tools}
-        expected_names = {tool["name"] for tool in rest_tools}
-        assert rest_ids, "per-server tool listing is empty"
-        assert rest_ids == set(tool_ids)
+        rest_names = {tool["name"] for tool in rest_tools}
+        assert rest_ids == expected_ids, f"per-server REST tool ids mismatch: missing={sorted(expected_ids - rest_ids)} unexpected={sorted(rest_ids - expected_ids)}"
+        assert rest_names == expected_names, f"per-server REST tool names mismatch: missing={sorted(expected_names - rest_names)} unexpected={sorted(rest_names - expected_names)}"
 
         observed = mcp.tool_names_when_ready(_server_mcp_base(server_id), expected_names)
         assert observed == expected_names, f"MCP tools/list mismatch: missing={sorted(expected_names - observed)} unexpected={sorted(observed - expected_names)}"
@@ -153,9 +159,14 @@ class TestVirtualServerLifecycle:
         resource_resp = create_resource()
         assert resource_resp.status in (200, 201), f"POST /resources returned {resource_resp.status}: {resource_resp.text()[:500]}"
         resource = json_or_fail(resource_resp, "POST /resources")
-        resource_id = resource["id"]
 
-        resp = create_server(resource_ids=[resource_id])
+        # Both the id and the URI come from the creation response, so the
+        # per-server REST records and the MCP catalog are each checked against
+        # the resource as created rather than against one another.
+        expected_id = str(resource["id"])
+        expected_uris = {resource["uri"]}
+
+        resp = create_server(resource_ids=[expected_id])
         assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
         server_id = json_or_fail(resp, "POST /servers")["id"]
 
@@ -163,13 +174,13 @@ class TestVirtualServerLifecycle:
         assert rest.status == 200, f"GET /servers/{server_id}/resources returned {rest.status}: {rest.text()[:500]}"
         rest_resources = json_or_fail(rest, f"GET /servers/{server_id}/resources")
 
-        # The association is by id, but MCP exposes resources by URI only, so the
-        # comparison has to go through the per-server REST records.
         rest_ids = {str(entry["id"]) for entry in rest_resources}
-        expected_uris = {entry["uri"] for entry in rest_resources}
-        assert rest_ids, "per-server resource listing is empty"
-        assert rest_ids == {str(resource_id)}
+        rest_uris = {entry["uri"] for entry in rest_resources}
+        assert rest_ids == {expected_id}, f"per-server REST resource ids mismatch: got {sorted(rest_ids)}, expected {[expected_id]}"
+        assert rest_uris == expected_uris, f"per-server REST resource uris mismatch: got {sorted(rest_uris)}, expected {sorted(expected_uris)}"
 
+        # MCP exposes resources by URI only — there is no id in the protocol —
+        # so the URI from the creation response is the shared reference point.
         observed = mcp.resource_uris_when_ready(_server_mcp_base(server_id), expected_uris)
         assert observed == expected_uris, f"MCP resources/list mismatch: missing={sorted(expected_uris - observed)} unexpected={sorted(observed - expected_uris)}"
 

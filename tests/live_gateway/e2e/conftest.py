@@ -46,6 +46,9 @@ pytest.importorskip("playwright", reason="playwright is not installed – pip in
 # Third-Party
 from playwright.sync_api import APIRequestContext, APIResponse, Playwright
 
+# First-Party
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
 # Local
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_test_jwt
@@ -114,20 +117,60 @@ def json_or_fail(resp: APIResponse, what: str) -> Any:
         raise AssertionError(f"{what}: response was not JSON (HTTP {resp.status}): {body[:500]}") from exc
 
 
-def _json_or_none(resp: APIResponse) -> Any:
+class _LastFailure:
+    """Records why a polled call yielded nothing, so the deadline message can say so.
+
+    Without this a 401 or 500 from the polled endpoint is indistinguishable from
+    a genuinely absent registration, and the timeout message sends the reader off
+    to repair something that is not broken.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded failure."""
+        self.detail: str | None = None
+
+    def record(self, call: str, resp: APIResponse | None = None, exc: Exception | None = None) -> None:
+        """Store a human-readable description of the most recent failed attempt.
+
+        Args:
+            call: The endpoint being polled, e.g. ``GET /gateways``.
+            resp: Response whose status was not 200, when there was one.
+            exc: Exception raised instead of a response, when there was one.
+        """
+        if resp is not None:
+            self.detail = f"last response from {call} was HTTP {resp.status}: {resp.text()[:200]}"
+        elif exc is not None:
+            self.detail = f"last attempt at {call} raised {type(exc).__name__}: {exc}"
+
+    def suffix(self) -> str:
+        """Return the recorded failure as a message suffix, or an empty string.
+
+        Returns:
+            Text to append to a timeout message.
+        """
+        return f"\n\n{self.detail}" if self.detail else ""
+
+
+def _json_or_none(resp: APIResponse, call: str = "", failure: _LastFailure | None = None) -> Any:
     """Return the decoded body, or None when the call failed or was not JSON.
 
     Args:
         resp: Playwright API response to decode.
+        call: Endpoint description used when recording a failure.
+        failure: Recorder notified of a non-200 status or an undecodable body.
 
     Returns:
         The decoded JSON body, or None.
     """
     if resp.status != 200:
+        if failure is not None:
+            failure.record(call, resp=resp)
         return None
     try:
         return resp.json()
-    except Exception:  # pylint: disable=broad-except
+    except Exception as exc:  # pylint: disable=broad-except
+        if failure is not None:
+            failure.record(call, exc=exc)
         return None
 
 
@@ -188,10 +231,11 @@ def list_all_servers(admin_api: APIRequestContext) -> list[dict[str, Any]]:
 def model_audience_excludes_model(tool: dict[str, Any]) -> bool:
     """Return whether a REST tool record is explicitly hidden from the model.
 
-    Mirrors the gateway's audience rule against the REST payload rather than
-    importing the production helper: the expectation must not depend on this
-    process's settings, which are independent of the gateway container's.
-    Absent ``ui`` metadata means model-facing.
+    Applies the gateway's audience rule to the REST payload rather than calling
+    the production filter: the expectation must not depend on this process's
+    settings, which are independent of the gateway container's. Only the
+    extension key is imported, so the two cannot drift apart. Absent MCP UI
+    metadata means model-facing.
 
     Args:
         tool: Tool record as returned by the REST API.
@@ -200,7 +244,7 @@ def model_audience_excludes_model(tool: dict[str, Any]) -> bool:
         True when the tool declares an audience that omits ``model``.
     """
     metadata = tool.get("extensionMetadata") or tool.get("extension_metadata") or {}
-    ui = metadata.get("ui") if isinstance(metadata, dict) else None
+    ui = metadata.get(MCP_UI_EXTENSION) if isinstance(metadata, dict) else None
     if not isinstance(ui, dict):
         return False
     audience = ui.get("visibility", ui.get("audience"))
@@ -447,8 +491,10 @@ def shared_gateway(admin_api: APIRequestContext) -> dict[str, Any]:
         Mapping with the gateway ``id``, ``name``, and its enabled ``tools``.
     """
 
+    failure = _LastFailure()
+
     def _find() -> dict[str, Any] | None:
-        gateways = _json_or_none(admin_api.get("/gateways")) or []
+        gateways = _json_or_none(admin_api.get("/gateways"), "GET /gateways", failure) or []
         for gateway in gateways:
             if gateway.get("name") == SHARED_GATEWAY_NAME:
                 return gateway
@@ -456,15 +502,17 @@ def shared_gateway(admin_api: APIRequestContext) -> dict[str, Any]:
 
     gateway = _poll_until(_find, _GATEWAY_DISCOVERY_DEADLINE)
     if not gateway:
-        pytest.fail(_MISSING_GATEWAY_HINT)
+        pytest.fail(_MISSING_GATEWAY_HINT + failure.suffix())
 
     actual_url = (gateway.get("url") or "").rstrip("/")
     assert actual_url == SHARED_GATEWAY_URL.rstrip("/"), f"Gateway {SHARED_GATEWAY_NAME!r} points at {actual_url!r}, expected {SHARED_GATEWAY_URL!r}. Refusing to run against an unexpected upstream."
 
     gateway_id = gateway["id"]
 
+    catalog_failure = _LastFailure()
+
     def _tools() -> list[dict[str, Any]]:
-        tools = _json_or_none(admin_api.get("/tools")) or []
+        tools = _json_or_none(admin_api.get("/tools"), "GET /tools", catalog_failure) or []
         return [tool for tool in tools if tool.get("gatewayId") == gateway_id and tool.get("enabled", True)]
 
     tools = _poll_until(_tools, _CATALOG_SYNC_DEADLINE)
@@ -472,7 +520,7 @@ def shared_gateway(admin_api: APIRequestContext) -> dict[str, Any]:
         f"Gateway {SHARED_GATEWAY_NAME!r} (id={gateway_id}) is registered but reported no "
         f"enabled tools within {_CATALOG_SYNC_DEADLINE:.0f}s. The registration exists, so this "
         "is a tool-synchronisation problem rather than a missing gateway — check the upstream "
-        "fast_time_server and the gateway's last sync status."
+        "fast_time_server and the gateway's last sync status." + catalog_failure.suffix()
     )
 
     hidden = sorted(tool.get("name", "?") for tool in tools if model_audience_excludes_model(tool))
