@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 # First-Party
-from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION, MCPProtocolVersionMiddleware
+from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION, MCPProtocolVersionMiddleware, SUPPORTED_PROTOCOL_VERSIONS
 
 
 def _make_request(path: str, headers: Iterable[Tuple[bytes, bytes]] | None = None) -> Request:
@@ -88,3 +88,71 @@ async def test_unsupported_protocol_version_rejected():
     assert response.status_code == 400
     payload = orjson.loads(response.body)
     assert "Unsupported protocol version" in payload["message"]
+
+
+# --------------------------------------------------------------------------- #
+#              Legacy inbound protocol mode tests                               #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_legacy_mode_rejects_modern_version(monkeypatch):
+    """2026-07-28 must be rejected with 400 in legacy mode."""
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_inbound_protocol_mode", "legacy")
+    middleware = MCPProtocolVersionMiddleware(app=None)
+    request = _make_request("/rpc", headers=[(b"mcp-protocol-version", b"2026-07-28")])
+
+    async def call_next(req):
+        return Response("ok")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 400
+    payload = orjson.loads(response.body)
+    assert "2026-07-28" in payload["message"]
+    # Response must list handshake-era versions so dual-era clients know what to retry
+    assert "2025-11-25" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_mode_accepts_handshake_version(monkeypatch):
+    """Handshake-era versions must still be accepted in legacy mode."""
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_inbound_protocol_mode", "legacy")
+    middleware = MCPProtocolVersionMiddleware(app=None)
+    request = _make_request("/rpc", headers=[(b"mcp-protocol-version", b"2025-11-25")])
+
+    async def call_next(req):
+        return Response("ok")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 200
+    assert request.state.mcp_protocol_version == "2025-11-25"
+
+
+@pytest.mark.asyncio
+async def test_legacy_mode_defaults_missing_header_to_latest_handshake(monkeypatch):
+    """Missing header in legacy mode must default to 2025-11-25, not 2026-07-28."""
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_inbound_protocol_mode", "legacy")
+    middleware = MCPProtocolVersionMiddleware(app=None)
+    request = _make_request("/rpc")
+
+    async def call_next(req):
+        return Response("ok")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 200
+    assert request.state.mcp_protocol_version == "2025-11-25"
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_accepts_modern_version(monkeypatch):
+    """2026-07-28 must be accepted in auto mode (current default behavior)."""
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_inbound_protocol_mode", "auto")
+    middleware = MCPProtocolVersionMiddleware(app=None)
+    request = _make_request("/rpc", headers=[(b"mcp-protocol-version", b"2026-07-28")])
+
+    async def call_next(req):
+        return Response("ok")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 200
+    assert request.state.mcp_protocol_version == "2026-07-28"
