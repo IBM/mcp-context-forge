@@ -237,6 +237,8 @@ services:
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
+      - MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED=${MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED:-false}
+      - MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT=${MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT:-90}
       # Prometheus metrics endpoint (compose enables it by default; requires JWT auth when enabled).
       # Set ENABLE_METRICS=false to disable it for local or resource-constrained runs.
       - ENABLE_METRICS=${ENABLE_METRICS:-true}
@@ -874,7 +876,7 @@ services:
         soft: 5000
         hard: 5000
     ports:
-      - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
+      - "${POSTGRES_HOST_PORT:-5433}:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
     # WITH PgBouncer (default): 800 connections provides headroom for 700 pool + system overhead
     # DIRECT connection mode: increase to 4000 for (3 replicas × 16 workers × 80 pool)
@@ -1009,7 +1011,7 @@ services:
         soft: 5000
         hard: 5000
     ports:
-      - "6432:6432"    # PgBouncer port (optional external access)
+      - "${PGBOUNCER_HOST_PORT:-6432}:6432"    # PgBouncer port (optional external access)
     environment:
       # Connection to upstream PostgreSQL
       - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
@@ -1164,7 +1166,7 @@ services:
       start_period: 10s
     ports:
       #- "6380:6380"      # TLS port exposed to host
-      - "6379:6379"      # plain TCP port exposed to host
+      - "${REDIS_HOST_PORT:-6379}:6379"      # plain TCP port exposed to host
     networks: [mcpnet]
     deploy:
       resources:

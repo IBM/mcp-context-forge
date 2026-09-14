@@ -1003,6 +1003,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `MCPGATEWAY_WS_RELAY_ENABLED` | Enable `/ws` JSON-RPC WebSocket relay | `false` | bool                       |
 | `MCPGATEWAY_REVERSE_PROXY_ENABLED` | Enable `/reverse-proxy/*` endpoints | `false` | bool                     |
 | `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED` | Enable Redis-backed cross-worker reverse-proxy routing | `false` | bool |
+| `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT` | Seconds before a silent reverse-proxy client is evicted; `0` disables eviction | `90` | float >= 0 |
 | `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
