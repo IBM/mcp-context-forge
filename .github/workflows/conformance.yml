@@ -3,7 +3,7 @@ run-name: Conformance for PR #${{ github.event.pull_request.number || github.eve
 
 on:
   pull_request:
-    branches: [chore/mcp-sdk-v2, user/luca/sdk-v2-capability-discovery]
+    branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
   # Comment commands become available once this workflow is on the default branch.
   issue_comment:
@@ -58,7 +58,7 @@ jobs:
       - name: Install cf-integration 0.3.3 binary
         run: cargo binstall cf-integration@0.3.3 --no-confirm
 
-      - name: Run legacy and modern conformance
+      - name: Run legacy-to-legacy conformance
         env:
           CF_COMPOSE_BUILD: "false"
           CF_CONTROLPLANE_IMAGE: mcpgateway/mcpgateway:conformance
