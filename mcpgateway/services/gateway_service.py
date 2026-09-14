@@ -3730,7 +3730,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             last_error: Optional sanitized failure reason to persist. Written
             atomically with the state change when reachability changes; written
             in a standalone commit when only the error text differs (no state
-            transition occurred).
+            transition occurred). ``None`` means "no new reason to report" and
+            leaves a stored one in place. Orthogonal to ``status_message``,
+            which reports the registration lifecycle.
 
         Returns:
             The updated GatewayRead object
@@ -3956,6 +3958,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
 
             elif last_error is not None and gateway.last_error != last_error:
+                # Only last_error is written here, never status_message: that column
+                # reports the registration lifecycle, and a periodic health check
+                # overwriting it would erase the outcome the operator last acted on.
                 gateway.last_error = last_error
                 gateway.updated_at = datetime.now(timezone.utc)
                 db.commit()
@@ -4587,6 +4592,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         Args:
             gateway: The gateway object that failed its health check.
             error: The health-check failure. It is sanitized before persistence.
+                ``None`` -- the pre-#6343 call shape -- persists the placeholder
+                ``"Unknown health-check failure"`` rather than a null reason.
             auth_query_params: Decrypted query-auth params used for sanitizing
                 embedded URLs. Falls back to the gateway's stored params when
                 absent (redaction is name-based, so both redact identically;
@@ -4597,24 +4604,36 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             None
 
         Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> service = GatewayService()
-            >>> gateway = type('Gateway', (), {
-            ...     'id': 'gw1', 'name': 'test_gw', 'enabled': True, 'reachable': True
-            ... })()
-            >>> service._gateway_failure_counts = {}
             >>> import asyncio
-            >>> # Test failure counting
-            >>> asyncio.run(service._handle_gateway_failure(gateway))  # doctest: +ELLIPSIS
-            >>> service._gateway_failure_counts['gw1'] >= 1
-            True
+            >>> from types import SimpleNamespace
+            >>> from mcpgateway.services import gateway_service as gs
+            >>> service = gs.GatewayService()
+            >>> service._gateway_failure_counts = {}
+            >>> gateway = SimpleNamespace(
+            ...     id="gw1", name="test_gw", enabled=False, reachable=True, auth_query_params=None
+            ... )
 
-            >>> # Test disabled gateway (no action)
-            >>> gateway.enabled = False
-            >>> old_count = service._gateway_failure_counts.get('gw1', 0)
-            >>> asyncio.run(service._handle_gateway_failure(gateway))  # doctest: +ELLIPSIS
-            >>> service._gateway_failure_counts.get('gw1', 0) == old_count
-            True
+            A disabled gateway is skipped before its failure count is touched, even
+            when a concrete error is supplied:
+
+            >>> asyncio.run(service._handle_gateway_failure(gateway, error=RuntimeError("connection refused")))
+            >>> service._gateway_failure_counts.get("gw1", 0)
+            0
+
+            An enabled gateway is counted. The threshold is pinned around the call so
+            the example stays deterministic whatever the deployed configuration is:
+
+            >>> gateway.enabled = True
+            >>> configured_threshold = gs.GW_FAILURE_THRESHOLD
+            >>> gs.GW_FAILURE_THRESHOLD = 2
+            >>> asyncio.run(service._handle_gateway_failure(gateway, error=RuntimeError("connection refused")))
+            >>> service._gateway_failure_counts["gw1"]
+            1
+            >>> gs.GW_FAILURE_THRESHOLD = configured_threshold
+
+            Crossing the threshold is what sanitizes ``error`` and persists it as
+            ``last_error``; that path opens its own database session and is covered by
+            ``tests/unit/mcpgateway/services/test_gateway_service.py``.
         """
         if GW_FAILURE_THRESHOLD == -1:
             return  # Gateway failure action disabled
@@ -4758,10 +4777,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return True
 
     async def _mark_gateway_reachable(self, gateway_id: str, gateway_name: str, gateway_enabled: bool, gateway_reachable: bool, *, reactivation_reason: str = "healthy") -> None:
-        """Reactivate a previously-unreachable gateway and update its last_seen timestamp.
+        """Reactivate a previously-unreachable gateway, refresh ``last_seen``, and clear a stale outage reason.
 
         Extracted to avoid duplicating the same pattern in the success path and the
         401/403-as-healthy path of ``_check_single_gateway_health``.
+
+        Behaviour of the outage reason (``last_error``): a gateway that answers a probe
+        has no reason left to be reported down for, so ``last_error`` is cleared -- but
+        only for enabled gateways. Disabled ones are still probed (the scheduler lists
+        them through ``_get_gateways()``, which defaults to ``include_inactive=True``),
+        and a successful probe there must not erase the reason an operator sees the
+        gateway listed as down for. The enabled flag is read from the freshly-loaded
+        row rather than from the ``gateway_enabled`` snapshot, which can be stale when
+        the gateway is disabled mid-probe; the snapshot is used only to decide whether
+        to run the reactivation itself.
 
         Args:
             gateway_id: Gateway DB identifier.
