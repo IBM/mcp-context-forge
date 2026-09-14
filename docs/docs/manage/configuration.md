@@ -528,6 +528,18 @@ MCP_INBOUND_PROTOCOL_MODE=legacy      # inbound: clients must use initialize han
 MCP_CLIENT_CONNECT_MODE=legacy        # outbound: gateway uses initialize only
 ```
 
+#### Compatibility Guidance
+
+Choose each mode independently for its direction: `MCP_INBOUND_PROTOCOL_MODE` applies to MCP clients connecting to the gateway, while `MCP_CLIENT_CONNECT_MODE` applies to upstream MCP servers.
+
+| Peer capability | `MCP_INBOUND_PROTOCOL_MODE` | `MCP_CLIENT_CONNECT_MODE` | Guidance |
+| ---------------- | --------------------------- | ------------------------- | -------- |
+| Legacy-only | `legacy` | `legacy` | Use the pre-2026 `initialize` handshake only. |
+| Dual-era | `legacy` | `legacy` | Sufficient for compatibility; dual-era clients should retry with legacy after the gateway returns `400` for a modern handshake. |
+| Modern-only | `auto` | `auto` | Required because there is no strict `modern` mode; `auto` negotiates modern protocol revisions and retains legacy fallback. |
+
+For dual-era peers, use `auto` instead of `legacy` only when modern protocol negotiation or modern-only features are required. `auto` is not modern-only.
+
 ### SSO (Single Sign-On) Configuration
 
 | Setting                        | Description                                      | Default               | Options |
