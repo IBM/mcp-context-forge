@@ -22,6 +22,7 @@ Covers:
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # First-Party
@@ -306,6 +307,156 @@ class TestAggregate:
         acc._records.append(("pre", bad_rec))  # pylint: disable=protected-access
         agg = acc.aggregate()
         assert "cpex.control.invocation_count" in agg
+
+    def test_add_violation_preserves_safe_outcome_and_drops_sensitive_data(self):
+        """CPEX deny outcomes produce one safe denying result record."""
+        denying_record = SimpleNamespace(
+            plugin_id="rate-limiter-1",
+            plugin_name="RateLimiterPlugin",
+            plugin_kind="builtin",
+            hook_name="tool_pre_invoke",
+            mode="sequential",
+            status="completed",
+            requested_allow=False,
+            effective_allow=False,
+            matched=True,
+            applied=True,
+            payload_modified=False,
+            duration_ns=42,
+        )
+        outcome = SimpleNamespace(
+            execution=denying_record,
+            violation_code="RATE_LIMIT",
+            mcp_error_code=-32029,
+            http_status_code=429,
+            metadata={"allowed": False, "throttled": True, "backend": "redis", "token": "must-not-leak"},
+        )
+        exception = SimpleNamespace(executions=[], denial_outcome=outcome)
+
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(exception, hook="pre")
+
+        assert acc.pre_denied is True
+        assert len(acc.records) == 1
+        attrs = _per_control_attributes("pre", denying_record, acc.denial_details_for(denying_record))
+        assert attrs["cpex.control.result.allowed"] is False
+        assert attrs["cpex.control.result.violation_code"] == "RATE_LIMIT"
+        assert attrs["cpex.control.result.mcp_error_code"] == -32029
+        assert attrs["cpex.control.result.http_status_code"] == 429
+        assert attrs["cpex.control.result.metadata.backend"] == "redis"
+        assert "token" not in str(attrs)
+
+    def test_add_violation_rejects_unsafe_outcome_data(self):
+        """Untrusted code, status, and metadata never cross the exception boundary."""
+        denying_record = _make_rec(effective_allow=False)
+        outcome = SimpleNamespace(
+            execution=denying_record,
+            violation_code="RATE_LIMIT secret=abc",
+            mcp_error_code=True,
+            http_status_code=99,
+            metadata={"allowed": 0, "backend": "custom", "headers": {"Authorization": "secret"}},
+        )
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[], denial_outcome=outcome), hook="pre")
+
+        attrs = _per_control_attributes("pre", denying_record, acc.denial_details_for(denying_record))
+        assert "cpex.control.result.violation_code" not in attrs
+        assert "cpex.control.result.mcp_error_code" not in attrs
+        assert "cpex.control.result.http_status_code" not in attrs
+        assert "metadata" not in str(attrs)
+
+    def test_add_violation_preserves_prior_controls_without_duplicate_denier(self):
+        """CPEX execution history remains complete while outcome decorates its denial."""
+        prior_record = _make_rec(plugin_id="prior-1", plugin_name="PriorPlugin")
+        denying_record = _make_rec(
+            plugin_id="rate-limiter-1",
+            plugin_name="RateLimiterPlugin",
+            effective_allow=False,
+            requested_allow=False,
+        )
+        safe_outcome_record = SimpleNamespace(
+            plugin_id="rate-limiter-1",
+            plugin_name="RateLimiterPlugin",
+            hook_name="tool_pre_invoke",
+            effective_allow=False,
+        )
+        outcome = SimpleNamespace(
+            execution=safe_outcome_record,
+            violation_code="RATE_LIMIT",
+            mcp_error_code=None,
+            http_status_code=None,
+            metadata={},
+        )
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[prior_record, denying_record], denial_outcome=outcome), hook="pre")
+
+        assert [record for _hook, record in acc.records] == [prior_record, denying_record]
+        assert acc.denial_details_for(denying_record) == {"violation_code": "RATE_LIMIT"}
+
+    def test_add_violation_ignores_unreadable_execution_history(self):
+        """A malformed CPEX exception must still produce denied summary telemetry."""
+
+        class BrokenExecutions:
+            denial_outcome = None
+
+            @property
+            def executions(self):
+                raise RuntimeError("unreadable executions")
+
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(BrokenExecutions(), hook="pre")
+
+        assert acc.pre_denied is True
+        assert acc.records == []
+
+    def test_add_violation_ignores_unreadable_denial_outcome(self):
+        """A malformed CPEX outcome cannot prevent denial telemetry from flushing."""
+
+        class BrokenOutcome:
+            executions = []
+
+            @property
+            def denial_outcome(self):
+                raise RuntimeError("unreadable denial outcome")
+
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(BrokenOutcome(), hook="pre")
+
+        assert acc.pre_denied is True
+
+    def test_add_violation_ignores_unreadable_record_identity(self):
+        """A bad outcome record cannot suppress telemetry for prior CPEX records."""
+
+        prior_record = _make_rec(plugin_id="prior-1")
+
+        class BrokenOutcomeRecord:
+            @property
+            def plugin_id(self):
+                raise RuntimeError("unreadable record")
+
+        outcome = SimpleNamespace(execution=BrokenOutcomeRecord(), metadata={})
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[prior_record], denial_outcome=outcome), hook="pre")
+
+        assert [record for _hook, record in acc.records] == [prior_record, outcome.execution]
+
+    def test_add_violation_ignores_unreadable_safe_details(self):
+        """Outcome attribute failures must never leak or prevent a denial result."""
+
+        denying_record = _make_rec(effective_allow=False)
+
+        class BrokenDetails:
+            execution = denying_record
+
+            @property
+            def violation_code(self):
+                raise RuntimeError("unreadable details")
+
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[], denial_outcome=BrokenDetails()), hook="pre")
+
+        assert acc.pre_denied is True
+        assert acc.denial_details_for(denying_record) == {}
 
 
 # ---------------------------------------------------------------------------
