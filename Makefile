@@ -857,7 +857,7 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter> to pick one)
+# help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
 # help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
@@ -934,20 +934,22 @@ smoketest:
 
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@$(UV_BIN) run playwright install --with-deps chromium >/dev/null
+	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
+	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
+	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
+	@echo "   Requires: docker-compose stack with SSE gateway registered"
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
 # deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (v1.3.0)
-test-mcp-protocol-e2e:
+test-mcp-protocol-e2e: test-e2e
 	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,1.3.0)
-	@$(MAKE) --no-print-directory test-e2e K="$(K)"
 
 # deprecated: test-mcp-cli - Use "make test-e2e" instead (v1.3.0)
-test-mcp-cli:
+test-mcp-cli: test-e2e
 	$(call deprecated_target,test-mcp-cli,make test-e2e,1.3.0)
-	@$(MAKE) --no-print-directory test-e2e K="$(K)"
 
 .PHONY: test-bats
 test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
@@ -962,9 +964,8 @@ test-bats:                     ## 🧪  Run bats tests for git tooling (tests/ba
 	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
 
 # deprecated: test-mcp-rbac - Use "make test-e2e" instead (v1.3.0)
-test-mcp-rbac:
+test-mcp-rbac: test-e2e
 	$(call deprecated_target,test-mcp-rbac,make test-e2e,1.3.0)
-	@$(MAKE) --no-print-directory test-e2e K="$(K)"
 
 test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."

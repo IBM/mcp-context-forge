@@ -380,7 +380,7 @@ Runs the full Playwright test suite in headless Chromium against the live compos
 Requires the compose stack to be running with SSE transport enabled.
 
 ```bash
-make test-mcp-rbac test-mcp-protocol-e2e
+make test-e2e
 ```
 
 | Target | What it tests |
@@ -1422,7 +1422,7 @@ make testing-down compose-clean testing-up
 
 # 7. Integration tests (compose stack must be running)
 make test-ui-headless
-make test-mcp-rbac test-mcp-protocol-e2e
+make test-e2e
 make load-test-cli
 
 # 8. Embedded mode
