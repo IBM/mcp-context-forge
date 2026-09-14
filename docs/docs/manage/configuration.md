@@ -1336,22 +1336,22 @@ The plugin framework has its own configuration via `pydantic-settings` with the 
 
 ### CPU Spin Loop Mitigation
 
-These settings mitigate CPU spin loops that can occur when SSE/MCP connections are cancelled.
+These settings detect and close dead SSE connections before they can trigger CPU
+spin loops during connection cleanup. The underlying anyio `_deliver_cancellation`
+spin (anyio#695) was fixed upstream in anyio 4.15.0, which this project requires;
+the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
+`SSE_TASK_GROUP_CLEANUP_TIMEOUT`) and the experimental anyio monkey-patch
+(`ANYIO_CANCEL_DELIVERY_*`) were removed. Cleanup waits remain bounded internally
+(fixed 5-second windows). See the
+[CPU Spin Loop Mitigation guide](../operations/cpu-spin-loop-mitigation.md) for details.
 
-**Layer 1: SSE Connection Protection**
+**SSE Connection Protection**
 
 | Setting                    | Description                                              | Default | Options     |
 | -------------------------- | -------------------------------------------------------- | ------- | ----------- |
 | `SSE_SEND_TIMEOUT`         | ASGI send() timeout - protects against hung connections | `30.0`  | float       |
 | `SSE_RAPID_YIELD_WINDOW_MS`| Time window for rapid yield detection (milliseconds)    | `1000`  | int > 0     |
 | `SSE_RAPID_YIELD_MAX`      | Max yields per window before assuming client dead       | `50`    | int         |
-
-**Layer 2: Cleanup Timeouts**
-
-| Setting                          | Description                                        | Default | Options |
-| -------------------------------- | -------------------------------------------------- | ------- | ------- |
-| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | Session `__aexit__` timeout (seconds)            | `5.0`   | float > 0 |
-| `SSE_TASK_GROUP_CLEANUP_TIMEOUT`   | SSE task group cleanup timeout (seconds)         | `5.0`   | float > 0 |
 
 ---
 

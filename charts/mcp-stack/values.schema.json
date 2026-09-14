@@ -831,9 +831,6 @@
                 "false"
               ]
             },
-            "MCP_SESSION_POOL_CLEANUP_TIMEOUT": {
-              "type": "string"
-            },
             "MCP_SESSION_POOL_ENABLED": {
               "type": "string"
             },
@@ -1208,9 +1205,6 @@
               "type": "string"
             },
             "SSE_SEND_TIMEOUT": {
-              "type": "string"
-            },
-            "SSE_TASK_GROUP_CLEANUP_TIMEOUT": {
               "type": "string"
             },
             "SSRF_ALLOWED_NETWORKS": {
