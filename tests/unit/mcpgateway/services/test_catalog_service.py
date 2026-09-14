@@ -7,6 +7,7 @@ Unit Tests for Catalog Service .
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -159,7 +160,7 @@ async def test_get_catalog_servers_filters(service):
     }
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
         db = MagicMock()
-        db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
+        db.execute.return_value = [("gw-a", "http://a", True, None, "public", None, None, "catalog")]
         req = CatalogListRequest(category="cat", auth_type="Open", provider="prov", search="srv", tags=["t1"], show_registered_only=True, show_available_only=True, offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total >= 1
@@ -178,7 +179,7 @@ async def test_get_catalog_servers_requires_oauth_config_unconfigured(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Disabled OAuth server with no oauth_config - needs configuration
-        db.execute.return_value = [("gw-oauth", "http://oauth.example.com", False, "oauth", None, "public", None, None, "catalog")]
+        db.execute.return_value = [("gw-oauth", "http://oauth.example.com", False, "oauth", "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
@@ -186,36 +187,6 @@ async def test_get_catalog_servers_requires_oauth_config_unconfigured(service):
         assert server.is_registered is True
         assert server.gateway_id == "gw-oauth"
         assert server.requires_oauth_config is True
-
-
-@pytest.mark.asyncio
-async def test_get_catalog_servers_requires_oauth_config_configured(service):
-    """Test that disabled OAuth server with oauth_config is NOT marked as requires_oauth_config."""
-    fake_catalog = {
-        "catalog_servers": [
-            {
-                "id": "2",
-                "name": "oauth-configured",
-                "url": "http://oauth-configured.example.com",
-                "category": "cat",
-                "auth_type": "OAuth2.1",
-                "provider": "prov",
-                "tags": [],
-                "description": "Configured OAuth server",
-            },
-        ]
-    }
-    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
-        db = MagicMock()
-        # Disabled OAuth server WITH oauth_config - manually disabled, not needing setup
-        db.execute.return_value = [("gw-configured", "http://oauth-configured.example.com", False, "oauth", {"client_id": "abc", "client_secret": "xyz"}, "public", None, None, "catalog")]
-        req = CatalogListRequest(offset=0, limit=10)
-        result = await service.get_catalog_servers(req, db)
-        assert result.total == 1
-        server = result.servers[0]
-        assert server.is_registered is True
-        assert server.gateway_id == "gw-configured"
-        assert server.requires_oauth_config is False
 
 
 @pytest.mark.asyncio
@@ -238,7 +209,7 @@ async def test_get_catalog_servers_requires_oauth_config_enabled(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Enabled OAuth server - fully configured and active
-        db.execute.return_value = [("gw-enabled", "http://oauth-enabled.example.com", True, "oauth", {"client_id": "abc"}, "public", None, None, "catalog")]
+        db.execute.return_value = [("gw-enabled", "http://oauth-enabled.example.com", True, "oauth", "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
@@ -246,6 +217,62 @@ async def test_get_catalog_servers_requires_oauth_config_enabled(service):
         assert server.is_registered is True
         assert server.gateway_id == "gw-enabled"
         assert server.requires_oauth_config is False
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_requires_oauth_config_true_even_when_oauth_config_set(service, test_db):
+    """A disabled OAuth gateway still requires_oauth_config even once oauth_config is persisted -
+    including one that was never registered through the catalog at all.
+
+    Catalog registration now persists oauth_config up front (#5967), so an unauthorized gateway
+    can have a populated oauth_config and still need the caller to complete the OAuth flow.
+    requires_oauth_config must key off enabled/auth_type alone, not oauth_config presence or
+    created_via - otherwise a genuinely unauthorized gateway would look fully configured to the
+    caller. This gateway is deliberately created without created_via (i.e. not "catalog") to
+    document that a manually-created disabled OAuth gateway sharing a catalog entry's URL is
+    intentionally flagged the same way as a catalog-registered one, matching selected_gateways_by_url's
+    URL-only matching in get_catalog_servers.
+    """
+    # First-Party
+    from mcpgateway.db import Gateway as DbGateway
+
+    gateway = DbGateway(
+        id="gw-configured-disabled",
+        name="oauth-configured",
+        slug="oauth-configured",
+        url="http://oauth-configured.example.com",
+        description="OAuth server with oauth_config already set, still disabled",
+        capabilities={},
+        auth_type="oauth",
+        enabled=False,
+        oauth_config={"grant_type": "authorization_code", "issuer": "https://idp.example.com"},
+        created_via=None,
+    )
+    test_db.add(gateway)
+    test_db.commit()
+
+    fake_catalog = {
+        "catalog_servers": [
+            {
+                "id": "1",
+                "name": "oauth-configured",
+                "url": "http://oauth-configured.example.com",
+                "category": "cat",
+                "auth_type": "OAuth2.1",
+                "provider": "prov",
+                "tags": [],
+                "description": "OAuth server",
+            },
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, test_db)
+        assert result.total == 1
+        server = result.servers[0]
+        assert server.is_registered is True
+        assert server.gateway_id == "gw-configured-disabled"
+        assert server.requires_oauth_config is True
 
 
 @pytest.mark.asyncio
@@ -576,6 +603,324 @@ async def test_register_oauth_skip_init_stamps_owner(service):
     assert db_gateway.visibility == "private"
 
 
+@pytest.mark.asyncio
+async def test_register_oauth_invalid_config_does_not_leak_client_secret(service):
+    """A GatewayCreate validation failure (e.g. bad issuer URL) must never echo the
+    caller-supplied oauth_credentials - including client_secret - back in the
+    response's error/message fields, since those are logged and rendered verbatim
+    in the admin UI's HTMX error tooltip.
+    """
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    secret = "SUPER-SECRET-CLIENT-VALUE"  # pragma: allowlist secret
+
+    request = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={"issuer": "not-a-valid-url", "client_id": "abc", "client_secret": secret},
+    )
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with patch("mcpgateway.services.catalog_service.select"):
+            result = await service.register_catalog_server("oauth-server", request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success is False
+    assert secret not in (result.error or "")
+    assert secret not in (result.message or "")
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_non_string_client_secret_is_rejected(service):
+    """A dict `client_secret` (or any non-string value for a known credential key) must fail
+    registration rather than persisting unencrypted - see
+    test_build_oauth_config_from_credentials_rejects_non_string_values for the unit-level check
+    this exercises end to end."""
+    secret = {"inner": "PLAINTEXT-SECRET"}  # pragma: allowlist secret
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    request = CatalogServerRegisterRequest(server_id="oauth-server", oauth_credentials={"issuer": "https://issuer.example.com", "client_secret": secret})
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with patch("mcpgateway.services.catalog_service.select"):
+            result = await service.register_catalog_server("oauth-server", request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success is False
+    assert "PLAINTEXT-SECRET" not in (result.error or "")
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_build_oauth_config_from_credentials_carries_resource_and_audience_fields(service):
+    """The catalog registration path must not drop RFC 8707 resource/audience fields that
+    the equivalent admin.py OAuth form assembly accepts, otherwise a catalog-registered
+    gateway can never get them set at registration time. username/password are omitted:
+    grant_type is hardcoded to authorization_code, so those password-grant-only fields
+    would never be read."""
+    raw = service._build_oauth_config_from_credentials(
+        {
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "username": "svc-account",
+            "password": "svc-secret",  # pragma: allowlist secret
+            "audience": "https://api.example.com",
+            "resource": "https://api.example.com/mcp",
+        }
+    )
+    assert raw["redirect_uri"] == "https://gateway.example.com/oauth/callback"
+    assert "username" not in raw
+    assert "password" not in raw
+    assert raw["audience"] == "https://api.example.com"
+    assert raw["resource"] == "https://api.example.com/mcp"
+
+
+def test_build_oauth_config_from_credentials_ignores_caller_supplied_grant_type(service):
+    """grant_type is always hardcoded to authorization_code, regardless of what the caller
+    submits. token-exchange is a privileged, SSRF-boundary grant type (AGENTS.md) gated to
+    platform admins by `_enforce_token_exchange_admin_only`; an unprivileged catalog
+    registration caller must never be able to reach it by supplying `grant_type` in
+    oauth_credentials, since the catalog register endpoints carry no admin-only gate."""
+    raw = service._build_oauth_config_from_credentials({"grant_type": "token-exchange", "issuer": "https://issuer.example.com"})
+    assert raw["grant_type"] == "authorization_code"
+
+
+def test_build_oauth_config_from_credentials_resource_list_preserved(service):
+    """A caller-supplied multi-value ``resource`` (RFC 7519 aud-claim shape) round-trips as a
+    list rather than being coerced to str or dropped for not being a plain string."""
+    raw = service._build_oauth_config_from_credentials({"resource": ["https://a.example.com", "https://b.example.com"]})
+    assert raw["resource"] == ["https://a.example.com", "https://b.example.com"]
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [
+        [42],
+        [""],
+        ["https://a.example.com", ""],
+        [None],
+        123,
+        {"not": "a-list"},
+    ],
+)
+def test_build_oauth_config_from_credentials_rejects_malformed_resource(service, resource):
+    """``resource`` feeds token_validation_service's RFC 8707 audience check, which only ever
+    expects a string or a list of non-empty strings. An unvalidated value such as ``[42]``
+    would otherwise persist unchanged and silently never match any token ``aud``."""
+    with pytest.raises(ValueError, match="oauth_credentials.resource must be"):
+        service._build_oauth_config_from_credentials({"resource": resource})
+
+
+def test_build_oauth_config_from_credentials_splits_comma_separated_scopes(service):
+    """A comma-separated ``scopes`` string (the shape admin.py's own OAuth form accepts) must
+    be split into individual scope tokens, matching admin._assemble_oauth_config_from_fields().
+    Without this, "repo,read:user" is stored as one malformed scope instead of two, and every
+    downstream consumer (oauth_manager.py, dcr_service.py) joins the list with a space before
+    sending it to the IdP, so the comma would ride along onto the wire unsplit."""
+    raw = service._build_oauth_config_from_credentials({"scopes": "repo,read:user"})
+    assert raw["scopes"] == ["repo", "read:user"]
+
+
+def test_build_oauth_config_from_credentials_scopes_list_normalized(service):
+    """A list of scopes still normalizes embedded commas/whitespace per element, and plain
+    space-separated input round-trips unchanged."""
+    raw = service._build_oauth_config_from_credentials({"scopes": ["repo,read:user", "write"]})
+    assert raw["scopes"] == ["repo", "read:user", "write"]
+
+    raw = service._build_oauth_config_from_credentials({"scopes": "repo read:user"})
+    assert raw["scopes"] == ["repo", "read:user"]
+
+
+@pytest.mark.parametrize("key", ["issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"])
+def test_build_oauth_config_from_credentials_rejects_non_string_values(service, key):
+    """A dict/list/int value for a known credential key must be rejected outright rather than
+    silently persisted. Left unchecked, `_encrypt_oauth_secret_value`'s `isinstance(value, str)`
+    guard returns a non-string value as-is (never encrypts it) and `_validate_oauth_config_urls`
+    only inspects the URL-bearing keys - so e.g. a dict `client_secret` would land in
+    `gateways.oauth_config` in plaintext (CWE-312) instead of being caught here."""
+    with pytest.raises(ValueError, match=f"oauth_credentials.{key} must be a string"):
+        service._build_oauth_config_from_credentials({key: {"inner": "not-a-string"}})
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_skip_init_persists_oauth_credentials(service):
+    """oauth_credentials submitted with the register request land on the gateway's
+    oauth_config in a single call - no second PUT /gateways/{id} required (#5967)."""
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    req = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={
+            "issuer": "https://issuer.example.com",
+            "client_id": "client-123",
+            "client_secret": "super-secret",  # pragma: allowlist secret
+            "scopes": ["read", "write"],
+        },
+    )
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        # Discovery makes an outbound call; keep it a no-op so the test stays offline.
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
+            patch.object(service._gateway_service, "_auto_discover_oauth_endpoints", AsyncMock(side_effect=lambda cfg: cfg)),
+        ):
+            result = await service.register_catalog_server("oauth-server", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    assert result.oauth_required is True
+    db_gateway = db.add.call_args[0][0]
+    assert db_gateway.auth_type == "oauth"
+    assert db_gateway.enabled is False
+    stored = db_gateway.oauth_config
+    assert stored["grant_type"] == "authorization_code"
+    assert stored["issuer"] == "https://issuer.example.com"
+    assert stored["client_id"] == "client-123"
+    assert stored["scopes"] == ["read", "write"]
+    # Sensitive values are encrypted at rest, never stored as the plaintext submitted.
+    assert stored["client_secret"] != "super-secret"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_skip_init_survives_slow_discovery(service):
+    """Register-time OAuth endpoint discovery is a best-effort optimization
+    (/oauth/authorize's own DCR branch discovers again later), not a correctness requirement.
+    A slow/unreachable issuer must not pin the request worker and DB connection for up to 60s
+    (two sequential settings.oauth_request_timeout probes) - registration should still succeed,
+    with the submitted credentials persisted minus the discovered endpoints."""
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    req = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={"issuer": "https://issuer.example.com", "client_id": "client-123"},
+    )
+
+    async def _slow_discover(cfg):
+        await asyncio.sleep(10)
+        return cfg
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
+            patch("mcpgateway.services.catalog_service.CATALOG_OAUTH_DISCOVERY_TIMEOUT", 0.05),
+            patch.object(service._gateway_service, "_auto_discover_oauth_endpoints", _slow_discover),
+        ):
+            result = await service.register_catalog_server("oauth-server", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    db_gateway = db.add.call_args[0][0]
+    stored = db_gateway.oauth_config
+    assert stored["issuer"] == "https://issuer.example.com"
+    assert stored["client_id"] == "client-123"
+    assert "endpoints_discovered" not in stored
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_and_api_key_without_api_key_skips_initialization(service):
+    """A mixed OAuth2.1 & API Key catalog entry registered with no api_key must take the
+    skip-initialization path rather than falling through to a doomed connection test."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}
+        ]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="mixed-server"),
+            patch.object(service._gateway_service, "register_gateway", AsyncMock(side_effect=AssertionError("register_gateway must not be called on the skip-init path"))),
+        ):
+            # request=None: no api_key supplied at all.
+            result = await service.register_catalog_server("mixed-server", None, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    assert result.oauth_required is True
+    db_gateway = db.add.call_args[0][0]
+    assert db_gateway.auth_type == "oauth"
+    assert db_gateway.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_and_api_key_with_both_uses_bearer_and_drops_oauth_config(service):
+    """A mixed OAuth2.1 & API Key catalog entry registered with BOTH an api_key and
+    oauth_credentials takes the bearer-token path and does NOT persist oauth_config: auth_type
+    stays "bearer" while every downstream OAuth gate (tool_service token injection, vault_router's
+    visibility query, requires_oauth_config) keys off auth_type == "oauth", not oauth_config
+    presence, so a persisted-but-unused oauth_config would be a silent no-op. The caller can still
+    switch this gateway to OAuth explicitly via PUT /gateways/{id}."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}
+        ]
+    }
+    req = CatalogServerRegisterRequest(
+        server_id="mixed-server",
+        api_key="secret-key",  # pragma: allowlist secret
+        oauth_credentials={"issuer": "https://issuer.example.com", "client_id": "client-123", "scopes": ["read"]},
+    )
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        register_gateway = AsyncMock(return_value=MagicMock(id="gw-1", name="Mixed Server"))
+
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", register_gateway):
+            result = await service.register_catalog_server("mixed-server", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    kwargs = register_gateway.await_args.kwargs
+    gateway = kwargs["gateway"]
+    # Connection test still uses the bearer token, exactly as before.
+    assert gateway.auth_type == "bearer"
+    assert gateway.auth_token == "secret-key"  # pragma: allowlist secret
+    # oauth_credentials are not attached to a "bearer" gateway - see docstring.
+    assert gateway.oauth_config is None
+
+
 # ---------- Exception mapping in register_catalog_server ----------
 
 
@@ -713,7 +1058,7 @@ async def test_get_catalog_servers_cache_store_exception(service):
     mock_cache.set = AsyncMock(side_effect=Exception("Redis error"))
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
         db = MagicMock()
-        db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
+        db.execute.return_value = [("gw-a", "http://a", True, None, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
@@ -732,9 +1077,9 @@ async def test_get_catalog_servers_scoped_registration_state(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         db.execute.return_value = [
-            ("gw-visible", "http://visible", True, None, None, "team", "team-a", "teammate@example.com", "catalog"),
-            ("gw-wrong-team", "http://wrong-team", False, "oauth", None, "team", "team-b", "teammate@example.com", "catalog"),
-            ("gw-private-other", "http://private-other", True, None, None, "private", None, "other@example.com", "catalog"),
+            ("gw-visible", "http://visible", True, None, "team", "team-a", "teammate@example.com", "catalog"),
+            ("gw-wrong-team", "http://wrong-team", False, "oauth", "team", "team-b", "teammate@example.com", "catalog"),
+            ("gw-private-other", "http://private-other", True, None, "private", None, "other@example.com", "catalog"),
         ]
         req = CatalogListRequest(offset=0, limit=10)
 
@@ -765,7 +1110,7 @@ async def test_get_catalog_servers_scoped_request_uses_scope_aware_cache(service
     mock_cache.set = AsyncMock(side_effect=lambda _cache_type, value, filters_hash: cached_responses.update({filters_hash: value}))
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
         db = MagicMock()
-        db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
+        db.execute.return_value = [("gw-a", "http://a", True, None, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
 
         result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=["team-b", "team-a"])
@@ -784,33 +1129,33 @@ async def test_get_catalog_servers_scoped_request_uses_scope_aware_cache(service
     [
         (
             [
-                ("gw-catalog-other", "http://a", True, None, None, "public", None, "other@example.com", "catalog"),
-                ("gw-owned-manual", "http://a", True, None, None, "public", None, "user@example.com", "api"),
-                ("gw-owned-catalog", "http://a", False, "oauth", None, "public", None, "user@example.com", "catalog"),
+                ("gw-catalog-other", "http://a", True, None, "public", None, "other@example.com", "catalog"),
+                ("gw-owned-manual", "http://a", True, None, "public", None, "user@example.com", "api"),
+                ("gw-owned-catalog", "http://a", False, "oauth", "public", None, "user@example.com", "catalog"),
             ],
             "gw-owned-catalog",
             True,
         ),
         (
             [
-                ("gw-catalog-other", "http://a", True, None, None, "public", None, "other@example.com", "catalog"),
-                ("gw-owned-manual", "http://a", True, None, None, "public", None, "user@example.com", "api"),
+                ("gw-catalog-other", "http://a", True, None, "public", None, "other@example.com", "catalog"),
+                ("gw-owned-manual", "http://a", True, None, "public", None, "user@example.com", "api"),
             ],
             "gw-owned-manual",
             False,
         ),
         (
             [
-                ("gw-manual-other", "http://a", True, None, None, "public", None, "other@example.com", "api"),
-                ("gw-catalog-other", "http://a", True, None, None, "public", None, "other@example.com", "catalog"),
+                ("gw-manual-other", "http://a", True, None, "public", None, "other@example.com", "api"),
+                ("gw-catalog-other", "http://a", True, None, "public", None, "other@example.com", "catalog"),
             ],
             "gw-catalog-other",
             False,
         ),
         (
             [
-                ("gw-b", "http://a", True, None, None, "public", None, "other@example.com", "api"),
-                ("gw-a", "http://a", True, None, None, "public", None, "other@example.com", "api"),
+                ("gw-b", "http://a", True, None, "public", None, "other@example.com", "api"),
+                ("gw-a", "http://a", True, None, "public", None, "other@example.com", "api"),
             ],
             "gw-a",
             False,

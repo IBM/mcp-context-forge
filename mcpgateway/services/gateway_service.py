@@ -759,7 +759,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._file_lock_pid = os.getpid()
 
     @staticmethod
-    async def _auto_discover_oauth_endpoints(raw_oauth_config: dict) -> dict:
+    async def _auto_discover_oauth_endpoints(raw_oauth_config: Optional[dict]) -> Optional[dict]:
         """Auto-discover OAuth endpoints from issuer metadata if needed.
 
         Args:
@@ -830,7 +830,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
 
     @staticmethod
-    def _validate_token_exchange_config(oauth_config: dict) -> dict:
+    def _validate_token_exchange_config(oauth_config: Optional[dict]) -> Optional[dict]:
         """Validate and default RFC 8693 token-exchange config. No-op for other grants.
 
         Args:
@@ -884,9 +884,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             oauth_config: Raw gateway oauth_config dict being applied (create or update).
             requester_email: Email of the user performing the create/update. ``None``/empty
                 means the call originates from a trusted internal flow (config import, which
-                is already gated behind the platform-admin-only ``admin.import`` permission;
-                catalog registration, which applies a bundled/static definition) rather than
-                a request-scoped HTTP caller, so the gate is skipped.
+                is already gated behind the platform-admin-only ``admin.import`` permission)
+                rather than a request-scoped HTTP caller, so the gate is skipped. Catalog
+                registration now passes the real caller's ``owner_email`` here rather than an
+                empty string, so it goes through this gate like any other caller - harmless
+                today since catalog-built oauth_config always hardcodes grant_type to
+                authorization_code, never token-exchange.
 
         Raises:
             PermissionError: If grant_type is token-exchange, a requester_email is present,
@@ -902,6 +905,34 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         is_platform_admin = await permission_service.check_permission(requester_email, "*", allow_admin_bypass=True)
         if not is_platform_admin:
             raise PermissionError("Configuring a token-exchange gateway requires platform administrator privileges.")
+
+    async def prepare_oauth_config_for_storage(self, db: Session, raw_oauth_config: Optional[dict], requester_email: Optional[str]) -> Optional[dict]:
+        """Run the shared enforce/discover/validate/encrypt pipeline for a gateway's oauth_config.
+
+        Every write path that persists a gateway's ``oauth_config`` (interactive gateway
+        registration and catalog registration) must apply the same token-exchange admin gate,
+        issuer-discovery, and token-exchange defaulting before encrypting for storage - otherwise
+        a path that hand-rolls a subset silently loses those checks the moment it needs to support
+        a grant type beyond the one it was written for.
+
+        Instance method (rather than static/classmethod) so callers - and unit tests - can patch
+        the discovery/validation steps per-instance the same way ``register_gateway`` already
+        allows.
+
+        Args:
+            db: Database session, forwarded to the token-exchange admin-only gate.
+            raw_oauth_config: Raw OAuth config dict to prepare, or None.
+            requester_email: Email of the user performing the create/update, for the
+                token-exchange admin-only gate. None/empty skips that gate (see
+                ``_enforce_token_exchange_admin_only``).
+
+        Returns:
+            The encrypted-for-storage oauth_config dict, or None.
+        """
+        await self._enforce_token_exchange_admin_only(db, raw_oauth_config, requester_email)
+        raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
+        raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
+        return await protect_oauth_config_for_storage(raw_oauth_config)
 
     @staticmethod
     def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
@@ -1541,11 +1572,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             decoded = decode_auth(auth_value)
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
-        raw_oauth_config = getattr(gateway, "oauth_config", None)
-        await self._enforce_token_exchange_admin_only(db, raw_oauth_config, owner_email)
-        raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
-        raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
-        oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
+        oauth_config = await self.prepare_oauth_config_for_storage(db, getattr(gateway, "oauth_config", None), owner_email)
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
         init_client_key = getattr(gateway, "client_key", None)
