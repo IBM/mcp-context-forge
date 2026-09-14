@@ -66,6 +66,7 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "alembic>=1.19.1",
+    "anyio>=4.15.0", # 4.15.0 fixes the _deliver_cancellation CPU spin (anyio#695/#1111); SSE cancel-deadline workarounds removed in #5427
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
     "brotli>=1.2.0",
