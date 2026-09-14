@@ -58,6 +58,68 @@ class RelayUnavailableError(RuntimeError):
         super().__init__("reverse-proxy relay unavailable")
 
 
+async def _redis_operation(operation: Awaitable[_RedisResult]) -> _RedisResult:
+    """Convert Redis implementation failures into one code-only relay error."""
+    try:
+        return await operation
+    except Exception:  # Redis implementations expose multiple backend-specific failure classes
+        raise RelayUnavailableError from None
+
+
+@dataclass(frozen=True, slots=True)
+class _RedisLease:
+    """One generation-fenced Redis lease on a single key.
+
+    Parameterizes the registration and owner leases over their key, holder
+    value, and TTL. ``reclaim_stale`` encodes the owner lease's same-worker
+    stale-generation reclamation, the only claim-semantics difference between
+    the two; promotion and maintained refresh are exposed for every lease and
+    used only where the caller's invariant requires them.
+    """
+
+    redis: RelayRedis | None
+    key: str
+    holder_value: str
+    ttl_seconds: int
+    reclaim_stale: Callable[[], Awaitable[bool]] | None = None
+
+    async def claim(self) -> bool:
+        """Acquire the lease, reclaiming one contested stale holder only when hooked."""
+        if self.redis is None:
+            return False
+        if await _redis_operation(self.redis.set(self.key, self.holder_value, nx=True, ex=self.ttl_seconds)):
+            return True
+        if self.reclaim_stale is None or not await self.reclaim_stale():
+            return False
+        return bool(await _redis_operation(self.redis.set(self.key, self.holder_value, nx=True, ex=self.ttl_seconds)))
+
+    async def heartbeat(self) -> bool:
+        """Refresh the lease only for its exact holder generation."""
+        if self.redis is None:
+            return False
+        return await _redis_operation(self.redis.eval(_OWNER_REFRESH_LUA, 1, self.key, self.holder_value, self.ttl_seconds)) == 1
+
+    async def release(self) -> bool:
+        """Release the lease only for its exact holder generation."""
+        if self.redis is None:
+            return False
+        return await _redis_operation(self.redis.eval(_OWNER_RELEASE_LUA, 1, self.key, self.holder_value)) == 1
+
+    async def promote(self, target_key: str) -> bool:
+        """Atomically copy the lease into the target key for the exact holder."""
+        if self.redis is None:
+            return False
+        return await _redis_operation(self.redis.eval(_REGISTRATION_PROMOTE_LUA, 2, self.key, target_key, self.holder_value, self.holder_value, self.ttl_seconds)) == 1
+
+    async def maintain(self, authority_lost_message: str) -> None:
+        """Refresh a held lease until cancelled or authority is lost."""
+        refresh_interval = max(self.ttl_seconds / 3, 0.1)
+        while True:
+            await anyio.sleep(refresh_interval)
+            if not await self.heartbeat():
+                raise RuntimeError(authority_lost_message)
+
+
 @dataclass(frozen=True, slots=True)
 class _OwnerOperation:
     """Tracked owner request authority and its cancellation scope."""
@@ -136,53 +198,31 @@ class ReverseProxyRelay:
         """Serialize one exact worker and connection ownership generation."""
         return RelayOwner(worker_id=worker_id or self._worker_id(), connection_id=str(connection_id)).model_dump_json()
 
+    def _registration_lease(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> _RedisLease:
+        """Return the single-writer registration lease for one exact generation."""
+        return _RedisLease(self._redis, self.registration_key(stable_id), self.owner_value(connection_id), self._owner_ttl_seconds)
+
+    def _owner_lease(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> _RedisLease:
+        """Return the ownership lease with same-worker stale-generation reclamation."""
+        return _RedisLease(
+            self._redis,
+            self.owner_key(stable_id),
+            self.owner_value(connection_id),
+            self._owner_ttl_seconds,
+            reclaim_stale=lambda: self._reclaim_stale_owner(stable_id),
+        )
+
     async def claim_registration(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Acquire the single-writer lease before any catalog mutation."""
-        if self._redis is None:
-            return False
-        return bool(
-            await self._redis_operation(
-                self._redis.set(
-                    self.registration_key(stable_id),
-                    self.owner_value(connection_id),
-                    nx=True,
-                    ex=self._owner_ttl_seconds,
-                )
-            )
-        )
+        return await self._registration_lease(stable_id, connection_id).claim()
 
     async def heartbeat_registration(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Refresh the registration lease only for its exact generation."""
-        if self._redis is None:
-            return False
-        return (
-            await self._redis_operation(
-                self._redis.eval(
-                    _OWNER_REFRESH_LUA,
-                    1,
-                    self.registration_key(stable_id),
-                    self.owner_value(connection_id),
-                    self._owner_ttl_seconds,
-                )
-            )
-            == 1
-        )
+        return await self._registration_lease(stable_id, connection_id).heartbeat()
 
     async def release_registration(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Release only the matching registration generation."""
-        if self._redis is None:
-            return False
-        return (
-            await self._redis_operation(
-                self._redis.eval(
-                    _OWNER_RELEASE_LUA,
-                    1,
-                    self.registration_key(stable_id),
-                    self.owner_value(connection_id),
-                )
-            )
-            == 1
-        )
+        return await self._registration_lease(stable_id, connection_id).release()
 
     async def promote_registration(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Atomically replace active ownership only for the matching lease holder.
@@ -191,56 +231,33 @@ class ReverseProxyRelay:
         acknowledgement succeeds, preventing a replacement registration from
         racing failure compensation.
         """
-        if self._redis is None:
-            return False
-        return (
-            await self._redis_operation(
-                self._redis.eval(
-                    _REGISTRATION_PROMOTE_LUA,
-                    2,
-                    self.registration_key(stable_id),
-                    self.owner_key(stable_id),
-                    self.owner_value(connection_id),
-                    self.owner_value(connection_id),
-                    self._owner_ttl_seconds,
-                )
-            )
-            == 1
-        )
+        return await self._registration_lease(stable_id, connection_id).promote(self.owner_key(stable_id))
 
     async def maintain_registration(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> None:
         """Refresh a held registration lease until cancelled or authority is lost."""
-        refresh_interval = max(self._owner_ttl_seconds / 3, 0.1)
-        while True:
-            await anyio.sleep(refresh_interval)
-            if not await self.heartbeat_registration(stable_id, connection_id):
-                raise RuntimeError("reverse-proxy registration authority was lost")
+        await self._registration_lease(stable_id, connection_id).maintain("reverse-proxy registration authority was lost")
 
     async def claim_owner(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Claim ownership when no generation currently owns the stable gateway."""
-        if self._redis is None:
-            return False
-        owner_key = self.owner_key(stable_id)
-        owner_value = self.owner_value(connection_id)
-        if await self._redis_operation(self._redis.set(owner_key, owner_value, nx=True, ex=self._owner_ttl_seconds)):
-            return True
-        current = await self._read_owner(stable_id)
-        if current is None or current.worker_id != self._worker_id() or self._manager.get_session(ConnectionId(current.connection_id)) is not None:
-            return False
-        released = await self._redis_operation(self._redis.eval(_OWNER_RELEASE_LUA, 1, owner_key, current.model_dump_json()))
-        return released == 1 and bool(await self._redis_operation(self._redis.set(owner_key, owner_value, nx=True, ex=self._owner_ttl_seconds)))
+        return await self._owner_lease(stable_id, connection_id).claim()
 
     async def heartbeat_owner(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Refresh ownership only when the exact generation still owns it."""
-        if self._redis is None:
-            return False
-        return await self._redis_operation(self._redis.eval(_OWNER_REFRESH_LUA, 1, self.owner_key(stable_id), self.owner_value(connection_id), self._owner_ttl_seconds)) == 1
+        return await self._owner_lease(stable_id, connection_id).heartbeat()
 
     async def release_owner(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> bool:
         """Release ownership only when the exact generation still owns it."""
-        if self._redis is None:
+        return await self._owner_lease(stable_id, connection_id).release()
+
+    async def _reclaim_stale_owner(self, stable_id: StableGatewayId) -> bool:
+        """Fenced-release one same-worker owner generation whose local session is gone."""
+        redis = self._redis
+        if redis is None:
             return False
-        return await self._redis_operation(self._redis.eval(_OWNER_RELEASE_LUA, 1, self.owner_key(stable_id), self.owner_value(connection_id))) == 1
+        current = await self._read_owner(stable_id)
+        if current is None or current.worker_id != self._worker_id() or self._manager.get_session(ConnectionId(current.connection_id)) is not None:
+            return False
+        return await _redis_operation(redis.eval(_OWNER_RELEASE_LUA, 1, self.owner_key(stable_id), current.model_dump_json())) == 1
 
     async def is_unowned(self, eviction: ReverseProxyEviction) -> bool:
         """Return whether Redis has no owner after one exact generation was evicted."""
@@ -261,22 +278,15 @@ class ReverseProxyRelay:
         if self._redis is None:
             yield await self.is_unowned(eviction)
             return
-        claimed = await self._redis_operation(
-            self._redis.set(
-                self.registration_key(eviction.stable_id),
-                self.owner_value(eviction.connection_id),
-                nx=True,
-                ex=self._owner_ttl_seconds,
-            )
-        )
-        if not claimed:
+        lease = self._registration_lease(eviction.stable_id, eviction.connection_id)
+        if not await lease.claim():
             yield False
             return
         try:
             yield await self.is_unowned(eviction)
         finally:
             try:
-                await self._redis_operation(self._redis.eval(_OWNER_RELEASE_LUA, 1, self.registration_key(eviction.stable_id), self.owner_value(eviction.connection_id)))
+                await lease.release()
             except RelayUnavailableError:
                 # The lease still expires by TTL; a lost release must not mask the write outcome.
                 LOGGER.warning("Reverse-proxy unreachable-write lease release failed", extra={"stable_id": str(eviction.stable_id)})
@@ -299,22 +309,22 @@ class ReverseProxyRelay:
             bytes_transferred=session.bytes_transferred,
             server_info=dict(session.server_info),
         )
-        await self._redis_operation(self._redis.setex(self.session_key(connection_id), self._owner_ttl_seconds, entry.model_dump_json()))
-        await self._redis_operation(self._redis.sadd(self.session_index_key(), str(connection_id)))
+        await _redis_operation(self._redis.setex(self.session_key(connection_id), self._owner_ttl_seconds, entry.model_dump_json()))
+        await _redis_operation(self._redis.sadd(self.session_index_key(), str(connection_id)))
         return entry
 
     async def remove_session(self, connection_id: ConnectionId) -> None:
         """Remove one exact connection from the distributed session directory."""
         if self._redis is None:
             return
-        await self._redis_operation(self._redis.delete(self.session_key(connection_id)))
-        await self._redis_operation(self._redis.srem(self.session_index_key(), str(connection_id)))
+        await _redis_operation(self._redis.delete(self.session_key(connection_id)))
+        await _redis_operation(self._redis.srem(self.session_index_key(), str(connection_id)))
 
     async def get_session_entry(self, connection_id: ConnectionId) -> RelaySessionEntry | None:
         """Resolve one connection's typed distributed directory entry."""
         if self._redis is None:
             return None
-        raw = await self._redis_operation(self._redis.get(self.session_key(connection_id)))
+        raw = await _redis_operation(self._redis.get(self.session_key(connection_id)))
         try:
             return RelaySessionEntry.model_validate_json(raw) if raw is not None else None
         except ValidationError:
@@ -325,13 +335,13 @@ class ReverseProxyRelay:
         """List live typed entries and prune expired index members."""
         if self._redis is None:
             return ()
-        raw_members = await self._redis_operation(self._redis.smembers(self.session_index_key()))
+        raw_members = await _redis_operation(self._redis.smembers(self.session_index_key()))
         entries: list[RelaySessionEntry] = []
         for raw_member in raw_members:
             connection_id = ConnectionId(raw_member.decode() if isinstance(raw_member, bytes) else raw_member)
             entry = await self.get_session_entry(connection_id)
             if entry is None:
-                await self._redis_operation(self._redis.srem(self.session_index_key(), str(connection_id)))
+                await _redis_operation(self._redis.srem(self.session_index_key(), str(connection_id)))
             else:
                 entries.append(entry)
         return tuple(entries)
@@ -340,7 +350,7 @@ class ReverseProxyRelay:
         """Publish liveness for the current worker with a bounded TTL."""
         if self._redis is None:
             return False
-        return bool(await self._redis_operation(self._redis.setex(f"mcpgw:worker_heartbeat:{self._worker_id()}", _WORKER_HEARTBEAT_TTL_SECONDS, "alive")))
+        return bool(await _redis_operation(self._redis.setex(f"mcpgw:worker_heartbeat:{self._worker_id()}", _WORKER_HEARTBEAT_TTL_SECONDS, "alive")))
 
     async def heartbeat(self) -> None:
         """Refresh this worker and only the exact local ownership generations."""
@@ -391,14 +401,6 @@ class ReverseProxyRelay:
         """Retire each snapshot generation only while it remains locally current."""
         for stable_id, connection_id in mappings:
             await self._retire_lost_authority(stable_id, connection_id)
-
-    @staticmethod
-    async def _redis_operation(operation: Awaitable[_RedisResult]) -> _RedisResult:
-        """Convert Redis implementation failures into one code-only relay error."""
-        try:
-            return await operation
-        except Exception:  # Redis implementations expose multiple backend-specific failure classes
-            raise RelayUnavailableError from None
 
     @staticmethod
     def _redis_sync_operation(operation: Callable[[], _RedisResult]) -> _RedisResult:
@@ -497,7 +499,7 @@ class ReverseProxyRelay:
             origin_worker_id=self._worker_id(),
             forward_sig="0" * 64,
         )
-        published = await self._redis_operation(
+        published = await _redis_operation(
             redis.publish(
                 f"mcpgw:pool_rp:{owner.worker_id}",
                 orjson.dumps(sign_envelope(envelope.model_dump(mode="json", exclude={"forward_sig"}))),
@@ -519,8 +521,8 @@ class ReverseProxyRelay:
         if redis is None:
             raise ConnectionNotFoundError(ConnectionId(str(target.stable_id)))
         owner = target.owner
-        if not await self._redis_operation(redis.exists(f"mcpgw:worker_heartbeat:{owner.worker_id}")):
-            await self._redis_operation(redis.eval(_OWNER_RELEASE_LUA, 1, self.owner_key(target.stable_id), owner.model_dump_json()))
+        if not await _redis_operation(redis.exists(f"mcpgw:worker_heartbeat:{owner.worker_id}")):
+            await _RedisLease(redis, self.owner_key(target.stable_id), owner.model_dump_json(), self._owner_ttl_seconds).release()
             raise ConnectionNotFoundError(ConnectionId(owner.connection_id))
         request_id = uuid.uuid4().hex
         deadline = self._utc_now() + timeout_seconds
@@ -541,8 +543,8 @@ class ReverseProxyRelay:
         pubsub = self._redis_sync_operation(redis.pubsub)
         completed = False
         try:
-            await self._redis_operation(pubsub.subscribe(channel))
-            await self._redis_operation(redis.publish(f"mcpgw:pool_rp:{owner.worker_id}", orjson.dumps(outbound)))
+            await _redis_operation(pubsub.subscribe(channel))
+            await _redis_operation(redis.publish(f"mcpgw:pool_rp:{owner.worker_id}", orjson.dumps(outbound)))
             with anyio.fail_after(max(0.0, deadline - self._utc_now())):
                 async for entry in self._listen_pubsub(pubsub):
                     raw = parse_pubsub_message(entry)
@@ -585,7 +587,7 @@ class ReverseProxyRelay:
             reconnect = False
             try:
                 pubsub = self._redis_sync_operation(redis.pubsub)
-                await self._redis_operation(pubsub.subscribe(channel))
+                await _redis_operation(pubsub.subscribe(channel))
                 if not started:
                     self._listening_event.set()
                     task_status.started()
@@ -712,7 +714,7 @@ class ReverseProxyRelay:
         remaining = envelope.deadline_utc - self._utc_now()
         if redis is None or remaining <= 0:
             return False
-        claimed = await self._redis_operation(
+        claimed = await _redis_operation(
             redis.set(
                 f"mcpgw:rp_consumed:{envelope.origin_worker_id}:{envelope.request_id}",
                 envelope.forward_sig,
@@ -728,13 +730,13 @@ class ReverseProxyRelay:
         if redis is None:
             return
         raw = {"type": "rp_response", "request_id": request_id, "response": response.model_dump(mode="json") if response else None, "error": error}
-        await self._redis_operation(redis.publish(self.response_channel(request_id), orjson.dumps(sign_envelope({key: value for key, value in raw.items() if value is not None}))))
+        await _redis_operation(redis.publish(self.response_channel(request_id), orjson.dumps(sign_envelope({key: value for key, value in raw.items() if value is not None}))))
 
     async def _read_owner(self, stable_id: StableGatewayId) -> RelayOwner | None:
         """Read and strictly parse the current Redis owner generation."""
         if self._redis is None:
             return None
-        raw = await self._redis_operation(self._redis.get(self.owner_key(stable_id)))
+        raw = await _redis_operation(self._redis.get(self.owner_key(stable_id)))
         try:
             return RelayOwner.model_validate_json(raw) if raw is not None else None
         except ValidationError:
