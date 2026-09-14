@@ -56,6 +56,90 @@ The distributed lifecycle also has deterministic race and compensation regressio
 
 ---
 
+## Live end-to-end harness
+
+The harness in `tests/live_gateway/reverse_proxy/` runs the real maintained client against a containerized multi-worker gateway and executes 11 live scenarios. It is **not** part of `make test` or CI. It is a manually invoked live verification for when you change the reverse-proxy service, the protocol, or the dispatch path.
+
+### Prerequisites
+
+- Docker with compose v2
+- `uv`
+- A local clone of the maintained client ([contextforge-org/mcp-reverse-proxy](https://github.com/contextforge-org/mcp-reverse-proxy))
+
+The client clone is located via `MCP_REVERSE_PROXY_CLIENT_ROOT`, which defaults to `../../../mcp-reverse-proxy` relative to the repo root (the fleet-worktree layout). Most developers need to set it explicitly:
+
+```bash
+export MCP_REVERSE_PROXY_CLIENT_ROOT=/path/to/mcp-reverse-proxy
+```
+
+The script exits with status 2 and a clear message if `pyproject.toml` is missing at that path.
+
+### Invocation
+
+```bash
+RP_E2E_RUN_ID=my-run tests/live_gateway/reverse_proxy/run.sh
+```
+
+Any working directory works; the script resolves the repo root via `git rev-parse`. If `RP_E2E_RUN_ID` is unset, the run id defaults to a pid/random slug.
+
+### What it runs
+
+The script brings up the repo's `docker-compose.yml` stack plus the `tests/live_gateway/reverse_proxy/docker-compose.reverse-proxy.yml` override:
+
+- One gateway container with **2 Gunicorn workers**, `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` and `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED=true`
+- Redis, Postgres, pgbouncer, and nginx
+- The pinned fast-test downstream server, the repo compliance server, and auth/authority probe servers
+- The real maintained client, as three separate client processes
+
+It then runs two pytest modules:
+
+- `test_reverse_proxy_e2e.py` (10 scenarios)
+- `test_reverse_proxy_feature_flag_e2e.py` (1 scenario)
+
+The scenarios cover:
+
+1. Auth-denial status preservation
+2. Token-scope 403 on a restricted token
+3. Authority non-override (client cannot claim server-owned identity)
+4. Resource and prompt round-trips, including typed blobs
+5. Cross-worker relay invocation
+6. Server-owned authority on discovered catalog rows
+7. Stored bearer token forwarding without exposure in logs
+8. Redis-outage fail-closed behavior plus recovery
+9. Client-stop unreachable state plus fail-closed dispatch
+10. Heartbeat-timeout eviction
+11. Feature-flag-off route absence
+
+### Isolation
+
+All host ports are picked dynamically, so there are no fixed-port conflicts. Every compose resource, container name, and the gateway image tag is namespaced by the run slug, which means parallel runs from different worktrees are isolated. A unit test (`tests/unit/mcpgateway/services/test_reverse_proxy_live_harness.py`) asserts this.
+
+### Artifacts
+
+Each run writes to `artifacts/reverse-proxy-e2e/<run-slug>/`:
+
+- `junit.xml` for the pytest results
+- `gateway.log` plus per-process logs for each client and probe server
+
+After the pytest run, the harness also greps the logs for bearer tokens and the forwarded downstream token, and fails if any credential leaked into a log.
+
+### Cleanup
+
+An `EXIT` trap kills the client and server processes, tears down containers, the network, and volumes, and removes the run-scoped gateway image unless `RP_GATEWAY_IMAGE` was supplied externally. If any Docker resources survive cleanup, the script reports it and exits non-zero.
+
+### Environment overrides
+
+| Variable | Purpose |
+| -------- | ------- |
+| `RP_E2E_RUN_ID` | Stable run name; also the artifact directory slug |
+| `MCP_REVERSE_PROXY_CLIENT_ROOT` | Path to the maintained client clone |
+| `RP_GATEWAY_IMAGE` | Use a prebuilt gateway image instead of building one |
+| `RP_HEARTBEAT_TIMEOUT` | Heartbeat eviction timeout in seconds (default 3) |
+| `FAST_TEST_PORT`, `NGINX_PORT`, `REDIS_HOST_PORT`, `POSTGRES_HOST_PORT`, `PGBOUNCER_HOST_PORT`, `RP_COMPLIANCE_PORT`, `RP_AUTH_PORT`, `RP_FEATURE_OFF_PORT` | Pin a host port instead of picking a random one |
+| `RP_JWT_SECRET_KEY`, `RP_AUTH_ENCRYPTION_SECRET` | Override the generated per-run secrets |
+
+---
+
 ## Related documentation
 
 - [MCP Reverse Proxy user guide](../using/reverse-proxy.md) - client usage, deployment, and gateway-side configuration
