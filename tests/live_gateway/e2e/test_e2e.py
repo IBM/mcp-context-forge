@@ -630,6 +630,7 @@ _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-by
 # The default covers one 60-second publish interval plus 15 seconds of slack.
 _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
+_REPLICA_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_REPLICA_SYNC_DEADLINE", "30.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +642,27 @@ def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
     return make_playwright_api_context(playwright, BASE_URL, token)
+
+
+def _replica_tools_path(gateway_id: str, probe: str) -> str:
+    """Build a unique, unpaginated gateway-tool request for a replica probe."""
+    return f"/tools?limit=0&gateway_id={gateway_id}&replica_probe={probe}"
+
+
+def _assert_replica_response(response, read_index: int) -> list[dict[str, Any]]:
+    """Assert a successful backend response that was not served from Nginx cache."""
+    assert response.status == 200, f"Replica read {read_index} failed: {response.status} {response.text()}"
+    cache_status = response.headers.get("x-cache-status")
+    assert cache_status != "HIT", f"Replica read {read_index} was served from Nginx cache, not a gateway backend"
+    payload = response.json()
+    assert isinstance(payload, list), f"Replica read {read_index} returned unexpected payload: {payload!r}"
+    return payload
+
+
+def _get_gateway_tools(admin_api: APIRequestContext, gateway_id: str, probe: str, read_index: int) -> list[dict[str, Any]]:
+    """Read all tools for one gateway through Nginx using a unique cache key."""
+    response = admin_api.get(_replica_tools_path(gateway_id, probe))
+    return _assert_replica_response(response, read_index)
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +808,7 @@ def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, N
 
 @pytest.fixture(scope="module")
 def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
-    """Register fast_time_server via Streamable HTTP transport and wait for tool sync."""
+    """Register fast_time_server and wait for a stable Streamable HTTP tool catalog."""
     streamable_http_url = "http://fast_time_server:9080/mcp"
 
     # Delete any pre-existing gateway with same name or same URL (gateway_service
@@ -802,37 +824,60 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
                 displaced_gateways.append(gw)
                 admin_api.delete(f"/gateways/{gw['id']}")
 
-    resp = admin_api.post(
-        "/gateways",
-        data={
-            "name": STREAMABLE_HTTP_GATEWAY_NAME,
-            "url": streamable_http_url,
-            "transport": "STREAMABLEHTTP",
-        },
-    )
-    assert resp.status in (200, 201), f"Failed to register Streamable HTTP gateway: {resp.status} {resp.text()}"
-    gw = resp.json()
-    gw_id = gw["id"]
-    logger.info("Registered Streamable HTTP gateway: %s (id=%s)", STREAMABLE_HTTP_GATEWAY_NAME, gw_id)
+    gw_id: str | None = None
+    try:
+        resp = admin_api.post(
+            "/gateways",
+            data={
+                "name": STREAMABLE_HTTP_GATEWAY_NAME,
+                "url": streamable_http_url,
+                "transport": "STREAMABLEHTTP",
+            },
+        )
+        assert resp.status in (200, 201), f"Failed to register Streamable HTTP gateway: {resp.status} {resp.text()}"
+        gw = resp.json()
+        gw_id = gw["id"]
+        logger.info("Registered Streamable HTTP gateway: %s (id=%s)", STREAMABLE_HTTP_GATEWAY_NAME, gw_id)
 
-    # Poll for tool sync (up to 30s)
-    for i in range(30):
+        deadline = time.monotonic() + _REPLICA_SYNC_DEADLINE_SECONDS
+        previous_tool_ids: frozenset[str] | None = None
+        read_index = 0
+        while time.monotonic() < deadline:
+            read_index += 1
+            probe = f"gateway-sync-{uuid.uuid4().hex}"
+            try:
+                gateway_tools = _get_gateway_tools(admin_api, gw_id, probe, read_index)
+                tool_ids = frozenset(str(tool["id"]) for tool in gateway_tools)
+                if tool_ids and tool_ids == previous_tool_ids:
+                    logger.info("Streamable HTTP gateway synchronized with %d stable tools", len(tool_ids))
+                    yield {"id": gw_id, "name": STREAMABLE_HTTP_GATEWAY_NAME, "tool_ids": tool_ids}
+                    return
+                previous_tool_ids = tool_ids
+            except (AssertionError, KeyError, TypeError, ValueError) as exc:
+                logger.debug("Gateway tool synchronization probe %d did not succeed: %s", read_index, exc)
+            time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
+
+        raise AssertionError(f"Streamable HTTP gateway {gw_id} did not produce a stable tool catalog within {_REPLICA_SYNC_DEADLINE_SECONDS}s")
+    finally:
+        if gw_id:
+            with suppress(Exception):
+                delete_response = admin_api.delete(f"/gateways/{gw_id}")
+                if delete_response.status not in (200, 204, 404):
+                    logger.warning("Failed to delete Streamable HTTP gateway %s: %s %s", gw_id, delete_response.status, delete_response.text())
+
+
+@pytest.fixture(scope="module")
+def cross_replica_user(admin_api: APIRequestContext, playwright: Playwright, streamable_http_gateway: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
+    """Create a token-owning user for replica consistency checks and always clean it up."""
+    del streamable_http_gateway
+    email = f"{RBAC_PREFIX}-replica-{uuid.uuid4().hex[:8]}@test.com"
+    user_info: dict[str, Any] = {"email": email, "team_id": None, "role": None, "token_id": None}
+    try:
+        user_info.update(_create_user_with_token(admin_api, playwright, email))
         time.sleep(1)
-        try:
-            tools = admin_api.get("/tools").json()
-            gateway_tools = [t for t in tools if t.get("gatewayId") == gw_id]
-            if gateway_tools:
-                logger.info("Streamable HTTP gateway synced: %d tools", len(gateway_tools))
-                break
-        except Exception:
-            pass
-    else:
-        logger.warning("Streamable HTTP gateway tool sync timed out, continuing anyway")
-
-    yield {"id": gw_id, "name": STREAMABLE_HTTP_GATEWAY_NAME}
-
-    with suppress(Exception):
-        admin_api.delete(f"/gateways/{gw_id}")
+        yield user_info
+    finally:
+        _cleanup_user(admin_api, user_info)
 
     # Restore any displaced pre-existing registration (e.g. the compose-seeded
     # "fast_time" gateway) so other tests relying on it keep working.
@@ -2093,3 +2138,59 @@ class TestVirtualServerLifecycle:
             )
 
         assert probe.status_code == 404, f"initialize against the deleted server returned {probe.status_code}. Expected 404: {probe.text[:500]}"
+
+
+# ---------------------------------------------------------------------------
+# Test: Cross-replica consistency
+# ---------------------------------------------------------------------------
+@pytest.mark.flaky(reruns=1, reruns_delay=2)
+class TestCrossReplicaConsistency:
+    """Writes through Nginx are visible across the three default gateway replicas.
+
+    Ten independent reads have a roughly 99.9949% probability of reaching at
+    least two replicas when Nginx distributes requests uniformly.
+    """
+
+    N_READS = 10
+
+    def test_tool_visible_across_replicas(self, admin_api: APIRequestContext, streamable_http_gateway: dict[str, Any]) -> None:
+        """Every replica probe sees at least one synchronized tool for the new gateway."""
+        gateway_id = streamable_http_gateway["id"]
+
+        for read_index in range(1, self.N_READS + 1):
+            tools = _get_gateway_tools(admin_api, gateway_id, f"tool-visible-{uuid.uuid4().hex}", read_index)
+            assert tools, f"Replica read {read_index} did not return tools for gateway {gateway_id}"
+            assert all(tool.get("gatewayId") == gateway_id for tool in tools), f"Replica read {read_index} returned a tool for another gateway"
+
+    def test_token_authenticates_across_replicas(self, playwright: Playwright, cross_replica_user: dict[str, Any], streamable_http_gateway: dict[str, Any]) -> None:
+        """A token minted through Nginx authenticates every subsequent replica probe."""
+        gateway_id = streamable_http_gateway["id"]
+        user_api = _api_context(playwright, cross_replica_user["access_token"])
+        try:
+            for read_index in range(1, self.N_READS + 1):
+                response = user_api.get(_replica_tools_path(gateway_id, f"token-auth-{uuid.uuid4().hex}"))
+                _assert_replica_response(response, read_index)
+        finally:
+            user_api.dispose()
+
+    def test_user_visible_across_replicas(self, admin_api: APIRequestContext, cross_replica_user: dict[str, Any]) -> None:
+        """A user created through Nginx appears in every subsequent admin listing."""
+        email = cross_replica_user["email"]
+
+        for read_index in range(1, self.N_READS + 1):
+            response = admin_api.get(f"/auth/email/admin/users?limit=0&replica_probe=user-visible-{uuid.uuid4().hex}")
+            users = _assert_replica_response(response, read_index)
+            assert any(user.get("email") == email for user in users), f"Replica read {read_index} did not return user {email}"
+
+    def test_gateway_tools_consistent_across_replicas(self, admin_api: APIRequestContext, streamable_http_gateway: dict[str, Any]) -> None:
+        """Every replica returns the same stable tool catalog and gateway ID."""
+        gateway_id = streamable_http_gateway["id"]
+        expected_tool_ids = streamable_http_gateway["tool_ids"]
+        assert expected_tool_ids, "Gateway fixture did not capture a stable, non-empty tool catalog"
+
+        for read_index in range(1, self.N_READS + 1):
+            tools = _get_gateway_tools(admin_api, gateway_id, f"catalog-consistency-{uuid.uuid4().hex}", read_index)
+            assert all(tool.get("gatewayId") == gateway_id for tool in tools), f"Replica read {read_index} returned a tool for another gateway"
+            actual_tool_ids = frozenset(str(tool["id"]) for tool in tools)
+            assert actual_tool_ids == expected_tool_ids, f"Replica read {read_index} returned tool IDs {sorted(actual_tool_ids)}, expected {sorted(expected_tool_ids)}"
+            assert len(tools) == len(expected_tool_ids), f"Replica read {read_index} returned duplicate tools for gateway {gateway_id}"
