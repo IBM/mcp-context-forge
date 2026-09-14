@@ -72,13 +72,12 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_internal_proxied_gateway, is_proxied_transport, JsonRpcErrorResponse, JsonRpcRequest
-from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
+from mcpgateway.services.reverse_proxy_dispatch import _read_reverse_proxied_resource, _resource_content_for_read
+from mcpgateway.services.reverse_proxy_protocol import is_proxied_transport
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
-from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.gateway_access import build_downstream_auth, build_gateway_auth_headers, check_gateway_access, GatewayAuthValueError
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -119,14 +118,6 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
-
-
-def _resource_content_for_read(resource: DbResource) -> ResourceContent:
-    """Return cached content or a dispatch placeholder for an internal PROXIED row."""
-    gateway = resource.gateway
-    if is_internal_proxied_gateway(gateway):
-        return ResourceContent(type="resource", id=str(resource.id), uri=resource.uri, mimeType=resource.mime_type, text="", _meta=None)
-    return resource.content
 
 
 # Initialize logging service first
@@ -1678,144 +1669,6 @@ class ResourceService(BaseService):
         """
         return get_cached_ssl_context(ca_certificate)
 
-    async def _read_reverse_proxied_resource(
-        self,
-        gateway_id_str: str,
-        uri: str,
-        effective_timeout: float,
-        downstream_auth: Optional[DownstreamAuth] = None,
-    ) -> ResourceContents:
-        """Dispatch ``resources/read`` to a PROXIED gateway over its reverse-proxy session.
-
-        The request resolves the process-local connection for the persisted stable
-        gateway ID and sends the persisted upstream URI downstream (or the
-        substituted request URI for template-derived reads) — never a namespaced
-        public catalog name. When the gateway row carries stored auth material,
-        ``downstream_auth`` rides the request envelope as ``authentication``/
-        ``authType`` for the client to apply downstream; when ``None`` those members
-        are omitted. The material is never logged.
-
-        Args:
-            gateway_id_str: Stable gateway identifier used to resolve the live connection.
-            uri: Upstream resource URI sent as ``params.uri``.
-            effective_timeout: Per-request timeout in seconds.
-            downstream_auth: Optional stored gateway credentials to forward downstream.
-
-        Returns:
-            The typed first ``result.contents`` entry, preserving blob/text and MIME metadata.
-
-        Raises:
-            ResourceError: If no live connection exists for the gateway, the
-                connection drops mid-read, the read exceeds ``effective_timeout``,
-                the downstream server returns a JSON-RPC error, or the upstream
-                result carries no contents.
-            ValidationError: If the upstream ``resources/read`` result is malformed.
-        """
-        stable_id = StableGatewayId(gateway_id_str)
-        session_manager = await get_reverse_proxy_session_manager()
-        connection_id = session_manager.resolve_connection_id(stable_id)
-        if connection_id is None:
-            raise ResourceError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
-
-        request_payload = JsonRpcRequest(jsonrpc="2.0", id=uuid.uuid4().hex, method="resources/read", params={"uri": uri})
-
-        correlation_id = get_correlation_id()
-        mcp_start_time = time.time()
-        structured_logger.log(
-            level="INFO",
-            message=f"MCP resource read started: {uri}",
-            component="resource_service",
-            correlation_id=correlation_id,
-            metadata={"event": "mcp_call_started", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
-        )
-        try:
-            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
-        except TimeoutError as timeout_err:
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="WARNING",
-                message=f"MCP proxied resource read timed out: {uri}",
-                component="resource_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                metadata={"event": "resource_timeout", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied", "timeout_seconds": effective_timeout},
-            )
-            raise ResourceError(f"Resource read timed out after {effective_timeout}s") from timeout_err
-        except (ConnectionClosedError, ConnectionNotFoundError) as conn_err:
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="ERROR",
-                message=f"MCP resource read failed: {uri}",
-                component="resource_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                error_details={"error_type": type(conn_err).__name__, "error_message": str(conn_err)},
-                metadata={"event": "mcp_call_failed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
-            )
-            raise ResourceError(f"Reverse-proxy connection for gateway '{gateway_id_str}' failed: {conn_err}") from conn_err
-
-        if isinstance(response.payload, JsonRpcErrorResponse):
-            mcp_error = response.payload.error
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="ERROR",
-                message=f"MCP resource read failed: {uri}",
-                component="resource_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}"},
-                metadata={"event": "mcp_call_failed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
-            )
-            raise ResourceError(f"MCP error {mcp_error.code}")
-
-        try:
-            validated_result = types.ReadResourceResult.model_validate(response.payload.result)
-        except ValidationError as validation_err:
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="ERROR",
-                message=f"MCP resource read failed: {uri}",
-                component="resource_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                error_details={"error_type": "ValidationError", "error_message": "malformed upstream resources/read result"},
-                metadata={"event": "mcp_call_failed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
-            )
-            raise validation_err
-
-        if not validated_result.contents:
-            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-            structured_logger.log(
-                level="ERROR",
-                message=f"MCP resource read failed: {uri}",
-                component="resource_service",
-                correlation_id=correlation_id,
-                duration_ms=mcp_duration_ms,
-                error_details={"error_type": "EmptyContentsError", "error_message": "upstream resources/read result carried no contents"},
-                metadata={"event": "mcp_call_failed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
-            )
-            raise ResourceError(f"Upstream resources/read for gateway '{gateway_id_str}' returned no contents")
-
-        first_content = validated_result.contents[0]
-        content_uri = str(first_content.uri)
-        content_mime_type = first_content.mimeType
-        content_meta = first_content.meta
-        if isinstance(first_content, types.TextResourceContents):
-            content = TextResourceContents(uri=content_uri, mimeType=content_mime_type, text=first_content.text, _meta=content_meta)
-        else:
-            content = BlobResourceContents(uri=content_uri, mimeType=content_mime_type, blob=first_content.blob, _meta=content_meta)
-
-        mcp_duration_ms = (time.time() - mcp_start_time) * 1000
-        structured_logger.log(
-            level="INFO",
-            message=f"MCP resource read completed: {uri}",
-            component="resource_service",
-            correlation_id=correlation_id,
-            duration_ms=mcp_duration_ms,
-            metadata={"event": "mcp_call_completed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied", "success": True},
-        )
-        return content
-
     async def invoke_resource(  # pylint: disable=unused-argument
         self,
         db: Session,
@@ -2418,7 +2271,7 @@ class ResourceService(BaseService):
                                 downstream_auth = build_downstream_auth(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
                             except GatewayAuthValueError as auth_err:
                                 raise ResourceError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
-                            resource_text = await self._read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth)
+                            resource_text = await _read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth)
                         elif (gateway_transport).lower() == "sse":
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:

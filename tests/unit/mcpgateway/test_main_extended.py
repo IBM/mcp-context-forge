@@ -14042,6 +14042,7 @@ async def test_reverse_proxy_reaper_evicts_and_persists_at_injected_cycle(monkey
     """The reaper delegates stale cleanup to the manager and persists returned stable IDs before its next interval."""
     # First-Party
     import mcpgateway.main as main_mod
+    from mcpgateway.services.reverse_proxy_catalog import ReverseProxyCatalogService
     from mcpgateway.services.reverse_proxy_sessions import ConnectionId, ReverseProxyEviction, StableGatewayId
 
     manager = MagicMock()
@@ -14051,7 +14052,7 @@ async def test_reverse_proxy_reaper_evicts_and_persists_at_injected_cycle(monkey
     sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     monkeypatch.setattr(main_mod.asyncio, "sleep", sleep)
     monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
-    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = AsyncMock()
+    monkeypatch.setattr(ReverseProxyCatalogService, "mark_reverse_proxy_gateways_unreachable", AsyncMock())
 
     with pytest.raises(asyncio.CancelledError):
         await main_mod._run_reverse_proxy_reaper()
@@ -14060,8 +14061,8 @@ async def test_reverse_proxy_reaper_evicts_and_persists_at_injected_cycle(monkey
     reap_call = manager.reap_stale.await_args
     assert reap_call is not None
     assert reap_call.kwargs["timeout_seconds"] == 90.0
-    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable.assert_awaited_once()
-    persistence_call = main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable.await_args
+    ReverseProxyCatalogService.mark_reverse_proxy_gateways_unreachable.assert_awaited_once()
+    persistence_call = ReverseProxyCatalogService.mark_reverse_proxy_gateways_unreachable.await_args
     assert persistence_call is not None
     assert persistence_call.args == (manager, (eviction,))
 
@@ -14085,12 +14086,13 @@ def test_reverse_proxy_reaper_lifespan_gate(feature_enabled, timeout_seconds, ex
 async def test_reverse_proxy_reaper_continues_after_persistence_failure(monkeypatch):
     """A failed persistence iteration is logged and the reaper reaches its next scan."""
     import mcpgateway.main as main_mod
+    from mcpgateway.services.reverse_proxy_catalog import ReverseProxyCatalogService
 
     manager = MagicMock(reap_stale=AsyncMock(side_effect=[(), asyncio.CancelledError()]))
     monkeypatch.setattr("mcpgateway.services.reverse_proxy_sessions.get_reverse_proxy_session_manager", AsyncMock(return_value=manager))
     monkeypatch.setattr(main_mod.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
-    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = AsyncMock(side_effect=RuntimeError("db unavailable"))
+    monkeypatch.setattr(ReverseProxyCatalogService, "mark_reverse_proxy_gateways_unreachable", AsyncMock(side_effect=RuntimeError("db unavailable")))
 
     with pytest.raises(asyncio.CancelledError):
         await main_mod._run_reverse_proxy_reaper()
