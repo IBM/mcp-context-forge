@@ -42,7 +42,11 @@ PROXIED_RESULT = {"content": [{"type": "text", "text": "proxied ok"}], "isError"
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
+    with (
+        patch("mcpgateway.services.tool_service.audit_trail") as mock_audit,
+        patch("mcpgateway.services.tool_service.structured_logger") as mock_logger,
+        patch("mcpgateway.services.reverse_proxy_dispatch.structured_logger", mock_logger),
+    ):
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -218,7 +222,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -255,7 +259,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", upstream_result))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None, meta_data={"traceparent": "00-abc"})
@@ -274,7 +278,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", upstream_result))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -288,7 +292,7 @@ class TestInvokeToolReverseProxied:
         _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway)
         manager = _manager_mock(connection_id=None)
 
-        with patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             with pytest.raises(ToolInvocationError, match=r"No active reverse-proxy connection for gateway 'proxied-gw-1'"):
                 await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
 
@@ -301,7 +305,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_side_effect=TimeoutError("slow downstream"))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolTimeoutError, match="Tool invocation timed out after"),
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -326,7 +330,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_side_effect=connection_error)
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError, match=r"Reverse-proxy connection for gateway 'proxied-gw-1'"),
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -338,7 +342,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError, match=r"MCP error -32001") as exc_info,
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -351,13 +355,13 @@ class TestInvokeToolReverseProxied:
         _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway)
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
-        with patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             with pytest.raises(ToolInvocationError) as direct_exc:
                 await tool_service._invoke_reverse_proxied_tool("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"param": "value"}, None, 30.0)
         assert str(direct_exc.value) == "MCP error -32001"
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError),
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -392,7 +396,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_side_effect=connection_error)
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError, match=r"Reverse-proxy connection for gateway 'proxied-gw-1'"),
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -429,7 +433,7 @@ class TestInvokeToolReverseProxied:
         manager.send_request = send_and_assert_in_span
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.create_child_span", recording_span),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
@@ -470,7 +474,7 @@ class TestInvokeToolReverseProxied:
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda headers: headers),
             patch("mcpgateway.services.tool_service._downstream_session_id_from_request", return_value=None),
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager") as manager_factory,
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
 
@@ -486,7 +490,7 @@ class TestInvokeToolReverseProxied:
         _stub_db_execute(test_db, proxied_tool)
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager") as manager_factory,
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
             pytest.raises(ToolNotFoundError, match="Tool not found"),
         ):
             await tool_service.invoke_tool(
@@ -506,7 +510,7 @@ class TestInvokeToolReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", {"isError": False}))  # missing required content
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ValidationError),
         ):
             await tool_service._invoke_reverse_proxied_tool("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"param": "value"}, None, 30.0)
@@ -535,7 +539,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -554,7 +558,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -574,7 +578,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="unauthorized downstream"))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError, match=r"MCP error -32001") as exc_info,
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -600,7 +604,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -621,7 +625,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -642,7 +646,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError) as exc_info,
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -663,7 +667,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError) as exc_info,
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -683,7 +687,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ToolInvocationError) as exc_info,
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -739,7 +743,7 @@ class TestInvokeToolReverseProxiedAuth:
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
             patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
@@ -760,7 +764,7 @@ class TestInvokeToolReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
 
         with (
-            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer INBOUND-HOSTILE", "X-Inbound": "x"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):

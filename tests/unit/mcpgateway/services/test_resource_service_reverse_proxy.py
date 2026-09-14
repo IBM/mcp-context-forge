@@ -29,6 +29,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.reverse_proxy_dispatch import _read_reverse_proxied_resource
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcSuccessResponse, ResponseMessage
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError
 
@@ -42,7 +43,11 @@ PROXIED_BLOB_RESULT = {"contents": [{"uri": PROXIED_RESOURCE_URI, "mimeType": "a
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
+    with (
+        patch("mcpgateway.services.resource_service.audit_trail") as mock_audit,
+        patch("mcpgateway.services.resource_service.structured_logger") as mock_logger,
+        patch("mcpgateway.services.reverse_proxy_dispatch.structured_logger", mock_logger),
+    ):
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -155,7 +160,7 @@ class TestReadResourceReverseProxied:
         """resources/read must carry the persisted upstream URI verbatim and normalize via the shared path."""
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
 
         manager.resolve_connection_id.assert_called_once_with("proxied-gw-1")
@@ -183,7 +188,7 @@ class TestReadResourceReverseProxied:
         assert PROXIED_SUBSTITUTED_URI != PROXIED_TEMPLATE_URI  # precedence is only exercised when they differ
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(
                 MagicMock(),
                 "res-1",
@@ -204,7 +209,7 @@ class TestReadResourceReverseProxied:
         """No live connection for the stable gateway ID: fail closed, never send, name the gateway."""
         manager = _manager_mock(connection_id=None)
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             with pytest.raises(ResourceError, match=r"No active reverse-proxy connection for gateway 'proxied-gw-1'"):
                 await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
 
@@ -216,7 +221,7 @@ class TestReadResourceReverseProxied:
         manager = _manager_mock(send_side_effect=TimeoutError("slow downstream"))
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError, match="Resource read timed out after"),
         ):
             await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
@@ -240,7 +245,7 @@ class TestReadResourceReverseProxied:
         manager = _manager_mock(send_side_effect=connection_error)
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError, match=r"Reverse-proxy connection for gateway 'proxied-gw-1'"),
         ):
             await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
@@ -257,13 +262,13 @@ class TestReadResourceReverseProxied:
         """A JSON-RPC error response surfaces the MCP error code only; peer free text never escapes."""
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             with pytest.raises(ResourceError) as direct_exc:
-                await resource_service._read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
+                await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
         assert str(direct_exc.value) == "MCP error -32001"
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError, match=r"MCP error -32001"),
         ):
             await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
@@ -301,7 +306,7 @@ class TestReadResourceReverseProxied:
 
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.read_resource(db, resource_id="res-1")
 
         manager.send_request.assert_awaited_once()
@@ -314,7 +319,7 @@ class TestReadResourceReverseProxied:
         """BlobResourceContents remain typed with their runtime MIME metadata."""
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_BLOB_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
 
         assert isinstance(result, BlobResourceContents)
@@ -337,7 +342,7 @@ class TestReadResourceReverseProxied:
         db.get.return_value = resource_db
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_BLOB_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.read_resource(db, resource_id="res-1")
 
         assert isinstance(result, BlobResourceContents)
@@ -361,7 +366,7 @@ class TestReadResourceReverseProxied:
         runtime_result = {"contents": [{"uri": PROXIED_RESOURCE_URI, "mimeType": "application/json", "text": '{"ok":true}'}]}
         manager = _manager_mock(send_return=_success_response("req-1", runtime_result))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.read_resource(db, resource_id="res-1")
 
         assert isinstance(result, TextResourceContents)
@@ -374,10 +379,10 @@ class TestReadResourceReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", {}))  # missing required contents
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ValidationError),
         ):
-            await resource_service._read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
+            await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
 
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert events["mcp_call_started"]["transport"] == "proxied"
@@ -394,10 +399,10 @@ class TestReadResourceReverseProxied:
         manager = _manager_mock(send_return=_success_response("req-1", {"contents": []}))
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError, match=r"returned no contents"),
         ):
-            await resource_service._read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
+            await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
 
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert "mcp_call_completed" not in events
@@ -437,7 +442,7 @@ class TestReadResourceReverseProxied:
         with (
             patch(f"mcpgateway.services.resource_service.{client_patch}") as mock_client,
             patch("mcpgateway.services.resource_service.ClientSession") as mock_client_session,
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager") as manager_factory,
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
         ):
             mock_client_session.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
             mock_client_session.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -469,7 +474,7 @@ class TestReadResourceReverseProxied:
         db.get.return_value = resource_db
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager") as manager_factory,
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
             pytest.raises(ResourceNotFoundError, match="Resource not found"),
         ):
             await resource_service.read_resource(db, resource_id="res-1", user="outsider@example.com", token_teams=["team-b"])
@@ -488,7 +493,7 @@ class TestReadResourceReverseProxiedAuth:
         proxied_gateway.auth_value = {"Authorization": "Bearer proxied-resource-secret"}
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
         assert isinstance(result, TextResourceContents)
@@ -504,7 +509,7 @@ class TestReadResourceReverseProxiedAuth:
         """No stored gateway auth material: send_request receives auth=None so the envelope omits the fields."""
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
 
         assert isinstance(result, TextResourceContents)
@@ -522,7 +527,7 @@ class TestReadResourceReverseProxiedAuth:
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="unauthorized downstream"))
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError, match=r"MCP error -32001") as exc_info,
         ):
             await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
@@ -546,7 +551,7 @@ class TestReadResourceReverseProxiedAuth:
         proxied_gateway.auth_value = {"Authorization": "Basic dXNlcjpwYXNz"}
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
         assert isinstance(result, TextResourceContents)
@@ -564,7 +569,7 @@ class TestReadResourceReverseProxiedAuth:
         proxied_gateway.auth_value = {"X-Api-Key": "proxied-resource-key", "X-Tenant": "acme"}  # pragma: allowlist secret
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
-        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+        with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
         assert isinstance(result, TextResourceContents)
@@ -583,7 +588,7 @@ class TestReadResourceReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError) as exc_info,
         ):
             await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
@@ -603,7 +608,7 @@ class TestReadResourceReverseProxiedAuth:
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError) as exc_info,
         ):
             await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
@@ -626,7 +631,7 @@ class TestReadResourceReverseProxiedAuth:
         identity = UserContext(user_id="inbound@example.com", email="inbound@example.com", is_admin=False, teams=[], auth_method="bearer")
 
         with (
-            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"Authorization": "Bearer INBOUND-HOSTILE", "X-User-Id": "inbound"}),
         ):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, user_identity=identity, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
