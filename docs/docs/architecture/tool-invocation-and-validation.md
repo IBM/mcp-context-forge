@@ -165,7 +165,7 @@ A2A tools do not currently route through Validator B. In practice this means gat
 
 ## Known gaps and follow-ups
 
-- **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-mcp-protocol-e2e` e2e tests.
+- **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-e2e` tests.
 
 - **[#4208] — success path with declared schema but empty output.** Validator B currently returns `True` when it cannot obtain any structured payload, even if an `outputSchema` is declared. The MCP spec says servers MUST provide conforming structured output in that case. Tightening requires deciding how to handle upstream servers that legitimately return empty success bodies (HTTP 204, REST tools without data shapes) — scoped out of #4202 because the blast radius is wider.
 
@@ -181,10 +181,10 @@ Unit tests:
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress` — Validator C short-circuit, local (non-pooled) branch.
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_session_affinity_forwarded_preserves_is_error` — Validator C short-circuit, worker-forwarded branch.
 
-End-to-end (via `make test-mcp-protocol-e2e`):
+End-to-end (via `make test-e2e`):
 
-- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-time-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
-- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-time-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
+- `tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-time-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
+- `tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-time-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
 
 ## Adding a new backend
 
