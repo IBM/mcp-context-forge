@@ -454,7 +454,8 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
-| `MCP_CLIENT_CONNECT_MODE`     | Upstream MCP connect mode (see below)            | `auto`                | `auto`, `legacy` |
+| `MCP_CLIENT_CONNECT_MODE`     | Upstream MCP connect mode (see below)            | `legacy`              | `auto`, `legacy` |
+| `MCP_INBOUND_PROTOCOL_MODE`   | Inbound MCP protocol mode (see below)            | `legacy`              | `auto`, `legacy` |
 
 !!! warning "MCP Access Control Dependencies"
     Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
@@ -465,13 +466,29 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 
 | Value    | Behavior |
 | -------- | -------- |
-| `auto` (default) | Upstream connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
-| `legacy` | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
+| `auto` | Upstream connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
+| `legacy` (default) | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
 
-This setting covers the client/federation side only. It does not change the protocol spoken by the gateway's own `/mcp` server endpoints.
+This setting covers the client/federation side only. For inbound protocol control, see [Inbound MCP Protocol Mode](#inbound-mcp-protocol-mode) below.
 
 !!! note "Upgrading the MCP SDK"
     The upstream transport health check reads SDK-internal dispatcher flags. The compatibility spike tests in `tests/unit/mcpgateway/utils/test_sdk_client_compat.py` fail loudly if a future SDK release changes those internals, so run them before adopting a new SDK pin.
+
+#### Inbound MCP Protocol Mode
+
+`MCP_INBOUND_PROTOCOL_MODE` controls which protocol versions the gateway accepts from inbound MCP clients connecting to its `/mcp` server endpoints.
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
+| `legacy` (default) | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
+
+An operator wanting full legacy-only mode on both sides:
+
+```bash
+MCP_CLIENT_CONNECT_MODE=legacy        # outbound: gateway uses initialize only (default)
+MCP_INBOUND_PROTOCOL_MODE=legacy      # inbound: clients must use initialize
+```
 
 ### SSO (Single Sign-On) Configuration
 

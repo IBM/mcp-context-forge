@@ -8445,94 +8445,97 @@ async def test_gateway_handshake(
 
     try:
         async with asyncio.timeout(settings.health_check_timeout):
-            discover_headers = {
-                **headers,
-                "Host": target["original_authority"],
-                "MCP-Protocol-Version": MCP_STATELESS_PROTOCOL_VERSION,
-                "Mcp-Method": "server/discover",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
-            # Per-request metadata required by the stateless mode: the server reads the requested
-            # protocol version from `_meta`, not just from the HTTP header.
-            request_meta = {
-                "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
-                "io.modelcontextprotocol/clientInfo": {"name": "contextforge", "version": __version__},
-                "io.modelcontextprotocol/clientCapabilities": {},
-            }
-            discover_payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "server/discover",
-                "params": {"_meta": request_meta},
-            }
             discover_result: Optional[Dict[str, Any]] = None
-            async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": handshake_verify}) as client:
-                try:
-                    response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
-                except httpx.RequestError as e:
-                    logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
-                    return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {sanitize_exception_message(str(e))}")
 
-                if response.status_code in (401, 403):
-                    return _failure("auth", _HANDSHAKE_AUTH_COPY)
-
-                if 200 <= response.status_code < 300:
+            # Skip server/discover probe in legacy mode — go straight to SDK initialize
+            if settings.mcp_client_connect_mode != "legacy":
+                discover_headers = {
+                    **headers,
+                    "Host": target["original_authority"],
+                    "MCP-Protocol-Version": MCP_STATELESS_PROTOCOL_VERSION,
+                    "Mcp-Method": "server/discover",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                }
+                # Per-request metadata required by the stateless mode: the server reads the requested
+                # protocol version from `_meta`, not just from the HTTP header.
+                request_meta = {
+                    "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientInfo": {"name": "contextforge", "version": __version__},
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                }
+                discover_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "server/discover",
+                    "params": {"_meta": request_meta},
+                }
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": handshake_verify}) as client:
                     try:
-                        body = response.json()
-                        result_payload = body.get("result") if isinstance(body, dict) else None
-                        # A bare `{"result": {}}`, or another method's result, is not evidence that
-                        # the server implements discovery: fall through to the initialize probe.
-                        if isinstance(result_payload, dict) and (isinstance(result_payload.get("capabilities"), dict) or isinstance(result_payload.get("supportedVersions"), list)):
-                            discover_result = result_payload
-                    except ValueError:
-                        discover_result = None
+                        response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
+                    except httpx.RequestError as e:
+                        logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
+                        return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {sanitize_exception_message(str(e))}")
 
-                if discover_result is not None:
-                    capabilities = discover_result.get("capabilities") if isinstance(discover_result.get("capabilities"), dict) else None
-                    result_meta = discover_result.get("_meta") if isinstance(discover_result.get("_meta"), dict) else {}
-                    server_info = result_meta.get("io.modelcontextprotocol/serverInfo")
-                    if not isinstance(server_info, dict):
-                        # Servers predating the namespaced metadata put serverInfo at the top level.
-                        server_info = discover_result.get("serverInfo") if isinstance(discover_result.get("serverInfo"), dict) else {}
-                    component_counts: Dict[str, int] = {}
-                    counts_partial = False
-                    if capabilities:
-                        list_methods = {"tools": "tools/list", "resources": "resources/list", "prompts": "prompts/list"}
-                        for cap_key, method in list_methods.items():
-                            if cap_key not in capabilities:
-                                continue
-                            try:
-                                list_headers = {**discover_headers, "Mcp-Method": method}
-                                list_response: httpx.Response = await client.request(
-                                    method="POST",
-                                    url=full_url,
-                                    headers=list_headers,
-                                    json={"jsonrpc": "2.0", "id": 2, "method": method, "params": {"_meta": request_meta}},
-                                    extensions={"sni_hostname": validated_hostname},
-                                )
-                                list_body = list_response.json()
-                                list_result = list_body.get("result") if isinstance(list_body, dict) else None
-                                if isinstance(list_result, dict) and isinstance(list_result.get(cap_key), list):
-                                    component_counts[cap_key] = len(list_result[cap_key])
-                                    if list_result.get("nextCursor"):
-                                        counts_partial = True
-                            except Exception as list_exc:
-                                logger.debug("MCP handshake %s failed for %s: %s", method, sanitize_url_for_logging(validated_base_url), list_exc)
+                    if response.status_code in (401, 403):
+                        return _failure("auth", _HANDSHAKE_AUTH_COPY)
 
-                    return GatewayHandshakeResponse(
-                        success=True,
-                        latency_ms=_latency_ms(),
-                        negotiation_path="server_discover",
-                        protocol_version=MCP_STATELESS_PROTOCOL_VERSION,
-                        server_name=server_info.get("name"),
-                        server_version=server_info.get("version"),
-                        capabilities=capabilities,
-                        component_counts=component_counts or None,
-                        counts_partial=counts_partial,
-                        credential_source=credential_source,
-                        raw_preview=json.dumps(discover_result, default=str)[:4096],
-                    )
+                    if 200 <= response.status_code < 300:
+                        try:
+                            body = response.json()
+                            result_payload = body.get("result") if isinstance(body, dict) else None
+                            # A bare `{"result": {}}`, or another method's result, is not evidence that
+                            # the server implements discovery: fall through to the initialize probe.
+                            if isinstance(result_payload, dict) and (isinstance(result_payload.get("capabilities"), dict) or isinstance(result_payload.get("supportedVersions"), list)):
+                                discover_result = result_payload
+                        except ValueError:
+                            discover_result = None
+
+                    if discover_result is not None:
+                        capabilities = discover_result.get("capabilities") if isinstance(discover_result.get("capabilities"), dict) else None
+                        result_meta = discover_result.get("_meta") if isinstance(discover_result.get("_meta"), dict) else {}
+                        server_info = result_meta.get("io.modelcontextprotocol/serverInfo")
+                        if not isinstance(server_info, dict):
+                            # Servers predating the namespaced metadata put serverInfo at the top level.
+                            server_info = discover_result.get("serverInfo") if isinstance(discover_result.get("serverInfo"), dict) else {}
+                        component_counts: Dict[str, int] = {}
+                        counts_partial = False
+                        if capabilities:
+                            list_methods = {"tools": "tools/list", "resources": "resources/list", "prompts": "prompts/list"}
+                            for cap_key, method in list_methods.items():
+                                if cap_key not in capabilities:
+                                    continue
+                                try:
+                                    list_headers = {**discover_headers, "Mcp-Method": method}
+                                    list_response: httpx.Response = await client.request(
+                                        method="POST",
+                                        url=full_url,
+                                        headers=list_headers,
+                                        json={"jsonrpc": "2.0", "id": 2, "method": method, "params": {"_meta": request_meta}},
+                                        extensions={"sni_hostname": validated_hostname},
+                                    )
+                                    list_body = list_response.json()
+                                    list_result = list_body.get("result") if isinstance(list_body, dict) else None
+                                    if isinstance(list_result, dict) and isinstance(list_result.get(cap_key), list):
+                                        component_counts[cap_key] = len(list_result[cap_key])
+                                        if list_result.get("nextCursor"):
+                                            counts_partial = True
+                                except Exception as list_exc:
+                                    logger.debug("MCP handshake %s failed for %s: %s", method, sanitize_url_for_logging(validated_base_url), list_exc)
+
+                        return GatewayHandshakeResponse(
+                            success=True,
+                            latency_ms=_latency_ms(),
+                            negotiation_path="server_discover",
+                            protocol_version=MCP_STATELESS_PROTOCOL_VERSION,
+                            server_name=server_info.get("name"),
+                            server_version=server_info.get("version"),
+                            capabilities=capabilities,
+                            component_counts=component_counts or None,
+                            counts_partial=counts_partial,
+                            credential_source=credential_source,
+                            raw_preview=json.dumps(discover_result, default=str)[:4096],
+                        )
 
             async def _probe_session(session: ClientSession) -> GatewayHandshakeResponse:
                 """Run initialize plus first-page component listings on an open session.
