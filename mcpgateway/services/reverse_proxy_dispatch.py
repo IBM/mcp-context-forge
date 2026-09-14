@@ -27,8 +27,10 @@ from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, TextResourceContents
+from mcpgateway.config import settings
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_internal_proxied_gateway, JsonRpcErrorResponse, JsonRpcRequest, ResponseMessage
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -86,16 +88,18 @@ async def dispatch_proxied_rpc(
         The peer's response frame, guaranteed to carry a success payload.
 
     Raises:
-        TimeoutError: Re-raised when the call exceeds ``timeout_seconds`` (after
-            a ``{noun}_timeout`` WARNING); the caller maps it to its typed error.
         Exception: ``error_factory`` output when no live connection exists for
-            the gateway, the connection drops mid-call, or the peer answers with
-            a JSON-RPC error (surfaced as the MCP error code only).
+            the gateway, the connection drops mid-call, the distributed relay
+            is unavailable, or the peer answers with a JSON-RPC error
+            (surfaced as the MCP error code only).
     """
-    session_manager = await get_reverse_proxy_session_manager()
-    connection_id = session_manager.resolve_connection_id(stable_id)
-    if connection_id is None:
-        raise error_factory(f"No active reverse-proxy connection for gateway '{stable_id}'")
+    session_manager = None
+    connection_id = None
+    if not settings.mcpgateway_reverse_proxy_distributed_enabled:
+        session_manager = await get_reverse_proxy_session_manager()
+        connection_id = session_manager.resolve_connection_id(stable_id)
+        if connection_id is None:
+            raise error_factory(f"No active reverse-proxy connection for gateway '{stable_id}'")
 
     correlation_id = get_correlation_id()
     mcp_start_time = time.time()
@@ -108,7 +112,17 @@ async def dispatch_proxied_rpc(
         metadata={"event": "mcp_call_started", **base_metadata},
     )
     try:
-        response = await session_manager.send_request(connection_id, request, timeout_seconds=timeout_seconds, auth=auth)
+        if settings.mcpgateway_reverse_proxy_distributed_enabled:
+            from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+            relay = await get_reverse_proxy_relay()
+            response = await relay.send_request_by_stable_id(stable_id, request, timeout_seconds=timeout_seconds, auth=auth)
+        else:
+            if session_manager is None or connection_id is None:
+                raise error_factory(f"No active reverse-proxy connection for gateway '{stable_id}'")
+            response = await session_manager.send_request(connection_id, request, timeout_seconds=timeout_seconds, auth=auth)
+    except RelayUnavailableError:
+        raise error_factory(f"Reverse-proxy relay unavailable for gateway '{telemetry.gateway_id}'") from None
     except TimeoutError:
         mcp_duration_ms = (time.time() - mcp_start_time) * 1000
         structured_logger.log(
