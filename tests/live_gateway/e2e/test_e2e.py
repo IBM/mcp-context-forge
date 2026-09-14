@@ -786,11 +786,17 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
     """Register fast_time_server via Streamable HTTP transport and wait for tool sync."""
     streamable_http_url = "http://fast_time_server:9080/mcp"
 
-    # Delete any pre-existing gateway with same name or same URL
+    # Delete any pre-existing gateway with same name or same URL (gateway_service
+    # rejects a second public gateway at the same URL), but remember what was
+    # displaced so it can be restored at teardown. Without this, deleting the
+    # compose-seeded "fast_time" gateway here permanently breaks TestToolCalls'
+    # fast-time-* tools on any subsequent run against the same stack.
+    displaced_gateways: list[dict[str, Any]] = []
     with suppress(Exception):
         gateways = admin_api.get("/gateways").json()
         for gw in gateways:
             if gw.get("name") == STREAMABLE_HTTP_GATEWAY_NAME or gw.get("url") == streamable_http_url:
+                displaced_gateways.append(gw)
                 admin_api.delete(f"/gateways/{gw['id']}")
 
     resp = admin_api.post(
@@ -824,6 +830,20 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
 
     with suppress(Exception):
         admin_api.delete(f"/gateways/{gw_id}")
+
+    # Restore any displaced pre-existing registration (e.g. the compose-seeded
+    # "fast_time" gateway) so other tests relying on it keep working.
+    for gw in displaced_gateways:
+        with suppress(Exception):
+            admin_api.post(
+                "/gateways",
+                data={
+                    "name": gw["name"],
+                    "url": gw["url"],
+                    "transport": gw.get("transport", "STREAMABLEHTTP"),
+                    "description": gw.get("description"),
+                },
+            )
 
 
 @pytest.fixture(scope="module")
