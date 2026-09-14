@@ -62,7 +62,8 @@ async def test_non_mcp_endpoint_skips_validation():
 
 
 @pytest.mark.asyncio
-async def test_default_protocol_version_applied():
+async def test_default_protocol_version_applied(monkeypatch):
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_inbound_protocol_mode", "auto")
     middleware = MCPProtocolVersionMiddleware(app=None)
     request = _make_request("/rpc")
 
