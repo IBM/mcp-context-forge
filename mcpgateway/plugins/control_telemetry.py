@@ -64,6 +64,8 @@ _ACTIVE_STATUSES = frozenset({"completed", "error", "timeout"})
 # are opaque tokens whose cardinality and format are determined by CPEX control
 # authors, not the gateway; the charset is the safest defensible subset.
 _CONFIG_KEY_RE = _IDENTIFIER_RE  # re-use: ^[A-Za-z0-9_.-]{1,64}$
+_SAFE_DENIAL_METADATA_TYPES = {"allowed": bool, "throttled": bool, "backend": str}
+_SAFE_DENIAL_BACKENDS = frozenset({"memory", "redis", "valkey"})
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +107,7 @@ class ControlTelemetryAccumulator:
     _plugin_error_hook: str = ""  # "pre" | "post" | "" — which hook the error occurred on
     _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
     _export_cap_dropped: int = 0  # records dropped at emit time by the per-invocation export cap
+    _denial_details: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def add(self, result: Any, *, hook: str) -> None:
         """Consume executions from one ``invoke_hook`` result.
@@ -117,6 +120,20 @@ class ControlTelemetryAccumulator:
             records = list(getattr(result, "executions", None) or [])
         except Exception:  # noqa: BLE001
             records = []
+        self._add_records(records, hook=hook)
+
+        # Track denial at each phase independently.
+        # Use a guarded read — continue_processing may be a descriptor that raises.
+        try:
+            denied = result is not None and not getattr(result, "continue_processing", True)
+        except Exception:  # noqa: BLE001
+            denied = False
+        if denied:
+            self.mark_denied(hook=hook)
+
+    def _add_records(self, records: list[Any], *, hook: str) -> list[Any]:
+        """Append bounded execution records and return records accepted for telemetry."""
+        accepted: list[Any] = []
         hook_count = 0
         for rec in records:
             if hook_count >= _MAX_RECORDS_PER_HOOK:
@@ -128,18 +145,42 @@ class ControlTelemetryAccumulator:
                 self._truncated += 1
                 continue
             self._records.append((hook, rec))
+            accepted.append(rec)
+        return accepted
 
-        # Track denial at each phase independently.
-        # Use a guarded read — continue_processing may be a descriptor that raises.
+    def add_violation(self, exception: Any, *, hook: str) -> None:
+        """Consume safe CPEX denial data from a raised ``PluginViolationError``.
+
+        Works with released CPEX versions that do not yet expose
+        ``denial_outcome``.  Framework execution records retain the complete
+        control chain; the safe denial outcome supplements its denying record
+        with protocol status and allowlisted rate-limit metadata.
+        """
+        self.mark_denied(hook=hook)
         try:
-            denied = result is not None and not getattr(result, "continue_processing", True)
+            records = list(getattr(exception, "executions", None) or [])
         except Exception:  # noqa: BLE001
-            denied = False
-        if denied:
-            if hook == "pre":
-                self._pre_denied = True
-            else:
-                self._post_denied = True
+            records = []
+        accepted = self._add_records(records, hook=hook)
+
+        try:
+            outcome = getattr(exception, "denial_outcome", None)
+            outcome_record = getattr(outcome, "execution", None)
+        except Exception:  # noqa: BLE001
+            return
+        if outcome_record is None:
+            return
+
+        target = next((record for record in reversed(accepted) if _same_control_record(record, outcome_record)), None)
+        if target is None:
+            appended = self._add_records([outcome_record], hook=hook)
+            target = appended[0] if appended else None
+        if target is not None:
+            self._denial_details[id(target)] = _safe_denial_details(outcome)
+
+    def denial_details_for(self, record: Any) -> dict[str, Any]:
+        """Return safe protocol details associated with one denial record."""
+        return dict(self._denial_details.get(id(record), {}))
 
     def mark_denied(self, *, hook: str) -> None:
         """Explicitly mark a denial when ``violations_as_exceptions=True`` causes
@@ -510,7 +551,7 @@ def _emit_db_spans(
         # UIs render them nested under the summary rather than as siblings.
         max_results = _get_max_results()
         for hook, rec in itertools.islice(accumulator.records, max_results):
-            attrs = _per_control_attributes(hook, rec)
+            attrs = _per_control_attributes(hook, rec, accumulator.denial_details_for(rec))
             if not attrs:
                 continue
             span_id = service.start_span(
@@ -567,7 +608,7 @@ def _emit_otel_spans(aggregate: dict, accumulator: "ControlTelemetryAccumulator"
         with create_span("cpex.control.summary", dict(aggregate)):
             max_results = _get_max_results()
             for hook, rec in itertools.islice(accumulator.records, max_results):
-                attrs = _per_control_attributes(hook, rec)
+                attrs = _per_control_attributes(hook, rec, accumulator.denial_details_for(rec))
                 if attrs:
                     with create_span("cpex.control.result", attrs):
                         pass
@@ -580,7 +621,7 @@ def _emit_otel_spans(aggregate: dict, accumulator: "ControlTelemetryAccumulator"
 # ---------------------------------------------------------------------------
 
 
-def _per_control_attributes(hook: str, rec: Any) -> dict:
+def _per_control_attributes(hook: str, rec: Any, denial_details: Optional[dict[str, Any]] = None) -> dict:
     """Build the fixed-schema attribute dict for one ControlExecutionRecord.
 
     Only uses trusted CPEX record fields.  Never accesses plugin metadata.
@@ -589,6 +630,7 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
     Args:
         hook: Enforcement-point tag (``"pre"`` or ``"post"``).
         rec: A ``ControlExecutionRecord`` instance.
+        denial_details: Safe protocol details attached to a framework denial outcome.
 
     Returns:
         Attribute dict or empty dict on error.
@@ -626,20 +668,26 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
         # boundary.  Set CPEX_CONTROL_TELEMETRY_EMIT_REASON=true only in environments where
         # these fields are known safe and the observability sink is appropriately secured.
         if _emit_reason_enabled():
-            if rec.reason:
-                attrs["cpex.control.result.reason"] = _safe_str(rec.reason, _MAX_REASON_LEN)
-            if rec.error_code:
-                attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
-        if rec.config_keys:
+            reason = getattr(rec, "reason", None)
+            if reason:
+                attrs["cpex.control.result.reason"] = _safe_str(reason, _MAX_REASON_LEN)
+            error_code = getattr(rec, "error_code", None)
+            if error_code:
+                attrs["cpex.control.result.error_code"] = _safe_str(error_code, _MAX_ERROR_CODE_LEN)
+        config_keys = getattr(rec, "config_keys", None)
+        if config_keys:
             # Key names only (CPEX never includes values).
             # _sanitize_config_key() validates each key against _CONFIG_KEY_RE:
             # commas, CR/LF, control chars, non-ASCII, and secret-shaped text are
             # rejected (key dropped entirely, not truncated) to prevent CSV ambiguity
             # and log/telemetry injection.  The joined string is also byte-bounded.
-            safe_keys = [s for k in rec.config_keys[:_MAX_CONFIG_KEYS] if (s := _sanitize_config_key(k)) is not None]
+            safe_keys = [s for k in config_keys[:_MAX_CONFIG_KEYS] if (s := _sanitize_config_key(k)) is not None]
             if safe_keys:
                 joined = ",".join(safe_keys)
                 attrs["cpex.control.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
+        if denial_details:
+            for key, value in denial_details.items():
+                attrs[f"cpex.control.result.{key}"] = value
         return attrs
     except Exception:  # noqa: BLE001
         logger.debug("Failed to build per-control attributes", exc_info=True)
@@ -649,6 +697,48 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
+
+def _same_control_record(left: Any, right: Any) -> bool:
+    """Return whether two trusted CPEX records identify the same control execution."""
+    try:
+        return (
+            getattr(left, "plugin_id", None) == getattr(right, "plugin_id", None)
+            and getattr(left, "plugin_name", None) == getattr(right, "plugin_name", None)
+            and getattr(left, "hook_name", None) == getattr(right, "hook_name", None)
+            and getattr(left, "effective_allow", None) is False
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _safe_denial_details(outcome: Any) -> dict[str, Any]:
+    """Project a CPEX denial outcome into bounded, non-sensitive telemetry fields."""
+    try:
+        details: dict[str, Any] = {}
+        violation_code = getattr(outcome, "violation_code", None)
+        if isinstance(violation_code, str) and _IDENTIFIER_RE.match(violation_code):
+            details["violation_code"] = violation_code
+
+        mcp_error_code = getattr(outcome, "mcp_error_code", None)
+        if isinstance(mcp_error_code, int) and not isinstance(mcp_error_code, bool) and -(2**31) <= mcp_error_code <= (2**31 - 1):
+            details["mcp_error_code"] = mcp_error_code
+
+        http_status_code = getattr(outcome, "http_status_code", None)
+        if isinstance(http_status_code, int) and not isinstance(http_status_code, bool) and 100 <= http_status_code <= 599:
+            details["http_status_code"] = http_status_code
+
+        metadata = getattr(outcome, "metadata", None)
+        if metadata:
+            for key, expected_type in _SAFE_DENIAL_METADATA_TYPES.items():
+                value = metadata.get(key)
+                if expected_type is bool and isinstance(value, bool):
+                    details[f"metadata.{key}"] = value
+                elif key == "backend" and isinstance(value, str) and value in _SAFE_DENIAL_BACKENDS:
+                    details[f"metadata.{key}"] = value
+        return details
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _safe_str(value: Any, max_len: int) -> str:
