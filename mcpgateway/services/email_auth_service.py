@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth_user_helpers import DISABLED_PASSWORD_HASH, is_passwordless_user
+from mcpgateway.auth_user_helpers import DISABLED_PASSWORD_HASH, is_passwordless_user, PASSWORDLESS_HASH_TYPE
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import (
@@ -55,6 +55,7 @@ from mcpgateway.db import (
     PendingUserApproval,
     Role,
     SSOAuthSession,
+    SSOProvider,
     TokenRevocation,
     UserRole,
     utc_now,
@@ -64,6 +65,7 @@ from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
+from mcpgateway.sso_provider_ids import canonicalize_sso_provider_id, SSOProviderValidationError
 from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
@@ -630,6 +632,9 @@ class EmailAuthService:
         skip_password_validation: bool = False,
         granted_by: Optional[str] = None,
         skip_onboarding: bool = False,
+        passwordless: bool = False,
+        email_verified: Optional[bool] = None,
+        admin_origin_source: Optional[str] = None,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
@@ -649,11 +654,16 @@ class EmailAuthService:
                 ``except Exception`` path) are always recorded regardless of
                 this flag.  Duplicate-user rejections (``UserExistsError``,
                 ``IntegrityError``) are not audited by design.
+            passwordless: Create a passwordless user with no local password hash.
+            email_verified: Explicit email verification state. ``None`` keeps the
+                existing granted_by-derived behavior.
+            admin_origin_source: Source to record when creating an administrator.
 
         Returns:
             EmailUser: The created user object
 
         Raises:
+            ValueError: If passwordless creation is requested with local-password-only fields
             EmailValidationError: If email format is invalid
             PasswordValidationError: If password doesn't meet policy
             UserExistsError: If user already exists
@@ -670,12 +680,17 @@ class EmailAuthService:
             # user.full_name      # Returns: 'New User'
             # user.is_active      # Returns: True
         """
+        if passwordless and password:
+            raise ValueError("Password is not allowed for passwordless users")
+        if passwordless and password_change_required:
+            raise ValueError("Password change cannot be required for passwordless users")
+
         # Normalize email to lowercase
         email = email.lower().strip()
 
         # Validate inputs
         self.validate_email(email)
-        if not skip_password_validation:
+        if not skip_password_validation and not passwordless:
             # Determine if this is a privileged account
             is_privileged_account = is_admin or auth_provider != "local"
             self.validate_password(password, email, is_privileged_account)
@@ -686,10 +701,18 @@ class EmailAuthService:
         # ensure_user_exists for service accounts) get a non-loginable sentinel;
         # all other callers go through hash_password_async which raises
         # ValueError on empty input.
-        if not password and skip_password_validation:
+        if passwordless:
+            password_hash = None
+            password_hash_type = PASSWORDLESS_HASH_TYPE
+            password_changed_at = None
+        elif not password and skip_password_validation:
             password_hash = DISABLED_PASSWORD_HASH  # nosec B105 — not a valid Argon2 hash, verify_password always rejects
+            password_hash_type = "argon2id"
+            password_changed_at = utc_now()
         else:
             password_hash = await self.password_service.hash_password_async(password)
+            password_hash_type = "argon2id"
+            password_changed_at = utc_now()
 
         # Check if user already exists
         existing_user = await self.get_user_by_email(email)
@@ -705,16 +728,22 @@ class EmailAuthService:
             is_active=is_active,
             password_change_required=password_change_required,
             auth_provider=auth_provider,
-            password_changed_at=utc_now(),
-            admin_origin="api" if is_admin else None,
+            password_hash_type=password_hash_type,
+            password_changed_at=password_changed_at,
+            admin_origin=(admin_origin_source or "api") if is_admin else None,
         )
 
-        # Admin-created users are implicitly email-verified (the admin vouched for them)
-        if granted_by:
+        # Admin-created users are implicitly email-verified unless callers explicitly override it.
+        if email_verified is not None:
+            user.email_verified_at = utc_now() if email_verified else None
+        elif granted_by:
             user.email_verified_at = utc_now()
 
         try:
             self.db.add(user)
+            if passwordless:
+                self.db.flush()
+                user.password_changed_at = None
             self.db.commit()
             self.db.refresh(user)
 
@@ -794,6 +823,82 @@ class EmailAuthService:
             self.db.commit()
 
             raise
+
+    def _validate_enabled_sso_provider_id(self, provider_id: str) -> str:
+        """Return the canonical ID for a configured, enabled SSO provider.
+
+        Args:
+            provider_id: Inbound provider ID or supported alias.
+
+        Returns:
+            Canonical provider ID stored on users.
+
+        Raises:
+            SSOProviderValidationError: If the provider ID is invalid, missing,
+                or configured but disabled.
+        """
+        canonical_provider_id = canonicalize_sso_provider_id(provider_id)
+        provider = self.db.execute(select(SSOProvider).where(SSOProvider.id == canonical_provider_id)).scalar_one_or_none()
+        if not provider:
+            raise SSOProviderValidationError(f"SSO provider '{canonical_provider_id}' is not configured")
+        if not provider.is_enabled:
+            raise SSOProviderValidationError(f"SSO provider '{canonical_provider_id}' is disabled")
+        return canonical_provider_id
+
+    async def create_sso_user(
+        self,
+        email: str,
+        auth_provider: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        is_active: bool = True,
+        granted_by: Optional[str] = None,
+    ) -> EmailUser:
+        """Create a passwordless SSO/federated user.
+
+        This service method is for explicit administrator-driven provisioning.
+        It intentionally does not enforce browser JIT policies such as
+        provider ``auto_create_users``, trusted-domain checks, or pending
+        approval flows.
+
+        Args:
+            email: User's email address.
+            auth_provider: SSO provider ID or supported alias.
+            full_name: Optional full name.
+            is_admin: Whether to create the user as an administrator.
+            is_active: Whether the user is active.
+            granted_by: Email of the administrator provisioning the user.
+
+        Returns:
+            EmailUser: The created user.
+
+        Raises:
+            EmailValidationError: If email format is invalid.
+            SSOProviderValidationError: If provider ID is invalid, missing, or disabled.
+            UserExistsError: If a user with the email already exists.
+        """
+        normalized_email = email.lower().strip()
+        self.validate_email(normalized_email)
+        canonical_provider_id = self._validate_enabled_sso_provider_id(auth_provider)
+
+        existing_user = await self.get_user_by_email(normalized_email)
+        if existing_user:
+            raise UserExistsError(f"User with email {normalized_email} already exists")
+
+        return await self.create_user(
+            email=normalized_email,
+            password="",
+            full_name=full_name,
+            is_admin=is_admin,
+            is_active=is_active,
+            password_change_required=False,
+            auth_provider=canonical_provider_id,
+            skip_password_validation=True,
+            granted_by=granted_by,
+            passwordless=True,
+            email_verified=False,
+            admin_origin_source="sso" if is_admin else None,
+        )
 
     async def ensure_user_exists(
         self,
