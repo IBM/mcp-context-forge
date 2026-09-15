@@ -420,7 +420,7 @@ Scans tool outputs for common secret patterns (AWS keys, GCP API keys, Slack tok
 | `slack_token`             | Slack bot / user tokens (`xox[bprs]-…`)        |
 | `private_key_block`       | PEM private key blocks                         |
 | `jwt_like`                | JWT-shaped tokens (three base64url segments)   |
-| `hex_secret_32`           | 32-character hexadecimal strings               |
+| `hex_secret_32`           | 32-character hexadecimal strings (shape match only, no authenticity check — false-positives on any legitimate 32-char hex value: session tokens, MD5 hashes, dashless UUIDs; see warning below) |
 | `base64_24`               | 24+ char base64 strings (high false-positive rate — keep `false` unless needed) |
 
 #### Example — redact AWS keys and JWTs, block on any finding
@@ -459,6 +459,42 @@ curl -s -X POST \
   }' \
   http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings | jq
 ```
+
+> **⚠️ `hex_secret_32` false-positive warning:** this pattern is a shape
+> match only — it cannot tell a forged/malicious 32-character hex string
+> from a completely legitimate one. Any tool that legitimately returns a
+> 32-char hex value (session tokens, MD5 checksums, git short SHAs,
+> dashless UUIDs) will be flagged identically to an attacker-supplied
+> one. With `block_on_detection: true`, this silently breaks that tool
+> for every caller — not just attackers — while providing no actual
+> protection against a forged-but-correctly-shaped credential, since the
+> plugin never validates *authenticity*, only *shape*.
+>
+> Scope `SecretsDetection` away from tools that legitimately emit
+> 32-char hex output using `tool_names` on the policy binding, or leave
+> `hex_secret_32: false` unless you have verified none of your bound
+> tools produce legitimate 32-char hex values:
+>
+> ```json
+> {
+>   "policies": [{
+>     "tool_names": ["fetch_external_content", "read_document"],
+>     "plugin_id": "SecretsDetection",
+>     "mode": "enforce",
+>     "config": {
+>       "enabled": { "hex_secret_32": true },
+>       "block_on_detection": true
+>     }
+>   }]
+> }
+> ```
+>
+> `SecretsDetection` is a DLP/secrets-leakage scanner, not a token or
+> session *authenticity* validator — it has no way to check whether a
+> token was actually issued by your application, only whether it looks
+> like one. If you need to reject forged tokens, that requires a
+> session-store lookup, signature check, or expiry check, which no
+> shipped plugin currently performs.
 
 ---
 
