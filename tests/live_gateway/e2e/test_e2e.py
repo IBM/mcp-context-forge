@@ -656,6 +656,61 @@ def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Token minting: POST /tokens as the token's own owner
+# ---------------------------------------------------------------------------
+def _mint_token(
+    playwright: Playwright,
+    email: str,
+    *,
+    is_admin: bool = False,
+    team_id: str | None = None,
+    scope: dict[str, Any] | None = None,
+    expires_in_days: int = 1,
+) -> dict[str, Any]:
+    """Mint an API token for ``email`` through ``POST /tokens``.
+
+    The call runs as the token's own owner. A short-lived JWT for ``email``
+    authenticates a throwaway API context, so the created token is self-owned
+    rather than admin-delegated.
+
+    Args:
+        playwright: Playwright entry point used to build the API context.
+        email: Owner of the new token.
+        is_admin: Set the ``is_admin`` claim on the minting JWT.
+        team_id: Scope the token to this team. Omit for a personal token.
+        scope: Token scope payload, for example ``{"permissions": ["tools.read"]}``.
+        expires_in_days: Token lifetime in days.
+
+    Returns:
+        dict: Keys ``access_token``, ``token_id``, ``token_name``.
+    """
+    user_jwt = _make_jwt(email, is_admin=is_admin, teams=[team_id] if team_id else None)
+    user_ctx = _api_context(playwright, user_jwt)
+    token_name = f"{RBAC_PREFIX}-token-{uuid.uuid4().hex[:8]}"
+    token_data: dict[str, Any] = {
+        "name": token_name,
+        "expires_in_days": expires_in_days,
+    }
+    if team_id:
+        token_data["team_id"] = team_id
+    if scope:
+        token_data["scope"] = scope
+
+    try:
+        token_resp = user_ctx.post("/tokens", data=token_data)
+        assert token_resp.status in (200, 201), f"Failed to create token for {email}: {token_resp.status} {token_resp.text()}"
+        payload = token_resp.json()
+        access_token = payload["access_token"]
+        token_obj = payload.get("token", payload)
+        token_id = token_obj.get("id") or token_obj.get("token_id")
+    finally:
+        user_ctx.dispose()
+
+    logger.info("Created API token for %s (id=%s)", email, token_id)
+    return {"access_token": access_token, "token_id": token_id, "token_name": token_name}
+
+
+# ---------------------------------------------------------------------------
 # User lifecycle: create, invite, accept, assign role, create token
 # ---------------------------------------------------------------------------
 def _create_user_with_token(
@@ -670,7 +725,7 @@ def _create_user_with_token(
 ) -> dict[str, Any]:
     """Create a user via API, optionally join a team, assign RBAC role, and create an API token.
 
-    Returns dict with: email, access_token, token_id, team_id, role.
+    Returns dict with: email, access_token, token_id, token_name, team_id, role, is_admin.
     """
     # 1. Create user
     resp = admin_api.post(
@@ -704,36 +759,14 @@ def _create_user_with_token(
             assert role_resp.status in (200, 201), f"Failed to assign {rbac_role} to {email}: {role_resp.status} {role_resp.text()}"
         logger.info("Assigned %s role to %s", rbac_role, email)
 
-    # 4. Create API token via POST /tokens (as the user, using admin JWT that impersonates)
-    # We use a JWT for this user to create a self-owned token
-    user_jwt = _make_jwt(email, is_admin=is_admin, teams=[team_id] if team_id else None)
-    user_ctx = _api_context(playwright, user_jwt)
-    token_name = f"{RBAC_PREFIX}-token-{uuid.uuid4().hex[:8]}"
-    token_data: dict[str, Any] = {
-        "name": token_name,
-        "expires_in_days": 1,
-    }
-    if team_id:
-        token_data["team_id"] = team_id
-    if token_scope:
-        token_data["scope"] = token_scope
-
-    try:
-        token_resp = user_ctx.post("/tokens", data=token_data)
-        assert token_resp.status in (200, 201), f"Failed to create token for {email}: {token_resp.status} {token_resp.text()}"
-        payload = token_resp.json()
-        access_token = payload["access_token"]
-        token_obj = payload.get("token", payload)
-        token_id = token_obj.get("id") or token_obj.get("token_id")
-    finally:
-        user_ctx.dispose()
-
-    logger.info("Created API token for %s (id=%s)", email, token_id)
+    # 4. Create API token via POST /tokens, acting as the user
+    minted = _mint_token(playwright, email, is_admin=is_admin, team_id=team_id, scope=token_scope)
 
     return {
         "email": email,
-        "access_token": access_token,
-        "token_id": token_id,
+        "access_token": minted["access_token"],
+        "token_id": minted["token_id"],
+        "token_name": minted["token_name"],
         "team_id": team_id,
         "role": rbac_role,
         "is_admin": is_admin,
