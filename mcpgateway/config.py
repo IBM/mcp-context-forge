@@ -1700,7 +1700,8 @@ class Settings(BaseSettings):
         Secrets (``jwt_secret_key``, ``auth_encryption_secret``) are checked
         unconditionally for empty, placeholder, weak, short, and low-entropy
         values.  Password credentials (``basic_auth_password``,
-        empty, placeholder, known-weak, and too-short (below
+        ``platform_admin_password``, and ``default_user_password``) are checked
+        for empty, placeholder, known-weak, and too-short (below
         ``password_min_length_user``, the OWASP baseline) values when their
         consuming authentication feature is enabled (feature-gated fail-closed).
         No entropy floor is applied to passwords: the Shannon-entropy check used
