@@ -3182,7 +3182,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         context={
                             "modified_via": modified_via,
                         },
-                        db=db,
                     )
 
                     structured_logger.log(
@@ -4134,7 +4133,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "url": gateway_info["url"],
                         "status": gateway.status,
                     },
-                    db=db,
                 )
 
                 structured_logger.log(
