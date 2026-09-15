@@ -43,6 +43,7 @@ from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -154,6 +155,12 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    if "redirect_uri_after_oauth" in v:
+        redirect_after_oauth = v["redirect_uri_after_oauth"]
+        if not isinstance(redirect_after_oauth, str) or not redirect_after_oauth.strip():
+            raise ValueError("oauth_config.redirect_uri_after_oauth must be a non-empty string URL")
+        if not is_allowed_redirect(redirect_after_oauth, str(settings.app_domain), settings.oauth_redirect_allowed_origin):
+            raise ValueError(f"oauth_config.redirect_uri_after_oauth must use this gateway origin ({origin_from_url(str(settings.app_domain))}) or the origin in OAUTH_REDIRECT_ALLOWED_ORIGIN")
     raw_servers = v.get("authorization_servers")
     if raw_servers in (None, ""):
         return v
@@ -2082,9 +2089,32 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
                                    Not executed against the tool; see :class:`ToolPreviewResponse`.
+
+    Examples:
+        >>> ToolPreviewRequest().arguments
+        {}
+        >>> ToolPreviewRequest(arguments={}).arguments
+        {}
+        >>> # An explicit JSON null for "arguments" is as good as omitting the key entirely --
+        >>> # a client that always serializes the field shouldn't 422 for doing so (#5629).
+        >>> ToolPreviewRequest(arguments=None).arguments
+        {}
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _coerce_none_to_empty_dict(cls, value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Treat an explicit JSON ``null`` the same as an omitted ``arguments`` key.
+
+        Args:
+            value: The raw ``arguments`` value as received, before type validation.
+
+        Returns:
+            Dict[str, Any]: ``value`` unchanged, or ``{}`` when ``value`` is ``None``.
+        """
+        return {} if value is None else value
 
 
 class ToolPreviewTarget(BaseModelWithConfigDict):
@@ -4890,6 +4920,14 @@ class ServerRead(BaseModelWithConfigDict):
     updated_at: datetime
     # is_active: bool
     enabled: bool
+    url: Optional[str] = Field(
+        None,
+        description=(
+            "Fully-qualified MCP endpoint URL for this virtual server, derived from APP_DOMAIN. "
+            "This value is also the RFC 8707 OAuth resource/audience identifier; keep its path format stable "
+            "and use a separate function for any future display-only path change. None if APP_DOMAIN isn't a usable URL."
+        ),
+    )
     associated_tools: List[str] = []
     associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
@@ -8402,6 +8440,26 @@ class PluginStatsResponse(BaseModel):
 # MCP Server Catalog Schemas
 
 
+class CatalogOAuthMetadata(BaseModel):
+    """Public OAuth discovery metadata seeded for a catalog server entry.
+
+    Non-secret only: ``client_id``/``client_secret`` are per-deployment values
+    and never belong here. Seeding these fields lets a catalog entry skip the
+    outbound discovery probe at registration time, which matters for
+    restricted-egress deployments and for providers that publish no discovery
+    document at all (see issue #6461).
+    """
+
+    model_config = ConfigDict(extra="forbid")  # secrets must never round-trip through this model, even silently
+
+    issuer: Optional[str] = Field(None, description="OAuth issuer / authorization server base URL")
+    authorization_url: Optional[str] = Field(None, description="OAuth authorization endpoint")
+    token_url: Optional[str] = Field(None, description="OAuth token endpoint")
+    scopes: List[str] = Field(default_factory=list, description="Scopes recognized by this provider's OAuth server")
+    supports_dcr: bool = Field(default=False, description="Whether the provider supports Dynamic Client Registration (RFC 7591)")
+    resource: Optional[str] = Field(None, description="RFC 8707 resource indicator for this server")
+
+
 class CatalogServer(BaseModel):
     """Schema for a catalog server entry."""
 
@@ -8422,6 +8480,56 @@ class CatalogServer(BaseModel):
     gateway_id: Optional[str] = Field(None, description="ID of the caller-visible gateway matched to this catalog server")
     is_available: bool = Field(default=True, description="Whether server is currently available")
     requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
+    oauth: Optional[CatalogOAuthMetadata] = Field(None, description="Seeded public OAuth discovery metadata for OAuth entries, when known (no secrets)")
+
+
+# oauth_credentials is a flat dict of known keys (issuer, client_id, client_secret, token_url,
+# authorization_url, redirect_uri, audience, scopes, resource) - CatalogService only ever reads a
+# scalar or a list of scalars out of it, so two levels of nesting is already generous.
+# validate_meta_data's own byte budget (4096 total, meant for a different field) would reject a
+# single legitimate 4096-char secret once JSON overhead is added, so the caps here are sized for
+# oauth_credentials specifically rather than reused wholesale.
+_OAUTH_CREDENTIALS_MAX_KEYS = 16
+_OAUTH_CREDENTIALS_MAX_DEPTH = 2
+_OAUTH_CREDENTIALS_MAX_BYTES = 65536
+
+
+def _validate_catalog_oauth_credentials(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Bound catalog ``oauth_credentials`` overrides against oversized/malicious input (CWE-400).
+
+    Shared by ``CatalogServerRegisterRequest`` (bound as the admin
+    ``POST /admin/mcp-registry/{server_id}/register`` body) and ``CatalogServerRegisterBody``
+    (the v1 ``POST /v1/catalog/{server_id}/register`` body), so both request bodies that read
+    this field get the same bound - a bespoke top-level-only string-length check here would walk
+    straight past a nested container (a list/dict value skips the ``isinstance(value, str)`` check
+    entirely), so this also enforces key-count, nesting-depth, and total serialized size, the same
+    class of check ``validate_meta_data`` applies to ``meta_data`` elsewhere.
+
+    Args:
+        v: OAuth credential overrides to validate.
+
+    Returns:
+        The validated oauth_credentials dict or None.
+
+    Raises:
+        ValueError: If any string value exceeds 4096 characters, the dict has too many keys,
+            nests too deeply, or its serialized size exceeds the bound.
+    """
+    if v is None:
+        return v
+    if len(v) > _OAUTH_CREDENTIALS_MAX_KEYS:
+        raise ValueError(f"oauth_credentials exceeds maximum key count ({_OAUTH_CREDENTIALS_MAX_KEYS}): got {len(v)}")
+    SecurityValidator.validate_json_depth(v, max_depth=_OAUTH_CREDENTIALS_MAX_DEPTH)
+    for key, value in v.items():
+        if isinstance(value, str) and len(value) > 4096:
+            raise ValueError(f"oauth_credentials.{key} exceeds maximum length of 4096 characters")
+    try:
+        size = len(orjson.dumps(v))
+    except TypeError as exc:
+        raise ValueError(f"oauth_credentials is not serializable: {exc}") from exc
+    if size > _OAUTH_CREDENTIALS_MAX_BYTES:
+        raise ValueError(f"oauth_credentials exceeds maximum size ({_OAUTH_CREDENTIALS_MAX_BYTES} bytes): got {size}")
+    return v
 
 
 class CatalogServerRegisterRequest(BaseModel):
@@ -8434,16 +8542,34 @@ class CatalogServerRegisterRequest(BaseModel):
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
+    @field_validator("oauth_credentials")
+    @classmethod
+    def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Bound ``oauth_credentials`` (see ``_validate_catalog_oauth_credentials``).
+
+        This request is bound as the admin ``POST /admin/mcp-registry/{server_id}/register``
+        body, so it needs the same cap as the v1 endpoint's ``CatalogServerRegisterBody`` -
+        without this, the admin path was the uncapped one.
+
+        Args:
+            v: OAuth credential overrides to validate.
+
+        Returns:
+            The validated oauth_credentials dict or None.
+        """
+        return _validate_catalog_oauth_credentials(v)
+
 
 class CatalogServerRegisterBody(BaseModel):
     """Body for the v1 catalog register endpoint.
 
     The catalog server id comes from the path; this body carries only the
-    optional overrides. OAuth configuration is out of scope here (#5967).
+    optional overrides.
     """
 
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+    oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if the catalog entry requires OAuth")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
@@ -8461,6 +8587,19 @@ class CatalogServerRegisterBody(BaseModel):
         if v is None:
             return v
         return SecurityValidator.validate_name(v, "Server name")
+
+    @field_validator("oauth_credentials")
+    @classmethod
+    def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Bound ``oauth_credentials`` (see ``_validate_catalog_oauth_credentials``).
+
+        Args:
+            v: OAuth credential overrides to validate.
+
+        Returns:
+            The validated oauth_credentials dict or None.
+        """
+        return _validate_catalog_oauth_credentials(v)
 
 
 class CatalogServerRegisterResponse(BaseModel):

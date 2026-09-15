@@ -60,8 +60,7 @@ Rules:
 - [ ] Confirm `/health` reports Python MCP mode
 - [ ] Confirm admin Overview shows `🐍 Python MCP Core`
 - [ ] Confirm Version Info shows the MCP Runtime card in Python mode
-- [ ] `make test-mcp-protocol-e2e`
-- [ ] `make test-mcp-rbac`
+- [ ] `make test-e2e`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make 2025-11-25-core`
 - [ ] `make 2025-11-25-auth`
@@ -80,8 +79,7 @@ Rules:
 - [ ] `curl -sD - http://localhost:8080/health -o /dev/null | rg 'x-contextforge-mcp-'`
 - [ ] Confirm `/health` reports `rust-managed` runtime with Python transport mounted
 - [ ] Confirm admin Overview shows Rust runtime present but Python public transport semantics
-- [ ] `make test-mcp-protocol-e2e`
-- [ ] `make test-mcp-rbac`
+- [ ] `make test-e2e`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make 2025-11-25-core`
 - [ ] `make 2025-11-25-auth`
@@ -93,8 +91,7 @@ Rules:
 - [ ] Confirm `/health` reports Rust transport mounted
 - [ ] Confirm admin Overview shows `🦀 Rust MCP Core`
 - [ ] Confirm Version Info shows MCP Runtime card with Rust transport mounted
-- [ ] `make test-mcp-protocol-e2e`
-- [ ] `make test-mcp-rbac`
+- [ ] `make test-e2e`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make 2025-11-25-core`
 - [ ] `make 2025-11-25-auth`
@@ -106,8 +103,7 @@ Rules:
 - [ ] Confirm `/health` reports Rust transport/session/event-store/resume/live-stream/affinity/auth-reuse mounted as expected
 - [ ] Confirm admin Overview shows `🦀 Rust MCP Core`
 - [ ] Confirm Version Info shows MCP Runtime card with the expected mounted/core modes
-- [ ] `make test-mcp-protocol-e2e`
-- [ ] `make test-mcp-rbac`
+- [ ] `make test-e2e`
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make test-mcp-session-isolation`
 - [ ] `make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s`

@@ -27,7 +27,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
 )
 from mcpgateway.services.team_invitation_service import InvitationDeliveryResult, TeamInvitationService
-from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamSeedResult
+from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, TeamSeedResult
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
@@ -337,6 +337,72 @@ class TestTeamsRouter:
             assert "exceeding the maximum" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_create_team_name_conflict_admin_returns_400(self, mock_admin_context, mock_db):
+        """ICA20-1559: a caller authorized to list all teams (platform admin) sees the specific
+        conflict message on an active name collision — this is the 400 ICA depends on to trigger
+        its recovery-by-name lookup."""
+        request = TeamCreateRequest(name="Existing Active Team", visibility="private")
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(
+                side_effect=TeamNameConflictError("A team named 'Existing Active Team' already exists")
+            )
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_admin_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "already exists" in str(exc_info.value.detail)
+            assert "Existing Active Team" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_create_team_name_conflict_non_admin_returns_generic_409(self, mock_user_context, mock_db):
+        """Security/deny-path: a non-admin who hits an active name collision gets a generic 409 that
+        does NOT confirm a team with that name exists (prevents name-existence oracle)."""
+        request = TeamCreateRequest(name="Existing Active Team", visibility="private")
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(
+                side_effect=TeamNameConflictError("A team named 'Existing Active Team' already exists")
+            )
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "Existing Active Team" not in str(exc_info.value.detail)
+            assert "already exists" not in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_create_team_non_admin_unrelated_validation_keeps_specific_400(self, mock_user_context, mock_db):
+        """Precision guard: a non-admin hitting an UNRELATED validation error (not a name collision)
+        still gets its specific 400 message, not the generic collision 409."""
+        request = TeamCreateRequest(name="New Team", visibility="private")
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(
+                side_effect=TeamMemberLimitExceededError("max_members cannot exceed the configured limit of 500")
+            )
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "configured limit" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
     async def test_create_team_value_error(self, mock_user_context, mock_db):
         """Test team creation with service-level validation error."""
         request = TeamCreateRequest(
@@ -397,13 +463,13 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_admin_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
             # personal_owner_email must be forwarded so an admin sees their own personal team (issue #5391)
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_scoped_admin_forwards_team_ids_to_query_and_count(self, mock_admin_context, mock_team, mock_db):
@@ -420,12 +486,12 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=scoped_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=scoped_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == "team-b"
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"])
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"])
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"], search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"], search_query=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_public_only_admin_token_returns_no_fallback_teams(self, mock_admin_context, mock_team, mock_db):
@@ -442,7 +508,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=public_only_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=public_only_context, db=mock_db)
 
             assert result.teams == []
             assert result.total == 0
@@ -471,17 +537,21 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_admin_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == personal_team.id
             assert result.total == 1
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team, mock_db):
-        """Test listing teams as admin with include_pagination=True returns cursor format."""
+        """Test listing teams as admin with include_pagination=True returns cursor format.
+
+        get_teams_count must NOT be called — CursorPaginatedTeamsResponse has no total field
+        so the DB round-trip is wasted.
+        """
         teams = [mock_team]
         next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # Base64 encoded cursor  # pragma: allowlist secret
 
@@ -495,13 +565,15 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, search_query=None, current_user_ctx=mock_admin_context, db=mock_db)
 
             # With include_pagination=True, should return CursorPaginatedTeamsResponse
             assert hasattr(result, "teams")
             assert hasattr(result, "next_cursor")
             assert len(result.teams) == 1
             assert result.next_cursor == next_cursor
+            # S-001: get_teams_count must NOT be called for cursor pagination
+            mock_service.get_teams_count.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_teams_regular_user(self, mock_user_context, mock_team, mock_db):
@@ -518,7 +590,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.total == 1
@@ -559,7 +631,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             # Test pagination - skip 5, limit 3
-            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
+            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 3
             assert result.total == 10
@@ -588,12 +660,12 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
 
             # SSO platform_admin should see all teams (admin path)
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None)
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None, search_query=None)
             mock_perm_service.check_platform_admin_permission.assert_called_once_with(
                 mock_sso_platform_admin_context["email"],
                 token_teams=mock_sso_platform_admin_context.get("token_teams"),
@@ -620,7 +692,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == own_team.id
@@ -642,12 +714,12 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_admin_context, db=mock_db)
 
             assert result.teams == []
             assert result.total == 0
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_sso_platform_admin_includes_own_personal_team(self, mock_sso_platform_admin_context, mock_team, mock_db):
@@ -674,13 +746,13 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query=None, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == personal_team.id
             # The caller's own email (not a client-supplied value) scopes the personal team.
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None)
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com", team_ids=None)
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None, search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com", team_ids=None, search_query=None)
 
     @pytest.mark.asyncio
     async def test_create_team_sso_platform_admin_bypass_limits(self, mock_sso_platform_admin_context, mock_team, mock_db):
@@ -757,6 +829,258 @@ class TestTeamsRouter:
             assert call_kwargs["skip_limits"] is True
 
     @pytest.mark.asyncio
+    async def test_list_teams_admin_forwards_search_query(self, mock_admin_context, mock_team, mock_db):
+        """Admin branch: search_query is forwarded to both list_teams and get_teams_count, and only matches come back."""
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="test", current_user_ctx=mock_admin_context, db=mock_db)
+
+            assert len(result.teams) == 1
+            assert result.teams[0].id == mock_team.id
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="test")
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query="test")
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_search_query_no_match_returns_empty(self, mock_admin_context, mock_db):
+        """Admin branch: a search_query with no matching team returns an empty list, not a 404."""
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([], None))
+            mock_service.get_teams_count = AsyncMock(return_value=0)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="no-such-team", current_user_ctx=mock_admin_context, db=mock_db)
+
+            assert result.teams == []
+            assert result.total == 0
+
+    @pytest.mark.asyncio
+    async def test_list_teams_regular_user_search_query_filters_locally_by_name(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: search_query narrows the caller's own teams via local name/slug filtering."""
+        mock_team.name = "Rocket Squad"
+        mock_team.slug = "rocket-squad"
+        mock_public_team.name = "Unrelated Team"
+        mock_public_team.slug = "unrelated-team"
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="rocket", current_user_ctx=mock_user_context, db=mock_db)
+
+            assert result.total == 1
+            assert result.teams[0].id == mock_team.id
+
+    @pytest.mark.asyncio
+    async def test_list_teams_regular_user_search_query_matches_description(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: a team whose description (not name/slug) contains the search string is matched too."""
+        mock_team.name = "Some Team"
+        mock_team.slug = "some-team"
+        mock_team.description = "Owns the rocket-squad integration"
+        mock_public_team.name = "Other Team"
+        mock_public_team.slug = "other-team"
+        mock_public_team.description = "Nothing related"
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="rocket-squad", current_user_ctx=mock_user_context, db=mock_db)
+
+            assert result.total == 1
+            assert result.teams[0].id == mock_team.id
+
+    @pytest.mark.asyncio
+    async def test_list_teams_regular_user_search_query_matches_across_name_and_description(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: the substring filter matches both an exact name and an incidental description mention, per _apply_team_list_filters(search_description=True) semantics."""
+        mock_team.name = "rocket-squad"
+        mock_team.slug = "rocket-squad"
+        mock_team.description = None
+        mock_public_team.name = "Ops Team"
+        mock_public_team.slug = "ops-team"
+        mock_public_team.description = "Escalates to rocket-squad when paged"
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1, str(mock_public_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="rocket-squad", current_user_ctx=mock_user_context, db=mock_db)
+
+            # Both the exact name match and the incidental description mention match the substring
+            # filter (matches _apply_team_list_filters(search_description=True) semantics) — this
+            # confirms the filter is a real substring scan, not an exact-field check.
+            result_ids = {team.id for team in result.teams}
+            assert result_ids == {mock_team.id, mock_public_team.id}
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_empty_string_search_query(self, mock_admin_context, mock_team, mock_db):
+        """Empty-string search_query is normalised to None before both branches (FI-001).
+
+        The handler does ``search_query = search_query or None`` at entry so both admin (SQL)
+        and non-admin (in-memory) paths receive None and behave identically.
+        """
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="", current_user_ctx=mock_admin_context, db=mock_db)
+
+            # "" is normalised to None before forwarding — service receives None, not "".
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query=None)
+            assert len(result.teams) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_teams_non_admin_empty_string_search_query_skips_filter(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: empty-string normalised to None, so local filter is skipped
+        and all of the caller's teams are returned unchanged (same outcome as admin path)."""
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1, str(mock_public_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="", current_user_ctx=mock_user_context, db=mock_db)
+
+            # "" → None → falsy guard skips filter → all teams returned.
+            assert result.total == 2
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_search_query_case_insensitive_slug(self, mock_admin_context, mock_team, mock_db):
+        """Admin branch: search_query is case-insensitive — uppercase query matches lowercase slug."""
+        mock_team.name = "Rocket Squad"
+        mock_team.slug = "rocket-squad"
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            # Uppercase query must still be forwarded; case folding is the service's responsibility.
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="ROCKET", current_user_ctx=mock_admin_context, db=mock_db)
+
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="ROCKET")
+            assert len(result.teams) == 1
+            assert result.teams[0].slug == "rocket-squad"
+
+    @pytest.mark.asyncio
+    async def test_list_teams_non_admin_search_query_case_insensitive_slug(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: local filter is case-insensitive — ROCKET matches slug rocket-squad."""
+        mock_team.name = "Rocket Squad"
+        mock_team.slug = "rocket-squad"
+        mock_team.description = None
+        mock_public_team.name = "Ops Team"
+        mock_public_team.slug = "ops-team"
+        mock_public_team.description = None
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="ROCKET", current_user_ctx=mock_user_context, db=mock_db)
+
+            assert result.total == 1
+            assert result.teams[0].id == mock_team.id
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_cursor_pagination_with_search_query(self, mock_admin_context, mock_team, mock_db):
+        """S-004: cursor-pagination (include_pagination=True) with a non-None search_query.
+
+        search_query must be forwarded to list_teams and get_teams_count must NOT be called
+        (CursorPaginatedTeamsResponse has no total field).
+        """
+        next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # pragma: allowlist secret
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], next_cursor))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, search_query="engineering", current_user_ctx=mock_admin_context, db=mock_db)
+
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="engineering")
+            mock_service.get_teams_count.assert_not_called()
+            assert result.next_cursor == next_cursor
+            assert len(result.teams) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_teams_non_admin_scoped_token_search_query_cannot_leak_out_of_scope(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """FI-002: scoped token (token_teams set) + search_query must not surface out-of-scope teams.
+
+        Scope narrowing is applied BEFORE the search filter. A search_query matching an
+        out-of-scope team's name must not include it in results.
+        """
+        in_scope_team = mock_team
+        in_scope_team.name = "Alpha Engineering"
+        in_scope_team.slug = "alpha-engineering"
+        in_scope_team.description = None
+
+        out_of_scope_team = mock_public_team
+        out_of_scope_team.name = "Beta Engineering"
+        out_of_scope_team.slug = "beta-engineering"
+        out_of_scope_team.description = None
+
+        # Token scoped to only the in-scope team
+        scoped_context = {**mock_user_context, "token_teams": [{"id": str(in_scope_team.id)}]}
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            # Service returns both teams as if the user is a member of both
+            mock_service.get_user_teams = AsyncMock(return_value=[in_scope_team, out_of_scope_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(in_scope_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            # "engineering" matches BOTH teams by name — but only in-scope team must be returned
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="engineering", current_user_ctx=scoped_context, db=mock_db)
+
+            result_ids = {t.id for t in result.teams}
+            assert str(in_scope_team.id) in result_ids, "In-scope matching team must be returned"
+            assert str(out_of_scope_team.id) not in result_ids, "Out-of-scope team must not leak even if name matches search_query"
+
+    @pytest.mark.asyncio
     async def test_list_teams_error(self, mock_user_context, mock_db):
         """Test listing teams with error."""
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
@@ -767,7 +1091,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             with pytest.raises(HTTPException) as exc_info:
-                await list_teams(skip=0, limit=50, current_user_ctx=mock_user_context, db=mock_db)
+                await list_teams(skip=0, limit=50, search_query=None, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to list teams" in str(exc_info.value.detail)
@@ -783,34 +1107,9 @@ class TestTeamsRouter:
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
             MockService.return_value = mock_service
 
-            # Mock the entire decorated function to bypass RBAC
-            from mcpgateway.routers.teams import TeamResponse
+            from mcpgateway.routers.teams import get_team
 
-            async def mock_get_team(team_id, current_user, db):
-                _ = TeamManagementService(db)
-                team = await mock_service.get_team_by_id(team_id)
-                if not team:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
-                user_role = await mock_service.get_user_role_in_team(current_user["email"], team_id)
-                if not user_role:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-                return TeamResponse(
-                    id=team.id,
-                    name=team.name,
-                    slug=team.slug,
-                    description=team.description,
-                    created_by=team.created_by,
-                    is_personal=team.is_personal,
-                    visibility=team.visibility,
-                    max_members=team.max_members,
-                    member_count=team.get_member_count(),
-                    created_at=team.created_at,
-                    updated_at=team.updated_at,
-                    is_active=team.is_active,
-                )
-
-            with patch("mcpgateway.routers.teams.get_team", new=mock_get_team):
-                result = await mock_get_team(team_id, mock_user_context, mock_db)
+            result = await get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name

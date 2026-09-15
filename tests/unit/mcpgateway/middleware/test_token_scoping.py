@@ -251,6 +251,14 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    def test_tools_preview_precedes_tools_update_catchall(self, middleware):
+        """POST /tools/preview/{name} must map to tools.preview, not the /tools/[^/]+/
+        catch-all mapped to tools.update -- the preview pattern must be listed first (#5629)."""
+        assert middleware._check_permission_restrictions("/tools/preview/foo", "POST", [Permissions.TOOLS_PREVIEW]) is True
+        assert middleware._check_permission_restrictions("/tools/preview/foo", "POST", [Permissions.TOOLS_UPDATE]) is False
+        # A multi-segment tool name must still match (re.match is a prefix match).
+        assert middleware._check_permission_restrictions("/tools/preview/gateway-slug/tool-name", "POST", [Permissions.TOOLS_PREVIEW]) is True
+
     def test_versioned_virtual_server_restriction_checks_alias_id(self, middleware):
         """Server-scoped tokens must enforce the ID in versioned virtual-server paths."""
         path = "/v1/virtual-servers/server-123/tools"
@@ -404,6 +412,23 @@ class TestTokenScopingMiddleware:
         # Category wildcard and full wildcard still work
         assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", ["admin.*"]) is True
         assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", ["*"]) is True
+
+    @pytest.mark.asyncio
+    async def test_oauth_status_paths_require_gateways_read(self, middleware):
+        """GET /oauth/status/{gateway_id} and the batch GET /oauth/status are mapped to
+        gateways.read, matching the /vault/authorize/{id} pattern (#6620 review).
+
+        Without this entry, a scoped API token (as opposed to a session token) would be
+        default-denied here before ever reaching _enforce_gateway_access's per-gateway check.
+        """
+        assert middleware._check_permission_restrictions("/oauth/status/gw1", "GET", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions("/oauth/status", "GET", [Permissions.GATEWAYS_READ]) is True
+
+        assert middleware._check_permission_restrictions("/oauth/status/gw1", "GET", ["*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/status", "GET", ["*"]) is True
+
+        assert middleware._check_permission_restrictions("/oauth/status/gw1", "GET", [Permissions.TOOLS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/status", "GET", [Permissions.TOOLS_READ]) is False
 
     @pytest.mark.asyncio
     async def test_other_oauth_paths_still_default_deny(self, middleware):
@@ -1405,29 +1430,27 @@ class TestTokenScopingMiddleware:
 
         # Valid membership case
         db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
         result_proxy = MagicMock()
         result_proxy.scalars.return_value.all.return_value = ["team-1", "team-2"]
         db.execute.return_value = result_proxy
 
-        def _get_db():
-            yield db
-
-        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+        # validate_token_team_membership uses SessionLocal() as a context manager
+        monkeypatch.setattr("mcpgateway.auth.SessionLocal", lambda: db)
         assert middleware._check_team_membership(payload) is True
         cache.set_team_membership_valid_sync.assert_called_with("user@example.com", ["team-1", "team-2"], True)
         db.commit.assert_called_once()
-        db.close.assert_called_once()
 
         # Missing team case
         db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
         result_proxy = MagicMock()
         result_proxy.scalars.return_value.all.return_value = ["team-1"]
         db.execute.return_value = result_proxy
 
-        def _get_db_missing():
-            yield db
-
-        monkeypatch.setattr("mcpgateway.db.get_db", _get_db_missing)
+        monkeypatch.setattr("mcpgateway.auth.SessionLocal", lambda: db)
         assert middleware._check_team_membership(payload) is False
         cache.set_team_membership_valid_sync.assert_called_with("user@example.com", ["team-1", "team-2"], False)
 
@@ -2141,6 +2164,50 @@ def test_check_resource_team_ownership_gateway_private_denies_non_owner():
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
     assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
+
+
+def test_check_resource_team_ownership_gateway_reuses_preloaded_gateway():
+    """A matching preloaded_gateway must be reused instead of re-SELECTing the row.
+
+    Regression test for the oauth/status batch endpoint (#6620): a caller that already
+    bulk-fetched N gateways shouldn't pay for a second per-id SELECT here just to redo
+    the ownership check.
+    """
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    gateway = MagicMock()
+    gateway.id = "a1b2c3d4"
+    gateway.visibility = "public"
+
+    result = middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com", preloaded_gateway=gateway)
+
+    assert result is ResourceOwnershipResult.ALLOWED
+    db.execute.assert_not_called()
+
+
+def test_check_resource_team_ownership_gateway_ignores_mismatched_preloaded_gateway():
+    """A preloaded_gateway whose id doesn't match the path's resource id must be ignored,
+    falling back to the normal DB lookup rather than checking the wrong gateway's ACL."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    stale_preloaded = MagicMock()
+    stale_preloaded.id = "different-id"
+    stale_preloaded.visibility = "public"
+
+    actual_gateway = MagicMock()
+    actual_gateway.id = "a1b2c3d4"
+    actual_gateway.visibility = "private"
+    actual_gateway.owner_email = "owner@example.com"
+    db.execute.return_value.scalar_one_or_none.return_value = actual_gateway
+
+    result = middleware._check_resource_team_ownership(
+        "/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com", preloaded_gateway=stale_preloaded
+    )
+
+    db.execute.assert_called_once()
+    assert result is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch):

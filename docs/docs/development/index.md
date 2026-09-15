@@ -13,7 +13,9 @@ Welcome! This guide is for developers contributing to ContextForge. Whether you'
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
 | [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
-| [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Coding standards, commit conventions, and review workflow                      |
+| [Coding Standards](coding-standards.md)                                           | Clean Code rules for readable, self-documenting Python, Rust, and TypeScript   |
+| [Agent Prose Standard](agent-prose.md)                                            | ASD-STE100 prose rules for code comments, commits, PRs, reviews, and issues    |
+| [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Development setup, project architecture, workflow, and debugging              |
 
 ---
 
@@ -21,7 +23,7 @@ Welcome! This guide is for developers contributing to ContextForge. Whether you'
 
 ContextForge is built with:
 
-* **Python 3.11+**
+* **Python 3.12+**
 * **FastAPI** + **SQLAlchemy (async)** + **Pydantic Settings**
 * **HTMX**, **Alpine.js**, **TailwindCSS** for the Admin UI
 

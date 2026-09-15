@@ -23,7 +23,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy import and_, func, select
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams, resolve_session_teams
+from mcpgateway.auth import normalize_token_teams, resolve_session_teams, validate_token_team_membership
 from mcpgateway.auth_context import get_jwt_user_email_from_payload, resolve_jwt_user_email_from_payload
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -148,6 +148,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # permissions list does not include gateways.read is rejected at the middleware
     # layer rather than reaching the handler and failing there.
     ("GET", re.compile(r"^/vault/authorize/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth per-caller token status (oauth_router, prefix="/oauth") - single-gateway
+    # and batch variants. The handler enforces gateway-level access via
+    # _enforce_gateway_access, so this entry adds defence-in-depth only: it ensures a
+    # server-scoped API token whose permissions list does not include gateways.read is
+    # rejected at the middleware layer rather than reaching the handler and failing there.
+    ("GET", re.compile(r"^/oauth/status(?:$|/)"), Permissions.GATEWAYS_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an
@@ -883,61 +889,10 @@ class TokenScopingMiddleware:
 
         # Extract team IDs from token (handles both dict and string formats)
         team_ids = [team["id"] if isinstance(team, dict) else team for team in teams]
-
-        # First-Party
-        from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-
-        # Check cache first (synchronous in-memory lookup)
-        auth_cache = get_auth_cache()
-        cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
-        if cached_result is not None:
-            if not cached_result:
-                logger.warning(f"Token invalid (cached): User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
-            return cached_result
-
-        # Cache miss - query database
-        # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
-
-        # Track if we own the session (and thus must clean it up)
-        owns_session = db is None
-        if owns_session:
-            db = next(get_db())
-
-        try:
-            # Single query for all teams (fixes N+1 pattern)
-            memberships = (
-                db.execute(
-                    select(EmailTeamMember.team_id).where(
-                        EmailTeamMember.team_id.in_(team_ids),
-                        EmailTeamMember.user_email == user_email,
-                        EmailTeamMember.is_active.is_(True),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Check if user is member of ALL teams in token
-            valid_team_ids = set(memberships)
-            missing_teams = set(team_ids) - valid_team_ids
-
-            if missing_teams:
-                logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams: {SecurityValidator.sanitize_log_message(str(missing_teams))}")
-                # Cache negative result
-                auth_cache.set_team_membership_valid_sync(user_email, team_ids, False)
-                return False
-
-            # Cache positive result
-            auth_cache.set_team_membership_valid_sync(user_email, team_ids, True)
-            return True
-        finally:
-            # Only commit/close if we created the session
-            if owns_session:
-                try:
-                    db.commit()  # Commit read-only transaction to avoid implicit rollback
-                finally:
-                    db.close()
+        valid = validate_token_team_membership(user_email, team_ids, db=db)
+        if not valid:
+            logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
+        return valid
 
     def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
         """Return whether request is an exact server or gateway DELETE path."""
@@ -945,7 +900,7 @@ class TokenScopingMiddleware:
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
     def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
-        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+        self, request_path: str, token_teams: list, db=None, _user_email: str = None, preloaded_gateway=None
     ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
@@ -973,6 +928,12 @@ class TokenScopingMiddleware:
             token_teams: List of team IDs from the token (empty list = public-only token)
             db: Optional database session. If provided, caller manages lifecycle.
                 If None, creates and manages its own session.
+            preloaded_gateway: Optional already-fetched ``Gateway`` row. When the
+                path resolves to a gateway resource and this row's ``id`` matches
+                the path's resource id, it is reused instead of issuing another
+                ``SELECT`` - lets a caller that already loaded the gateway (e.g. a
+                batch endpoint that bulk-fetched many gateways) avoid a redundant
+                per-id re-fetch here.
 
         Returns:
             ResourceOwnershipResult: Allowed, missing, or denied ownership result.
@@ -1240,7 +1201,10 @@ class TokenScopingMiddleware:
 
             # CHECK GATEWAYS
             if resource_type == "gateway":
-                gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
+                if preloaded_gateway is not None and getattr(preloaded_gateway, "id", None) == resource_id:
+                    gateway = preloaded_gateway
+                else:
+                    gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
 
                 if not gateway:
                     logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(resource_id)} not found in database")

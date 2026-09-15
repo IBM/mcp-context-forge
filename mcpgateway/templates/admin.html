@@ -5682,7 +5682,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         >
                       </p>
                     </div>
-
+                    {% if oauth_redirect_allowed_origin %}
+                      <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        Post-OAuth Redirect URL
+                      </label>
+                      <input
+                        type="url"
+                        name="redirect_uri_after_success"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="{{ oauth_redirect_allowed_origin }}"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        Optional. After authorization, redirect the browser to
+                        this URL. Leave blank to use the built-in success page.
+                      </p>
+                      <p class="mt-1 text-sm text-blue-600 font-medium">
+                        Must use the origin configured by
+                        <code class="bg-blue-100 px-1 rounded font-mono">OAUTH_REDIRECT_ALLOWED_ORIGIN</code>
+                      </p>
+                      </div>
+                    {% endif %}
                     <div>
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -10261,6 +10283,31 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             </p>
                           </div>
 
+                          {% if oauth_redirect_allowed_origin %}
+                           <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Post-OAuth Redirect URL
+                          </label>
+                          <input
+                            type="url"
+                            name="redirect_uri_after_success"
+                            id="oauth-redirect-after-success-gw-edit"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 dark:border-gray-70"
+                            placeholder="{{ oauth_redirect_allowed_origin }}/oauth-complete"
+                          />
+                            <p class="mt-1 text-sm text-gray-500">
+                              Optional. After authorization, redirect the browser
+                              to this URL. Leave blank to use the built-in success page.
+                            </p>
+                            <p class="mt-1 text-sm text-blue-600 font-medium">
+                              Must use the origin configured by
+                              <code class="bg-blue-100 px-1 rounded font-mono">OAUTH_REDIRECT_ALLOWED_ORIGIN</code>
+                            </p>
+                          </div>
+                          {% endif %}
+
                           <div>
                             <label
                               class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -11730,22 +11777,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </p>
 
               <div class="space-y-3">
-                <button
-                  id="stdio-config-btn"
-                  data-action-click="generateAndShowConfig" data-arg0="stdio"
-                  class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <span class="text-2xl mr-3">▶️</span>
-                  <div>
-                    <div class="font-medium text-gray-900 dark:text-gray-100">
-                      Stdio (Claude Desktop, CLI)
-                    </div>
-                    <div class="text-sm text-gray-500 dark:text-gray-400">
-                      For Claude Desktop, CLI tools, and stdio-based MCP clients
-                    </div>
-                  </div>
-                </button>
-
                 <button
                   id="sse-config-btn"
                   data-action-click="generateAndShowConfig" data-arg0="sse"
