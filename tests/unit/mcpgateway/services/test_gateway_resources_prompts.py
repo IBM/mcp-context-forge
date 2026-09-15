@@ -53,21 +53,21 @@ class TestGatewayResourcesPrompts:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(nextCursor=None)
             mock_resource = MagicMock()
             mock_resource.model_dump.return_value = {"uri": "test://resource", "name": "Test Resource", "description": "A test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
             mock_session_instance.list_resources.return_value = mock_resources_response
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(nextCursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "A test prompt", "template": "Test template {{arg}}", "arguments": [{"name": "arg", "type": "string"}]}
             mock_prompts_response.prompts = [mock_prompt]
@@ -124,7 +124,7 @@ class TestGatewayResourcesPrompts:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
@@ -177,7 +177,7 @@ class TestGatewayResourcesPrompts:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response - success
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
