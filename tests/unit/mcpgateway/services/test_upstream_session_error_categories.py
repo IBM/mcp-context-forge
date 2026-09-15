@@ -424,9 +424,11 @@ async def test_structured_logger_exception_handling(monkeypatch):
     # Mock structured logger to raise an exception
     def fake_get_structured_logger():
         logger_called.append(True)
+
         class BrokenLogger:
             def log(self, *args, **kwargs):
                 raise RuntimeError("Structured logger is broken!")
+
         return BrokenLogger()
 
     monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
@@ -555,14 +557,8 @@ async def test_structured_logger_metadata_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cross_layer_error_message_consistency(monkeypatch):
-    """
-    Regression test for cross-layer consistency: verify that registry-created RuntimeError
-    surfaces the same categorized root-cause text through the tool_service consuming layer.
-
-    This ensures that the fix for the generic "unhandled errors in a TaskGroup" message
-    remains effective across the entire error propagation chain.
-    """
+async def test_registry_error_message_contains_categorized_root_cause(monkeypatch):
+    """Registry errors should surface categorized root-cause text."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
@@ -575,37 +571,16 @@ async def test_cross_layer_error_message_consistency(monkeypatch):
 
     req = _make_request()
 
-    # The registry creates a RuntimeError with categorized error information
-    try:
+    with pytest.raises(RuntimeError) as exc_info:
         await usr._default_session_factory(req)  # pylint: disable=protected-access
-        assert False, "Should have raised RuntimeError"
-    except RuntimeError as registry_error:
-        # Verify the registry error message contains:
-        # 1. Error category
-        # 2. Exception type
-        # 3. Original error message
-        error_msg = str(registry_error)
 
-        # Should NOT contain generic TaskGroup message
-        assert "unhandled errors in a TaskGroup" not in error_msg, \
-            "Generic TaskGroup message should be replaced with specific error"
-
-        # Should contain specific categorized error information
-        assert "[connection_refused]" in error_msg, \
-            "Error category should be present"
-        assert "ConnectionRefusedError" in error_msg, \
-            "Exception type should be present"
-        assert "Connection refused by server" in error_msg, \
-            "Original error message should be preserved"
-
-        # Verify format matches expected pattern:
-        # "Failed to create upstream MCP session for <url>: [<category>] <type>: <message>"
-        assert "Failed to create upstream MCP session for" in error_msg
-        assert "https://upstream.example.com/mcp" in error_msg
-
-        # This RuntimeError would be caught by tool_service.py which unwraps
-        # BaseExceptionGroup. Since we already unwrapped at registry level,
-        # the consuming layer receives a clean RuntimeError with actionable text.
+    error_msg = str(exc_info.value)
+    assert "unhandled errors in a TaskGroup" not in error_msg
+    assert "[connection_refused]" in error_msg
+    assert "ConnectionRefusedError" in error_msg
+    assert "Connection refused by server" in error_msg
+    assert "Failed to create upstream MCP session for" in error_msg
+    assert "https://upstream.example.com/mcp" in error_msg
 
 
 @pytest.mark.asyncio

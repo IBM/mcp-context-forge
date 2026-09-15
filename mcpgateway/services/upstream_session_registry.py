@@ -334,6 +334,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
             error_category = "connection_error"
     elif isinstance(root_cause, httpx.HTTPStatusError):
         status_code = getattr(root_cause.response, "status_code", None)
+        error_category = "http_error"
         if status_code is not None:
             if status_code == 401:
                 error_category = "auth_unauthorized"
@@ -343,10 +344,6 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
                 error_category = "not_found"
             elif 500 <= status_code < 600:
                 error_category = "upstream_server_error"
-            else:
-                error_category = "http_error"
-        else:
-            error_category = "http_error"
     elif isinstance(root_cause, McpError):
         # MCP protocol-level errors (failed session.initialize(), etc.)
         error_category = "mcp_protocol_error"
