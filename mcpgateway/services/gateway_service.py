@@ -157,7 +157,7 @@ class MCPListMethod(Enum):
     RESOURCE_TEMPLATES = ("resource_templates", "resourceTemplates")
 
 
-async def get_list_paginated(session: Any, mcp_method: MCPListMethod):
+async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
     """Collect MCP list results until the server returns no next cursor.
 
     Args:
