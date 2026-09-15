@@ -780,11 +780,11 @@ class NotificationService:
             try:
                 error = mcp_types.ErrorData.model_validate(payload["error"])
             except ValidationError as exc:
-                # Substituting INTERNAL_ERROR silently strips the original
-                # error context — operators would only see a generic
-                # message and have no way to trace what the downstream
-                # actually said. Log at warning + include the raw payload
-                # at debug so the trail isn't lost.
+                # Substituting INTERNAL_ERROR would otherwise strip the original
+                # error context — operators and clients would only see a generic
+                # message with no way to trace what the downstream actually
+                # said. Attach the raw payload as ``data`` so the trail reaches
+                # the client, and log at warning for the server-side trail.
                 logger.warning(
                     "Downstream error payload failed validation; substituting INTERNAL_ERROR: %s",
                     exc,
@@ -793,7 +793,7 @@ class NotificationService:
                 error = mcp_types.ErrorData(
                     code=mcp_types.INTERNAL_ERROR,
                     message="Malformed error from downstream",
-                    data=None,
+                    data=payload.get("error"),
                 )
             await responder.respond(error)
             return
