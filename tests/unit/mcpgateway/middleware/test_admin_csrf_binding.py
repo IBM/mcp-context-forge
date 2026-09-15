@@ -260,6 +260,44 @@ def test_admin_login_binds_csrf_to_email_not_sub_claim():
     assert 'csrf_user_id = str(payload["sub"])' not in source, "csrf_user_id must not bind to the JWT sub claim (EmailUser.id) — CSRFMiddleware validates against .email"
 
 
+def test_main_calls_register_auth_context_middleware_before_router_mounting():
+    """Source-level regression guard for issue #6025: mcpgateway/main.py must
+    call ``register_auth_context_middleware(app)`` and that call must appear
+    *before* the first ``app.include_router(`` so middleware is registered on
+    the application before any routes are mounted.
+
+    The existing tests in this file exercise the helper against a bare
+    FastAPI app; they would continue to pass even if the call were silently
+    removed from main.py.  This guard closes that gap by reading the actual
+    production source.
+    """
+    # Standard
+    from importlib import resources
+
+    source = resources.files("mcpgateway").joinpath("main.py").read_text(encoding="utf-8")
+
+    call_token = "register_auth_context_middleware(app)"
+    router_token = "app.include_router("
+
+    assert call_token in source, (
+        "register_auth_context_middleware(app) not found in mcpgateway/main.py — "
+        "the production middleware registration has been removed (issue #6025)"
+    )
+    assert router_token in source, (
+        "app.include_router( not found in mcpgateway/main.py — "
+        "cannot verify middleware-before-router ordering"
+    )
+
+    call_pos = source.index(call_token)
+    router_pos = source.index(router_token)
+
+    assert call_pos < router_pos, (
+        f"register_auth_context_middleware(app) (offset {call_pos}) must appear "
+        f"before the first app.include_router( (offset {router_pos}) in "
+        "mcpgateway/main.py — middleware must be registered before routes are mounted"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Middleware registration order (issue #5739 companion fix)
 #
