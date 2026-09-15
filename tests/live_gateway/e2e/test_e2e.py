@@ -33,7 +33,7 @@ import asyncio
 from collections.abc import AsyncIterator
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -630,6 +630,9 @@ _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-by
 # The default covers one 60-second publish interval plus 15 seconds of slack.
 _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
+# Revocation invalidates the Redis auth cache and publishes to the other replicas.
+# One second matches TestDenyPaths.test_revoked_token_fails. Raise it under CI load.
+_REVOCATION_PROPAGATION_SECONDS = float(os.getenv("MCP_E2E_REVOCATION_DELAY", "1.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -1018,6 +1021,25 @@ def scoped_token_read_execute(admin_api: APIRequestContext, playwright: Playwrig
         is_admin=True,
         rbac_role="platform_admin",
         token_scope={"permissions": ["tools.read", "tools.execute"]},
+    )
+    yield user
+    _cleanup_user(admin_api, user)
+
+
+@pytest.fixture(scope="module")
+def token_lifecycle_user(admin_api: APIRequestContext, playwright: Playwright) -> Generator[dict[str, Any], None, None]:
+    """An admin user whose first token survives the whole token-lifecycle class.
+
+    Tests that do not destroy the token share this one. Tests that revoke or
+    restrict a token mint their own against the same user.
+    """
+    uid = uuid.uuid4().hex[:8]
+    user = _create_user_with_token(
+        admin_api,
+        playwright,
+        f"{RBAC_PREFIX}-tokenlc-{uid}@test.com",
+        is_admin=True,
+        rbac_role="platform_admin",
     )
     yield user
     _cleanup_user(admin_api, user)
