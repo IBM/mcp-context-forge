@@ -619,6 +619,59 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
 
+### Preview a Tool Call (Dry Run)
+
+`POST /tools/preview/{name}` validates and resolves a tool call without executing it — no
+REST/MCP/A2A/gRPC call is made, and no `TOOL_POST_INVOKE` hook runs. It shares tool
+resolution, RBAC, and input-schema validation with the live `tools/call` path (via
+`ToolService._resolve_tool_for_invocation`), so a `validated: true` preview is a reliable
+predictor of whether the same arguments would pass live invocation.
+
+Requires the `tools.preview` permission, which is distinct from `tools.execute` — a role
+holding `tools.preview` but not `tools.execute` can validate a call but never invoke it. The
+route 404s if `MCPGATEWAY_TOOL_PREVIEW_ENABLED=false`, using the same visibility rules as live
+invocation otherwise (a tool outside the caller's team also 404s, matching `tools/call`).
+
+```bash
+# Preview a tool call — validates arguments against the tool's input schema, resolves the
+# target (local vs. federated), and reports which preview_safe plugin hooks actually ran.
+jq -n --argjson args '{"param1":"value1"}' '{"arguments":$args}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/tools/preview/$TOOL_NAME" | jq
+```
+
+Response shape (`pre_hooks_run` lists the names of `preview_safe`-tagged plugins that actually
+ran — not a fixed set of built-in stages, so it's empty on a gateway with no such plugins
+configured):
+
+```json
+{
+  "validated": true,
+  "resolved_arguments": {"param1": "value1"},
+  "target": {"kind": "local", "gateway_name": null},
+  "annotations": {"readOnlyHint": true, "destructiveHint": null, "idempotentHint": null, "openWorldHint": null},
+  "pre_hooks_run": [],
+  "warnings": []
+}
+```
+
+For a federated tool (`target.kind == "federated"`), only the gateway's name is ever
+returned — never its URL, transport, or credentials — and no wire call to the remote gateway
+is made regardless of the tool's annotations. An empty request body defaults to
+`{"arguments": {}}`, so `POST /tools/preview/{name}` with no body is valid.
+
+!!! warning "Live invocation now enforces `input_schema`"
+    `tools/call` validates `arguments` against the tool's `input_schema` before dispatch and
+    fails the call on a mismatch. Earlier releases did not check the input schema at all, so a
+    tool whose published schema does not match what its callers actually send will now reject
+    calls it previously accepted.
+
+    Preview is the migration tool for this: run the same arguments through
+    `POST /tools/preview/{name}` and a `validated: false` response with an `invalid_arguments`
+    warning is exactly what live invocation will reject. Fix it by correcting the caller's
+    arguments, or by relaxing the tool's registered `input_schema` to match what it accepts.
+
 ### Update Tool
 
 ```bash
@@ -1830,7 +1883,9 @@ curl -s -X POST \
 | `400` | Seed count + 1 exceeds capacity | `Team would start with 6 members, exceeding the maximum of 5` |
 | `400` | Invalid role value | `Input should be 'owner' or 'member'` |
 | `400` | Invitations disabled and unknown address seeded | `members[1] (external@partner.com): invitations are currently disabled` |
+| `400` | Requested name's generated slug already belongs to an active team (platform admin caller) | `A team named 'Marketing' already exists` |
 | `403` | `ALLOW_TEAM_CREATION=false` and caller is not admin | `Team creation is currently disabled` |
+| `409` | Requested name's generated slug already belongs to an active team (non-admin caller; purposefully generic so a team's existence cannot be probed) | `A team with the same name could not be created` |
 | `422` | `members` array exceeds 500 entries | Pydantic validation error |
 
 ### List Teams
@@ -1880,6 +1935,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/teams | jq '.'
 | `limit` | int | `50` | Maximum number of teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
 | `cursor` | string | – | Opaque cursor for cursor-based pagination. |
 | `include_pagination` | bool | `false` | When `true`, return cursor metadata instead of a total count. |
+| `search_query` | string | – | Case-insensitive substring filter on team name, slug, or description (max 500 chars). Admins filter server-side; non-admins filter their own team list locally. |
 
 ```bash
 # Offset-based pagination
@@ -1889,6 +1945,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 # Cursor-based pagination (returns CursorPaginatedTeamsResponse)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/teams?include_pagination=true" | jq '.'
+
+# Search teams by name, slug, or description
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?search_query=engineering" | jq '.'
 ```
 
 **Response with `include_pagination=true` (`CursorPaginatedTeamsResponse`):**

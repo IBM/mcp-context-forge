@@ -33,8 +33,8 @@ make dev
 make autoflake isort black pre-commit
 make doctest test htmlcov pylint verify
 
-# If you changed Rust code (tools_rust/):
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+# If you changed Rust code (crates/mcp_runtime/):
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
@@ -64,7 +64,7 @@ The old hook ran `lint-staged`; the replacement installs the pre-commit framewor
 
 ### Prerequisites
 
-- **Python 3.11+** (3.10 minimum)
+- **Python 3.12+**
 - **uv** (recommended) or pip/virtualenv
 - **Make** for automation
 - **Docker/Podman** (optional, for container development)
@@ -139,7 +139,7 @@ mcp-context-forge/
 │   ├── transports/            # Protocol implementations
 │   │   ├── sse_transport.py      # Server-Sent Events
 │   │   ├── websocket_transport.py # WebSocket
-│   │   └── stdio_transport.py    # Standard I/O wrapper
+│   │   └── stdio_transport.py    # Server-side stdio transport
 │   ├── plugins/               # Plugin framework
 │   │   ├── framework/            # Core plugin system
 │   │   └── [plugin_dirs]/       # Individual plugins
@@ -184,7 +184,6 @@ mcp-context-forge/
 - **SSE Transport**: Server-Sent Events for streaming
 - **WebSocket Transport**: Bidirectional real-time communication
 - **HTTP Transport**: Standard JSON-RPC over HTTP
-- **Stdio Wrapper**: Bridge for stdio-based MCP clients
 
 #### 3. Plugin System
 - **Hook-based**: Pre/post request/response hooks
@@ -227,8 +226,8 @@ make lint-watch
 # Fix common issues automatically
 make lint-fix
 
-# Rust (tools_rust/) — run before committing Rust changes
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+# Rust (crates/mcp_runtime/) — run before committing Rust changes
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ### Pre-commit Workflow
@@ -298,6 +297,8 @@ volumes:
   - Functions/variables: `snake_case`
   - Classes: `PascalCase`
   - Constants: `UPPER_SNAKE_CASE`
+
+Readability follows *Clean Code*: [Coding Standards](docs/docs/development/coding-standards.md). Prose in comments, commits, and PRs follows the [Agent Prose Standard](docs/docs/development/agent-prose.md).
 
 ### Quality Tools
 
@@ -396,7 +397,7 @@ app.include_router(router, tags=["my-feature"])
 
 ```python
 # mcpgateway/schemas.py
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 class MySchema(BaseModel):
     """Schema for my feature."""
@@ -404,7 +405,7 @@ class MySchema(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     value: int = Field(..., gt=0, le=100)
 
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         """Custom validation logic."""
         if not v.isalnum():
@@ -464,13 +465,13 @@ logger = logging.getLogger(__name__)
 
 async def pre_request_hook(request: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Process request before handling."""
-    logger.info(f"Pre-request hook: {request.get('method')}")
+    logger.info("Pre-request hook: %s", request.get("method"))
     # Modify request if needed
     return request
 
 async def post_response_hook(response: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Process response before sending."""
-    logger.info(f"Post-response hook: {response.get('result')}")
+    logger.info("Post-response hook: %s", response.get("result"))
     # Modify response if needed
     return response
 ```
@@ -501,19 +502,15 @@ make dev
 
 ```bash
 # Setup environment
-export MCP_GATEWAY_BASE_URL=http://localhost:4444
-export MCP_SERVER_URL=http://localhost:4444/servers/UUID/mcp
-export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)"
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Launch Inspector with SSE (direct)
 npx @modelcontextprotocol/inspector
 
-# Launch with stdio wrapper
-npx @modelcontextprotocol/inspector python3 -m mcpgateway.wrapper
-
 # Open browser to http://localhost:5173
 # Add server: http://localhost:4444/servers/UUID/sse
-# Add header: Authorization: Bearer <token>
+# Add header: Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN
 ```
 
 ### Using mcpgateway.translate
@@ -597,7 +594,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def my_function():
-    logger.debug(f"Debug info: {variable}")
+    logger.debug("Debug info: %s", variable)
     logger.info("Operation started")
     logger.warning("Potential issue")
     logger.error("Error occurred", exc_info=True)

@@ -139,6 +139,45 @@ if __name__ == "__main__":
 
 ---
 
+## Listing and Searching Teams
+
+The `GET /v1/teams/` endpoint returns the teams visible to the caller.
+
+| Query parameter | Type | Default | Description |
+|----------------|------|---------|-------------|
+| `skip` | int | `0` | Number of teams to skip (offset-based pagination). |
+| `limit` | int | `50` | Maximum teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
+| `cursor` | string | – | Opaque cursor for cursor-based pagination. |
+| `include_pagination` | bool | `false` | When `true`, response includes `nextCursor` instead of `total`. |
+| `search_query` | string | – | Case-insensitive substring filter on name, slug, or description (max 500 chars). |
+
+**Visibility rules:**
+
+- **Platform admins** see all non-personal teams plus their own personal team. `search_query` is applied server-side via SQL.
+- **Regular users** see only teams they belong to. `search_query` filters the result locally.
+
+```bash
+# List your teams
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/teams/" | jq '.teams[].name'
+
+# Search by name, slug, or description
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/teams/?search_query=engineering" | jq '.teams[].name'
+
+# Paginate with offset
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/teams/?skip=50&limit=25" | jq '.'
+
+# Cursor-based pagination
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/teams/?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/teams/?include_pagination=true&cursor=$CURSOR" | jq '.'
+```
+
+---
+
 ## Operational Tips
 
 - Generate deterministic team UUIDs and manage them via export/import or admin APIs so they're stable across environments.

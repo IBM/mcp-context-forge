@@ -233,3 +233,27 @@ class TestSIEMRBACDenyPaths:
         with pytest.raises(HTTPException) as exc:
             await siem.get_siem_health(_user=None)
         assert exc.value.status_code == 401
+
+
+def test_destination_name_rejects_html_metacharacters():
+    """Issue #5856: stored-XSS defense-in-depth — HTML in destination name is rejected at ingestion."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        siem.DestinationUpsertRequest(name="<script>alert(1)</script>", type="webhook", url="https://example.com/hook")
+
+    # A safe name still validates, and spaces are permitted (regression guard for the narrowed charset).
+    assert siem.DestinationUpsertRequest(name="splunk-prod.1", type="webhook", url="https://example.com/hook").name == "splunk-prod.1"
+    assert siem.DestinationUpsertRequest(name="Splunk Prod", type="webhook", url="https://example.com/hook").name == "Splunk Prod"
+
+
+def test_config_loaded_destination_name_rejects_html():
+    """Issue #5856: config/env destinations bypass DestinationUpsertRequest — validated in _normalize_destination_config."""
+    # First-Party
+    from mcpgateway.services.siem_export_service import get_siem_export_service
+
+    svc = get_siem_export_service()
+    # Name gate runs before URL/type-specific checks, so an HTML name is rejected deterministically.
+    with pytest.raises(ValueError):
+        svc._normalize_destination_config({"name": "<script>alert(1)</script>", "type": "webhook", "url": "https://example.com/hook"})

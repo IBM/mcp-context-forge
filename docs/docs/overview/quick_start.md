@@ -31,7 +31,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
     PLATFORM_ADMIN_EMAIL=admin@example.com \
-    PLATFORM_ADMIN_PASSWORD=changeme \
+    PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
     PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
     uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
@@ -78,7 +78,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         export MCPGATEWAY_UI_ENABLED=true
         export MCPGATEWAY_ADMIN_API_ENABLED=true
         export PLATFORM_ADMIN_EMAIL=admin@example.com
-        export PLATFORM_ADMIN_PASSWORD=changeme
+        export PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me
         export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
         mcpgateway --host 0.0.0.0 --port 4444
         ```
@@ -120,7 +120,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e HOST=0.0.0.0 \
           -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-          -e PLATFORM_ADMIN_PASSWORD=changeme \
+          -e PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
           ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
         ```
@@ -136,7 +136,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e DATABASE_URL=sqlite:////data/mcp.db \
               -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
             ```
@@ -158,7 +158,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
               -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
             ```
@@ -270,36 +270,6 @@ npx -y @modelcontextprotocol/inspector
 
 ---
 
-## Connect via `mcpgateway-wrapper` (stdio)
-
-```bash
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL=$BASE_URL/servers/UUID_OF_SERVER_1/mcp
-python3 -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
-```
-
-Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Example:
-
-```jsonc
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python3",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        // Use http://localhost:8080 if you're running docker-compose with nginx.
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
-        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
-```
-
-For more information see [MCP Clients](../using/index.md)
-
----
 
 ## 4 - Useful URLs
 
@@ -321,9 +291,8 @@ Use the `BASE_URL` you set above (for example `http://localhost:4444` or `http:/
 * [Features Overview](features.md) - deep dive on transports, federation, caching
 * [Admin UI Guide](ui.md)
 * [Deployment to K8s / AWS / GCP / Azure](../deployment/index.md)
-* [Wrap any client via `mcpgateway-wrapper`](../using/mcpgateway-wrapper.md)
 * Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
-You now have an authenticated ContextForge proxying a live tool, exposed via SSE **and** stdio.
+You now have an authenticated ContextForge proxying a live tool, exposed via SSE and Streamable HTTP.
 Jump into the Admin UI or start wiring it into your agents and clients!

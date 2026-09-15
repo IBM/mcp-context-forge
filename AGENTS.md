@@ -10,7 +10,7 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `mcp-servers/AGENTS.md` - MCP server implementation
 - `crates/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
-**Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
+**Note:** The `llms/` directory holds LLM guidance of two kinds: end-user runtime guidance for using ContextForge, and work prompts for agents changing this repository. Where `llms/` guidance overlaps an `AGENTS.md` file, the `AGENTS.md` file is authoritative.
 
 ## Project Overview
 
@@ -38,7 +38,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-crates/                     # Direct Rust crate folders (runtime and wrapper)
+crates/                     # Direct Rust crate folders (runtime)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -68,76 +68,52 @@ make pre-commit
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
 
-# Before committing Rust changes (tools_rust/):
+# Before committing Rust changes (crates/mcp_runtime/):
 # Run fmt-check, clippy -D warnings, and cargo test for Rust crates
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-## PR Review Workflow
+## PR Review
 
-Standard prompt: *"Rebase against main, then conduct an in-depth PR Review."* It runs as a **fixed-point loop** terminating when a full pass surfaces no blocking findings. Each cycle clears blocking and functionally-impacting findings (within reason — escalate edge cases). Cosmetic suggestions can be deferred.
+A review is a set of findings the author can act on. Verify scope before writing findings: cross-reference the PR description against linked issues (`gh pr view`, `gh issue view`). Partial coverage of an issue is acceptable when the PR says so; unstated gaps and scope drift are findings.
 
-### Review State: `llms/NOTES.md`
+### Finding Format
 
-`llms/NOTES.md` is the **ephemeral per-review cycle tracker** — lives in the `llms/` directory alongside other LLM guidance, persists across cycles within one review but never across reviews. It holds the cycle counter, the `Conducting review` / `Implementing suggestions` phase toggles, and per-gate checkboxes; update as you advance. The canonical, committed source is `llms/NOTES.template.md`. When starting a review, instantiate from the template:
+One line per finding:
 
-```bash
-cp llms/NOTES.template.md llms/NOTES.md
+```text
+severity | path:line | problem | fix
 ```
 
-If `llms/NOTES.md` is missing or stale, reset from the template; never assume prior cycle state carries over.
+Add an indented paragraph under a finding only when one line cannot carry it. Delivery channel (file, agent toolkit, `gh pr review`) is per-PR; confirm before posting externally.
 
-### Rebase
+### Severity
 
-```bash
-(cd ../mcp-context-forge && git pull)
-git rebase main
-```
+| Severity | Meaning | Disposition |
+|----------|---------|-------------|
+| blocking | Meets a blocking criterion with evidence in the diff or linked artifacts | Merge gate; no waiver |
+| functionally-impacting | Affects behavior or maintainability, below the blocking bar | Fix before merge unless the PR documents a waiver |
+| suggestion | A better way exists; optional | May be deferred |
+| minor | Polish | May be deferred |
 
-For each conflict, apply the resolution that best preserves both intents using
-the PR diff and recent main commits as context. Escalate when the conflict is
-semantic (logic intent on both sides), would silently weaken a test / security
-check / migration, or when you're not confident the fix matches the PR author's
-intent. Preserve sign-off (`git commit -s`) on any new commits.
+### Blocking Criteria
 
-For conflicts with `.secrets.baseline`, use the version of `.secrets.baseline`
-from the main branch.
+A finding is blocking if and only if it meets one of these criteria with evidence in the diff or linked artifacts. If there is no evidence, it is not blocking:
 
-### Cycle: review → fix → loop
+1. Correctness bug in changed code, reachable in real use (includes data loss).
+2. Security regression, or a security-sensitive change without deny-path regression tests (unauthenticated, wrong team, insufficient permission, feature disabled).
+3. Violates a documented Security Invariant or design decision (see *Authentication & RBAC Overview*; *Synchronous SQLAlchemy in Async Handlers*).
+4. Breaks a consumer contract unflagged: HTTP API, environment variables or their defaults, database schema, Helm values, MCP/A2A wire behavior.
+5. Adds or changes a model without a matching Alembic migration.
+6. The PR does not deliver what it claims.
 
-1. **Verify scope.** Cross-reference the PR description against any linked issues (`gh pr view`, `gh issue view`) and confirm the changes deliver what the PR claims. Partial coverage of an issue is acceptable when the PR documentation explicitly says so; unstated gaps or scope drift are blocking findings.
-2. **Review.** Default categorization: **blocking / functionally-impacting / suggestions / minor** (matches *Tone for GitHub Comments*). Output format and delivery channel (file, agent toolkit, `gh pr review`) decided per-PR — confirm before posting externally.
-3. **Fix.** Address every blocking and functionally-impacting finding this cycle. Update `llms/NOTES.md` to advance state.
-4. **Loop.** Repeat until a full pass yields zero blocking findings, then run the validation gate.
+When severity stays ambiguous after investigation, mark the finding blocking and name the missing evidence. The next pass resolves it.
 
-### Pre-Merge Validation Gate
+Not blocking: style and naming (Ruff owns these), the sync-SQLAlchemy-in-async pattern, doc polish, test-count aesthetics.
 
-Run from the worktree root, in order. Each must pass (or have a documented waiver) before the PR is ready:
+### Tone
 
-| # | Command | Validates |
-|---|---------|-----------|
-| 1 | `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
-| 2 | `make test` | Full pytest suite |
-| 3 | `make coverage diff-cover` | Coverage of changed lines vs. base |
-| 4 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
-| 5 | `make test-mcp-protocol-e2e test-mcp-rbac` | MCP protocol E2E and RBAC against the live gateway |
-| 6 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
-
-Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
-
-### Secret Detection (detect-secrets)
-
-When `detect-secrets` identifies false positives:
-
-- **Python files**: Suppress inline using `# pragma: allowlist secret` comment
-so they don't appear in `.secrets.baseline` after running `make
-detect-secrets-scan`
-    - The one exception to this is doctest strings where the content contains a
-    false positive secret as the comment will interfere with assertions. In this
-    case rely on the .secrets.baseline file and audit the result with 'make
-    detect-secrets-audit'.
-- **All other file types**: Regenerate the baseline using `make
-detect-secrets-scan` to update `.secrets.baseline`
+Courteous by structure, direct by sentence. Lead with what works. State severity so the author knows what must change. Write as a respectful senior colleague: direct about problems, never harsh, never hedged. Prose follows *Agent Prose*.
 
 ## Authentication & RBAC Overview
 
@@ -505,40 +481,75 @@ exempt.
 
 ## Coding Standards
 
-- **Python >= 3.11** with type hints; strict mypy
+- **Python >= 3.12** with type hints; strict mypy
 - **Formatting**: Ruff (line length 200)
 - **Linting**: Ruff (`E3`,`E4`,`E7`,`E9`,`F`,`D1`), Pylint per `pyproject.toml`
 - **Naming**: `snake_case` functions/modules, `PascalCase` classes, `UPPER_CASE` constants
 - **Imports**: Group per isort sections (stdlib, third-party, first-party `mcpgateway`, local)
+- **Readability**: *Clean Code* — implement per [`docs/docs/development/coding-standards.md`](docs/docs/development/coding-standards.md)
+
+### Code Comments
+
+- Comments are a last resort. Make the code self-documenting first: extract a function or rename a thing until the comment becomes redundant.
+- A comment earns its place only when code cannot express a durable constraint: security rationale, upstream workaround, dependency-pin reason.
+- Comments never carry transient implementation process or decisions. Decisions go to an ADR (`docs/docs/architecture/adr/`), process to the commit body, tasks to an issue.
+- Docstrings are API contract, not comments: Ruff `D1`/`D417` and interrogate enforce presence and parameter coverage; summary line first, then the contract.
+- Fix a comment in the same change that fixes its code.
+
+## Agent Prose (ASD-STE100)
+
+All agent-authored prose follows the ASD-STE100 writing rules. The controlled dictionary is not enforced; domain, protocol, and code terms count as technical names.
+
+- One instruction per sentence: 20 words or fewer for instructions, 25 for description.
+- Active voice, present tense. Imperative for instructions: "Add a test", never "a test should be added".
+- One word, one meaning: a token stays a token, never also a credential or a key.
+- Positive constructions. No hedging ("worth considering"), no idioms.
+- Technical names verbatim: `normalize_token_teams()`, `DB_POOL_SIZE`, `QueuePool limit exceeded`.
+
+Covers code comments and docstrings, commit bodies, PR descriptions, review findings, issue bodies and comments, CHANGELOG entries. Exempt: identifiers, log and error strings, `docs/` prose, ephemeral working notes.
+
+Full rules and worked examples per artifact: [`docs/docs/development/agent-prose.md`](docs/docs/development/agent-prose.md).
 
 ## Commit & PR Standards
 
-- **Sign commits**: `git commit -s` (DCO requirement)
-- **Conventional Commits**: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`
+- **Sign commits**: `git commit -s` (DCO requirement). Preserve sign-off on rewritten commits (rebases, conflict resolutions).
+- **Conventional Commits**: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`. Subjects keep that format; bodies follow *Agent Prose*.
 - **Link issues**: `Closes #123`
-- Include tests for behavior changes
-- Every PR whose behavior can be exercised through a live gateway must include a full black-box test against a running gateway; see [`tests/live_gateway/`](tests/live_gateway/) for examples
-- Require green lint and tests before PR
+- Include tests for behavior changes.
+- Every PR whose behavior can be exercised through a live gateway must include a full black-box test against a running gateway; see [`tests/live_gateway/`](tests/live_gateway/) for examples.
+- Green lint and tests before PR.
 - Don't push until asked.
 
-### Tone for GitHub Comments
+### Pre-Merge Validation Gate
 
-When posting PR reviews, issue comments, or any public-facing text on GitHub, use a collaborative and constructive tone:
+Run from the worktree root, in order. Each command must pass, or the PR must document a waiver, before the PR is ready:
 
-- Lead with what's good before raising concerns.
-- Frame issues as questions or options ("worth considering", "a couple of approaches") rather than directives.
-- Remember contributors are people doing their jobs — be direct about problems without being harsh.
-- Categorize findings clearly (blocking, suggestions, minor notes) so the author knows what must change vs. what's optional.
-- Avoid sounding algorithmic or robotic; write the way a respectful senior colleague would in a code review.
+| Command | Validates |
+|---------|-----------|
+| `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
+| `make test` | Full pytest suite |
+| `make coverage diff-cover` | Coverage of changed lines vs. base |
+| `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
+| `make test-e2e` | MCP protocol E2E and RBAC against the live gateway |
+| `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 
-## GitHub Issues (Brief)
+Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
 
-- Prefer issue templates in `.github/ISSUE_TEMPLATE/`: `bug-report-code.md`, `feature-request.md`, `docs-issue.md`, `testing--bug--unit--manual--or-new-test-.md`, `chore-task--devops--linting--maintenance-.md`.
-- Title style should include type prefix, for example: `[BUG]: ...`, `[FEATURE]: ...`, `[DOCS]: ...`, `[TESTING]: ...`, `[CHORE]: ...`.
-- Label baseline: one primary type label (`bug` or `enhancement` or `documentation` or `testing` or `chore`) plus `triage` on new issues.
-- Add 1-3 optional scope labels as needed (for example `security`, `performance`, `ui`, `api`, `python`, `devops`, `a2a`, `mcp-protocol`).
-- Epic title format: `[EPIC][SECURITY]: Security clearance levels plugin - Bell-LaPadula MAC implementation #1245`.
-- Epic labels: `epic`, `security`, `enhancement`, `triage` (plus optional scope labels).
+### Secret Detection (detect-secrets)
+
+When `detect-secrets` identifies false positives:
+
+- **Python files**: suppress inline with `# pragma: allowlist secret` so they don't appear in `.secrets.baseline` after `make detect-secrets-scan`.
+  - Exception: doctest strings where the comment breaks the assertion. Rely on `.secrets.baseline` and audit with `make detect-secrets-audit`.
+- **All other file types**: regenerate the baseline with `make detect-secrets-scan`.
+- **Merge conflicts**: resolve `.secrets.baseline` using the version from `main`.
+
+## GitHub Issues
+
+- Start from the matching template in `.github/ISSUE_TEMPLATE/`; the template's fields define the body.
+- Title style includes a type prefix: `[BUG]: ...`, `[FEATURE]: ...`, `[DOCS]: ...`, `[TESTING]: ...`, `[CHORE]: ...`. Epics: `[EPIC][SCOPE]: ...`.
+- Label baseline: one primary type label (`bug`, `enhancement`, `documentation`, `testing`, `chore`) plus `triage` on new issues. Add 1-3 optional scope labels (`security`, `performance`, `ui`, `api`, `python`, `devops`, `a2a`, `mcp-protocol`); epics add `epic`.
+- Bodies and comments follow *Agent Prose*. For public tone, see *PR Review → Tone*.
 
 ## Maintenance Guardrails (Brief)
 

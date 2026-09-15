@@ -3787,3 +3787,92 @@ class TestConvertServerToReadAssociatedToolIds:
             assert len(server_result.associated_prompts) == 1
             assert "prompt-1" in server_result.associated_prompts
             assert "prompt-2" not in server_result.associated_prompts
+
+
+# --------------------------------------------------------------------------- #
+#  convert_server_to_read: url                                                #
+# --------------------------------------------------------------------------- #
+
+
+class TestConvertServerToReadUrl:
+    """Verify url is derived from APP_DOMAIN in convert_server_to_read, not the caller's Host header.
+
+    mcp-context-forge#6632: the web UI previously built this URL client-side
+    from window.location.origin, which is wrong in any split deployment where
+    the web UI's own origin differs from the gateway's public APP_DOMAIN.
+    """
+
+    @pytest.fixture
+    def server_service(self):
+        return ServerService()
+
+    def _make_server(self, server_id="srv-1"):
+        # Standard
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id=server_id,
+            name="test",
+            description="desc",
+            icon=None,
+            enabled=True,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+            team_id=None,
+            team=None,
+            owner_email=None,
+            visibility="public",
+            created_by="admin",
+            modified_by=None,
+            tags=[],
+            tools=[],
+            resources=[],
+            prompts=[],
+            a2a_agents=[],
+            metrics=[],
+            oauth_enabled=False,
+            oauth_config=None,
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+            version=1,
+        )
+
+    def test_url_derived_from_app_domain(self, server_service, monkeypatch):
+        """url is APP_DOMAIN + /servers/{id}/mcp, regardless of any request context."""
+        monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        monkeypatch.setattr(settings, "app_root_path", "")
+        server = self._make_server(server_id="srv-42")
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url == "https://gateway.example.com/servers/srv-42/mcp"
+
+    def test_url_includes_app_root_path(self, server_service, monkeypatch):
+        """url includes APP_ROOT_PATH so it's actually reachable when the gateway is mounted under a subpath."""
+        monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        monkeypatch.setattr(settings, "app_root_path", "/gateway")
+        server = self._make_server(server_id="srv-42")
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url == "https://gateway.example.com/gateway/servers/srv-42/mcp"
+
+    def test_url_none_when_app_domain_unusable(self, server_service, monkeypatch):
+        """url is None (not a broken string) when APP_DOMAIN can't be stringified."""
+
+        class Exploding:
+            def __str__(self):
+                raise AttributeError("no __str__ for you")
+
+        monkeypatch.setattr(settings, "app_domain", Exploding())
+        server = self._make_server()
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url is None

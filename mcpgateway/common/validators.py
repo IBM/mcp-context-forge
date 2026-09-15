@@ -57,10 +57,13 @@ from pathlib import Path
 import re
 import shlex
 import socket
-from typing import Any, Dict, Iterable, List, Optional, Pattern
+from typing import Annotated, Any, Dict, Iterable, List, Optional, Pattern
 import unicodedata
 from urllib.parse import unquote, urlparse
 import uuid
+
+# Third-Party
+from pydantic import AfterValidator
 
 # First-Party
 from mcpgateway.config import settings
@@ -2519,3 +2522,15 @@ def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
             raise ValueError(f"meta_data exceeds maximum size ({max_bytes} bytes): got {size}")
     except (TypeError, ValueError) as exc:
         raise ValueError(f"meta_data is not serializable: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Reusable Pydantic field types (dedup for router request schemas).
+#
+# SafeIdentifier: strict identifier charset (no spaces) for values used in URLs
+#   / path segments / dict keys (e.g. SSO provider id).
+# SafeName: human-facing names — allows spaces but still rejects HTML special
+#   characters, so a stored name is inert at any DOM sink (issue #5856).
+# ---------------------------------------------------------------------------
+SafeIdentifier = Annotated[str, AfterValidator(lambda v: SecurityValidator.validate_identifier(v, "Identifier"))]
+SafeName = Annotated[str, AfterValidator(lambda v: SecurityValidator.validate_name(v, "Name"))]

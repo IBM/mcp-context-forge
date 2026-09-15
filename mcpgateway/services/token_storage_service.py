@@ -353,6 +353,35 @@ class TokenStorageService:
             app_user_email=app_user_email,
         )
 
+    async def get_token_info_bulk(
+        self,
+        gateway_ids: list[str],
+        app_user_email: str,
+    ) -> Dict[str, Any]:
+        """Get information about stored OAuth tokens for multiple gateways at once.
+
+        ``team_id`` is resolved once from ``self.user_context`` (the authenticated
+        caller's JWT) rather than per gateway_id, since ``_get_team_id`` derives it
+        solely from the caller's own team claim - identical for every id in the batch.
+
+        Args:
+            gateway_ids: IDs of the gateways to look up.
+            app_user_email: ContextForge user email.
+
+        Returns:
+            Mapping of gateway_id to: the get_token_info() result dict, None (no
+            token stored), or the caught Exception instance (lookup failed) - see
+            ``AbstractTokenBackend.get_token_info_bulk``.
+        """
+        if not gateway_ids:
+            return {}
+        team_id = self._get_team_id(gateway_ids[0], app_user_email)
+        return await self._backend.get_token_info_bulk(
+            gateway_ids=gateway_ids,
+            team_id=team_id,
+            app_user_email=app_user_email,
+        )
+
     async def revoke_user_tokens(
         self,
         gateway_id: str,
