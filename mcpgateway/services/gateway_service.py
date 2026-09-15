@@ -181,7 +181,7 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
             raise ValueError(f"Repeated pagination cursor from list_{method_suffix}")
         seen_cursors.add(cursor)
         response = await list_method(cursor=cursor)
-        mcp_responses.extend(getattr(response, response_attribute))
+        mcp_responses = list(getattr(response, response_attribute, None) or [])
     return mcp_responses
 
 
