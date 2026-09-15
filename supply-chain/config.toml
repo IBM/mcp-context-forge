@@ -62,7 +62,7 @@ version = "1.4.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.chacha20]]
-version = "0.10.1"
+version = "0.10.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.cmov]]
@@ -314,7 +314,7 @@ version = "2.1.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls]]
-version = "0.23.43"
+version = "0.23.45"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-platform-verifier-android]]
