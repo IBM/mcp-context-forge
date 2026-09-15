@@ -14,6 +14,7 @@ It handles:
 """
 
 # Standard
+import asyncio
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -1746,13 +1747,34 @@ class PromptService(BaseService):
             db.commit()  # Release transaction to avoid idle-in-transaction
 
             result = []
+            reads_by_prompt = {}
             for t in prompts:
                 try:
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                    result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
+                    read = self.convert_prompt_to_read(t, include_metrics=include_metrics)
+                    reads_by_prompt[id(t)] = read
+                    result.append(read)
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                     # Continue with remaining prompts instead of failing completely
+
+            # Gateway-backed prompts are synced into the catalog as metadata only
+            # (template=""), so their content must be fetched live from the
+            # upstream, same as the single-prompt GET endpoint already does via
+            # _should_fetch_gateway_prompt() / _fetch_gateway_prompt_result()
+            # (issue #6440). Fetched concurrently; a per-prompt failure is logged
+            # and leaves that prompt's template as-is rather than failing the list.
+            gateway_backed = [t for t in prompts if id(t) in reads_by_prompt and self._should_fetch_gateway_prompt(t)]
+            if gateway_backed:
+                fetches = await asyncio.gather(*(self._fetch_gateway_prompt_result(t, None, meta_data=None) for t in gateway_backed), return_exceptions=True)
+                for t, fetched in zip(gateway_backed, fetches):
+                    if isinstance(fetched, BaseException):
+                        logger.warning("Failed to fetch live content for gateway-backed prompt %s: %s", getattr(t, "name", "unknown"), fetched)
+                        continue
+                    text = next((m.content.text for m in fetched.messages if isinstance(m.content, TextContent)), None)
+                    if text is not None:
+                        reads_by_prompt[id(t)].template = text
+
             return result
 
     async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
