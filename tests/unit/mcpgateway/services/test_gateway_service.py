@@ -7742,17 +7742,7 @@ class TestUpdateGatewayAdvanced:
         mock_gateway.version = 1
         mock_gateway.tags = []
 
-        update_data = _make_gateway(
-            passthrough_headers=["X-Custom", "X-Other"],
-            auth_type=None,
-            auth_value=None,
-            url="http://example.com/gateway",
-        )
-        update_data.auth_token = None
-        update_data.auth_password = None
-        update_data.auth_header_value = None
-        update_data.auth_query_param_key = None
-        update_data.auth_query_param_value = None
+        update_data = GatewayUpdate(passthrough_headers=["X-Custom", "X-Other"])
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
@@ -7785,6 +7775,28 @@ class TestUpdateGatewayAdvanced:
         await gateway_service.update_gateway(db, mock_gateway.id, update_data)
 
         assert mock_gateway.passthrough_headers is None
+
+    @pytest.mark.asyncio
+    async def test_omitted_passthrough_headers_preserves_override(self, gateway_service, mock_gateway, monkeypatch):
+        """Omitting the field leaves the current gateway override unchanged."""
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = {}
+        mock_gateway.auth_query_params = None
+        mock_gateway.version = 1
+        mock_gateway.tags = []
+        mock_gateway.passthrough_headers = ["X-Custom"]
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [], [])))
+
+        await gateway_service.update_gateway(db, mock_gateway.id, GatewayUpdate())
+
+        assert mock_gateway.passthrough_headers == ["X-Custom"]
 
     @pytest.mark.asyncio
     async def test_update_passthrough_headers_string(self, gateway_service, mock_gateway, monkeypatch):

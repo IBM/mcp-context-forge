@@ -2930,9 +2930,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     for prompt in gateway.prompts:
                         if prompt.visibility == old_visibility:
                             prompt.visibility = gateway.visibility
-                passthrough_headers_present = "passthrough_headers" in getattr(
-                    gateway_update, "model_fields_set", set()
-                ) or getattr(gateway_update, "passthrough_headers", None) is not None
+                passthrough_headers_present = "passthrough_headers" in gateway_update.model_fields_set
                 if passthrough_headers_present:
                     if gateway_update.passthrough_headers is None or isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers
