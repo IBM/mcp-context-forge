@@ -149,7 +149,10 @@ from mcpgateway.validation.tags import validate_tags_field
 
 
 class MCPListMethod(Enum):
-    """MCP list method suffixes and response collection attributes."""
+    """MCP list method suffixes and response collection attributes.
+    Each value is `(method_suffix, response_attribute)` where `list_{method_suffix}`
+    is the SDK method and `response_attribute` is the camelCase attribute on the response object.
+    """
 
     TOOLS = ("tools", "tools")
     PROMPTS = ("prompts", "prompts")
@@ -162,7 +165,7 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
 
     Args:
         session: MCP client session
-        mcp_method: mcp method to call list_*
+        mcp_method: MCPListMethod Enum for list_* method and response
 
     Returns:
         list of MCP objects across all pages
@@ -178,10 +181,11 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
     while getattr(response, "nextCursor", None) is not None:
         cursor = response.nextCursor
         if cursor in seen_cursors:
-            raise ValueError(f"Repeated pagination cursor from list_{method_suffix}")
+            logger.warning("Repeated pagination cursor from list_%s", method_suffix)
+            break
         seen_cursors.add(cursor)
         response = await list_method(cursor=cursor)
-        mcp_responses = list(getattr(response, response_attribute, None) or [])
+        mcp_responses.extend(getattr(response, response_attribute, []))
     return mcp_responses
 
 
