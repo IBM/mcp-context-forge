@@ -173,7 +173,7 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
     response = await list_method()
-    mcp_responses = list(getattr(response, response_attribute))
+    mcp_responses = list(getattr(response, response_attribute, None) or [])
     seen_cursors = set()
     while getattr(response, "nextCursor", None) is not None:
         cursor = response.nextCursor
