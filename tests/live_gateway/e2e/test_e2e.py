@@ -1711,6 +1711,43 @@ class TestTokenLifecycle:
             with suppress(Exception):
                 admin_api.delete(f"/tokens/admin/{minted['token_id']}")
 
+    def test_revoke_token_denies_rest(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """A revoked token is rejected on the REST API."""
+        minted = _mint_token(playwright, token_lifecycle_user["email"], is_admin=True)
+        ctx = _api_context(playwright, minted["access_token"])
+        try:
+            before = ctx.get("/tools")
+            assert before.status == 200, f"Token must work before revocation: {before.status} {before.text()}"
+
+            revoke = admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+            assert revoke.status == 204, f"Revoke must return 204: {revoke.status} {revoke.text()}"
+            time.sleep(_REVOCATION_PROPAGATION_SECONDS)
+
+            after = ctx.get("/tools")
+            assert after.status == 401, f"Revoked token must be rejected with 401, got {after.status}: {after.text()}"
+            print(f"    -> Revoked token rejected on REST: {after.status}")
+        finally:
+            ctx.dispose()
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
+    def test_revoke_token_denies_mcp(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """A revoked token cannot open an MCP session."""
+        minted = _mint_token(playwright, token_lifecycle_user["email"], is_admin=True)
+        try:
+            assert _mcp_initialize_only(minted["access_token"]), "Token must work before revocation"
+
+            revoke = admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+            assert revoke.status == 204, f"Revoke must return 204: {revoke.status} {revoke.text()}"
+            time.sleep(_REVOCATION_PROPAGATION_SECONDS)
+
+            with pytest.raises(Exception) as excinfo:
+                _mcp_initialize_only(minted["access_token"])
+            print(f"    -> Revoked token rejected on MCP (expected): {excinfo.value}")
+        finally:
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
 
 # ---------------------------------------------------------------------------
 # Test: Cross-transport consistency
