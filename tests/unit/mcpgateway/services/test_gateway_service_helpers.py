@@ -1588,9 +1588,27 @@ async def test_get_list_no_cursor():
 async def test_get_list_paginated_multi_page(mcp_method, method_name, response_attribute):
     session = AsyncMock()
     list_method = getattr(session, method_name)
-    list_method.side_effect = [
+    pages = [
         SimpleNamespace(**{response_attribute: ["t1"], "nextCursor": "cur"}),
         SimpleNamespace(**{response_attribute: ["t2", "t3"], "nextCursor": None}),
     ]
+    list_method.side_effect = pages
     assert await get_list_paginated(session, mcp_method) == ["t1", "t2", "t3"]
     list_method.assert_awaited_with(cursor="cur")
+    assert getattr(pages[0], response_attribute) == ["t1"]
+    assert getattr(pages[1], response_attribute) == ["t2", "t3"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cursors", [("cur", "cur"), ("first", "second", "first")])
+async def test_get_list_paginated_rejects_cursor_cycles(cursors):
+    """Reject repeated cursors before requesting another page."""
+    session = AsyncMock()
+    pages = [SimpleNamespace(tools=["t1"], nextCursor=cursor) for cursor in cursors]
+    session.list_tools.side_effect = pages
+
+    with pytest.raises(ValueError, match="Repeated pagination cursor from list_tools"):
+        await get_list_paginated(session, MCPListMethod.TOOLS)
+
+    assert session.list_tools.await_count == len(cursors)
+    assert all(page.tools == ["t1"] for page in pages)

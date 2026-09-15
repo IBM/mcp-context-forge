@@ -2897,21 +2897,21 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {"type": "object"}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response with URI handling
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(nextCursor=None)
             mock_resource = MagicMock()
             mock_resource.model_dump.return_value = {"uri": "file://test.txt", "name": "test_resource", "description": "Test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
             mock_session_instance.list_resources.return_value = mock_resources_response
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(nextCursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "Test prompt"}
             mock_prompts_response.prompts = [mock_prompt]
@@ -2961,12 +2961,12 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response with complex URI object
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(nextCursor=None)
             mock_resource = MagicMock()
 
             # Create a complex URI object that has unicode_string attribute
@@ -3020,12 +3020,12 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(nextCursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "complex_prompt", "description": "Complex prompt"}
             mock_prompts_response.prompts = [mock_prompt]
@@ -3074,7 +3074,7 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -3119,7 +3119,7 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -3811,7 +3811,7 @@ class TestGatewayRefresh:
         valid_tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
         long_name_tool = MagicMock()
         long_name_tool.model_dump.return_value = {"name": long_name, "inputSchema": {}}
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = [valid_tool, long_name_tool]
         mock_session.list_tools.return_value = mock_list_tools
 
@@ -3853,7 +3853,7 @@ class TestGatewayRefresh:
 
         tool = MagicMock()
         tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = [tool]
         mock_session.list_tools.return_value = mock_list_tools
 
@@ -3863,7 +3863,7 @@ class TestGatewayRefresh:
             "name": "customer_data",
             "_meta": {"ui/resourceUri": "ui://widgets/customer-search"},
         }
-        mock_list_resources = MagicMock()
+        mock_list_resources = MagicMock(nextCursor=None)
         mock_list_resources.resources = [resource]
         mock_session.list_resources.return_value = mock_list_resources
 
@@ -3873,7 +3873,7 @@ class TestGatewayRefresh:
             "name": "customer_record",
             "_meta": {"ui/resourceUri": "ui://widgets/customer-record"},
         }
-        mock_list_templates = MagicMock()
+        mock_list_templates = MagicMock(nextCursor=None)
         mock_list_templates.resourceTemplates = [template]
         mock_session.list_resource_templates.return_value = mock_list_templates
 
@@ -3948,16 +3948,16 @@ class TestGatewayRefresh:
         mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
         mock_session.initialize.return_value = mock_init_response
 
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
         mock_session.list_tools.return_value = mock_list_tools
 
-        mock_list_resources = MagicMock()
+        mock_list_resources = MagicMock(nextCursor=None)
         mock_list_resources.resources = [MagicMock(model_dump=MagicMock(return_value={"uri": "res1", "name": "res1"}))]
         mock_session.list_resources.return_value = mock_list_resources
         mock_session.list_resource_templates.return_value = MagicMock(resourceTemplates=[])
 
-        mock_list_prompts = MagicMock()
+        mock_list_prompts = MagicMock(nextCursor=None)
         mock_list_prompts.prompts = [MagicMock(model_dump=MagicMock(return_value={"name": "prompt1"}))]
         mock_session.list_prompts.return_value = mock_list_prompts
 
@@ -3991,7 +3991,7 @@ class TestGatewayRefresh:
         mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
         mock_session.initialize.return_value = mock_init_response
 
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = []
         mock_session.list_tools.return_value = mock_list_tools
 

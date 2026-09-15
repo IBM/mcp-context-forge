@@ -158,7 +158,7 @@ class MCPListMethod(Enum):
 
 
 async def get_list_paginated(session: Any, mcp_method: MCPListMethod):
-    """Helper method to run list_* paginated until the nextCursor is None
+    """Collect MCP list results until the server returns no next cursor.
 
     Args:
         session: MCP client session
@@ -166,13 +166,21 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod):
 
     Returns:
         list of MCP objects across all pages
+
+    Raises:
+        ValueError: If the server repeats a pagination cursor.
     """
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
     response = await list_method()
-    mcp_responses = getattr(response, response_attribute)
+    mcp_responses = list(getattr(response, response_attribute))
+    seen_cursors = set()
     while getattr(response, "nextCursor", None) is not None:
-        response = await list_method(cursor=response.nextCursor)
+        cursor = response.nextCursor
+        if cursor in seen_cursors:
+            raise ValueError(f"Repeated pagination cursor from list_{method_suffix}")
+        seen_cursors.add(cursor)
+        response = await list_method(cursor=cursor)
         mcp_responses.extend(getattr(response, response_attribute))
     return mcp_responses
 
