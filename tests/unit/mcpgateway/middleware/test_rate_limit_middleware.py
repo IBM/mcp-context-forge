@@ -49,6 +49,8 @@ class TestRateLimiterRedisUrl:
         mock_settings.rate_limiting_enabled = True
         mock_settings.rate_limiting_redis_enabled = True
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/0"
+        mock_settings.rate_limit_medium_rpm = 100
+        mock_settings.rate_limit_medium_burst = 20
 
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -67,6 +69,8 @@ class TestRateLimiterRedisUrl:
         mock_settings.rate_limiting_enabled = True
         mock_settings.rate_limiting_redis_enabled = True
         mock_settings.ratelimiter_redis_url = None
+        mock_settings.rate_limit_medium_rpm = 100
+        mock_settings.rate_limit_medium_burst = 20
 
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -549,6 +553,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_critical_rpm = 10
             mock_settings.rate_limit_high_rpm = 30
             mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
             mock_settings.rate_limit_low_rpm = 500
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
@@ -1163,6 +1168,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_critical_rpm = 10
             mock_settings.rate_limit_high_rpm = 30
             mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
             mock_settings.rate_limit_low_rpm = 500
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
@@ -1229,6 +1235,8 @@ class TestRateLimitMiddlewareTiers:
         with patch("mcpgateway.middleware.rate_limit_middleware.settings") as ms:
             ms.rate_limiting_enabled = False
             ms.rate_limiting_redis_enabled = True
+            ms.rate_limit_medium_rpm = 100
+            ms.rate_limit_medium_burst = 20
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 

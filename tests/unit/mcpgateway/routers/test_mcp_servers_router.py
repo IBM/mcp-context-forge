@@ -29,6 +29,7 @@ from sqlalchemy.orm import sessionmaker
 from mcpgateway.db import Base, Gateway as DbGateway
 from mcpgateway.routers.mcp_servers_router import _validated_team_id, check_mcp_server_connectivity, check_mcp_server_handshake
 from mcpgateway.schemas import GatewayHandshakeRequest, GatewayHandshakeResponse, GatewayTestRequest, GatewayTestResponse
+from mcpgateway.services.http_client_service import SniPinningTransport
 from mcpgateway.services.gateway_service import (
     _classify_handshake_error,
     _gateway_test_visibility_filters,
@@ -36,7 +37,6 @@ from mcpgateway.services.gateway_service import (
     _HANDSHAKE_INVALID_COPY,
     _HANDSHAKE_PROTOCOL_COPY,
     _HANDSHAKE_TRANSPORT_COPY,
-    _SniPinningTransport,
 )
 
 # Local
@@ -756,10 +756,10 @@ async def test_handshake_discover_fallback_to_initialize(handshake_request, user
     assert result.protocol_version == "2025-11-25"
     assert result.server_name == "legacy-srv"
     assert result.component_counts == {"tools": 2}
-    # The SDK keeps the validated hostname; _SniPinningTransport dials the pinned address.
+    # The SDK keeps the validated hostname; SniPinningTransport dials the pinned address.
     assert mock_streamable.call_args.kwargs["url"] == "http://example.com/mcp"
 
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
+    with patch("mcpgateway.services.gateway_service.SniPinningTransport", wraps=SniPinningTransport) as mock_transport:
         factory_client = mock_streamable.call_args.kwargs["httpx_client_factory"]()
         await factory_client.aclose()
 
@@ -1183,7 +1183,7 @@ async def test_handshake_sse_gateway_uses_sse_client(handshake_request, user_ctx
     assert mock_sse.call_args.kwargs["url"] == "http://example.com/mcp"
 
     factory = mock_sse.call_args.kwargs["httpx_client_factory"]
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
+    with patch("mcpgateway.services.gateway_service.SniPinningTransport", wraps=SniPinningTransport) as mock_transport:
         factory_client = factory()
         try:
             assert isinstance(factory_client, httpx.AsyncClient)
@@ -1574,7 +1574,7 @@ async def test_handshake_registered_only_allowlist_keeps_public_gateways_probeab
 @pytest.mark.asyncio
 async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
     """The transport rewrites the request onto the pinned address while keeping Host and TLS identity."""
-    transport = _SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
+    transport = SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
     request = httpx.Request("GET", "http://example.com/mcp")
 
     with patch.object(httpx.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx.Response(200))):
@@ -1589,7 +1589,7 @@ async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
 @pytest.mark.asyncio
 async def test_sni_pinning_transport_refuses_unvalidated_host():
     """The transport refuses to send anywhere but the validated hostname."""
-    transport = _SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
+    transport = SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
     request = httpx.Request("GET", "http://attacker.example.net/mcp")
 
     with pytest.raises(httpx.UnsupportedProtocol):
@@ -1640,7 +1640,7 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
     assert result.success is True
     mock_ssl.assert_called_once_with("ca-pem", client_cert="client-pem", client_key="key-pem")
 
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
+    with patch("mcpgateway.services.gateway_service.SniPinningTransport", wraps=SniPinningTransport) as mock_transport:
         factory_client = mock_streamable.call_args.kwargs["httpx_client_factory"]()
         await factory_client.aclose()
 
@@ -1653,7 +1653,7 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
 @pytest.mark.asyncio
 async def test_sni_pinning_transport_accepts_punycode_host():
     """An internationalized hostname is matched in its IDNA-encoded form, not rejected."""
-    transport = _SniPinningTransport(sni_hostname="xn--nicode-2ya.com", pinned_host="8.8.8.8")
+    transport = SniPinningTransport(sni_hostname="xn--nicode-2ya.com", pinned_host="8.8.8.8")
     request = httpx.Request("GET", "http://xn--nicode-2ya.com/mcp")
 
     with patch.object(httpx.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx.Response(200))):
