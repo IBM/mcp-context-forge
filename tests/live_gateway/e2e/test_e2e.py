@@ -1748,6 +1748,42 @@ class TestTokenLifecycle:
             with suppress(Exception):
                 admin_api.delete(f"/tokens/admin/{minted['token_id']}")
 
+    def test_scoped_token_denied_tool_execute(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright, streamable_http_gateway: dict) -> None:
+        """A token scoped to tools.read cannot execute a tool.
+
+        Token generation auto-injects ``servers.use`` for MCP-method
+        permissions, so the token reaches the transport. ``token_scope_grants``
+        then denies ``tools.execute`` at the JSON-RPC layer.
+        """
+        minted = _mint_token(
+            playwright,
+            token_lifecycle_user["email"],
+            is_admin=True,
+            scope={"permissions": ["tools.read"]},
+        )
+        try:
+            tools = _mcp_tools_list(minted["access_token"])
+            assert tools, "tools.read must still list tools"
+
+            # The except clause lists transport errors only. Catching bare Exception
+            # here would swallow the AssertionError below and the test could never fail.
+            # ExceptionGroup is included because the SDK's ClientSession runs call_tool()
+            # inside an anyio TaskGroup, which wraps a single McpError in an ExceptionGroup
+            # on the way out. This is still safe: the assert below sits outside this try,
+            # so widening the tuple here cannot swallow it.
+            result = None
+            try:
+                result = _mcp_tool_call(minted["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
+            except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
+                print(f"    -> Scoped token denied execute at the transport (expected): {exc}")
+
+            if result is not None:
+                assert result.isError, f"tools.read-only token must be denied tools.execute, got: {result}"
+                print(f"    -> Scoped token denied execute (expected): {result.content[0].text}")
+        finally:
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
 
 # ---------------------------------------------------------------------------
 # Test: Cross-transport consistency
