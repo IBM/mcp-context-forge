@@ -1559,7 +1559,7 @@ USER_PREFIX = "e2e-user"
 # Special-use TLDs such as .local and .invalid are rejected by email-validator,
 # so a test domain must be a normal one.
 USER_DOMAIN = "test.com"
-USER_PASSWORD = "E2eUser!9xQw2@Kp5z"
+USER_PASSWORD = "E2eUser!9xQw2@Kp5z"  # pragma: allowlist secret
 
 
 def _user_email() -> str:
@@ -1588,7 +1588,8 @@ def _list_all_users(admin_api: APIRequestContext) -> list[dict[str, Any]]:
     resp = admin_api.get("/auth/email/admin/users", params={"limit": 0})
     assert resp.status == 200, f"GET /auth/email/admin/users returned {resp.status}: {resp.text()[:500]}"
     body = _json_or_fail(resp, "GET /auth/email/admin/users")
-    return body if isinstance(body, list) else (body.get("users") or [])
+    assert isinstance(body, list), f"GET /auth/email/admin/users returned {type(body).__name__}, expected a list; the paginated shape appears only with include_pagination"
+    return body
 
 
 def _user_role_tuples(admin_api: APIRequestContext, email: str) -> set[tuple[str, str, str, str]]:
@@ -1628,20 +1629,21 @@ class _OwnedUsers:
 
 
 @pytest.fixture
-def owned_users(admin_api: APIRequestContext, rbac_team: dict) -> Generator[_OwnedUsers, None, None]:
+def owned_users(admin_api: APIRequestContext) -> Generator[_OwnedUsers, None, None]:
     """Track accounts one test creates, delete them, and prove they are gone.
 
     Deleting a user also removes that user's role assignments and team
     memberships, so no separate revocation step runs here. Teardown verifies
     the removals rather than assuming them, and reports every failure together.
 
-    ``rbac_team`` is a declared dependency so membership verification runs while
-    the team still exists. A team that has already gone would answer 404, which
-    is not evidence that a membership was cleaned up.
+    Only a test that requested the module-scoped team can record a membership,
+    and a module-scoped fixture outlives every function-scoped teardown, so the
+    team is still present when the verification below runs. A team that had
+    already gone would answer 404, which is not evidence that a membership was
+    cleaned up, so the check treats only a readable member list as proof.
 
     Args:
         admin_api: Authenticated admin API context.
-        rbac_team: The suite's team, kept alive for membership verification.
 
     Yields:
         The registry the factory writes to.
