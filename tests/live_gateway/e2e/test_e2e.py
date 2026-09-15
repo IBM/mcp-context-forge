@@ -1554,6 +1554,73 @@ class TestDenyPaths:
 
 
 # ---------------------------------------------------------------------------
+# Test: API token lifecycle
+# ---------------------------------------------------------------------------
+class TestTokenLifecycle:
+    """Create, list, authenticate, revoke, and scope-restrict an API token.
+
+    Issue #6523. Token revocation already has a deny-path test. Everything
+    before revocation was fixture infrastructure until this class. A silent
+    break in the token catalog would leave the RBAC suite green.
+    """
+
+    def test_create_token_returns_access_token_and_id(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """POST /tokens returns a non-empty access_token and a token id.
+
+        The POST runs inline rather than through ``_mint_token`` so the raw
+        ``TokenCreateResponse`` body is asserted, not the helper's extraction.
+        """
+        user_jwt = _make_jwt(token_lifecycle_user["email"], is_admin=True, teams=None)
+        ctx = _api_context(playwright, user_jwt)
+        token_id = None
+        try:
+            name = f"{RBAC_PREFIX}-token-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post("/tokens", data={"name": name, "expires_in_days": 1})
+            assert resp.status in (200, 201), f"POST /tokens failed: {resp.status} {resp.text()}"
+
+            payload = resp.json()
+            assert "access_token" in payload, f"TokenCreateResponse must carry access_token, got {sorted(payload)}"
+            assert "token" in payload, f"TokenCreateResponse must carry a token object, got {sorted(payload)}"
+            assert isinstance(payload["access_token"], str), f"access_token must be a string, got {type(payload['access_token'])}"
+            assert payload["access_token"], "access_token must not be empty"
+
+            token_obj = payload["token"]
+            token_id = token_obj.get("id")
+            assert token_id, f"token object must carry an id, got {sorted(token_obj)}"
+            assert token_obj["name"] == name, f"Name mismatch: {token_obj['name']} != {name}"
+            assert isinstance(payload.get("warnings", []), list), "warnings must be a list when present"
+            print(f"    -> Minted token {token_id} ({len(payload['access_token'])} chars, warnings={payload.get('warnings')})")
+        finally:
+            ctx.dispose()
+            if token_id:
+                with suppress(Exception):
+                    admin_api.delete(f"/tokens/admin/{token_id}")
+
+    def test_created_token_in_list(self, token_lifecycle_user: dict, playwright: Playwright) -> None:
+        """GET /tokens lists the caller's token by id and name.
+
+        ``/tokens`` blocks the ``api_token`` auth method outright
+        (``mcpgateway/routers/tokens.py`` ``_require_authenticated_session`` —
+        Management Plane isolation against token-chaining). List with a fresh
+        session-style JWT for the same user, not the minted access_token.
+        """
+        user_jwt = _make_jwt(token_lifecycle_user["email"], is_admin=True, teams=None)
+        ctx = _api_context(playwright, user_jwt)
+        try:
+            resp = ctx.get("/tokens")
+            assert resp.status == 200, f"GET /tokens failed: {resp.status} {resp.text()}"
+            payload = resp.json()
+            assert "tokens" in payload, f"TokenListResponse must carry a 'tokens' key, got {sorted(payload)}"
+            by_id = {token["id"]: token for token in payload["tokens"]}
+            assert token_lifecycle_user["token_id"] in by_id, f"Created token missing from catalog. Listed ids: {sorted(by_id)}"
+            listed = by_id[token_lifecycle_user["token_id"]]
+            assert listed["name"] == token_lifecycle_user["token_name"], f"Name mismatch: {listed['name']} != {token_lifecycle_user['token_name']}"
+            print(f"    -> Catalog lists {listed['name']} (total={payload['total']})")
+        finally:
+            ctx.dispose()
+
+
+# ---------------------------------------------------------------------------
 # Test: Cross-transport consistency
 # ---------------------------------------------------------------------------
 @pytest.mark.flaky(reruns=1, reruns_delay=2)
