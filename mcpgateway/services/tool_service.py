@@ -7139,7 +7139,15 @@ class ToolService(BaseService):
                 if isinstance(e, BaseExceptionGroup):
                     while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                         root_cause = root_cause.exceptions[0]
-                error_message = str(root_cause)
+                # The anyio/httpx transport family (ClosedResourceError, EndOfStream,
+                # BrokenResourceError, ReadTimeout) stringifies to '', which would leave
+                # the caller with a bare "Tool invocation failed: ". Fall back to the
+                # qualified class name so the caller can still tell the failures apart.
+                error_message = str(root_cause) or f"{type(root_cause).__module__}.{type(root_cause).__qualname__}"
+                # A timeout raised inside the MCP SDK's TaskGroup arrives group-wrapped and
+                # misses the typed timeout lanes above, so restate it in their vocabulary.
+                if isinstance(root_cause, (asyncio.TimeoutError, httpx.TimeoutException)):
+                    error_message = f"Tool invocation timed out after {effective_timeout}s ({type(root_cause).__module__}.{type(root_cause).__qualname__})"
                 # Set span error status
                 if span:
                     set_span_error(span, error_message)
