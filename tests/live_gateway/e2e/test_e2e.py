@@ -1619,6 +1619,50 @@ class TestTokenLifecycle:
         finally:
             ctx.dispose()
 
+    def test_token_authenticates_rest_endpoint(self, token_lifecycle_user: dict, playwright: Playwright) -> None:
+        """The minted token authenticates a REST endpoint."""
+        ctx = _api_context(playwright, token_lifecycle_user["access_token"])
+        try:
+            resp = ctx.get("/tools")
+            assert resp.status == 200, f"GET /tools with a valid token must return 200: {resp.status} {resp.text()}"
+            print(f"    -> REST auth accepted on GET /tools: {resp.status}")
+        finally:
+            ctx.dispose()
+
+    def test_token_authenticates_mcp_endpoint(self, token_lifecycle_user: dict) -> None:
+        """The minted token opens an MCP session."""
+        assert _mcp_initialize_only(token_lifecycle_user["access_token"]), "MCP initialize must succeed with a valid token"
+        print("    -> MCP initialize accepted the minted token")
+
+    def test_expires_at_reflects_expires_in_days(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """A one-day token expires about 24 hours from now.
+
+        List with a fresh session-style JWT, not the minted access_token —
+        see ``test_created_token_in_list`` for why ``/tokens`` rejects it.
+        """
+        minted = _mint_token(playwright, token_lifecycle_user["email"], is_admin=True, expires_in_days=1)
+        user_jwt = _make_jwt(token_lifecycle_user["email"], is_admin=True, teams=None)
+        ctx = _api_context(playwright, user_jwt)
+        try:
+            resp = ctx.get("/tokens")
+            assert resp.status == 200, f"GET /tokens failed: {resp.status} {resp.text()}"
+            by_id = {token["id"]: token for token in resp.json()["tokens"]}
+            assert minted["token_id"] in by_id, f"Minted token missing from catalog. Listed ids: {sorted(by_id)}"
+            raw = by_id[minted["token_id"]]["expires_at"]
+            assert raw, "expires_in_days=1 must produce a non-null expires_at"
+
+            expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expected = datetime.now(timezone.utc) + timedelta(days=1)
+            drift = abs((expires_at - expected).total_seconds())
+            assert drift <= 120, f"expires_at {expires_at.isoformat()} drifts {drift:.0f}s from now+24h"
+            print(f"    -> expires_at {expires_at.isoformat()} ({drift:.0f}s drift)")
+        finally:
+            ctx.dispose()
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
 
 # ---------------------------------------------------------------------------
 # Test: Cross-transport consistency
