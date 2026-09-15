@@ -2930,8 +2930,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     for prompt in gateway.prompts:
                         if prompt.visibility == old_visibility:
                             prompt.visibility = gateway.visibility
-                if gateway_update.passthrough_headers is not None:
-                    if isinstance(gateway_update.passthrough_headers, list):
+                passthrough_headers_present = "passthrough_headers" in getattr(
+                    gateway_update, "model_fields_set", set()
+                ) or getattr(gateway_update, "passthrough_headers", None) is not None
+                if passthrough_headers_present:
+                    if gateway_update.passthrough_headers is None or isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers
                     else:
                         if isinstance(gateway_update.passthrough_headers, str):
@@ -3130,7 +3133,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     await admin_stats_cache.invalidate_tags()
 
-                    if gateway_update.passthrough_headers is not None:
+                    if passthrough_headers_present:
                         # First-Party
                         from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
 
@@ -3329,7 +3332,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         logger.debug("Best-effort tool_discovery poll timestamp update failed: %s", poll_ts_err)
 
                 # Invalidate loopback passthrough cache when gateway headers change (#3640)
-                if gateway_update.passthrough_headers is not None:
+                if passthrough_headers_present:
                     # First-Party
                     from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
 
