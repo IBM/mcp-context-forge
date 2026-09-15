@@ -7447,7 +7447,9 @@ class TestOAuthFunctionality:
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 422
+        # Signing uses the server's own Ed25519 key, so a failure here is not the
+        # caller's fault: it must not be reported as an unprocessable request body.
+        assert result.status_code == 500
         body = json.loads(result.body)
         assert "Failed to sign CA certificate" in body["message"]
 
