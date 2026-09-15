@@ -45,6 +45,8 @@ import asyncio
 import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
+import json
 import logging
 import mimetypes
 import os
@@ -122,6 +124,47 @@ from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
+
+
+class MCPListMethod(Enum):
+    """MCP list method suffixes and response collection attributes.
+    Each value is `(method_suffix, response_attribute)` where `list_{method_suffix}`
+    is the SDK method and `response_attribute` is the camelCase attribute on the response object.
+    """
+
+    TOOLS = ("tools", "tools")
+    PROMPTS = ("prompts", "prompts")
+    RESOURCES = ("resources", "resources")
+    RESOURCE_TEMPLATES = ("resource_templates", "resourceTemplates")
+
+
+async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
+    """Collect MCP list results until the server returns no next cursor.
+
+    Args:
+        session: MCP client session
+        mcp_method: MCPListMethod Enum for list_* method and response
+
+    Returns:
+        list of MCP objects across all pages
+
+    Raises:
+        ValueError: If the server repeats a pagination cursor.
+    """
+    method_suffix, response_attribute = mcp_method.value
+    list_method = getattr(session, f"list_{method_suffix}")
+    response = await list_method()
+    mcp_responses = list(getattr(response, response_attribute, None) or [])
+    seen_cursors = set()
+    while getattr(response, "nextCursor", None) is not None:
+        cursor = response.nextCursor
+        if cursor in seen_cursors:
+            logger.warning("Repeated pagination cursor from list_%s", method_suffix)
+            break
+        seen_cursors.add(cursor)
+        response = await list_method(cursor=cursor)
+        mcp_responses.extend(getattr(response, response_attribute, []))
+    return mcp_responses
 
 
 def _resolve_tool_title(tool) -> Optional[str]:
@@ -6675,9 +6718,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     response = await session.initialize()
                     capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                     logger.debug("Server capabilities: %s", capabilities)
+                    tools = await get_list_paginated(session, MCPListMethod.TOOLS)
 
-                    response = await session.list_tools()
-                    tools = response.tools
                     tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                     tools, validation_errors = self._validate_tools(tools, context="oauth")
@@ -6689,8 +6731,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     resources = []
                     if capabilities.get("resources"):
                         try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
+                            raw_resources = await get_list_paginated(session, MCPListMethod.RESOURCES)
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
                                 merge_mcp_protocol_meta(resource_data)
@@ -6721,8 +6762,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # resource template URI
                         try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
+                            raw_resources_templates = await get_list_paginated(session, MCPListMethod.RESOURCE_TEMPLATES)
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
@@ -6746,8 +6786,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
+                            raw_prompts = await get_list_paginated(session, MCPListMethod.PROMPTS)
                             for prompt in raw_prompts:
                                 prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
                                 # Add default template if not present
@@ -6856,8 +6895,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
+                tools = await get_list_paginated(session, MCPListMethod.TOOLS)
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools)
@@ -6869,8 +6907,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     if capabilities.get("resources"):
                         try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
+                            raw_resources = await get_list_paginated(session, MCPListMethod.RESOURCES)
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
                                 merge_mcp_protocol_meta(resource_data)
@@ -6901,8 +6938,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # resource template URI
                         try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
+                            raw_resources_templates = await get_list_paginated(session, MCPListMethod.RESOURCE_TEMPLATES)
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
@@ -6927,8 +6963,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
+                            raw_prompts = await get_list_paginated(session, MCPListMethod.PROMPTS)
                             for prompt in raw_prompts:
                                 prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
                                 # Add default template if not present
@@ -7025,8 +7060,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
+                tools = await get_list_paginated(session, MCPListMethod.TOOLS)
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools)
@@ -7041,8 +7075,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     if capabilities.get("resources"):
                         try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
+                            raw_resources = await get_list_paginated(session, MCPListMethod.RESOURCES)
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
                                 merge_mcp_protocol_meta(resource_data)
@@ -7073,8 +7106,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # resource template URI
                         try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
+                            raw_resources_templates = await get_list_paginated(session, MCPListMethod.RESOURCE_TEMPLATES)
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
@@ -7099,8 +7131,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
+                            raw_prompts = await get_list_paginated(session, MCPListMethod.PROMPTS)
                             for prompt in raw_prompts:
                                 prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
                                 # Add default template if not present
