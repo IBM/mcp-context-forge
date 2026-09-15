@@ -1627,13 +1627,12 @@ class TestTokenLifecycle:
             assert resp.status in (200, 201), f"POST /tokens failed: {resp.status} {resp.text()}"
 
             payload = resp.json()
+            token_obj = payload.get("token", {})
+            token_id = token_obj.get("id")
             assert "access_token" in payload, f"TokenCreateResponse must carry access_token, got {sorted(payload)}"
             assert "token" in payload, f"TokenCreateResponse must carry a token object, got {sorted(payload)}"
             assert isinstance(payload["access_token"], str), f"access_token must be a string, got {type(payload['access_token'])}"
             assert payload["access_token"], "access_token must not be empty"
-
-            token_obj = payload["token"]
-            token_id = token_obj.get("id")
             assert token_id, f"token object must carry an id, got {sorted(token_obj)}"
             assert token_obj["name"] == name, f"Name mismatch: {token_obj['name']} != {name}"
             assert isinstance(payload.get("warnings", []), list), "warnings must be a list when present"
@@ -1764,6 +1763,7 @@ class TestTokenLifecycle:
         try:
             tools = _mcp_tools_list(minted["access_token"])
             assert tools, "tools.read must still list tools"
+            assert any(t.name == f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time" for t in tools), f"target tool missing from tools/list: {[t.name for t in tools]}"
 
             # The except clause lists transport errors only. Catching bare Exception
             # here would swallow the AssertionError below and the test could never fail.
