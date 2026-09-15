@@ -1646,7 +1646,9 @@ export const testTool = async function (toolId) {
           // Input field with validation (with multiline support)
           let fieldInput;
           const isTextType = prop.type === "text";
-          const isObjectType = prop.type === "object";
+          const isObjectType = prop.type === "object" ||
+            (prop.anyOf && prop.anyOf.some(s => s.type === "object")) ||
+            (prop.oneOf && prop.oneOf.some(s => s.type === "object"));
           if (isTextType || isObjectType) {
             fieldInput = document.createElement("textarea");
             fieldInput.rows = 4;
@@ -3319,7 +3321,9 @@ export const runToolTest = async function () {
             if (prop.enum.includes(value)) {
               params[keyValidation.value] = value;
             }
-          } else if (prop.type === "object") {
+          } else if (prop.type === "object" ||
+                     (prop.anyOf && prop.anyOf.some(s => s.type === "object")) ||
+                     (prop.oneOf && prop.oneOf.some(s => s.type === "object"))) {
             try {
               const parsed = JSON.parse(value);
               if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
