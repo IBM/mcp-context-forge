@@ -630,6 +630,8 @@ _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-by
 # The default covers one 60-second publish interval plus 15 seconds of slack.
 _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
+# Replica propagation via Nginx is expected to be faster than the 60-second
+# tool-catalog publish interval that _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS covers.
 _REPLICA_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_REPLICA_SYNC_DEADLINE", "30.0"))
 
 
@@ -855,6 +857,7 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
                 previous_tool_ids = tool_ids
             except (AssertionError, KeyError, TypeError, ValueError) as exc:
                 logger.debug("Gateway tool synchronization probe %d did not succeed: %s", read_index, exc)
+                previous_tool_ids = None
             time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
 
         raise AssertionError(f"Streamable HTTP gateway {gw_id} did not produce a stable tool catalog within {_REPLICA_SYNC_DEADLINE_SECONDS}s")
@@ -864,6 +867,20 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
                 delete_response = admin_api.delete(f"/gateways/{gw_id}")
                 if delete_response.status not in (200, 204, 404):
                     logger.warning("Failed to delete Streamable HTTP gateway %s: %s %s", gw_id, delete_response.status, delete_response.text())
+
+        # Restore any displaced pre-existing registration (e.g. the compose-seeded
+        # "fast_time" gateway) so other tests relying on it keep working.
+        for gw in displaced_gateways:
+            with suppress(Exception):
+                admin_api.post(
+                    "/gateways",
+                    data={
+                        "name": gw["name"],
+                        "url": gw["url"],
+                        "transport": gw.get("transport", "STREAMABLEHTTP"),
+                        "description": gw.get("description"),
+                    },
+                )
 
 
 @pytest.fixture(scope="module")
@@ -878,20 +895,6 @@ def cross_replica_user(admin_api: APIRequestContext, playwright: Playwright, str
         yield user_info
     finally:
         _cleanup_user(admin_api, user_info)
-
-    # Restore any displaced pre-existing registration (e.g. the compose-seeded
-    # "fast_time" gateway) so other tests relying on it keep working.
-    for gw in displaced_gateways:
-        with suppress(Exception):
-            admin_api.post(
-                "/gateways",
-                data={
-                    "name": gw["name"],
-                    "url": gw["url"],
-                    "transport": gw.get("transport", "STREAMABLEHTTP"),
-                    "description": gw.get("description"),
-                },
-            )
 
 
 @pytest.fixture(scope="module")
@@ -2143,7 +2146,6 @@ class TestVirtualServerLifecycle:
 # ---------------------------------------------------------------------------
 # Test: Cross-replica consistency
 # ---------------------------------------------------------------------------
-@pytest.mark.flaky(reruns=1, reruns_delay=2)
 class TestCrossReplicaConsistency:
     """Writes through Nginx are visible across the three default gateway replicas.
 
