@@ -366,3 +366,104 @@ def test_is_expired_returns_false_when_no_timestamp(monkeypatch):
     monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 60)
     result = ssl_context_cache._is_expired("nonexistent-key")
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# build_client_ssl_context
+#
+# Regression coverage: gating an SSL context on the CA certificate alone drops
+# the configured mTLS client identity whenever the peer's server certificate
+# chains to the system trust store.
+# ---------------------------------------------------------------------------
+
+
+def test_build_client_ssl_context_mtls_without_custom_ca() -> None:
+    """Client cert/key with no custom CA still yields a context (the regression)."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        result = ssl_context_cache.build_client_ssl_context(
+            "https://api.example.com/sse",
+            None,
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
+        )
+
+    assert result is ctx
+    # System trust store is kept for verification: no custom CA is loaded...
+    ctx.load_verify_locations.assert_not_called()
+    # ...but the client identity is presented.
+    ctx.load_cert_chain.assert_called_once_with(certfile="/path/to/cert.pem", keyfile="/path/to/key.pem")
+
+
+def test_build_client_ssl_context_mtls_with_custom_ca() -> None:
+    """A custom CA and client cert/key are both applied."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        result = ssl_context_cache.build_client_ssl_context(
+            "https://api.example.com/sse",
+            "CA_PEM",
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
+        )
+
+    assert result is ctx
+    ctx.load_verify_locations.assert_called_once_with(cadata="CA_PEM")
+    ctx.load_cert_chain.assert_called_once_with(certfile="/path/to/cert.pem", keyfile="/path/to/key.pem")
+
+
+def test_build_client_ssl_context_custom_ca_only() -> None:
+    """A custom CA with no client cert still yields a context."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        result = ssl_context_cache.build_client_ssl_context("https://api.example.com/sse", "CA_PEM")
+
+    assert result is ctx
+    ctx.load_cert_chain.assert_not_called()
+
+
+def test_build_client_ssl_context_returns_none_without_tls_material() -> None:
+    """No CA and no client cert means the caller's default verification applies."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        assert ssl_context_cache.build_client_ssl_context("https://api.example.com/sse", None) is None
+
+    mock_create.assert_not_called()
+
+
+def test_build_client_ssl_context_returns_none_for_plaintext_http() -> None:
+    """Plaintext http:// targets never build a context, even with full mTLS material."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        result = ssl_context_cache.build_client_ssl_context(
+            "http://api.example.com/sse",
+            "CA_PEM",
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
+        )
+
+    assert result is None
+    mock_create.assert_not_called()
+
+
+@pytest.mark.parametrize("url", ["HTTP://api.example.com/sse", "Http://api.example.com/sse"])
+def test_build_client_ssl_context_plaintext_scheme_is_case_insensitive(url: str) -> None:
+    """Scheme matching ignores case, matching the behaviour of the previous inline checks."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context"):
+        assert ssl_context_cache.build_client_ssl_context(url, "CA_PEM") is None
+
+
+@pytest.mark.parametrize(
+    ("client_cert", "client_key"),
+    [("/path/to/cert.pem", None), (None, "/path/to/key.pem")],
+)
+def test_build_client_ssl_context_half_configured_mtls_is_ignored(client_cert, client_key) -> None:
+    """A half-configured pair does not trigger a context (and so cannot raise)."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        result = ssl_context_cache.build_client_ssl_context(None, None, client_cert=client_cert, client_key=client_key)
+
+    assert result is None
+    mock_create.assert_not_called()
