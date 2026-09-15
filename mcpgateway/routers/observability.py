@@ -30,6 +30,7 @@ from mcpgateway.common.query_params import (
     QueryUserIdentifier,
 )
 from mcpgateway.config import settings
+from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
@@ -909,9 +910,15 @@ async def get_metrics_timeseries(
         return TimeseriesResponse(buckets=[], values=[])
 
     try:
+        cache_key = f"metrics:timeseries:{hours}:{interval_minutes}"
+        cached = await admin_stats_cache.get_observability_stats(hours, cache_key=cache_key)
+        if cached is not None:
+            return TimeseriesResponse(**cached)
+
         service = ObservabilityService()
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         data = service.get_execution_timeseries(db, cutoff_time, interval_minutes)
+        await admin_stats_cache.set_observability_stats(data, hours, cache_key=cache_key)
         return TimeseriesResponse(**data)
     except Exception as e:
         logger.error(f"Failed to calculate timeseries metrics: {e}", exc_info=True)
@@ -947,9 +954,15 @@ async def get_metrics_percentiles(
         return PercentilesResponse(buckets=[], p50=[], p95=[], p99=[])
 
     try:
+        cache_key = f"metrics:percentiles:{hours}:{interval_minutes}"
+        cached = await admin_stats_cache.get_observability_stats(hours, cache_key=cache_key)
+        if cached is not None:
+            return PercentilesResponse(**cached)
+
         service = ObservabilityService()
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         data = service.get_latency_percentiles(db, cutoff_time, interval_minutes)
+        await admin_stats_cache.set_observability_stats(data, hours, cache_key=cache_key)
         return PercentilesResponse(**data)
     except Exception as e:
         logger.error(f"Failed to calculate latency percentiles: {e}", exc_info=True)

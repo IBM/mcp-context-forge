@@ -1797,6 +1797,8 @@ class ObservabilityService:
         """
         if db.get_bind().dialect.name == "postgresql":
             return _execution_timeseries_postgresql(db, cutoff_time, interval_minutes)
+        if db.get_bind().dialect.name == "sqlite":
+            return _execution_timeseries_sqlite(db, cutoff_time, interval_minutes)
         return _execution_timeseries_python(db, cutoff_time, interval_minutes)
 
     def get_latency_percentiles(self, db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
@@ -1813,6 +1815,8 @@ class ObservabilityService:
         """
         if db.get_bind().dialect.name == "postgresql":
             return _latency_percentiles_postgresql(db, cutoff_time, interval_minutes)
+        if db.get_bind().dialect.name == "sqlite":
+            return _latency_percentiles_sqlite(db, cutoff_time, interval_minutes)
         return _latency_percentiles_python(db, cutoff_time, interval_minutes)
 
 
@@ -1854,8 +1858,38 @@ def _execution_timeseries_postgresql(db: Session, cutoff_time: datetime, interva
     return {"buckets": buckets, "values": values}
 
 
+def _execution_timeseries_sqlite(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+    """Count executions per time bucket using SQLite aggregation.
+
+    SQLite's built-in ``strftime`` keeps the time filter indexable while moving the
+    grouping work into the database, so process memory is independent of the
+    number of traces in the requested window.
+    """
+    stats_sql = text(
+        """
+        SELECT
+            CAST(CAST(strftime('%s', start_time) AS INTEGER) / :interval_seconds AS INTEGER) * :interval_seconds AS bucket_epoch,
+            COUNT(*) AS total
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time
+        GROUP BY bucket_epoch
+        ORDER BY bucket_epoch
+        """
+    )
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+    if not results:
+        return {"buckets": [], "values": []}
+
+    return {
+        "buckets": [datetime.fromtimestamp(int(row.bucket_epoch), tz=timezone.utc).isoformat() for row in results],
+        "values": [int(row.total) for row in results],
+    }
+
+
 def _execution_timeseries_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
-    """Count executions per time bucket in Python (fallback for SQLite).
+    """Count executions per time bucket in Python for unsupported dialects.
 
     Args:
         db: Database session
@@ -1928,8 +1962,81 @@ def _latency_percentiles_postgresql(db: Session, cutoff_time: datetime, interval
     return {"buckets": buckets, "p50": p50_values, "p95": p95_values, "p99": p99_values}
 
 
+def _latency_percentiles_sqlite(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+    """Compute time-bucketed latency percentiles using SQLite window functions.
+
+    The ranking and interpolation happen in SQLite, matching PostgreSQL's
+    ``percentile_cont`` semantics without materializing every duration in
+    Python. SQLite versions bundled with supported runtimes provide window
+    functions; the Python implementation remains available for other dialects.
+    """
+    stats_sql = text(
+        """
+        WITH bucketed AS (
+            SELECT
+                CAST(CAST(strftime('%s', start_time) AS INTEGER) / :interval_seconds AS INTEGER) * :interval_seconds AS bucket_epoch,
+                duration_ms
+            FROM observability_traces
+            WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
+        ),
+        ranked AS (
+            SELECT
+                bucket_epoch,
+                duration_ms,
+                ROW_NUMBER() OVER (PARTITION BY bucket_epoch ORDER BY duration_ms) - 1 AS row_idx,
+                COUNT(*) OVER (PARTITION BY bucket_epoch) AS bucket_count
+            FROM bucketed
+        ),
+        percentiles(p) AS (VALUES (0.50), (0.95), (0.99)),
+        positions AS (
+            SELECT
+                bucket_epoch,
+                p,
+                duration_ms,
+                row_idx,
+                CAST(p * (bucket_count - 1) AS INTEGER) AS lower_idx,
+                MIN(CAST(p * (bucket_count - 1) AS INTEGER) + 1, bucket_count - 1) AS upper_idx,
+                p * (bucket_count - 1) - CAST(p * (bucket_count - 1) AS INTEGER) AS fraction
+            FROM ranked
+            CROSS JOIN percentiles
+        )
+        SELECT
+            bucket_epoch,
+            p,
+            ROUND(
+                MAX(CASE WHEN row_idx = lower_idx THEN duration_ms END)
+                + fraction * (
+                    MAX(CASE WHEN row_idx = upper_idx THEN duration_ms END)
+                    - MAX(CASE WHEN row_idx = lower_idx THEN duration_ms END)
+                ),
+                2
+            ) AS value
+        FROM positions
+        GROUP BY bucket_epoch, p, fraction
+        ORDER BY bucket_epoch, p
+        """
+    )
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+    if not results:
+        return {"buckets": [], "p50": [], "p95": [], "p99": []}
+
+    values_by_bucket: Dict[int, Dict[float, float]] = defaultdict(dict)
+    for row in results:
+        values_by_bucket[int(row.bucket_epoch)][float(row.p)] = float(row.value)
+
+    bucket_epochs = sorted(values_by_bucket)
+    return {
+        "buckets": [datetime.fromtimestamp(bucket_epoch, tz=timezone.utc).isoformat() for bucket_epoch in bucket_epochs],
+        "p50": [values_by_bucket[bucket_epoch].get(0.50, 0.0) for bucket_epoch in bucket_epochs],
+        "p95": [values_by_bucket[bucket_epoch].get(0.95, 0.0) for bucket_epoch in bucket_epochs],
+        "p99": [values_by_bucket[bucket_epoch].get(0.99, 0.0) for bucket_epoch in bucket_epochs],
+    }
+
+
 def _latency_percentiles_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
-    """Compute time-bucketed latency percentiles in Python (fallback for SQLite).
+    """Compute time-bucketed latency percentiles for unsupported dialects.
 
     Args:
         db: Database session

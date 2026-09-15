@@ -203,6 +203,13 @@ class TestRateLimitMiddlewareTiers:
         tier = middleware.get_endpoint_tier("/health")
         assert tier["limit"] == 500
 
+    def test_endpoint_tier_observability_metrics(self, middleware):
+        """Expensive metrics aggregation has an explicit tier on both mounts."""
+        for path in ("/observability/metrics/timeseries", "/v1/observability/metrics/percentiles"):
+            tier = middleware.get_endpoint_tier(path)
+            assert tier["limit"] == 500
+            assert middleware._get_tier_name(path) == "OBSERVABILITY_METRICS"
+
     def test_get_client_ip_forwarded(self, middleware, mock_request):
         """Test IP extraction from X-Forwarded-For."""
         mock_request.headers["X-Forwarded-For"] = "10.0.0.1, 192.168.1.1"
