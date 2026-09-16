@@ -9,9 +9,7 @@ Live maintained-client verification for distributed reverse-proxy routing.
 from __future__ import annotations
 
 import json
-import os
 import re
-import signal
 import subprocess
 import time
 from urllib.error import HTTPError
@@ -21,6 +19,7 @@ import websockets
 
 from mcpgateway.services.reverse_proxy_protocol import JsonObject
 from tests.live_gateway.reverse_proxy.helpers.live_helpers import (
+    AUTH_CLIENT_CONTAINER,
     AUTH_CLIENT_PID,
     AUTH_SERVER_NAME,
     AUTH_TOOL_NAME,
@@ -28,16 +27,19 @@ from tests.live_gateway.reverse_proxy.helpers.live_helpers import (
     BASE_URL,
     COMPLIANCE_PROMPT_NAME,
     COMPOSE_PROJECT,
+    FAST_CLIENT_CONTAINER,
     FAST_CLIENT_PID,
     FAST_SERVER_NAME,
     FAST_TOOL_NAME,
     RESTRICTED_TOKEN,
     TOKEN,
+    freeze_client as _freeze_client,
     json_request as _json_request,
     post as _post,
     put as _put,
     rpc as _rpc,
     rpc_text as _rpc_text,
+    terminate_client as _terminate_client,
     wait_for_gateway as _wait_for_gateway,
     wait_for_tool as _wait_for_tool,
 )
@@ -233,7 +235,7 @@ def test_redis_outage_fails_closed_and_recovers() -> None:
 
 @pytest.mark.e2e
 def test_client_stop_marks_gateway_unreachable_and_invocation_fails_closed() -> None:
-    os.kill(FAST_CLIENT_PID, signal.SIGTERM)
+    _terminate_client(FAST_CLIENT_PID, FAST_CLIENT_CONTAINER)
     _wait_for_gateway(FAST_SERVER_NAME, False)
     response = _rpc("tools/call", {"name": FAST_TOOL_NAME, "arguments": {"message": "must-fail"}}, request_id="stopped")
     assert "error" in response
@@ -242,8 +244,5 @@ def test_client_stop_marks_gateway_unreachable_and_invocation_fails_closed() -> 
 @pytest.mark.e2e
 def test_heartbeat_timeout_evicts_paused_client() -> None:
     _wait_for_gateway(AUTH_SERVER_NAME, True)
-    children = subprocess.run(["pgrep", "-P", str(AUTH_CLIENT_PID)], check=True, capture_output=True, text=True).stdout.split()
-    assert children
-    for child in children:
-        os.kill(int(child), signal.SIGSTOP)
+    _freeze_client(AUTH_CLIENT_PID, AUTH_CLIENT_CONTAINER)
     _wait_for_gateway(AUTH_SERVER_NAME, False, timeout=15)
