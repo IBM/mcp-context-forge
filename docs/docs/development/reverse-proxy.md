@@ -142,6 +142,7 @@ An `EXIT` trap kills the client and server processes (with `RP_CLIENT_IMAGE`, it
 | `RP_GATEWAY_IMAGE` | Use a prebuilt gateway image instead of building one |
 | `FAST_TIME_IMAGE` | Override the pinned fast-test downstream server image |
 | `FAST_TEST_PORT`, `NGINX_PORT`, `REDIS_HOST_PORT`, `POSTGRES_HOST_PORT`, `PGBOUNCER_HOST_PORT`, `RP_COMPLIANCE_PORT`, `RP_AUTH_PORT`, `RP_FEATURE_OFF_PORT` | Pin a host port instead of picking a random one |
+| `RP_HEARTBEAT_TIMEOUT` | Heartbeat eviction timeout in seconds (default 3) |
 | `RP_JWT_SECRET_KEY`, `RP_AUTH_ENCRYPTION_SECRET` | Override the generated per-run secrets |
 | `RP_PLATFORM_ADMIN_PASSWORD`, `RP_DEFAULT_USER_PASSWORD` | Override the generated per-run credentials |
 
