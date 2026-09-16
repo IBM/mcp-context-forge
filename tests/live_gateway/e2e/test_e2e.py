@@ -2271,7 +2271,7 @@ def owned_users(admin_api: APIRequestContext) -> Generator[_OwnedUsers, None, No
             members = admin_api.get(f"/teams/{team_id}/members")
             # A missing team proves nothing about the membership, so only a
             # readable member list counts as verification.
-            if members.status == 200 and email in {member.get("email") for member in members.json()}:
+            if members.status == 200 and email in {member.get("user_email") for member in members.json()}:
                 failures.append(f"team membership for {email} on {team_id} survived cleanup")
 
     if failures:
@@ -2479,3 +2479,422 @@ class TestCrossReplicaConsistency:
             actual_tool_ids = frozenset(str(tool["id"]) for tool in tools)
             assert actual_tool_ids == expected_tool_ids, f"Replica read {read_index} returned tool IDs {sorted(actual_tool_ids)}, expected {sorted(expected_tool_ids)}"
             assert len(tools) == len(expected_tool_ids), f"Replica read {read_index} returned duplicate tools for gateway {gateway_id}"
+
+
+# ---------------------------------------------------------------------------
+# Team lifecycle
+# ---------------------------------------------------------------------------
+
+TEAM_PREFIX = "e2e-team"
+
+# Two teams per page over five teams forces at least three pages.
+_TEAM_PAGE_SIZE = 2
+_TEAM_PAGE_COUNT = 5
+
+
+def _team_name(run_prefix: str | None = None) -> str:
+    """Return a fresh team name inside the suite's namespace.
+
+    Args:
+        run_prefix: Prefix that isolates one test's teams. Defaults to the
+            suite prefix.
+
+    Returns:
+        A name no other run reuses.
+    """
+    return f"{run_prefix or TEAM_PREFIX}-{uuid.uuid4().hex[:8]}"
+
+
+def _team_pages(admin_api: APIRequestContext, search_query: str, limit: int | None = None) -> list[list[dict[str, Any]]]:
+    """Return each page of the teams matching ``search_query``, in order.
+
+    ``GET /teams/`` applies a default page size, so an unpaginated read drops
+    teams on a busy stack. The traversal rejects a repeated cursor, which would
+    otherwise loop until the page budget runs out.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        search_query: Substring the gateway matches on name, slug, or description.
+        limit: Page size. Defaults to the gateway's own default.
+
+    Returns:
+        One list of team records per page.
+
+    Raises:
+        AssertionError: A page failed, a cursor repeated, or the pages ran past
+            the budget.
+    """
+    pages: list[list[dict[str, Any]]] = []
+    seen_cursors: set[str] = set()
+    cursor: str | None = None
+
+    for _ in range(_LIFECYCLE_MAX_PAGES):
+        params: dict[str, Any] = {"include_pagination": "true", "search_query": search_query}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        resp = admin_api.get("/teams/", params=params)
+        assert resp.status == 200, f"GET /teams/ returned {resp.status}: {resp.text()[:500]}"
+        body = _json_or_fail(resp, "GET /teams/")
+        pages.append(body.get("teams") or [])
+
+        cursor = body.get("nextCursor")
+        if not cursor:
+            return pages
+        assert cursor not in seen_cursors, f"GET /teams/ repeated cursor {cursor!r}; the traversal does not advance"
+        seen_cursors.add(cursor)
+
+    raise AssertionError(f"GET /teams/ did not finish within {_LIFECYCLE_MAX_PAGES} pages for search_query={search_query!r}")
+
+
+def _teams_matching(admin_api: APIRequestContext, search_query: str) -> list[dict[str, Any]]:
+    """Return every team matching ``search_query`` across all pages.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        search_query: Substring the gateway matches on name, slug, or description.
+
+    Returns:
+        Every matching team record.
+    """
+    return [team for page in _team_pages(admin_api, search_query) for team in page]
+
+
+def _team_by_id(teams: list[dict[str, Any]], team_id: str) -> dict[str, Any] | None:
+    """Return one team record from a listing.
+
+    Args:
+        teams: Records from ``GET /teams/``.
+        team_id: Id to find.
+
+    Returns:
+        The matching record, or ``None``.
+    """
+    return next((team for team in teams if team.get("id") == team_id), None)
+
+
+def _member(members: list[dict[str, Any]], email: str) -> dict[str, Any] | None:
+    """Return one member record from a team member list.
+
+    Args:
+        members: Records from ``GET /teams/{id}/members``.
+        email: Address to find.
+
+    Returns:
+        The matching record, or ``None``.
+    """
+    return next((member for member in members if member.get("user_email") == email), None)
+
+
+def _team_members(admin_api: APIRequestContext, team_id: str) -> list[dict[str, Any]]:
+    """Return one team's members.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        team_id: Team to read.
+
+    Returns:
+        The member records.
+    """
+    resp = admin_api.get(f"/teams/{team_id}/members")
+    assert resp.status == 200, f"GET /teams/{team_id}/members returned {resp.status}: {resp.text()[:500]}"
+    return _json_or_fail(resp, f"GET /teams/{team_id}/members")
+
+
+def _created_team(create_team: Any, **kwargs: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create a team, and fail unless the gateway accepted it.
+
+    Args:
+        create_team: Factory returning ``(payload, response, body)``.
+        **kwargs: Forwarded to the factory.
+
+    Returns:
+        The request payload and the created team.
+    """
+    payload, resp, team = create_team(**kwargs)
+    assert resp.status == 201, f"POST /teams/ returned {resp.status}: {resp.text()[:500]}"
+    return payload, team
+
+
+class _OwnedTeams:
+    """Teams this test created.
+
+    A team is registered only after a successful create returns a usable id, so
+    teardown never deletes a team the test did not make.
+    """
+
+    def __init__(self) -> None:
+        """Initialise an empty registry."""
+        self.ids: list[str] = []
+
+
+@pytest.fixture
+def owned_teams(admin_api: APIRequestContext, owned_users: _OwnedUsers) -> Generator[_OwnedTeams, None, None]:
+    """Track teams one test creates, delete them, and prove they are gone.
+
+    This fixture requests ``owned_users`` to order the two teardowns. Pytest
+    finalises in reverse setup order, so ``owned_users`` is set up first and
+    runs last, and every team is deleted before the accounts that belong to it.
+
+    Teardown continues past a failure. One unreachable team must not strand the
+    rest, so transport errors and unexpected statuses are collected and reported
+    together at the end.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        owned_users: Account registry this teardown must precede.
+
+    Yields:
+        The registry the factory writes to.
+    """
+    del owned_users  # Requested for teardown order only.
+
+    owned = _OwnedTeams()
+    yield owned
+
+    failures: list[str] = []
+
+    for team_id in reversed(owned.ids):
+        try:
+            resp = admin_api.delete(f"/teams/{team_id}")
+        except Exception as exc:  # pylint: disable=broad-except
+            failures.append(f"DELETE /teams/{team_id} raised {type(exc).__name__}: {exc}")
+            continue
+        # 404 covers a team the test deleted itself. A 403 is unexpected here:
+        # no test drops the creator's own membership, so one signals a real
+        # authorization change and must fail.
+        if resp.status not in (200, 204, 404):
+            failures.append(f"DELETE /teams/{team_id} returned {resp.status}: {resp.text()[:200]}")
+
+    if owned.ids:
+        try:
+            remaining = {team.get("id") for team in _teams_matching(admin_api, TEAM_PREFIX)}
+        except Exception as exc:  # pylint: disable=broad-except
+            failures.append(f"listing teams after cleanup raised {type(exc).__name__}: {exc}")
+        else:
+            leaked = sorted(set(owned.ids) & remaining)
+            if leaked:
+                failures.append(f"teams still present after cleanup: {leaked}")
+
+    if failures:
+        pytest.fail("Team cleanup did not complete:\n  " + "\n  ".join(failures))
+
+
+@pytest.fixture
+def create_team(admin_api: APIRequestContext, owned_teams: _OwnedTeams) -> Any:
+    """Return a factory that creates throwaway teams.
+
+    The factory registers the new id before it returns, so a later failed
+    assertion still leaves the team tracked for teardown. It hands back the
+    request inputs, so tests assert against what was sent.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        owned_teams: Registry that receives created ids.
+
+    Returns:
+        A callable returning ``(payload, response, body)``.
+    """
+
+    def _create(*, name: str | None = None, visibility: str = "private", description: str = "E2E team lifecycle") -> tuple[dict[str, Any], APIResponse, Any]:
+        payload: dict[str, Any] = {"name": name or _team_name(), "visibility": visibility, "description": description}
+        resp = admin_api.post("/teams/", data=payload)
+
+        body: Any = None
+        if resp.status in (200, 201):
+            body = _json_or_fail(resp, "POST /teams/")
+            team_id = body.get("id") if isinstance(body, dict) else None
+            assert team_id, f"POST /teams/ returned {resp.status} without a usable id: {resp.text()[:500]}"
+            if team_id not in owned_teams.ids:
+                owned_teams.ids.append(team_id)
+
+        return payload, resp, body
+
+    return _create
+
+
+class TestTeamLifecycle:
+    """Admin creates a team, manages its members, then deletes the team."""
+
+    def test_create_team_returns_expected_fields(self, create_team: Any) -> None:
+        """Creation returns 201 and echoes the requested team.
+
+        Args:
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        payload, resp, team = create_team(visibility="private")
+
+        assert resp.status == 201, f"POST /teams/ returned {resp.status}: {resp.text()[:500]}"
+        # Expectations come from the request, never from the response echo.
+        assert team["id"], "POST /teams/ returned an empty id"
+        assert team["name"] == payload["name"]
+        assert team["visibility"] == payload["visibility"]
+
+    def test_create_team_makes_creator_an_owner(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """The caller holds an active owner membership on a team it created.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        _payload, team = _created_team(create_team)
+
+        owner = _member(_team_members(admin_api, team["id"]), ADMIN_EMAIL)
+        assert owner is not None, f"{ADMIN_EMAIL} holds no membership on the team it created"
+        assert owner["role"] == "owner", f"creator holds role {owner['role']!r}, expected 'owner'"
+        assert owner["is_active"] is True, "creator's owner membership is not active"
+
+    def test_team_appears_in_listing_and_detail(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """A created team is visible in the listing and in its detail record.
+
+        The listing read follows the cursor. A first-page-only read would miss
+        the team on a stack that already holds a full page.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        payload, team = _created_team(create_team)
+
+        listed = _team_by_id(_teams_matching(admin_api, payload["name"]), team["id"])
+        assert listed is not None, f"team {team['id']} is absent from GET /teams/"
+
+        detail = admin_api.get(f"/teams/{team['id']}")
+        assert detail.status == 200, f"GET /teams/{team['id']} returned {detail.status}: {detail.text()[:500]}"
+        body = _json_or_fail(detail, f"GET /teams/{team['id']}")
+
+        assert body["name"] == payload["name"]
+        assert body["visibility"] == payload["visibility"]
+        assert body["slug"] == listed["slug"], "detail and listing disagree on the slug"
+
+    def test_add_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any, owned_users: _OwnedUsers) -> None:
+        """Adding a member returns 201 and the member list confirms it.
+
+        The POST response is validated first. The member list is then read back
+        so the record is confirmed independently of that echo.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+            create_user: Factory returning ``(email, payload, response)``.
+            owned_users: Registry recording the membership for cleanup checks.
+        """
+        _payload, team = _created_team(create_team)
+        team_id = team["id"]
+
+        email, _user_payload, created = create_user()
+        assert created.status == 201, f"POST /auth/email/admin/users returned {created.status}: {created.text()[:500]}"
+
+        added = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
+        assert added.status == 201, f"POST /teams/{team_id}/members returned {added.status}: {added.text()[:500]}"
+        owned_users.team_memberships.append((email, team_id))
+
+        added_body = _json_or_fail(added, f"POST /teams/{team_id}/members")
+        assert added_body["user_email"] == email
+        assert added_body["team_id"] == team_id
+        assert added_body["role"] == "member"
+
+        member = _member(_team_members(admin_api, team_id), email)
+        assert member is not None, f"{email} is absent from the member list after POST returned 201"
+        assert member["user_email"] == email
+        assert member["team_id"] == team_id
+        assert member["role"] == "member"
+        assert member["is_active"] is True
+
+    def test_remove_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any, owned_users: _OwnedUsers) -> None:
+        """Removing a member leaves the creator's ownership intact.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+            create_user: Factory returning ``(email, payload, response)``.
+            owned_users: Registry recording the membership for cleanup checks.
+        """
+        _payload, team = _created_team(create_team)
+        team_id = team["id"]
+
+        email, _user_payload, created = create_user()
+        assert created.status == 201, f"POST /auth/email/admin/users returned {created.status}: {created.text()[:500]}"
+
+        added = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
+        assert added.status == 201, f"POST /teams/{team_id}/members returned {added.status}: {added.text()[:500]}"
+        owned_users.team_memberships.append((email, team_id))
+        assert _member(_team_members(admin_api, team_id), email) is not None, f"{email} is absent before removal"
+
+        removed = admin_api.delete(f"/teams/{team_id}/members/{email}")
+        assert removed.status == 200, f"DELETE /teams/{team_id}/members/{email} returned {removed.status}: {removed.text()[:500]}"
+
+        members = _team_members(admin_api, team_id)
+        assert _member(members, email) is None, f"{email} is still a member after removal"
+
+        # Removing a member must not touch the creator. A lost owner membership
+        # would also block the teardown delete.
+        owner = _member(members, ADMIN_EMAIL)
+        assert owner is not None, "the creator's membership disappeared when another member was removed"
+        assert owner["role"] == "owner", f"creator holds role {owner['role']!r} after the removal, expected 'owner'"
+        assert owner["is_active"] is True, "creator's owner membership is inactive after the removal"
+
+    def test_team_pagination_is_consistent(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """Paging a known set of teams returns each one exactly once.
+
+        The run prefix isolates this test's teams, so the assertion does not
+        depend on the gateway's total team count.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        run_prefix = f"{TEAM_PREFIX}-page-{uuid.uuid4().hex[:8]}"
+        created: set[str] = set()
+        for _ in range(_TEAM_PAGE_COUNT):
+            _payload, team = _created_team(create_team, name=_team_name(run_prefix))
+            created.add(team["id"])
+
+        pages = _team_pages(admin_api, run_prefix, limit=_TEAM_PAGE_SIZE)
+
+        assert len(pages) > 1, f"{_TEAM_PAGE_COUNT} teams at limit={_TEAM_PAGE_SIZE} returned {len(pages)} page(s); the traversal never paged"
+
+        seen: list[str] = [team["id"] for page in pages for team in page]
+        duplicates = sorted({team_id for team_id in seen if seen.count(team_id) > 1})
+        assert not duplicates, f"teams returned on more than one page: {duplicates}"
+        assert set(seen) == created, f"paging returned {sorted(set(seen))}, expected {sorted(created)}"
+
+    def test_deleted_team_disappears(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """Deletion removes the team from the listing and from detail reads.
+
+        The gateway deletes a team softly, so the row survives in the database.
+        These assertions cover the REST contract, which reports the team as
+        gone.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        payload, team = _created_team(create_team)
+        team_id = team["id"]
+
+        assert _team_by_id(_teams_matching(admin_api, payload["name"]), team_id) is not None, f"team {team_id} is absent from the listing before deletion"
+
+        deleted = admin_api.delete(f"/teams/{team_id}")
+        assert deleted.status == 200, f"DELETE /teams/{team_id} returned {deleted.status}: {deleted.text()[:500]}"
+
+        assert _team_by_id(_teams_matching(admin_api, payload["name"]), team_id) is None, f"team {team_id} is still listed after deletion"
+
+        detail = admin_api.get(f"/teams/{team_id}")
+        assert detail.status == 404, f"GET /teams/{team_id} returned {detail.status} after deletion, expected 404: {detail.text()[:500]}"
+
+    def test_delete_nonexistent_team_returns_404(self, admin_api: APIRequestContext) -> None:
+        """Deleting an unused team id is refused.
+
+        The id is well formed, so the 404 reports a missing team rather than a
+        rejected path.
+
+        Args:
+            admin_api: Authenticated admin API context.
+        """
+        unused = uuid.uuid4().hex
+
+        resp = admin_api.delete(f"/teams/{unused}")
+        assert resp.status == 404, f"DELETE /teams/{unused} returned {resp.status}, expected 404: {resp.text()[:500]}"
