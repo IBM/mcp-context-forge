@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import subprocess
 import time
 from typing import Final
 from urllib.error import HTTPError
@@ -32,6 +34,8 @@ COMPLIANCE_PROMPT_NAME: Final = f"{COMPLIANCE_SERVER_NAME}-greet"
 AUTH_TOOL_NAME: Final = f"{AUTH_SERVER_NAME}-auth-probe"
 FAST_CLIENT_PID: Final = int(os.environ.get("REVERSE_PROXY_E2E_FAST_CLIENT_PID", "0"))
 AUTH_CLIENT_PID: Final = int(os.environ.get("REVERSE_PROXY_E2E_AUTH_CLIENT_PID", "0"))
+FAST_CLIENT_CONTAINER: Final = os.environ.get("REVERSE_PROXY_E2E_FAST_CLIENT_CONTAINER", "")
+AUTH_CLIENT_CONTAINER: Final = os.environ.get("REVERSE_PROXY_E2E_AUTH_CLIENT_CONTAINER", "")
 
 
 def json_request(path: str, *, payload: bytes | None = None, method: str | None = None) -> JsonObject | list[JsonObject]:
@@ -44,6 +48,25 @@ def json_request(path: str, *, payload: bytes | None = None, method: str | None 
     )
     with urlopen(request, timeout=20) as response:  # noqa: S310 - fixed local live-test target
         return json.load(response)
+
+
+def terminate_client(pid: int, container: str) -> None:
+    """SIGTERM the reverse-proxy client, as a host process or a container."""
+    if container:
+        subprocess.run(["docker", "kill", "--signal", "SIGTERM", container], check=True)
+        return
+    os.kill(pid, signal.SIGTERM)
+
+
+def freeze_client(pid: int, container: str) -> None:
+    """Suspend the reverse-proxy client so its heartbeats stop arriving."""
+    if container:
+        subprocess.run(["docker", "kill", "--signal", "SIGSTOP", container], check=True)
+        return
+    children = subprocess.run(["pgrep", "-P", str(pid)], check=True, capture_output=True, text=True).stdout.split()
+    assert children
+    for child in children:
+        os.kill(int(child), signal.SIGSTOP)
 
 
 def post(path: str, payload: JsonObject) -> JsonObject:
