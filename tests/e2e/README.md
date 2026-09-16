@@ -46,10 +46,11 @@ the consolidated target.
 | `JWT_SECRET_KEY` | `my-test-key-but-now-longer-than-32-bytes` | JWT signing secret (must match gateway) |
 | `PLATFORM_ADMIN_EMAIL` | `admin@example.com` | Admin email for JWT token |
 | `MCP_CLI_TOKEN_EXPIRY` | `60` | JWT token lifetime in minutes |
+| `MCP_E2E_REVOCATION_DELAY` | `1.0` | Seconds to wait for a revoke to reach every replica |
 
 ### What's Tested
 
-15 classes across two coverage areas.
+16 classes across two coverage areas.
 
 **MCP protocol (async MCP SDK)** — `TestConnectivity`, `TestTools`,
 `TestDiscovery`, `TestToolCalls`, plus raw-HTTP probes (`TestRawJsonRpc`,
@@ -70,7 +71,8 @@ the consolidated target.
 `TestServerVisibilityViaAPI`, `TestMcpToolsVisibilityByRole`,
 `TestMcpResourcesPromptsByRole`, `TestMcpToolCallByRole`,
 `TestMcpScopedTokenPermissions`, `TestMcpStreamableHttpTransport`,
-`TestMcpPerServerEndpoint`, `TestDenyPaths`, `TestCrossTransportConsistency`:
+`TestMcpPerServerEndpoint`, `TestDenyPaths`, `TestTokenLifecycle`,
+`TestCrossTransportConsistency`:
 
 - Server visibility: REST API scoping of servers by team/public.
 - Tool/resource/prompt visibility by role: admin, developer, team admin,
@@ -80,6 +82,8 @@ the consolidated target.
   `servers.use` auto-injection.
 - Streamable HTTP transport and per-server MCP endpoint routing.
 - Deny paths: unauthenticated and cross-team access rejected.
+- Token lifecycle: create a token, find it in the catalog, authenticate REST
+  and MCP with it, revoke it, and confirm a `tools.read` scope blocks execute.
 - Cross-transport consistency: same visibility/behavior across transports.
 
 ### Architecture
