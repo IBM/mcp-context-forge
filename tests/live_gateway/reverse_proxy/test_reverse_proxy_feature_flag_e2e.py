@@ -44,6 +44,8 @@ def test_feature_flag_off_removes_websocket_route() -> None:
             "-e",
             "PLATFORM_ADMIN_PASSWORD=t8-feature-off-password",  # pragma: allowlist secret
             "-e",
+            "DEFAULT_USER_PASSWORD=t8-feature-off-user-password",  # pragma: allowlist secret
+            "-e",
             "HOST=0.0.0.0",
             "-e",
             "DATABASE_URL=sqlite:////tmp/feature-off.db",
