@@ -2666,7 +2666,7 @@ class TestTeamLifecycle:
         assert body["visibility"] == payload["visibility"]
         assert body["slug"] == listed["slug"], "detail and listing disagree on the slug"
 
-    def test_add_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any, owned_users: _OwnedUsers) -> None:
+    def test_add_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any) -> None:
         """Adding a member returns 201 and the member list confirms it.
 
         The POST response is validated first. The member list is then read back
@@ -2676,7 +2676,6 @@ class TestTeamLifecycle:
             admin_api: Authenticated admin API context.
             create_team: Factory returning ``(payload, response, body)``.
             create_user: Factory returning ``(email, payload, response)``.
-            owned_users: Registry recording the membership for cleanup checks.
         """
         _payload, team = _created_team(create_team)
         team_id = team["id"]
@@ -2686,7 +2685,6 @@ class TestTeamLifecycle:
 
         added = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
         assert added.status == 201, f"POST /teams/{team_id}/members returned {added.status}: {added.text()[:500]}"
-        owned_users.team_memberships.append((email, team_id))
 
         added_body = _json_or_fail(added, f"POST /teams/{team_id}/members")
         assert added_body["user_email"] == email
@@ -2700,14 +2698,13 @@ class TestTeamLifecycle:
         assert member["role"] == "member"
         assert member["is_active"] is True
 
-    def test_remove_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any, owned_users: _OwnedUsers) -> None:
+    def test_remove_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any) -> None:
         """Removing a member leaves the creator's ownership intact.
 
         Args:
             admin_api: Authenticated admin API context.
             create_team: Factory returning ``(payload, response, body)``.
             create_user: Factory returning ``(email, payload, response)``.
-            owned_users: Registry recording the membership for cleanup checks.
         """
         _payload, team = _created_team(create_team)
         team_id = team["id"]
@@ -2717,7 +2714,6 @@ class TestTeamLifecycle:
 
         added = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
         assert added.status == 201, f"POST /teams/{team_id}/members returned {added.status}: {added.text()[:500]}"
-        owned_users.team_memberships.append((email, team_id))
         assert _member(_team_members(admin_api, team_id), email) is not None, f"{email} is absent before removal"
 
         removed = admin_api.delete(f"/teams/{team_id}/members/{email}")
