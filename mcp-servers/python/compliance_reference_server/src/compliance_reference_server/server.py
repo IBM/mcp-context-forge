@@ -278,6 +278,16 @@ def greeting_resource() -> str:
 
 
 @mcp.resource(
+    "reference://static/blob",
+    name="blob",
+    description="Static binary blob resource for typed-payload verification.",
+    mime_type="application/x-t8-binary",
+)
+def blob_resource() -> bytes:
+    return b"t8-binary"
+
+
+@mcp.resource(
     "reference://users/{user_id}",
     name="user-profile",
     description="Templated user profile resource.",
