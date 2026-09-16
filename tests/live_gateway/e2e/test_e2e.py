@@ -3173,3 +3173,194 @@ class TestTeamLifecycle:
 
         resp = admin_api.delete(f"/teams/{unused}")
         assert resp.status == 404, f"DELETE /teams/{unused} returned {resp.status}, expected 404: {resp.text()[:500]}"
+
+
+# ---------------------------------------------------------------------------
+# Gateway registration and tool sync (#6521)
+# ---------------------------------------------------------------------------
+GATEWAY_LIFECYCLE_PREFIX = "e2e-gw-lifecycle"
+_GATEWAY_SYNC_DEADLINE = float(os.getenv("MCP_E2E_GATEWAY_SYNC_DEADLINE", "30.0"))
+_GATEWAY_UPSTREAM_URL = "http://fast_time_server:9080/mcp"
+
+
+def _gateway_tool_names(admin_api: APIRequestContext, gateway_id: str) -> set[str]:
+    """Return the names of tools currently synced from one gateway.
+
+    ``gateway_id`` filters server-side and ``limit=0`` disables the default
+    page size, so a busy catalog cannot hide a synced or removed tool from
+    this read the way an unpaginated ``GET /tools`` would.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        gateway_id: Gateway id to filter by.
+
+    Returns:
+        Names of the gateway's currently synced tools.
+    """
+    resp = admin_api.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+    assert resp.status == 200, f"GET /tools returned {resp.status}: {resp.text()[:500]}"
+    tools = _json_or_fail(resp, "GET /tools")
+    return {tool["name"] for tool in tools}
+
+
+def _gateway_tools(admin_api: APIRequestContext, gateway_id: str) -> list[dict[str, Any]]:
+    """Return the full tool records currently synced from one gateway.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        gateway_id: Gateway id to filter by.
+
+    Returns:
+        The gateway's currently synced tool records.
+    """
+    resp = admin_api.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+    assert resp.status == 200, f"GET /tools returned {resp.status}: {resp.text()[:500]}"
+    return _json_or_fail(resp, "GET /tools")
+
+
+def _wait_for_gateway_tool_names(admin_api: APIRequestContext, gateway_id: str, *, until_empty: bool = False) -> set[str]:
+    """Poll a gateway's synced tool names until sync (or teardown) converges.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        gateway_id: Gateway id to filter by.
+        until_empty: Wait for the set to become empty instead of non-empty.
+
+    Returns:
+        The last observed set of tool names.
+    """
+    deadline = time.monotonic() + _GATEWAY_SYNC_DEADLINE
+    observed: set[str] = set()
+    while True:
+        observed = _gateway_tool_names(admin_api, gateway_id)
+        ready = (not observed) if until_empty else bool(observed)
+        if ready or time.monotonic() >= deadline:
+            return observed
+        time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
+
+
+@pytest.fixture
+def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
+    """Register a throwaway gateway against ``fast_time_server`` and delete it after.
+
+    Registered ``private`` so it never collides with the suite's shared
+    public ``streamable_http_gateway`` fixture, which already holds the same
+    upstream URL for the whole module (``gateway_service`` rejects a second
+    public gateway at one URL; uniqueness is visibility-scoped, so a private
+    registration by the same owner is a distinct row).
+
+    Args:
+        admin_api: Authenticated admin API context.
+
+    Yields:
+        The raw registration response, for the test to assert on.
+    """
+    uid = uuid.uuid4().hex[:8]
+    name = f"{GATEWAY_LIFECYCLE_PREFIX}-{uid}"
+    resp = admin_api.post(
+        "/gateways",
+        data={
+            "name": name,
+            "url": _GATEWAY_UPSTREAM_URL,
+            "transport": "STREAMABLEHTTP",
+            "visibility": "private",
+        },
+    )
+    yield resp
+    with suppress(Exception):
+        gw_id = resp.json().get("id")
+        if gw_id:
+            admin_api.delete(f"/gateways/{gw_id}")
+
+
+class TestGatewayLifecycle:
+    """Register an MCP gateway, wait for tool sync, then delete it."""
+
+    def test_register_returns_id_and_metadata(self, ephemeral_gateway: APIResponse) -> None:
+        """Registration succeeds and echoes id, name, url, and transport.
+
+        Args:
+            ephemeral_gateway: Raw registration response.
+        """
+        assert ephemeral_gateway.status in (200, 201, 202), f"POST /gateways returned {ephemeral_gateway.status}: {ephemeral_gateway.text()[:500]}"
+        gw = _json_or_fail(ephemeral_gateway, "POST /gateways")
+        assert gw.get("id"), f"registered gateway has no id: {gw}"
+        assert gw.get("name", "").startswith(GATEWAY_LIFECYCLE_PREFIX)
+        assert gw.get("url") == _GATEWAY_UPSTREAM_URL
+        assert gw.get("transport") == "STREAMABLEHTTP"
+
+    def test_tools_sync_within_deadline(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """At least one tool syncs from the upstream within the sync deadline.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        names = _wait_for_gateway_tool_names(admin_api, gw_id)
+        assert names, f"gateway {gw_id} reported no synced tools within {_GATEWAY_SYNC_DEADLINE:.0f}s"
+
+    def test_synced_tools_carry_gateway_id(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """Every synced tool's ``gatewayId`` matches the registering gateway.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        _wait_for_gateway_tool_names(admin_api, gw_id)
+        tools = _gateway_tools(admin_api, gw_id)
+        assert tools, f"gateway {gw_id} reported no synced tools within {_GATEWAY_SYNC_DEADLINE:.0f}s"
+        mismatched = [tool["name"] for tool in tools if tool.get("gatewayId") != gw_id]
+        assert not mismatched, f"tools {mismatched} carry a gatewayId other than {gw_id}"
+
+    def test_synced_tools_have_expected_names(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """The synced catalog includes a ``get-system-time`` tool from ``fast_time_server``.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        names = _wait_for_gateway_tool_names(admin_api, gw_id)
+        time_tools = [name for name in names if "get-system-time" in name]
+        assert time_tools, f"expected a get-system-time tool, got: {sorted(names)}"
+
+    def test_delete_gateway_removes_tools(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """Deleting the gateway removes its synced tools from the catalog.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        assert _wait_for_gateway_tool_names(admin_api, gw_id), f"gateway {gw_id} never synced tools; deletion cleanup cannot be observed"
+
+        resp = admin_api.delete(f"/gateways/{gw_id}")
+        assert resp.status in (200, 202), f"DELETE /gateways/{gw_id} returned {resp.status}: {resp.text()[:500]}"
+
+        remaining = _wait_for_gateway_tool_names(admin_api, gw_id, until_empty=True)
+        assert not remaining, f"tools {sorted(remaining)} still report gatewayId={gw_id} after deletion"
+
+        detail = admin_api.get(f"/gateways/{gw_id}")
+        assert detail.status == 404, f"GET /gateways/{gw_id} returned {detail.status} after deletion, expected 404"
+
+    def test_duplicate_registration_conflicts(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """Re-registering the same name, url, and visibility returns 409.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw = _json_or_fail(ephemeral_gateway, "POST /gateways")
+
+        duplicate = admin_api.post(
+            "/gateways",
+            data={
+                "name": gw["name"],
+                "url": gw["url"],
+                "transport": gw["transport"],
+                "visibility": "private",
+            },
+        )
+        assert duplicate.status == 409, f"duplicate POST /gateways returned {duplicate.status}, expected 409: {duplicate.text()[:500]}"
