@@ -895,7 +895,7 @@ class OpenTelemetryRequestMiddleware:
         has_remote_parent = False
         if parent_context is not None and OTEL_AVAILABLE and trace is not None:
             try:
-                remote_span_context = trace.get_span_context(parent_context)
+                remote_span_context = trace.get_current_span(parent_context).get_span_context()
                 has_remote_parent = bool(remote_span_context and remote_span_context.is_valid and remote_span_context.is_remote)
             except Exception:  # pylint: disable=broad-exception-caught
                 has_remote_parent = False
