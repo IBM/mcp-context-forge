@@ -1108,6 +1108,26 @@ def _mcp_client_url(server_url: str = BASE_URL) -> str:
     return f"{server_url}/mcp/" if not server_url.endswith(("/mcp", "/mcp/")) else server_url.rstrip("/") + "/"
 
 
+def _unwrap_exception_group(exc: BaseException) -> list[BaseException]:
+    """Flatten a possibly-nested ``ExceptionGroup`` into its leaf exceptions.
+
+    The MCP SDK runs client calls inside anyio ``TaskGroup``s at both the
+    session and transport layers. A single underlying error (an ``McpError``,
+    an ``httpx.HTTPStatusError``) can arrive wrapped in one or more
+    ``ExceptionGroup`` layers depending on how many task groups were open on
+    the call stack when it surfaced -- for example ``initialize()`` alone
+    wraps once, while ``initialize()`` followed by ``call_tool()`` on the same
+    session wraps twice. Callers that need to inspect the real error must
+    unwrap to an unknown, not a fixed, depth.
+    """
+    if isinstance(exc, ExceptionGroup):
+        leaves: list[BaseException] = []
+        for sub in exc.exceptions:
+            leaves.extend(_unwrap_exception_group(sub))
+        return leaves
+    return [exc]
+
+
 @asynccontextmanager
 async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[ClientSession]:
     """Open an initialized MCP client session over Streamable HTTP."""
@@ -1740,9 +1760,18 @@ class TestTokenLifecycle:
             assert revoke.status == 204, f"Revoke must return 204: {revoke.status} {revoke.text()}"
             time.sleep(_REVOCATION_PROPAGATION_SECONDS)
 
-            with pytest.raises(Exception) as excinfo:
+            # A revoked token fails the JWT auth dependency before any MCP method
+            # dispatch, so the SDK surfaces it as a raw httpx.HTTPStatusError from
+            # the initialize POST -- wrapped in one or more ExceptionGroup layers
+            # because the SDK runs that POST inside anyio TaskGroups (see
+            # _unwrap_exception_group). Narrowed to these two types and to status
+            # 401 so an unrelated transport failure (a restart, a timeout) cannot
+            # read as "revocation confirmed".
+            with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as excinfo:
                 _mcp_initialize_only(minted["access_token"])
-            print(f"    -> Revoked token rejected on MCP (expected): {excinfo.value}")
+            status_errors = [e for e in _unwrap_exception_group(excinfo.value) if isinstance(e, httpx.HTTPStatusError)]
+            assert status_errors and status_errors[0].response.status_code == 401, f"expected a 401 from the revoked token, got: {excinfo.value!r}"
+            print(f"    -> Revoked token rejected on MCP (expected): {status_errors[0]}")
         finally:
             with suppress(Exception):
                 admin_api.delete(f"/tokens/admin/{minted['token_id']}")
@@ -1771,11 +1800,22 @@ class TestTokenLifecycle:
             # inside an anyio TaskGroup, which wraps a single McpError in an ExceptionGroup
             # on the way out. This is still safe: the assert below sits outside this try,
             # so widening the tuple here cannot swallow it.
+            #
+            # The inner assert checks *why* the call failed, not just that it did: an
+            # unrelated transport hiccup (a restart, a timeout) would otherwise also
+            # land in this except and print as "(expected)". "Access denied" is
+            # _ACCESS_DENIED_MSG in mcpgateway/middleware/rbac.py, the fixed message
+            # _ensure_rpc_permission() raises via JSONRPCError(-32003, ...) on a
+            # token_scope_grants() denial -- the one thing this except is meant to catch.
+            # _unwrap_exception_group handles the nesting depth varying by call shape
+            # (a preceding tools/list on the same session adds a task-group layer).
             result = None
             try:
                 result = _mcp_tool_call(minted["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
             except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
-                print(f"    -> Scoped token denied execute at the transport (expected): {exc}")
+                leaves = _unwrap_exception_group(exc)
+                assert any("access denied" in str(leaf).lower() for leaf in leaves), f"expected an access-denial error, got: {leaves!r}"
+                print(f"    -> Scoped token denied execute at the transport (expected): {leaves[0]}")
 
             if result is not None:
                 assert result.isError, f"tools.read-only token must be denied tools.execute, got: {result}"
