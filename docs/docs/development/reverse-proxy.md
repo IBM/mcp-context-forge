@@ -64,7 +64,7 @@ The harness in `tests/live_gateway/reverse_proxy/` runs the real maintained clie
 
 - Docker with compose v2
 - `uv`
-- A local clone of the maintained client ([contextforge-org/mcp-reverse-proxy](https://github.com/contextforge-org/mcp-reverse-proxy))
+- A local clone of the maintained client ([contextforge-org/mcp-reverse-proxy](https://github.com/contextforge-org/mcp-reverse-proxy)) - only when running the client from source; not needed when `RP_CLIENT_IMAGE` is set
 
 The client clone is located via `MCP_REVERSE_PROXY_CLIENT_ROOT`, which defaults to `../../../mcp-reverse-proxy` relative to the repo root (the fleet-worktree layout). Most developers need to set it explicitly:
 
@@ -72,7 +72,7 @@ The client clone is located via `MCP_REVERSE_PROXY_CLIENT_ROOT`, which defaults 
 export MCP_REVERSE_PROXY_CLIENT_ROOT=/path/to/mcp-reverse-proxy
 ```
 
-The script exits with status 2 and a clear message if `pyproject.toml` is missing at that path.
+Without `RP_CLIENT_IMAGE`, the script exits with status 2 and a clear message if `pyproject.toml` is missing at that path.
 
 ### Invocation
 
@@ -82,14 +82,19 @@ RP_E2E_RUN_ID=my-run tests/live_gateway/reverse_proxy/run.sh
 
 Any working directory works; the script resolves the repo root via `git rev-parse`. If `RP_E2E_RUN_ID` is unset, the run id defaults to a pid/random slug.
 
+To run the client from the published container image instead of a local clone, set `RP_CLIENT_IMAGE`. Each client then runs as a container on the compose network, and no client clone is required:
+
+```bash
+RP_CLIENT_IMAGE=ghcr.io/contextforge-org/mcp-reverse-proxy:latest RP_E2E_RUN_ID=my-run tests/live_gateway/reverse_proxy/run.sh
+```
+
 ### What it runs
 
 The script brings up the repo's `docker-compose.yml` stack plus the `tests/live_gateway/reverse_proxy/docker-compose.reverse-proxy.yml` override:
 
 - One gateway container with **2 Gunicorn workers**, `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` and `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED=true`
 - Redis, Postgres, pgbouncer, and nginx
-- The pinned fast-test downstream server, the repo compliance server, and auth/authority probe servers
-- The real maintained client, as three separate client processes
+- The real maintained client, as three separate client processes (or three containers on the compose network with `RP_CLIENT_IMAGE`)
 
 It then runs two pytest modules:
 
@@ -125,18 +130,20 @@ After the pytest run, the harness also greps the logs for bearer tokens and the 
 
 ### Cleanup
 
-An `EXIT` trap kills the client and server processes, tears down containers, the network, and volumes, and removes the run-scoped gateway image unless `RP_GATEWAY_IMAGE` was supplied externally. If any Docker resources survive cleanup, the script reports it and exits non-zero.
+An `EXIT` trap kills the client and server processes (with `RP_CLIENT_IMAGE`, it captures the client container logs and removes the containers instead), tears down containers, the network, and volumes, and removes the run-scoped gateway image unless `RP_GATEWAY_IMAGE` was supplied externally. If any Docker resources survive cleanup, the script reports it and exits non-zero.
 
 ### Environment overrides
 
 | Variable | Purpose |
 | -------- | ------- |
 | `RP_E2E_RUN_ID` | Stable run name; also the artifact directory slug |
-| `MCP_REVERSE_PROXY_CLIENT_ROOT` | Path to the maintained client clone |
+| `MCP_REVERSE_PROXY_CLIENT_ROOT` | Path to the maintained client clone (not used when `RP_CLIENT_IMAGE` is set) |
+| `RP_CLIENT_IMAGE` | Run the three clients from this container image (for example `ghcr.io/contextforge-org/mcp-reverse-proxy:latest`) instead of `uv run` from a local clone |
 | `RP_GATEWAY_IMAGE` | Use a prebuilt gateway image instead of building one |
-| `RP_HEARTBEAT_TIMEOUT` | Heartbeat eviction timeout in seconds (default 3) |
+| `FAST_TIME_IMAGE` | Override the pinned fast-test downstream server image |
 | `FAST_TEST_PORT`, `NGINX_PORT`, `REDIS_HOST_PORT`, `POSTGRES_HOST_PORT`, `PGBOUNCER_HOST_PORT`, `RP_COMPLIANCE_PORT`, `RP_AUTH_PORT`, `RP_FEATURE_OFF_PORT` | Pin a host port instead of picking a random one |
 | `RP_JWT_SECRET_KEY`, `RP_AUTH_ENCRYPTION_SECRET` | Override the generated per-run secrets |
+| `RP_PLATFORM_ADMIN_PASSWORD`, `RP_DEFAULT_USER_PASSWORD` | Override the generated per-run credentials |
 
 ---
 
