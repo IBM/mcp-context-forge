@@ -50,7 +50,8 @@ jobs:
           cache-from: |
             type=gha,scope=containerfile-lite-amd64
             type=gha,scope=cf-integration-conformance
-          cache-to: type=gha,mode=max,scope=cf-integration-conformance
+          # issue_comment runs have read-only cache access by default.
+          cache-to: ${{ github.event_name == 'pull_request' && 'type=gha,mode=max,scope=cf-integration-conformance' || '' }}
 
       - name: Install cf-integration 0.4.0 binary
         env:
