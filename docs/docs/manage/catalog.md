@@ -195,10 +195,22 @@ network access, run:
 python scripts/fetch_catalog_icons.py --normalize-existing
 ```
 
-The command crops visible content, upscales source artwork by at most 2×, and
+The command crops visible content, upscales source artwork by at most 8×, and
 centers it on a 128px transparent canvas. It skips missing assets and reports
 fully transparent assets as unresolved. Do not combine it with `--force`,
 which refreshes existing assets from remote candidates.
+
+A few bundled assets cannot be reproduced by `--force` or a fresh fetch, because
+their source is not a single fetchable image URL:
+
+- `metro-mcp`: hand-cropped from the site's Open Graph share image; no
+  standalone icon file exists at the source.
+- `linear`, `neon`, `supabase`: the override entry documents the real source,
+  but it is an SVG and this script has no SVG rasterizer. The bundled PNG was
+  produced by hand-rendering that SVG once, offline.
+
+Re-derive these by hand if the upstream source changes; do not expect
+`--force` to pick up the change automatically.
 
 ---
 

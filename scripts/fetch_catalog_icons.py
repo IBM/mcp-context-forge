@@ -11,6 +11,7 @@ from __future__ import annotations
 
 # Standard
 import argparse
+from collections import Counter, deque
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from io import BytesIO
@@ -41,9 +42,15 @@ LOCAL_PREFIX = "/static/catalog-icons/"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
 ICON_SIZE = 128
-MAX_UPSCALE_FACTOR = 2.0
+MAX_UPSCALE_FACTOR = 8.0
 NORMALIZED_ICON_MIN_EXTENT = 120
 NORMALIZED_ICON_MARKER = "contextforge_normalized"
+NORMALIZED_ICON_VERSION = "3"
+BACKDROP_STRIPPED_MARKER = "contextforge_backdrop_stripped"
+PALE_BACKDROP_FLOOR = 225
+PALE_BACKDROP_TOLERANCE = 28
+PALE_BACKDROP_MIN_PERIMETER_SHARE = 0.25
+PALE_BACKDROP_DRIFT_FLOOR = 185
 TIMEOUT_SECONDS = 10.0
 USER_AGENT = "ContextForge catalog icon curator/1.0"
 
@@ -196,7 +203,95 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
     raise IconFetchError(f"Too many redirects: {url}")
 
 
-def _image_to_png(body: bytes) -> bytes:
+def _strip_pale_backdrop(image: Image.Image) -> Image.Image:
+    """Remove a near-white badge (circle or square) enclosing a smaller brand mark.
+
+    Only triggers when the perimeter of the cropped content is dominated by a pale
+    color; a saturated or dark backdrop (a deliberate brand-color block, e.g. a
+    logo's own colored square) is left untouched, since removing it would strip
+    the icon's visual weight rather than excess padding. Any strip that would
+    leave nothing visible reverts to the original image. Catalog ids must be
+    explicitly opted in via the `strip_pale_backdrop` override list: automatic,
+    unreviewed detection risks trimming a genuine white design element (e.g. a
+    logo's own white face), not just padding.
+    """
+    bbox = image.getchannel("A").getbbox()
+    if bbox is None:
+        return image
+    cropped = image.crop(bbox)
+    width, height = cropped.size
+    pixels = cropped.load()
+    perimeter = {(x, 0) for x in range(width)} | {(x, height - 1) for x in range(width)} | {(0, y) for y in range(height)} | {(width - 1, y) for y in range(height)}
+
+    def quantize(channels: tuple[int, int, int]) -> tuple[int, int, int]:
+        return tuple(channel // 8 * 8 for channel in channels)  # type: ignore[return-value]
+
+    border_colors = Counter(quantize(pixels[x, y][:3]) for x, y in perimeter if pixels[x, y][3] >= 10)
+    if not border_colors:
+        return image
+    backdrop, count = border_colors.most_common(1)[0]
+    if count / len(perimeter) < PALE_BACKDROP_MIN_PERIMETER_SHARE or min(backdrop) < PALE_BACKDROP_FLOOR:
+        return image
+
+    # A vignette or gradient backdrop (common on GitHub org avatars) can drift far
+    # enough from the dominant perimeter color that matching against one fixed
+    # reference stops mid-sweep, leaving disconnected pale islands behind. Each
+    # queued cell instead carries the color of the opaque neighbor that reached
+    # it, so the sweep can follow a smooth gradient inward; an absolute floor
+    # still stops it from wandering into real (non-pale) content.
+    def local_reference(pixel: tuple[int, int, int, int], fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+        r, g, b, a = pixel
+        return (r, g, b) if a >= 10 else fallback
+
+    def is_backdrop(pixel: tuple[int, int, int, int], reference: tuple[int, int, int]) -> bool:
+        r, g, b, a = pixel
+        if a < 10:
+            return True
+        if min(r, g, b) < PALE_BACKDROP_DRIFT_FLOOR:
+            return False
+        return all(abs(channel - target) <= PALE_BACKDROP_TOLERANCE for channel, target in zip((r, g, b), reference))
+
+    visited = bytearray(width * height)
+    # Seed every perimeter cell with the detected majority backdrop, not its own
+    # color: seeding an opaque cell with itself made the tolerance check in
+    # is_backdrop() compare the pixel to itself, so any sufficiently light
+    # perimeter pixel passed regardless of hue. Propagation below still hands
+    # each confirmed cell's own color to its neighbors, preserving gradient
+    # tracking.
+    queue = deque((x, y, backdrop) for x, y in perimeter)
+    while queue:
+        x, y, reference = queue.popleft()
+        if not (0 <= x < width and 0 <= y < height):
+            continue
+        index = y * width + x
+        if visited[index]:
+            continue
+        pixel = pixels[x, y]
+        if not is_backdrop(pixel, reference):
+            continue
+        visited[index] = 1
+        next_reference = local_reference(pixel, reference)
+        queue.extend(((x - 1, y, next_reference), (x + 1, y, next_reference), (x, y - 1, next_reference), (x, y + 1, next_reference)))
+
+    trimmed = cropped.copy()
+    trimmed_pixels = trimmed.load()
+    remaining = False
+    for y in range(height):
+        for x in range(width):
+            if visited[y * width + x]:
+                r, g, b, _ = trimmed_pixels[x, y]
+                trimmed_pixels[x, y] = (r, g, b, 0)
+            elif trimmed_pixels[x, y][3] >= 10:
+                remaining = True
+    if not remaining:
+        return image
+
+    canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    canvas.alpha_composite(trimmed, (bbox[0], bbox[1]))
+    return canvas
+
+
+def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False) -> bytes:
     """Decode image, trim transparent padding, and emit a deterministic capped PNG."""
     try:
         with Image.open(BytesIO(body)) as source:
@@ -205,6 +300,12 @@ def _image_to_png(body: bytes) -> bytes:
             if alpha_bounds is None:
                 raise IconFetchError("Image has no visible pixels")
             image = image.crop(alpha_bounds)
+            if strip_pale_backdrop:
+                image = _strip_pale_backdrop(image)
+                alpha_bounds = image.getchannel("A").getbbox()
+                if alpha_bounds is None:
+                    raise IconFetchError("Image has no visible pixels")
+                image = image.crop(alpha_bounds)
             scale = min(ICON_SIZE / max(image.size), MAX_UPSCALE_FACTOR)
             target_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
             if image.size != target_size:
@@ -214,13 +315,29 @@ def _image_to_png(body: bytes) -> bytes:
             canvas.alpha_composite(image, offset)
             output = BytesIO()
             png_info = PngImagePlugin.PngInfo()
-            png_info.add_text(NORMALIZED_ICON_MARKER, "1")
+            png_info.add_text(NORMALIZED_ICON_MARKER, NORMALIZED_ICON_VERSION)
+            if strip_pale_backdrop:
+                # Records that this exact asset has already had the pale-backdrop
+                # sweep applied, so a later --normalize-existing run can trust it
+                # even though its catalog id stays on the strip_pale_backdrop
+                # allowlist (needed for ids newly added to that list, whose
+                # existing asset was never actually stripped).
+                png_info.add_text(BACKDROP_STRIPPED_MARKER, "1")
             canvas.save(output, format="PNG", optimize=True, pnginfo=png_info)
             return output.getvalue()
     except IconFetchError:
         raise
     except Exception as exc:  # Pillow raises several format-specific exceptions.
         raise IconFetchError(f"Image decode failed: {exc}") from exc
+
+
+def _has_backdrop_stripped_marker(body: bytes) -> bool:
+    """Return whether this exact asset already had the pale-backdrop sweep applied."""
+    try:
+        with Image.open(BytesIO(body)) as source:
+            return source.info.get(BACKDROP_STRIPPED_MARKER) == "1"
+    except Exception:  # Pillow raises several format-specific exceptions.
+        return False
 
 
 def _has_normalized_icon_bounds(body: bytes) -> bool:
@@ -232,7 +349,9 @@ def _has_normalized_icon_bounds(body: bytes) -> bool:
                 return False
             # PNG text must survive external processing to retain this fast path.
             # Without it, the geometry fallback can apply one additional capped resize.
-            if image.info.get(NORMALIZED_ICON_MARKER) == "1":
+            # The version guards against re-trusting assets normalized under a
+            # since-changed MAX_UPSCALE_FACTOR; bump it whenever that cap changes.
+            if image.info.get(NORMALIZED_ICON_MARKER) == NORMALIZED_ICON_VERSION:
                 return True
             alpha_bounds = image.getchannel("A").getbbox()
             if alpha_bounds is None:
@@ -263,19 +382,19 @@ def _icon_candidates(page: FetchResult | None, origin: str, domain: str) -> Iter
             yield candidate
 
 
-def _load_overrides(path: Path) -> tuple[set[str], dict[str, str]]:
-    """Load optional skip and explicit source overrides."""
+def _load_overrides(path: Path) -> tuple[set[str], dict[str, str], set[str]]:
+    """Load optional skip, explicit source, and pale-backdrop-strip overrides."""
     if not path.exists():
-        return set(), {}
+        return set(), {}, set()
     data = json.loads(path.read_text(encoding="utf-8"))
-    return set(data.get("skip", [])), dict(data.get("overrides", {}))
+    return set(data.get("skip", [])), dict(data.get("overrides", {})), set(data.get("strip_pale_backdrop", []))
 
 
-def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | None = None) -> tuple[bytes, str]:
+def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | None = None, *, strip_pale_backdrop: bool = False) -> tuple[bytes, str]:
     """Resolve and normalize one catalog icon."""
     if override:
         result = _fetch(client, override, expected_image=True)
-        return _image_to_png(result.body), result.url
+        return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop), result.url
 
     endpoint = str(server["url"])
     parsed = urlsplit(endpoint)
@@ -286,6 +405,14 @@ def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | No
     page: FetchResult | None = None
     try:
         page = _fetch(client, origin)
+        landed_hostname = urlsplit(page.url).hostname
+        if not landed_hostname or _registrable_domain(landed_hostname) != domain:
+            # A redirect landed on an unrelated site (e.g. an API host redirecting
+            # to its GitHub repo); that page's <link rel="icon"> belongs to the
+            # OTHER site's brand, not this catalog entry's, so it must not be
+            # trusted as a candidate source. Fall through to the domain-anchored
+            # favicon.ico / DuckDuckGo lookups below instead.
+            page = None
     except IconFetchError:
         pass
 
@@ -293,7 +420,7 @@ def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | No
     for candidate in _icon_candidates(page, origin, domain):
         try:
             result = _fetch(client, candidate, expected_image=True)
-            return _image_to_png(result.body), result.url
+            return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop), result.url
         except IconFetchError as exc:
             last_error = exc
     raise last_error or IconFetchError("No icon candidate succeeded")
@@ -352,7 +479,7 @@ def generate_icons(args: argparse.Namespace) -> int:
     catalog_text = catalog_path.read_text(encoding="utf-8")
     catalog = yaml.safe_load(catalog_text) or {}
     entries = _catalog_entries(catalog)
-    skip_ids, overrides = _load_overrides(args.overrides)
+    skip_ids, overrides, strip_backdrop_ids = _load_overrides(args.overrides)
     if not args.dry_run:
         args.output_dir.mkdir(parents=True, exist_ok=True)
     logo_urls: dict[str, str] = {}
@@ -367,17 +494,26 @@ def generate_icons(args: argparse.Namespace) -> int:
             if catalog_id in skip_ids:
                 print(f"SKIP {catalog_id}: override list")
                 continue
+            strip_pale_backdrop = catalog_id in strip_backdrop_ids
             if args.normalize_existing:
                 if not asset_path.exists():
                     print(f"SKIP {catalog_id}: no local asset to normalize")
                     continue
                 try:
                     existing = asset_path.read_bytes()
-                    if _has_normalized_icon_bounds(existing):
+                    # A backdrop-strip candidate may have full alpha bounds (the pale
+                    # badge, not the mark, fills the canvas) before it has ever been
+                    # stripped, so the geometry fast-path can't be trusted until the
+                    # asset itself records that the sweep already ran. Once it does,
+                    # trust it like any other id — this also protects manual touch-ups
+                    # (padding, size) applied to the asset after stripping from being
+                    # silently undone by a later --normalize-existing run.
+                    needs_backdrop_strip = strip_pale_backdrop and not _has_backdrop_stripped_marker(existing)
+                    if not needs_backdrop_strip and _has_normalized_icon_bounds(existing):
                         print(f"KEEP {catalog_id}: normalized bounds")
                     else:
                         if not args.dry_run:
-                            normalized = _image_to_png(existing)
+                            normalized = _image_to_png(existing, strip_pale_backdrop=strip_pale_backdrop)
                             temporary = asset_path.with_suffix(".tmp")
                             temporary.write_bytes(normalized)
                             temporary.replace(asset_path)
@@ -392,7 +528,7 @@ def generate_icons(args: argparse.Namespace) -> int:
                 print(f"KEEP {catalog_id}: {asset_path}")
                 continue
             try:
-                body, source_url = _fetch_icon(client, server, overrides.get(catalog_id))
+                body, source_url = _fetch_icon(client, server, overrides.get(catalog_id), strip_pale_backdrop=strip_pale_backdrop)
                 if not args.dry_run:
                     temporary = asset_path.with_suffix(".tmp")
                     temporary.write_bytes(body)
@@ -413,7 +549,7 @@ def generate_icons(args: argparse.Namespace) -> int:
 
 def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch and bundle MCP catalog icons. Normalization trims transparent padding and upscales source artwork by at most 2x.",
+        description="Fetch and bundle MCP catalog icons. Normalization trims transparent padding and upscales source artwork by at most 8x.",
     )
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -424,7 +560,7 @@ def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
     refresh_mode.add_argument(
         "--normalize-existing",
         action="store_true",
-        help="Trim and resize existing local assets up to 2x without refetching remote icons",
+        help="Trim and resize existing local assets up to 8x without refetching remote icons",
     )
     parser.add_argument("--dry-run", action="store_true", help="Fetch and report without writing")
     parser.add_argument("--strict", action="store_true", help="Return failure when any icon is unresolved")
