@@ -569,7 +569,7 @@ class TestRequestMiddlewareTraceEnvelope:
         scope = self._make_scope([(b"content-type", b"application/json")])
 
         mock_trace = MagicMock()
-        mock_trace.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
 
         with (
             patch("mcpgateway.observability._TRACER", MagicMock()),
@@ -593,7 +593,7 @@ class TestRequestMiddlewareTraceEnvelope:
         scope = self._make_scope()
 
         mock_trace = MagicMock()
-        mock_trace.get_span_context.side_effect = RuntimeError("boom")
+        mock_trace.get_current_span.side_effect = RuntimeError("boom")
 
         with (
             patch("mcpgateway.observability._TRACER", MagicMock()),
@@ -616,7 +616,7 @@ class TestRequestMiddlewareTraceEnvelope:
         scope = self._make_scope(original_headers)
 
         mock_trace = MagicMock()
-        mock_trace.get_span_context.return_value = MagicMock(is_valid=True, is_remote=True)
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=True, is_remote=True)
 
         with (
             patch("mcpgateway.observability._TRACER", MagicMock()),
@@ -640,7 +640,7 @@ class TestRequestMiddlewareTraceEnvelope:
         scope = self._make_scope(original_headers)
 
         mock_trace = MagicMock()
-        mock_trace.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
 
         with (
             patch("mcpgateway.observability._TRACER", MagicMock()),
