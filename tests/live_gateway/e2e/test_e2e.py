@@ -52,7 +52,7 @@ from mcp.types import InitializeResult
 import pytest
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-from playwright.sync_api import APIRequestContext, APIResponse, Playwright
+from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, Playwright
 
 # Local
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -855,7 +855,7 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
                     yield {"id": gw_id, "name": STREAMABLE_HTTP_GATEWAY_NAME, "tool_ids": tool_ids}
                     return
                 previous_tool_ids = tool_ids
-            except (AssertionError, KeyError, TypeError, ValueError) as exc:
+            except (AssertionError, KeyError, TypeError, ValueError, PlaywrightError) as exc:
                 logger.debug("Gateway tool synchronization probe %d did not succeed: %s", read_index, exc)
                 previous_tool_ids = None
             time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
