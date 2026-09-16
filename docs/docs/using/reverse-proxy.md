@@ -100,6 +100,8 @@ mcp-reverse-proxy --config reverse-proxy.yaml
 
 ### Single Container
 
+The published image `ghcr.io/contextforge-org/mcp-reverse-proxy:latest` covers stock deployments - pull it instead of building locally. Build a customized client image with a Dockerfile only when you need to bake in your own downstream servers or tooling:
+
 ```dockerfile
 FROM python:3.11-slim
 
@@ -122,24 +124,22 @@ version: '3.8'
 
 services:
   reverse-proxy-git:
-    build: .
+    image: ghcr.io/contextforge-org/mcp-reverse-proxy:latest
     environment:
       REVERSE_PROXY_GATEWAY: wss://gateway.example.com/reverse-proxy/ws
       REVERSE_PROXY_TOKEN: ${TOKEN}
     command: >
-      mcp-reverse-proxy
       --local-stdio "mcp-server-git"
       --keepalive 2
       --log-level INFO
     restart: unless-stopped
 
   reverse-proxy-fetch:
-    build: .
+    image: ghcr.io/contextforge-org/mcp-reverse-proxy:latest
     environment:
       REVERSE_PROXY_GATEWAY: wss://gateway.example.com/reverse-proxy/ws
       REVERSE_PROXY_TOKEN: ${TOKEN}
     command: >
-      mcp-reverse-proxy
       --local-stdio "uvx mcp-server-fetch"
     restart: unless-stopped
 ```
@@ -164,7 +164,7 @@ spec:
       containers:
 
       - name: reverse-proxy
-        image: your-registry/mcp-reverse-proxy:latest
+        image: ghcr.io/contextforge-org/mcp-reverse-proxy:latest
         env:
 
         - name: REVERSE_PROXY_GATEWAY
