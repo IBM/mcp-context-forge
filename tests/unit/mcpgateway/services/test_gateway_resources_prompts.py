@@ -38,6 +38,7 @@ class TestGatewayResourcesPrompts:
             mock_proxy_context.__aenter__.return_value = mock_client
             mock_proxy_context.__aexit__.return_value = None
             mock_proxy_client.return_value = mock_proxy_context
+            mock_client.protocol_version = "2024-11-05"
 
             # Mock negotiated server capabilities
             mock_client.server_capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
@@ -67,7 +68,7 @@ class TestGatewayResourcesPrompts:
             mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts, _, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities["resources"]["listChanged"] is True
@@ -102,6 +103,7 @@ class TestGatewayResourcesPrompts:
             mock_proxy_context.__aenter__.return_value = mock_client
             mock_proxy_context.__aexit__.return_value = None
             mock_proxy_client.return_value = mock_proxy_context
+            mock_client.protocol_version = "2024-11-05"
 
             # Mock negotiated server capabilities - no resources/prompts
             mock_client.server_capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "tools": {"listChanged": True}}
@@ -116,7 +118,7 @@ class TestGatewayResourcesPrompts:
             mock_client.list_prompts = AsyncMock()
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
+            capabilities, tools, resources, prompts, _, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify
             assert "resources" not in capabilities
@@ -147,6 +149,7 @@ class TestGatewayResourcesPrompts:
             mock_proxy_context.__aenter__.return_value = mock_client
             mock_proxy_context.__aexit__.return_value = None
             mock_proxy_client.return_value = mock_proxy_context
+            mock_client.protocol_version = "2024-11-05"
 
             # Mock negotiated server capabilities with resources/prompts
             mock_client.server_capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
@@ -168,7 +171,7 @@ class TestGatewayResourcesPrompts:
             mock_client.list_prompts = AsyncMock(side_effect=Exception("Failed to fetch prompts"))
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
+            capabilities, tools, resources, prompts, _, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify - should return empty lists for resources/prompts on failure
             assert len(tools) == 1
