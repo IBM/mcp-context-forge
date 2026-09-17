@@ -878,7 +878,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         client_key=None,
     )
     service._prepare_gateway_connection_material = AsyncMock(return_value=connection_material)
-    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], [], None))
     service._sync_gateway_catalog = Mock(return_value=SimpleNamespace())
     service._reconcile_gateway_catalog = Mock()
 
@@ -1085,7 +1085,7 @@ async def test_process_pending_gateway_does_not_overwrite_deleting_status(monkey
         client_key=None,
     )
     service._prepare_gateway_connection_material = AsyncMock(return_value=connection_material)
-    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+    service._initialize_gateway_with_timeout = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], [], None))
     service._sync_gateway_catalog = Mock(return_value=SimpleNamespace())
     service._reconcile_gateway_catalog = Mock()
 
@@ -1398,7 +1398,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
 
     service = GatewayService()
     service._check_gateway_uniqueness = MagicMock(return_value=None)
-    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], [], []))
+    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], [], [], None))
     service._notify_gateway_added = AsyncMock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_a, **_kw: None)

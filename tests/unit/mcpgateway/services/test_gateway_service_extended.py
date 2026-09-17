@@ -79,10 +79,11 @@ class TestGatewayServiceExtended:
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
+            mock_client.protocol_version = "2024-11-05"
             mock_proxy.return_value = mock_client
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts, _, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -119,10 +120,11 @@ class TestGatewayServiceExtended:
             mock_resources_response = MagicMock()
             mock_resources_response.resources = []
             mock_client.list_resources = AsyncMock(return_value=mock_resources_response)
+            mock_client.protocol_version = "2024-11-05"
             mock_proxy.return_value = mock_client
 
             # Execute
-            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
+            capabilities, tools, resources, prompts, _, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -176,6 +178,7 @@ class TestGatewayServiceExtended:
             mock_tools_response = MagicMock(next_cursor=None)
             mock_tools_response.tools = []
             mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
+            mock_client.protocol_version = "2024-11-05"
             mock_proxy_client.return_value = mock_client
 
             await service._initialize_gateway(
@@ -1790,7 +1793,7 @@ class TestGatewayServiceExtended:
                 patch.object(
                     service,
                     "_connect_to_sse_server_without_validation",
-                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [])),
+                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [], None)),
                 ),
                 patch.object(service, "_update_or_create_tools", return_value=[]),
                 patch.object(service, "_update_or_create_resources", return_value=[]),
