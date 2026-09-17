@@ -26,6 +26,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 # Third-Party
 import httpx
 from PIL import Image, ImageOps, PngImagePlugin
+import resvg_py
 import yaml
 
 try:
@@ -47,10 +48,15 @@ NORMALIZED_ICON_MIN_EXTENT = 120
 NORMALIZED_ICON_MARKER = "contextforge_normalized"
 NORMALIZED_ICON_VERSION = "3"
 BACKDROP_STRIPPED_MARKER = "contextforge_backdrop_stripped"
+SCALE_BOOSTED_MARKER = "contextforge_scale_boosted"
+SCALE_BOOST_FACTOR = 1.3
+SCALE_SHRUNK_MARKER = "contextforge_scale_shrunk"
+SCALE_SHRINK_FACTOR = 0.8944
 PALE_BACKDROP_FLOOR = 225
 PALE_BACKDROP_TOLERANCE = 28
 PALE_BACKDROP_MIN_PERIMETER_SHARE = 0.25
 PALE_BACKDROP_DRIFT_FLOOR = 185
+SVG_RENDER_SIZE = 512
 TIMEOUT_SECONDS = 10.0
 USER_AGENT = "ContextForge catalog icon curator/1.0"
 
@@ -59,10 +65,12 @@ _COMMON_MULTI_LABEL_SUFFIXES = frozenset({"co.uk", "org.uk", "com.au", "co.jp", 
 _ENTRY_RE = re.compile(r"^(?P<indent>\s*)-\s+id:\s*(?P<value>.+?)\s*$")
 _FIELD_RE = re.compile(r"^(?P<indent>\s+)(?P<field>[A-Za-z_][A-Za-z0-9_]*):(?:\s|$)")
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_SVG_SNIFF_RE = re.compile(rb"<svg[\s>]", re.IGNORECASE)
 _IMAGE_TYPES = {
     "image/gif",
     "image/jpeg",
     "image/png",
+    "image/svg+xml",
     "image/webp",
     "image/x-icon",
     "image/vnd.microsoft.icon",
@@ -291,8 +299,35 @@ def _strip_pale_backdrop(image: Image.Image) -> Image.Image:
     return canvas
 
 
-def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False) -> bytes:
+def _looks_like_svg(body: bytes) -> bool:
+    """Sniff whether response bytes are SVG markup, regardless of declared content type."""
+    return bool(_SVG_SNIFF_RE.search(body[:4096]))
+
+
+def _rasterize_svg(body: bytes) -> bytes:
+    """Render SVG markup to PNG bytes via resvg, ahead of the raster normalization pipeline.
+
+    resvg (through resvg_py) does not evaluate `<style>` rules, so an SVG whose
+    fill comes from CSS (e.g. a `:root { fill: ... }` block) renders blank.
+    Such sources need a hand-picked replacement with the fill on the path
+    itself, not an override URL, and belong on the `skip` list so --force does
+    not reintroduce a blank asset.
+    """
+    try:
+        svg_text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise IconFetchError(f"SVG is not valid UTF-8: {exc}") from exc
+    try:
+        rendered = resvg_py.svg_to_bytes(svg_string=svg_text, width=SVG_RENDER_SIZE)
+    except Exception as exc:  # resvg_py raises plain RuntimeError/ValueError on parse failure.
+        raise IconFetchError(f"SVG rasterization failed: {exc}") from exc
+    return bytes(rendered)
+
+
+def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False, scale_boost: bool = False, scale_shrink: bool = False) -> bytes:
     """Decode image, trim transparent padding, and emit a deterministic capped PNG."""
+    if _looks_like_svg(body):
+        body = _rasterize_svg(body)
     try:
         with Image.open(BytesIO(body)) as source:
             image = ImageOps.exif_transpose(source).convert("RGBA")
@@ -307,6 +342,20 @@ def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False) -> bytes:
                     raise IconFetchError("Image has no visible pixels")
                 image = image.crop(alpha_bounds)
             scale = min(ICON_SIZE / max(image.size), MAX_UPSCALE_FACTOR)
+            if scale_boost:
+                # Some source artwork has a lot of visual weight concentrated in a
+                # small area of its own bounding box (e.g. a thin-stroked mark), so
+                # even a full-bleed crop still reads smaller than its peers at tile
+                # size. Deliberately exceeds MAX_UPSCALE_FACTOR and the canvas
+                # itself for these opted-in ids; the overflow is centered and
+                # cropped away below, same as a CSS `background-size: cover`.
+                scale *= SCALE_BOOST_FACTOR
+            if scale_shrink:
+                # Some source artwork fills the full bounding box but reads visually
+                # heavy at tile size compared to peers. Reduce the rendered size so
+                # the icon sits with breathing room inside the canvas, consistent
+                # with icons that carry their own natural padding.
+                scale *= SCALE_SHRINK_FACTOR
             target_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
             if image.size != target_size:
                 image = image.resize(target_size, Image.Resampling.LANCZOS)
@@ -323,6 +372,18 @@ def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False) -> bytes:
                 # allowlist (needed for ids newly added to that list, whose
                 # existing asset was never actually stripped).
                 png_info.add_text(BACKDROP_STRIPPED_MARKER, "1")
+            if scale_boost:
+                # Mirrors BACKDROP_STRIPPED_MARKER: records that the boost was
+                # actually applied to this exact asset, so --normalize-existing
+                # can tell a newly-added id (needs reprocessing) from one it
+                # already boosted (safe to trust the geometry fast-path).
+                png_info.add_text(SCALE_BOOSTED_MARKER, "1")
+            if scale_shrink:
+                # Mirrors SCALE_BOOSTED_MARKER: records that the shrink was
+                # actually applied to this exact asset, so --normalize-existing
+                # can tell a newly-added id (needs reprocessing) from one it
+                # already shrunk (safe to trust the geometry fast-path).
+                png_info.add_text(SCALE_SHRUNK_MARKER, "1")
             canvas.save(output, format="PNG", optimize=True, pnginfo=png_info)
             return output.getvalue()
     except IconFetchError:
@@ -336,6 +397,24 @@ def _has_backdrop_stripped_marker(body: bytes) -> bool:
     try:
         with Image.open(BytesIO(body)) as source:
             return source.info.get(BACKDROP_STRIPPED_MARKER) == "1"
+    except Exception:  # Pillow raises several format-specific exceptions.
+        return False
+
+
+def _has_scale_boost_marker(body: bytes) -> bool:
+    """Return whether this exact asset already had the scale boost applied."""
+    try:
+        with Image.open(BytesIO(body)) as source:
+            return source.info.get(SCALE_BOOSTED_MARKER) == "1"
+    except Exception:  # Pillow raises several format-specific exceptions.
+        return False
+
+
+def _has_scale_shrunk_marker(body: bytes) -> bool:
+    """Return whether this exact asset already had the scale shrink applied."""
+    try:
+        with Image.open(BytesIO(body)) as source:
+            return source.info.get(SCALE_SHRUNK_MARKER) == "1"
     except Exception:  # Pillow raises several format-specific exceptions.
         return False
 
@@ -382,19 +461,25 @@ def _icon_candidates(page: FetchResult | None, origin: str, domain: str) -> Iter
             yield candidate
 
 
-def _load_overrides(path: Path) -> tuple[set[str], dict[str, str], set[str]]:
-    """Load optional skip, explicit source, and pale-backdrop-strip overrides."""
+def _load_overrides(path: Path) -> tuple[set[str], dict[str, str], set[str], set[str], set[str]]:
+    """Load optional skip, explicit source, pale-backdrop-strip, scale-boost, and scale-shrink overrides."""
     if not path.exists():
-        return set(), {}, set()
+        return set(), {}, set(), set(), set()
     data = json.loads(path.read_text(encoding="utf-8"))
-    return set(data.get("skip", [])), dict(data.get("overrides", {})), set(data.get("strip_pale_backdrop", []))
+    return (
+        set(data.get("skip", [])),
+        dict(data.get("overrides", {})),
+        set(data.get("strip_pale_backdrop", [])),
+        set(data.get("scale_boost", [])),
+        set(data.get("scale_shrink", [])),
+    )
 
 
-def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | None = None, *, strip_pale_backdrop: bool = False) -> tuple[bytes, str]:
+def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | None = None, *, strip_pale_backdrop: bool = False, scale_boost: bool = False, scale_shrink: bool = False) -> tuple[bytes, str]:
     """Resolve and normalize one catalog icon."""
     if override:
         result = _fetch(client, override, expected_image=True)
-        return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop), result.url
+        return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink), result.url
 
     endpoint = str(server["url"])
     parsed = urlsplit(endpoint)
@@ -420,7 +505,7 @@ def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | No
     for candidate in _icon_candidates(page, origin, domain):
         try:
             result = _fetch(client, candidate, expected_image=True)
-            return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop), result.url
+            return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink), result.url
         except IconFetchError as exc:
             last_error = exc
     raise last_error or IconFetchError("No icon candidate succeeded")
@@ -479,7 +564,7 @@ def generate_icons(args: argparse.Namespace) -> int:
     catalog_text = catalog_path.read_text(encoding="utf-8")
     catalog = yaml.safe_load(catalog_text) or {}
     entries = _catalog_entries(catalog)
-    skip_ids, overrides, strip_backdrop_ids = _load_overrides(args.overrides)
+    skip_ids, overrides, strip_backdrop_ids, scale_boost_ids, scale_shrink_ids = _load_overrides(args.overrides)
     if not args.dry_run:
         args.output_dir.mkdir(parents=True, exist_ok=True)
     logo_urls: dict[str, str] = {}
@@ -495,25 +580,30 @@ def generate_icons(args: argparse.Namespace) -> int:
                 print(f"SKIP {catalog_id}: override list")
                 continue
             strip_pale_backdrop = catalog_id in strip_backdrop_ids
+            scale_boost = catalog_id in scale_boost_ids
+            scale_shrink = catalog_id in scale_shrink_ids
             if args.normalize_existing:
                 if not asset_path.exists():
                     print(f"SKIP {catalog_id}: no local asset to normalize")
                     continue
                 try:
                     existing = asset_path.read_bytes()
-                    # A backdrop-strip candidate may have full alpha bounds (the pale
-                    # badge, not the mark, fills the canvas) before it has ever been
-                    # stripped, so the geometry fast-path can't be trusted until the
-                    # asset itself records that the sweep already ran. Once it does,
-                    # trust it like any other id — this also protects manual touch-ups
-                    # (padding, size) applied to the asset after stripping from being
-                    # silently undone by a later --normalize-existing run.
+                    # A backdrop-strip, scale-boost, or scale-shrink candidate may
+                    # already have normalized-looking geometry (full alpha bounds,
+                    # 128x128) before that treatment has ever actually run on it, so
+                    # the fast-path can't be trusted until the asset itself records
+                    # that the treatment already ran. Once it does, trust it like any
+                    # other id — this also protects manual touch-ups (padding, size)
+                    # applied to the asset afterward from being silently undone by a
+                    # later --normalize-existing run.
                     needs_backdrop_strip = strip_pale_backdrop and not _has_backdrop_stripped_marker(existing)
-                    if not needs_backdrop_strip and _has_normalized_icon_bounds(existing):
+                    needs_scale_boost = scale_boost and not _has_scale_boost_marker(existing)
+                    needs_scale_shrink = scale_shrink and not _has_scale_shrunk_marker(existing)
+                    if not needs_backdrop_strip and not needs_scale_boost and not needs_scale_shrink and _has_normalized_icon_bounds(existing):
                         print(f"KEEP {catalog_id}: normalized bounds")
                     else:
                         if not args.dry_run:
-                            normalized = _image_to_png(existing, strip_pale_backdrop=strip_pale_backdrop)
+                            normalized = _image_to_png(existing, strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink)
                             temporary = asset_path.with_suffix(".tmp")
                             temporary.write_bytes(normalized)
                             temporary.replace(asset_path)
@@ -528,7 +618,7 @@ def generate_icons(args: argparse.Namespace) -> int:
                 print(f"KEEP {catalog_id}: {asset_path}")
                 continue
             try:
-                body, source_url = _fetch_icon(client, server, overrides.get(catalog_id), strip_pale_backdrop=strip_pale_backdrop)
+                body, source_url = _fetch_icon(client, server, overrides.get(catalog_id), strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink)
                 if not args.dry_run:
                     temporary = asset_path.with_suffix(".tmp")
                     temporary.write_bytes(body)

@@ -200,17 +200,50 @@ centers it on a 128px transparent canvas. It skips missing assets and reports
 fully transparent assets as unresolved. Do not combine it with `--force`,
 which refreshes existing assets from remote candidates.
 
-A few bundled assets cannot be reproduced by `--force` or a fresh fetch, because
-their source is not a single fetchable image URL:
+Catalog ids on the `scale_boost` list in `scripts/catalog_icon_overrides.json`
+get one further, deliberate step: some source artwork carries a lot of visual
+weight in a small area of its own bounding box (a thin-stroked mark, say), so
+even a full-bleed crop still reads smaller than its peers at tile size. For
+these ids, normalization zooms in past the natural fit and crops the overflow,
+the same way CSS `background-size: cover` does. Only add an id here after
+checking the result does not clip legible content (a wordmark's outer letters,
+for instance) — it is not a substitute for `strip_pale_backdrop` on artwork
+that is merely padded.
 
-- `metro-mcp`: hand-cropped from the site's Open Graph share image; no
-  standalone icon file exists at the source.
-- `linear`, `neon`, `supabase`: the override entry documents the real source,
-  but it is an SVG and this script has no SVG rasterizer. The bundled PNG was
-  produced by hand-rendering that SVG once, offline.
+SVG override sources are rasterized via `resvg-py` before normalization, so
+`--force` reproduces them like any raster source (`linear`, `supabase`, and
+the `microsoft-*`/`azure-*`/`google-*` overrides all resolve this way). One
+exception remains:
 
-Re-derive these by hand if the upstream source changes; do not expect
-`--force` to pick up the change automatically.
+- `neon`: its favicon SVG sets fill through a `<style>` rule (including a
+  `prefers-color-scheme` variant), which resvg does not evaluate, so a fresh
+  fetch renders blank. The bundled PNG was hand-rendered once, offline, from
+  a variant with the fill on the path itself, and `neon` is on the
+  `skip` list in `scripts/catalog_icon_overrides.json` so `--force` does not
+  overwrite it with the blank render.
+- `tweetsave`: the only brand asset is a wide icon+wordmark lockup
+  (`https://tweetsave.org/logoType.webp`), not a standalone icon. The bundled
+  PNG was hand-cropped to the mark once, offline, and `tweetsave` is on the
+  `skip` list so `--force` does not overwrite it with the full lockup
+  (wordmark included) squeezed into a square canvas.
+- `rube`, `waystation`: both upstream sites (`rube.app`, `waystation.ai`)
+  were unreachable when the assets were bundled (DNS failure and a disabled
+  Vercel deployment, respectively). Both PNGs were rendered once, offline,
+  from a Wayback Machine snapshot of the site's own favicon/logo asset, and
+  both ids are on the `skip` list so `--force` does not fail trying to reach
+  the live, currently-down source.
+- `zip1`: the source badge is a near-full-bleed rounded square whose only
+  pale pixels are the four small corner triangles outside the rounding — the
+  perimeter majority `_strip_pale_backdrop` looks for is the badge's own dark
+  fill, not those corners, so it correctly declines to touch it (a majority
+  vote is not the right tool for a minority pale region). The corners were
+  cleared once, offline, by flood-filling from each corner pixel independently
+  instead. `zip1.io` was also unreachable when this was bundled, so `zip1` is
+  on the `skip` list so `--force` does not fail trying to reach it or, if it
+  comes back with the same source asset, reintroduce the corners.
+
+Re-derive these by hand if their upstream source changes; do not expect
+`--force` to pick them up automatically.
 
 ---
 

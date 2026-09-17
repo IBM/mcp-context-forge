@@ -25,7 +25,9 @@ from scripts.fetch_catalog_icons import (
     _fetch_icon,
     _has_normalized_icon_bounds,
     _image_to_png,
+    _looks_like_svg,
     _parse_args,
+    _rasterize_svg,
     _registrable_domain,
     _safe_asset_id,
     _set_logo_urls,
@@ -36,6 +38,8 @@ from scripts.fetch_catalog_icons import (
     IconFetchError,
     IconLinkParser,
     NORMALIZED_ICON_MARKER,
+    SCALE_BOOSTED_MARKER,
+    SCALE_SHRUNK_MARKER,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -184,6 +188,77 @@ def test_image_to_png_strips_pale_backdrop_only_when_requested() -> None:
     # The 24x24 mark upscales (capped at 8x) to fill the canvas once the badge is gone.
     assert stripped.getchannel("A").getbbox() == (0, 0, 128, 128)
     assert stripped.getpixel((64, 64)) == (30, 120, 220, 255)
+
+
+def test_image_to_png_scale_boost_zooms_past_a_natural_fit() -> None:
+    """A square crop already reaches a natural 1:1 fit on its own (the larger
+
+    dimension exactly matches the canvas), so scale_boost must deliberately
+    zoom in past that fit and let the resulting overflow crop away, rather
+    than being a no-op once the unboosted scale already "fits".
+    """
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    content = Image.new("RGBA", (100, 100), (30, 120, 220, 255))
+    content.paste(Image.new("RGBA", (6, 6), (220, 30, 30, 255)), (0, 0))
+    source.paste(content, (14, 14))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    fitted = Image.open(BytesIO(_image_to_png(raw.getvalue())))
+    assert fitted.getpixel((2, 2))[:3] == (220, 30, 30)
+
+    boosted_bytes = _image_to_png(raw.getvalue(), scale_boost=True)
+    boosted = Image.open(BytesIO(boosted_bytes))
+    # The corner marker that survived a natural fit is cropped away by the boost.
+    assert boosted.getpixel((2, 2))[:3] != (220, 30, 30)
+    assert boosted.getpixel((64, 64))[:3] == (30, 120, 220)
+    with Image.open(BytesIO(boosted_bytes)) as decoded:
+        assert decoded.info.get(SCALE_BOOSTED_MARKER) == "1"
+
+
+def test_looks_like_svg_sniffs_markup_regardless_of_declared_type() -> None:
+    assert _looks_like_svg(b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>') is True
+    assert _looks_like_svg(b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>') is True
+    assert _looks_like_svg(b"\x89PNG\r\n\x1a\n") is False
+    assert _looks_like_svg(b"GIF89a") is False
+
+
+def test_rasterize_svg_renders_fill_on_path() -> None:
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#1e78dc"/></svg>'
+
+    rendered = Image.open(BytesIO(_rasterize_svg(svg.encode("utf-8")))).convert("RGBA")
+
+    assert rendered.getpixel((rendered.width // 2, rendered.height // 2)) == (30, 120, 220, 255)
+
+
+def test_rasterize_svg_rejects_invalid_markup() -> None:
+    with pytest.raises(IconFetchError, match="SVG rasterization failed"):
+        _rasterize_svg(b"<svg><not-closed>")
+
+
+def test_image_to_png_rasterizes_svg_source_before_normalizing() -> None:
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#1e78dc"/></svg>'
+
+    normalized = Image.open(BytesIO(_image_to_png(svg.encode("utf-8"))))
+
+    assert normalized.size == (128, 128)
+    assert normalized.mode == "RGBA"
+    assert normalized.getpixel((64, 64)) == (30, 120, 220, 255)
+
+
+def test_image_to_png_does_not_rasterize_svg_style_fill() -> None:
+    """A `<style>`-driven fill (e.g. `:root { fill: ... }`) is not applied by the
+
+    rasterizer: the shape renders with the SVG default fill (black) instead of
+    the intended brand color. Such sources must be hand-replaced and moved to
+    the `skip` override list, not relied on through the automated fetch
+    pipeline.
+    """
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>:root { fill: #1e78dc; }</style><rect width="10" height="10"/></svg>'
+
+    normalized = Image.open(BytesIO(_image_to_png(svg.encode("utf-8"))))
+
+    assert normalized.getpixel((64, 64)) != (30, 120, 220, 255)
 
 
 def test_icon_normalization_rejects_empty_canvas() -> None:
@@ -396,6 +471,197 @@ def test_normalize_existing_trusts_an_already_stripped_backdrop_id(tmp_path: Pat
     assert "KEEP badged:" in output
 
     assert (output_dir / "badged.png").read_bytes() == raw.getvalue()
+
+
+def test_normalize_existing_forces_reprocessing_for_scale_boost_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A scale-boost candidate can already look fully normalized (128x128, marker
+
+    version "3") from a prior run before the boost existed, so the geometry
+    fast-path must not skip it once its id joins the scale_boost allowlist.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: small\n    url: https://small.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    fitted = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    content = Image.new("RGBA", (100, 100), (30, 120, 220, 255))
+    content.paste(Image.new("RGBA", (6, 6), (220, 30, 30, 255)), (0, 0))
+    fitted.paste(content, (14, 14))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    fitted.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "small.png").write_bytes(raw.getvalue())
+    assert _has_normalized_icon_bounds(raw.getvalue()) is True
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_boost": ["small"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "NORMALIZE small:" in output
+
+    with Image.open(output_dir / "small.png") as result:
+        rgba = result.convert("RGBA")
+        # The corner marker that would survive a natural fit is cropped away by the boost.
+        assert rgba.getpixel((2, 2))[:3] != (220, 30, 30)
+        assert result.info.get(SCALE_BOOSTED_MARKER) == "1"
+
+
+def test_normalize_existing_trusts_an_already_boosted_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Once an asset records that the scale boost already ran, a later
+
+    --normalize-existing run must not reprocess it just because its catalog id
+    stays on the scale_boost allowlist — that would silently undo a manual
+    touch-up applied to the asset afterward.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: small\n    url: https://small.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    # A corner marker that a fresh boost would crop away; if this got
+    # reprocessed, the marker would disappear.
+    fitted = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    content = Image.new("RGBA", (100, 100), (30, 120, 220, 255))
+    content.paste(Image.new("RGBA", (6, 6), (220, 30, 30, 255)), (0, 0))
+    fitted.paste(content, (14, 14))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    png_info.add_text(SCALE_BOOSTED_MARKER, "1")
+    fitted.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "small.png").write_bytes(raw.getvalue())
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_boost": ["small"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "KEEP small:" in output
+
+    assert (output_dir / "small.png").read_bytes() == raw.getvalue()
+
+
+def test_image_to_png_scale_shrink_reduces_fill_within_canvas() -> None:
+    """A full-bleed icon (100% fill) is reduced to roughly SCALE_SHRINK_FACTOR of the canvas."""
+    source = Image.new("RGBA", (128, 128), (30, 120, 220, 255))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    shrunk_bytes = _image_to_png(raw.getvalue(), scale_shrink=True)
+    shrunk = Image.open(BytesIO(shrunk_bytes))
+
+    bbox = shrunk.getchannel("A").getbbox()
+    assert bbox is not None
+    # The icon must be smaller than the full canvas (16 px margin on each side).
+    assert bbox[0] > 0 and bbox[1] > 0
+    assert bbox[2] < 128 and bbox[3] < 128
+    with Image.open(BytesIO(shrunk_bytes)) as decoded:
+        assert decoded.info.get(SCALE_SHRUNK_MARKER) == "1"
+
+
+def test_normalize_existing_forces_reprocessing_for_scale_shrink_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A scale-shrink candidate can already look fully normalized (128x128, marker
+    version "3") from a prior run before the shrink existed, so the geometry
+    fast-path must not skip it once its id joins the scale_shrink list.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: heavy\n    url: https://heavy.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    fitted = Image.new("RGBA", (128, 128), (30, 120, 220, 255))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    fitted.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "heavy.png").write_bytes(raw.getvalue())
+    assert _has_normalized_icon_bounds(raw.getvalue()) is True
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_shrink": ["heavy"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "NORMALIZE heavy:" in output
+
+    with Image.open(output_dir / "heavy.png") as result:
+        bbox = result.convert("RGBA").getchannel("A").getbbox()
+        assert bbox is not None
+        assert bbox[0] > 0 and bbox[1] > 0
+        assert result.info.get(SCALE_SHRUNK_MARKER) == "1"
+
+
+def test_normalize_existing_trusts_an_already_shrunk_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Once an asset records that the scale shrink already ran, a later
+    --normalize-existing run must not reprocess it just because its catalog id
+    stays on the scale_shrink list — that would silently undo a manual
+    touch-up applied to the asset afterward.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: heavy\n    url: https://heavy.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    shrunk = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    shrunk.paste(Image.new("RGBA", (96, 96), (30, 120, 220, 255)), (16, 16))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    png_info.add_text(SCALE_SHRUNK_MARKER, "1")
+    shrunk.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "heavy.png").write_bytes(raw.getvalue())
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_shrink": ["heavy"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "KEEP heavy:" in output
+
+    assert (output_dir / "heavy.png").read_bytes() == raw.getvalue()
 
 
 def test_set_logo_urls_preserves_comments_and_updates_existing_field() -> None:
