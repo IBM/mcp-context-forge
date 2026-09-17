@@ -63,18 +63,11 @@ def _enforcement(admin_client: httpx.Client, fast_time_server: dict[str, str]) -
     """Activate the enforcement path under test (static config or DB binding).
 
     Fails fast unless OutputLengthGuardPlugin loaded on the gateway, and — on
-    the bindings path — creates the runtime binding with ``strategy: block`` so
-    both paths surface the same block behaviour, removing it on teardown.
+    the bindings path — creates the runtime binding, removing it on teardown.
 
-    The committed static config uses ``strategy: truncate``; on the static path
-    the test asserts blocking, which requires ``strategy: block``. The static
-    path therefore uses a ``config_overrides`` with ``strategy: block``; this
-    works because ``plugin_enforcement`` on the ``static`` path only calls
-    ``assert_plugin_active`` (no binding is created), and the test must pass on
-    the ``static`` path as-is or be marked ``_static_only`` if appropriate.
-
-    For the bindings path, ``config_overrides`` applies the block strategy
-    explicitly so both paths produce a consistent assertion.
+    Both paths receive ``strategy: block`` via the workflow matrix
+    ``config_override`` key, so the gateway is booted with blocking enabled and
+    both legs surface ``isError=True`` on an oversized payload.
 
     Args:
         admin_client: Authenticated admin HTTP client.
@@ -87,7 +80,6 @@ def _enforcement(admin_client: httpx.Client, fast_time_server: dict[str, str]) -
         admin_client,
         fast_time_server=fast_time_server,
         plugin_name=PLUGIN_NAME,
-        config_overrides={"strategy": "block", "max_chars": 15000},
     ):
         yield
 
