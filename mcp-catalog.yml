@@ -206,7 +206,7 @@ catalog_servers:
     category: "Software Development"
     url: "https://mcp.instantdb.com/mcp"
     logo_url: "/static/catalog-icons/instant.png"
-    auth_type: "OAuth"
+    auth_type: "OAuth2.1"
     provider: "Instant"
     description: "Real-time database platform"
     requires_api_key: false
@@ -942,7 +942,7 @@ catalog_servers:
     category: "RAG-as-a-Service"
     url: "https://mcp.customgpt.ai"
     logo_url: "/static/catalog-icons/customgpt.png"
-    auth_type: "API"
+    auth_type: "API Key"
     provider: "CustomGPT.ai"
     description: "Custom AI chatbot creation platform"
     requires_api_key: true
