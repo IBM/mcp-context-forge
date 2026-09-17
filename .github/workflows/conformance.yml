@@ -62,6 +62,7 @@ jobs:
 
       - name: Run legacy-to-legacy conformance
         env:
+          CARGO_TERM_COLOR: always
           CF_COMPOSE_BUILD: "false"
           CF_CONTROLPLANE_IMAGE: mcpgateway/mcpgateway:conformance
           CF_CONTROLPLANE_PULL_POLICY: never
