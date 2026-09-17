@@ -2562,6 +2562,7 @@ def test_mcp_inbound_protocol_mode_env_var_honored(monkeypatch):
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",  # Avoid the auth-gated password checks; this test covers the protocol mode only
         "MCP_INBOUND_PROTOCOL_MODE": "legacy",
     }
     monkeypatch.delenv("MCP_INBOUND_PROTOCOL_MODE", raising=False)
