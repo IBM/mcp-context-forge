@@ -22,9 +22,9 @@ Don't use the bare word "server" in docs or UI copy. It means different things
 depending on which side you're standing on:
 
 - In the **API**, `/servers` (and `/v1/virtual-servers`) refers to virtual servers.
-- In the **React UI**, `src/api/servers.ts` wraps the `/gateways` endpoint — its own
-  header comment says it "exposes as 'servers' API for frontend consistency" — so
-  "server" there means an MCP server.
+- In the **React UI**, `src/api/servers.ts` wraps the `/v1/mcp-servers` endpoint
+  (migrated in [contextforge-web-ui#98](https://github.com/contextforge-org/contextforge-web-ui/pull/98)) —
+  so "server" there means an MCP server.
 
 Always write "virtual server" or "MCP server," never just "server."
 
@@ -35,6 +35,12 @@ The `/v1/mcp-servers` and `/v1/virtual-servers` paths are canonical
 [#6257](https://github.com/IBM/mcp-context-forge/pull/6257)) and are what
 `build_v1_router` mounts in `mcpgateway/api/v1/__init__.py`. Lead with them.
 
+`build_v1_router` also mounts `/v1/gateways` and `/v1/servers` (lines 87, 89 of
+`mcpgateway/api/v1/__init__.py`) alongside the product-language aliases. These
+paths are in-schema and not deprecated, but they use the original API vocabulary —
+prefer the `/v1/mcp-servers` and `/v1/virtual-servers` aliases in new documentation
+and client code.
+
 The unversioned `/gateways` and `/servers` paths are a deprecated compatibility shim
 (`build_legacy_router`):
 
@@ -44,8 +50,11 @@ The unversioned `/gateways` and `/servers` paths are a deprecated compatibility 
 - Carry RFC 8594 `Sunset` headers, defaulting to `Sat, 26 Sep 2026`.
 
 [contextforge-web-ui#85](https://github.com/contextforge-org/contextforge-web-ui/issues/85)
-tracks moving the React UI itself onto the `/v1` paths, which matters given that sunset
-date — the UI currently calls the legacy paths directly.
+tracked moving the React UI itself onto the `/v1` paths for MCP servers and virtual
+servers — that migration was completed by
+[contextforge-web-ui#98](https://github.com/contextforge-org/contextforge-web-ui/pull/98)
+(merged 2026-09-14). Tools, resources, prompts, teams, and tokens still call the
+legacy paths directly, so the sunset date remains relevant for those endpoints.
 
 ## What already gets this right
 
