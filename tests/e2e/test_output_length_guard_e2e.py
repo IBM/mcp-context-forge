@@ -22,10 +22,11 @@ from unittest.mock import AsyncMock
 import uuid
 
 # Third-Party
+from cpex.framework import PluginError, PluginViolationError, ToolHookType
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from httpx import ASGITransport, AsyncClient
 import httpx
+from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 import pytest
 import pytest_asyncio
@@ -53,7 +54,6 @@ from mcpgateway.main import (
 )
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_permission_service
-from cpex.framework import PluginError, PluginViolationError, ToolHookType
 from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
@@ -65,7 +65,6 @@ from mcpgateway.routers.observability import router as observability_router
 from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
-
 # Tests
 from tests.helpers.auth import make_auth_headers, make_test_jwt
 from tests.utils.rbac_mocks import create_mock_email_user, create_mock_user_context, MockPermissionService
