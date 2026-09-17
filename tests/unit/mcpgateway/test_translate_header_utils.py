@@ -89,49 +89,26 @@ def test_extract_env_vars_handles_sanitize_exception(monkeypatch):
     assert env_vars == {}
 
 
-def test_mock_safe_max_length_fallback():
-    """Test that Mock objects from settings are handled safely in sanitize_header_value."""
-    # Mock settings.max_header_value_length to return a Mock object (test behavior)
-    with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
-        mock_settings.max_header_value_length = Mock()  # Returns Mock, not int
+def test_config_validation():
+    """Test that max_header_value_length is validated in config.py."""
+    # This test verifies that the field validation in config.py catches invalid values
+    from mcpgateway.config import Settings
 
-        # Should fall back to 16384 default instead of using Mock (which would become 1)
-        result = sanitize_header_value("test_value")
-        assert result == "test_value"
+    # Valid: integer <= max_header_field_size_bytes
+    s1 = Settings(max_header_value_length=4096, max_header_field_size_bytes=8192)
+    assert s1.max_header_value_length == 4096
 
-        # Test with value larger than default
-        large_value = "a" * 20000
-        result = sanitize_header_value(large_value)
-        assert len(result) == 16384  # Should use fallback, not Mock.__int__ (1)
+    # Valid: at the boundary
+    s2 = Settings(max_header_value_length=8192, max_header_field_size_bytes=8192)
+    assert s2.max_header_value_length == 8192
 
+    # Invalid: exceeds max_header_field_size_bytes
+    with pytest.raises(ValueError, match="must be <= max_header_field_size_bytes"):
+        Settings(max_header_value_length=16384, max_header_field_size_bytes=8192)
 
-def test_settings_attribute_error_fallback():
-    """Test fallback when settings.max_header_value_length raises AttributeError."""
-    # Mock settings to raise AttributeError when accessing max_header_value_length
-    with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
-        type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(AttributeError("attribute not found")))
+    # Invalid: non-positive
+    with pytest.raises(ValueError, match="must be positive"):
+        Settings(max_header_value_length=0)
 
-        # Should fall back to 16384 default
-        result = sanitize_header_value("test_value")
-        assert result == "test_value"
-
-        # Test with value larger than default
-        large_value = "a" * 20000
-        result = sanitize_header_value(large_value)
-        assert len(result) == 16384
-
-
-def test_settings_type_error_fallback():
-    """Test fallback when settings.max_header_value_length raises TypeError."""
-    # Mock settings to raise TypeError when accessing max_header_value_length
-    with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
-        type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(TypeError("type error")))
-
-        # Should fall back to 16384 default
-        result = sanitize_header_value("test_value")
-        assert result == "test_value"
-
-        # Test with value larger than default
-        large_value = "a" * 20000
-        result = sanitize_header_value(large_value)
-        assert len(result) == 16384
+    with pytest.raises(ValueError, match="must be positive"):
+        Settings(max_header_value_length=-1)

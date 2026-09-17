@@ -94,13 +94,7 @@ def sanitize_header_value(value: str, max_length: Optional[int] = None) -> str:
     """
     # Use configured max length if not explicitly provided
     if max_length is None:
-        try:
-            max_length = settings.max_header_value_length
-            # Ensure it's an actual int, not a Mock object
-            if not isinstance(max_length, int):
-                max_length = 16384
-        except (AttributeError, TypeError):
-            max_length = 16384
+        max_length = settings.max_header_value_length
 
     if len(value) > max_length:
         logger.warning(f"Header value truncated from {len(value)} to {max_length} characters")
