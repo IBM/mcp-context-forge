@@ -65,9 +65,14 @@ def _enforcement(admin_client: httpx.Client, fast_time_server: dict[str, str]) -
     Fails fast unless OutputLengthGuardPlugin loaded on the gateway, and — on
     the bindings path — creates the runtime binding, removing it on teardown.
 
-    Both paths receive ``strategy: block`` via the workflow matrix
-    ``config_override`` key, so the gateway is booted with blocking enabled and
-    both legs surface ``isError=True`` on an oversized payload.
+    The committed config uses ``strategy: truncate``. Both paths need
+    ``strategy: block`` to surface ``isError=True`` on an oversized payload:
+
+    * static path: ``config_override: 'strategy="block"'`` in the workflow
+      matrix injects this into the derived config before the gateway boots.
+    * binding path: ``config_overrides`` here patches the config that
+      ``plugin_enforcement()`` reads from ``plugins/config.yaml`` when it
+      creates the runtime tool-plugin-binding.
 
     Args:
         admin_client: Authenticated admin HTTP client.
@@ -80,6 +85,7 @@ def _enforcement(admin_client: httpx.Client, fast_time_server: dict[str, str]) -
         admin_client,
         fast_time_server=fast_time_server,
         plugin_name=PLUGIN_NAME,
+        config_overrides={"strategy": "block"},
     ):
         yield
 
