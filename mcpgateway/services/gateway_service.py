@@ -5462,9 +5462,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Reject modern-only MCP servers that don't support the legacy initialize handshake
             if negotiated_version and negotiated_version not in HANDSHAKE_PROTOCOL_VERSIONS:
                 sanitized_url = sanitize_url_for_logging(url, auth_query_params)
+                sanitized_version = SecurityValidator.sanitize_log_message(str(negotiated_version))[:50]
                 raise GatewayConnectionError(
                     f"MCP server at {sanitized_url} negotiated protocol version "
-                    f"'{negotiated_version}' which is not yet supported for federation. "
+                    f"'{sanitized_version}' which is not yet supported for federation. "
                     f"The server must support the legacy initialize handshake "
                     f"(protocol versions: {', '.join(HANDSHAKE_PROTOCOL_VERSIONS)}). "
                     f"Set MCP_CLIENT_CONNECT_MODE=auto to allow modern protocol negotiation."
