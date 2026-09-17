@@ -3249,6 +3249,15 @@ def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any],
     public gateway at one URL; uniqueness is visibility-scoped, so a private
     registration by the same owner is a distinct row).
 
+    ``streamable_http_gateway``'s own displacement scan matches on name OR
+    url regardless of visibility, and its teardown restores whatever it
+    displaced without a ``visibility`` field (so the restored row comes
+    back public). That scan only runs once, at that fixture's first use,
+    which file order places before ``TestGatewayLifecycle``. A private row
+    from this fixture can only be swept up by it if this class ran first
+    and a delete below failed silently — reorder the class or harden the
+    delete below if that ever needs closing.
+
     Args:
         admin_api: Authenticated admin API context.
 
@@ -3266,6 +3275,7 @@ def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any],
             "visibility": "private",
         },
     )
+    assert resp.status in (200, 201, 202), f"POST /gateways returned {resp.status}: {resp.text()[:500]}"
     yield resp
     with suppress(Exception):
         gw_id = resp.json().get("id")
