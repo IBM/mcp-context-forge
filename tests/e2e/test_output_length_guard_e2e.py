@@ -340,10 +340,41 @@ class TestOutputLengthGuardE2E:
                 },
             }
             rpc_resp = await client.post("/rpc", json=rpc_payload, headers=call_headers)
-            assert rpc_resp.status_code in [200, 422]
+            # PluginViolationError is either caught inside the /rpc route handler
+            # (returns 200 with a JSON-RPC error envelope) or by the app-level
+            # plugin_violation_exception_handler (returns 422). Both are valid.
+            assert rpc_resp.status_code in (200, 422)
             rpc_data = rpc_resp.json()
-            # In JSON-RPC format, error is returned on violation
-            assert "error" in rpc_data or rpc_data.get("isError") is True
+
+            # PluginViolationError produces one of two response shapes:
+            #
+            # 200 — /rpc route's own except-PluginViolationError handler:
+            #   {"jsonrpc":"2.0","error":{"code":-32000,
+            #    "message":"tool_post_invoke blocked by plugin OutputLengthGuardPlugin:
+            #               OUTPUT_LENGTH_VIOLATION - ..."}}
+            #
+            # 422 — app-level plugin_violation_exception_handler (main.py):
+            #   {"error":{"code":-32000,
+            #    "message":"Plugin Violation: Result length N exceeds max_chars M",
+            #    "data":{"plugin_error_code":"OUTPUT_LENGTH_VIOLATION", ...}}}
+            assert "error" in rpc_data, f"expected error envelope, got: {rpc_data}"
+            error_obj = rpc_data["error"]
+
+            if rpc_resp.status_code == 200:
+                # Full "blocked by plugin" message contains both plugin name and code.
+                msg = error_obj["message"]
+                assert "OutputLengthGuardPlugin" in msg, (
+                    f"block did not originate from OutputLengthGuardPlugin — got: {msg!r}"
+                )
+                assert "OUTPUT_LENGTH_VIOLATION" in msg, (
+                    f"unexpected violation code in JSON-RPC error message: {msg!r}"
+                )
+            else:
+                # 422: violation code is in data.plugin_error_code.
+                plugin_error_code = error_obj.get("data", {}).get("plugin_error_code", "")
+                assert plugin_error_code == "OUTPUT_LENGTH_VIOLATION", (
+                    f"unexpected plugin_error_code in 422 response: {plugin_error_code!r}"
+                )
 
         test_app.dependency_overrides.clear()
         engine.dispose()

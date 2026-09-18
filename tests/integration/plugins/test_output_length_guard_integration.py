@@ -399,10 +399,158 @@ class TestOutputLengthGuardBackwardCompatibility:
 
     def test_inverted_min_max_chars_raises_at_load(self):
         """min_chars > max_chars is rejected with ValueError at plugin instantiation."""
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises(ValueError):
             self._make_plugin({"min_chars": 500, "max_chars": 100, "strategy": "truncate"})
 
     def test_inverted_min_max_tokens_raises_at_load(self):
         """min_tokens > max_tokens is rejected with ValueError at plugin instantiation."""
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises(ValueError):
             self._make_plugin({"limit_mode": "token", "min_tokens": 500, "max_tokens": 100, "strategy": "truncate"})
+
+    # ------------------------------------------------------------------
+    # max_text_length — distinguishable outcome
+    # ------------------------------------------------------------------
+
+    def test_max_text_length_skips_enforcement_for_text_within_max_chars(self):
+        """Text exceeding max_text_length but within max_chars is passed through unchanged.
+
+        max_text_length=1000, max_chars=2000.  A 1500-char string exceeds the
+        processing-window cap (max_text_length) but is within the enforcement
+        limit (max_chars).  The Rust package must not modify it — confirming
+        max_text_length is an input-cap, not an enforcement trigger.
+
+        This is the distinguishable outcome the prior test cannot provide:
+        max_chars alone would also pass the string through (1500 < 2000), but
+        max_text_length being honored is what keeps the processing window
+        within 1000 chars and does not trigger a false truncation.
+        """
+        plugin = self._make_plugin({"max_chars": 2000, "max_text_length": 1000, "strategy": "truncate", "ellipsis": "…"})
+        result = self._invoke(plugin, "X" * 1500)
+        # Within max_chars → must pass through unchanged
+        assert result.modified_payload is None
+        assert result.continue_processing is not False
+
+    # ------------------------------------------------------------------
+    # Resource-type MCP content items
+    # ------------------------------------------------------------------
+
+    def test_truncates_oversized_text_in_resource_item_mcp_list(self):
+        """Oversized resource.text inside an MCP content array list item is truncated.
+
+        MCP allows content items of type 'resource' carrying a 'resource.text'
+        field. The old plugin had dedicated handling for this shape; the Rust
+        package must preserve it.
+        """
+        plugin = self._make_plugin({"max_chars": 10, "strategy": "truncate", "ellipsis": "…"})
+        mcp_list = [{"type": "resource", "resource": {"uri": "file://x", "text": "A" * 200}}]
+        result = self._invoke(plugin, mcp_list)
+        assert result.modified_payload is not None
+        resource_text = result.modified_payload.result[0]["resource"]["text"]
+        assert len(resource_text) <= 10
+
+    def test_truncates_oversized_text_in_resource_item_mcp_content_dict(self):
+        """Oversized resource.text inside an MCP CallToolResult content dict is truncated."""
+        plugin = self._make_plugin({"max_chars": 10, "strategy": "truncate", "ellipsis": "…"})
+        mcp_result = {
+            "content": [{"type": "resource", "resource": {"uri": "file://x", "text": "B" * 200}}],
+            "isError": False,
+        }
+        result = self._invoke(plugin, mcp_result)
+        assert result.modified_payload is not None
+        resource_text = result.modified_payload.result["content"][0]["resource"]["text"]
+        assert len(resource_text) <= 10
+
+    # ------------------------------------------------------------------
+    # max_structure_size DoS limit
+    # ------------------------------------------------------------------
+
+    def test_max_structure_size_blocks_oversized_dict_in_structured_content(self):
+        """A structuredContent dict exceeding max_structure_size is blocked on the block strategy.
+
+        Builds a flat dict with 20 keys using max_structure_size=5.
+        The Rust package must return a violation (not silently pass through).
+        """
+        plugin = self._make_plugin({"max_chars": 500, "max_structure_size": 5, "strategy": "block"})
+        oversized_dict = {str(i): "value" for i in range(20)}
+        mcp_result = {"content": [{"type": "text", "text": "ok"}], "structuredContent": oversized_dict}
+        result = self._invoke(plugin, mcp_result)
+        assert result.continue_processing is False
+        assert result.violation is not None
+
+    # ------------------------------------------------------------------
+    # Circular / self-referential structuredContent
+    # ------------------------------------------------------------------
+
+    def test_circular_reference_does_not_hang_or_crash(self):
+        """A self-referential structuredContent dict is handled without infinite recursion.
+
+        The Rust package hits max_recursion_depth before the walk can loop
+        indefinitely; on block strategy it must return a violation within a
+        finite time (not hang or raise an unhandled exception).
+        """
+        import threading
+
+        plugin = self._make_plugin({"max_chars": 500, "strategy": "block"})
+        circular: dict = {}
+        circular["self"] = circular
+        mcp_result = {"content": [{"type": "text", "text": "ok"}], "structuredContent": circular}
+
+        result_holder: list = []
+        error_holder: list = []
+
+        def run() -> None:
+            try:
+                result_holder.append(self._invoke(plugin, mcp_result))
+            except Exception as exc:  # noqa: BLE001
+                error_holder.append(exc)
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(timeout=5)
+
+        assert not t.is_alive(), "plugin hung on circular reference — recursive walk did not terminate"
+        assert not error_holder, f"plugin raised an unhandled exception: {error_holder[0]}"
+        result = result_holder[0]
+        # Must block — recursion depth exceeded
+        assert result.continue_processing is False
+        assert result.violation is not None
+
+    # ------------------------------------------------------------------
+    # Numeric-string preservation
+    # ------------------------------------------------------------------
+
+    def test_numeric_strings_are_not_truncated(self):
+        """Integer, float, and scientific-notation strings are exempt from truncation.
+
+        The old plugin's _is_numeric_string() guard prevented data corruption
+        for transaction IDs, prices, and scientific values. The Rust package
+        must preserve the same exemption.
+        """
+        plugin = self._make_plugin({"max_chars": 5, "strategy": "truncate", "ellipsis": "…"})
+        for numeric in ("123", "123.45", "1.23e-4", "5E+10", "999999999999"):
+            result = self._invoke(plugin, numeric)
+            assert result.modified_payload is None, f"numeric string {numeric!r} was modified (truncation regression)"
+
+    def test_numeric_strings_are_not_blocked(self):
+        """Integer and float strings are exempt from block strategy enforcement."""
+        plugin = self._make_plugin({"max_chars": 5, "strategy": "block"})
+        for numeric in ("123", "123.45", "1.23e-4"):
+            result = self._invoke(plugin, numeric)
+            assert result.continue_processing is not False, f"numeric string {numeric!r} was blocked (regression)"
+            assert result.violation is None, f"numeric string {numeric!r} produced a violation (regression)"
+
+    # ------------------------------------------------------------------
+    # OUTPUT_TOKEN_VIOLATION code
+    # ------------------------------------------------------------------
+
+    def test_token_mode_violation_code_is_output_token_violation(self):
+        """limit_mode=token violations carry code OUTPUT_TOKEN_VIOLATION, not OUTPUT_LENGTH_VIOLATION.
+
+        Callers that branch on the violation code to distinguish character-mode
+        violations from token-mode violations depend on this being distinct.
+        """
+        plugin = self._make_plugin({"limit_mode": "token", "max_tokens": 5, "chars_per_token": 4, "strategy": "block"})
+        result = self._invoke(plugin, "A" * 100)
+        assert result.continue_processing is False
+        assert result.violation is not None
+        assert result.violation.code == "OUTPUT_TOKEN_VIOLATION"
