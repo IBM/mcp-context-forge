@@ -376,7 +376,7 @@ update:
 # Validate .env in production mode
 check-env:
 	@echo "🔎  Validating .env against .env.example using Python (prod)..."
-	@python -m mcpgateway.scripts.validate_env .env.example
+	@$(VENV_DIR)/bin/python -m mcpgateway.scripts.validate_env .env
 
 # Validate .env in development mode (warnings do not fail)
 check-env-dev:
