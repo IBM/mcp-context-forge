@@ -21,9 +21,14 @@ Requirements:
                                Set true in both gateway and test process to run MCP Apps cases
         MCP_E2E_GATEWAY_SYNC_DEADLINE
                                Gateway tool-sync poll deadline in seconds (default: 30.0)
+        GATEWAY_TOOL_NAME_SEPARATOR
+                               Expected gateway separator (default: -)
+        MCP_RESOURCE_NAME_EXPANSION
+                               Set true to enable the dedicated -- expansion case
 
 Usage:
     make test-e2e
+    GATEWAY_TOOL_NAME_SEPARATOR=-- MCP_RESOURCE_NAME_EXPANSION=true make test-e2e K=postgres_expansion
     pytest tests/live_gateway/e2e/test_e2e.py -v -s --tb=short
 """
 
@@ -39,8 +44,10 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Generator
 import uuid
@@ -49,9 +56,11 @@ import uuid
 import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.server.fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import InitializeResult
 import pytest
+import uvicorn
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, Playwright
@@ -184,6 +193,149 @@ async def client(jwt_token: str, mcp_url: str):
 # ---------------------------------------------------------------------------
 # Connectivity / lifecycle
 # ---------------------------------------------------------------------------
+@pytest.fixture
+def resource_namespacing_upstreams():
+    """Serve two real MCP peers reachable from the gateway under test.
+
+    Compose on Docker Desktop/Colima uses host.docker.internal. For a gateway
+    running on the host, set MCP_NAMESPACING_UPSTREAM_HOST=127.0.0.1. Linux
+    container deployments need a gateway-reachable host address or host-gateway
+    mapping. No database writes or gateway internals are used by this fixture.
+    """
+    host = os.getenv("MCP_NAMESPACING_UPSTREAM_HOST", "host.docker.internal")
+    identifier = uuid.uuid4().hex[:12]
+    uri = f"test://namespacing/{identifier}"
+    long_name = "a-" * 127 + "a"
+    peers = []
+    running = []
+    try:
+        for index in range(2):
+            content = f"upstream-{identifier}-{index}"
+            app = FastMCP(f"namespacing-{index}", host="0.0.0.0", stateless_http=True, json_response=True)
+
+            def make_reader(value: str):
+                """Bind each peer's response independently of the registration loop."""
+
+                def read() -> str:
+                    """Return this peer's distinctive resource content."""
+                    return value
+
+                return read
+
+            app.resource(uri, name="Shared Report")(make_reader(content))
+            app.resource(f"{uri}/long", name=long_name)(make_reader(content))
+            listener = socket.socket()
+            listener.bind(("0.0.0.0", 0))
+            port = listener.getsockname()[1]
+            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(), log_level="error"))
+            thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+            running.append((server, thread, listener))
+            thread.start()
+            deadline = time.monotonic() + 10
+            while not server.started and thread.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert server.started, "Resource namespacing upstream failed to start"
+            peers.append({"url": f"http://{host}:{port}/mcp", "content": content, "uri": uri})
+        yield peers
+    finally:
+        for server, thread, listener in running:
+            server.should_exit = True
+            thread.join(timeout=10)
+            listener.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "require_expansion",
+    [
+        pytest.param(False, id="configured_separator"),
+        pytest.param(
+            True,
+            id="postgres_expansion",
+            marks=pytest.mark.skipif(
+                os.getenv("MCP_RESOURCE_NAME_EXPANSION", "false").lower() != "true",
+                reason="Dedicated PostgreSQL expansion run requires MCP_RESOURCE_NAME_EXPANSION=true and a -- gateway",
+            ),
+        ),
+    ],
+)
+async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resource_namespacing_upstreams, require_expansion):
+    """Federate colliding URIs and verify prefixing, full bases, and scoped reads.
+
+    Set GATEWAY_TOOL_NAME_SEPARATOR to match the running gateway. The separate
+    postgres_expansion case requires a PostgreSQL-backed stack using -- and
+    explicitly asserts the 382-character base; it is opt-in for the normal gate.
+    """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    assert separator in ("-", "--", "_", ".")
+    if require_expansion:
+        assert separator == "--", "The dedicated expansion run requires GATEWAY_TOOL_NAME_SEPARATOR=--"
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    gateway_ids = []
+    server_ids = []
+    expected_names = []
+    identifier = uuid.uuid4().hex[:12]
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+        try:
+            for index, peer in enumerate(resource_namespacing_upstreams):
+                gateway_name = f"namespacing{identifier}{index}"
+                response = await http.post("/gateways", json={"name": gateway_name, "url": peer["url"], "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                gateway_ids.append(gateway_id)
+                deadline = time.monotonic() + 60
+                rows = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream resources: {rows}; check MCP_NAMESPACING_UPSTREAM_HOST"
+                resource = next(row for row in rows if row["uri"] == peer["uri"])
+                expected = f"{gateway_name}{separator}shared{separator}report"
+                assert resource["name"] == expected, "GATEWAY_TOOL_NAME_SEPARATOR must match the running gateway"
+                expected_names.append(expected)
+                expanded = next(row for row in rows if row["uri"].endswith("/long"))
+                assert expanded["customNameSlug"] == f"a{separator}" * 127 + "a"
+                if require_expansion:
+                    assert len(expanded["customNameSlug"]) == 382
+                assert len(expanded["name"]) == 255
+                response = await http.post(
+                    "/servers",
+                    json={"server": {"name": f"namespacing{identifier}{index}", "associated_resources": [resource["id"]]}, "visibility": "public"},
+                )
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                server_ids.append(server_id)
+                async with streamablehttp_client(f"{BASE_URL}/servers/{server_id}/mcp/", headers=headers) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        listed = await session.list_resources()
+                        assert [(str(item.uri), item.name) for item in listed.resources] == [(peer["uri"], expected)]
+                        result = await session.read_resource(peer["uri"])
+                        assert result.contents[0].text == peer["content"]
+
+            async with streamablehttp_client(f"{BASE_URL}/mcp/", headers=headers) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    names = []
+                    cursor = None
+                    while True:
+                        page = await session.list_resources(cursor=cursor)
+                        names.extend(item.name for item in page.resources if str(item.uri) == resource_namespacing_upstreams[0]["uri"])
+                        cursor = page.nextCursor
+                        if not cursor:
+                            break
+                    assert sorted(names) == sorted(expected_names)
+        finally:
+            for server_id in server_ids:
+                await http.delete(f"/servers/{server_id}")
+            for gateway_id in gateway_ids:
+                await http.delete(f"/gateways/{gateway_id}")
+
+
 class TestConnectivity:
 
     async def test_ping(self, client: GatewayClientSession) -> None:
