@@ -168,10 +168,12 @@ make podman            # or: make docker
 make ibmcloud-tag
 make ibmcloud-push
 # First time only: create the registry pull secret (see note below)
+# Use a long-lived IAM API key as the password — NOT $IBMCLOUD_API_KEY, which may
+# be blank for SSO users. See the note below for how to create a service ID key.
 ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
     --format registry \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
-    --username iamapikey --password "$IBMCLOUD_API_KEY"
+    --username iamapikey --password "$IBMCLOUD_ICR_API_KEY"
 make ibmcloud-deploy
 ```
 
@@ -289,10 +291,12 @@ ibmcloud cr images --restrict "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f2)"
 ```bash
 # 6 - Create registry secret (first time)
 # Note: 'ibmcloud ce registry create-secret' is deprecated — use the form below.
+# Use a long-lived IAM API key as the password — NOT $IBMCLOUD_API_KEY, which may
+# be blank for SSO users. See the "Registry pull secret" note in Workflow A.
 ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
     --format registry \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
-    --username iamapikey --password "$IBMCLOUD_API_KEY"
+    --username iamapikey --password "$IBMCLOUD_ICR_API_KEY"
 ibmcloud ce secret list # list every secret (generic, registry, SSH, TLS, etc.)
 ibmcloud ce secret get --name "$IBMCLOUD_REGISTRY_SECRET"         # add --decode to see clear-text values
 
