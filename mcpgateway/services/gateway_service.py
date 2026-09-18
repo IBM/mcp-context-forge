@@ -7146,17 +7146,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     resources.append(ResourceCreate.model_validate(resource_data))
                                 except Exception:
                                     # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
+                                    try:
+                                        resources.append(
+                                            ResourceCreate(
+                                                uri=str(resource_data.get("uri", "")),
+                                                name=resource_data.get("name", ""),
+                                                description=resource_data.get("description"),
+                                                mime_type=resource_data.get("mimeType"),
+                                                uri_template=resource_data.get("uriTemplate") or None,
+                                                content="",
+                                                extension_metadata=resource_data.get("extensionMetadata"),
+                                            )
                                         )
-                                    )
+                                    except Exception as exc:
+                                        # the fallback re-runs the same uri validator, so a resource with a
+                                        # rejected uri fails twice over - skip it instead of losing the batch
+                                        logger.warning(
+                                            "Skipping resource %s: %s",
+                                            resource_data.get("name") or resource_data.get("uri"),
+                                            exc,
+                                        )
                             logger.info("Fetched %s resources from gateway", len(resources))
                         except Exception as e:
                             logger.warning("Failed to fetch resources: %s", e)
@@ -7335,17 +7344,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     resources.append(ResourceCreate.model_validate(resource_data))
                                 except Exception:
                                     # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
+                                    try:
+                                        resources.append(
+                                            ResourceCreate(
+                                                uri=str(resource_data.get("uri", "")),
+                                                name=resource_data.get("name", ""),
+                                                description=resource_data.get("description"),
+                                                mime_type=resource_data.get("mimeType"),
+                                                uri_template=resource_data.get("uriTemplate") or None,
+                                                content="",
+                                                extension_metadata=resource_data.get("extensionMetadata"),
+                                            )
                                         )
-                                    )
+                                    except Exception as exc:
+                                        # the fallback re-runs the same uri validator, so a resource with a
+                                        # rejected uri fails twice over - skip it instead of losing the batch
+                                        logger.warning(
+                                            "Skipping resource %s: %s",
+                                            resource_data.get("name") or resource_data.get("uri"),
+                                            exc,
+                                        )
                             logger.info("Fetched %s resources from gateway", len(resources))
                         except Exception as e:
                             logger.warning("Failed to fetch resources: %s", e)
@@ -7516,17 +7534,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     resources.append(ResourceCreate.model_validate(resource_data))
                                 except Exception:
                                     # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
+                                    try:
+                                        resources.append(
+                                            ResourceCreate(
+                                                uri=str(resource_data.get("uri", "")),
+                                                name=resource_data.get("name", ""),
+                                                description=resource_data.get("description"),
+                                                mime_type=resource_data.get("mimeType"),
+                                                uri_template=resource_data.get("uriTemplate") or None,
+                                                content="",
+                                                extension_metadata=resource_data.get("extensionMetadata"),
+                                            )
                                         )
-                                    )
+                                    except Exception as exc:
+                                        # the fallback re-runs the same uri validator, so a resource with a
+                                        # rejected uri fails twice over - skip it instead of losing the batch
+                                        logger.warning(
+                                            "Skipping resource %s: %s",
+                                            resource_data.get("name") or resource_data.get("uri"),
+                                            exc,
+                                        )
                             logger.info("Fetched %s resources from gateway", len(resources))
                         except Exception as e:
                             logger.warning("Failed to fetch resources: %s", e)
