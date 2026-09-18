@@ -20,7 +20,7 @@ name: Compose Production Smoke Skip Reporter
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "chore/mcp-sdk-v2"]
 
 permissions:
   contents: read
