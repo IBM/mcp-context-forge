@@ -17151,6 +17151,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
         ssrf_blocked_networks = ["169.254.169.254/32"]
         ssrf_blocked_hosts = []
         ssrf_dns_fail_closed = False
+        validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     class ShouldNotBeCalled:
         async def __aenter__(self):
