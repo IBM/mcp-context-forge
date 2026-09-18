@@ -1404,7 +1404,7 @@ class TestMcpToolCallByRole:
         # ExceptionGroup is included because the SDK's ClientSession runs call_tool()
         # inside an anyio TaskGroup, which wraps a single McpError on the way out.
         # The asserts sit outside this try, so the tuple cannot swallow them.
-        _DENIED_STATUSES = (401, 403)
+        _DENIED_STATUSES = (403,)
         result = None
         try:
             result = _mcp_tool_call(outsider_user["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
@@ -1432,7 +1432,7 @@ class TestMcpToolCallByRole:
         # The except clause lists transport errors only. Catching bare Exception here
         # would swallow the AssertionError below and the test could never fail (#6839).
         # The asserts sit outside this try, so the tuple cannot swallow them.
-        _DENIED_STATUSES = (401, 403)
+        _DENIED_STATUSES = (403,)
         result = None
         try:
             result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
