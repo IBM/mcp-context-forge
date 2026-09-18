@@ -367,3 +367,25 @@ async def test_unapproved_origin_on_delete_method_returns_403(monkeypatch):
     await wrapper.shutdown()
 
     assert sent[0]["status"] == 403, f"Expected 403 for DELETE with bad Origin, got {sent}"
+
+
+def test_session_manager_wrapper_builds_sdk_security_settings(monkeypatch):
+    """SessionManagerWrapper passes TransportSecuritySettings to the SDK when mcp_allowed_hosts is set."""
+    captured_kwargs: dict = {}
+
+    class CapturingSessionManager(DummySessionManager):
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://myapp.example.com"})
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
+
+    wrapper = SessionManagerWrapper()
+
+    security = captured_kwargs.get("security_settings")
+    assert security is not None, "security_settings must be passed when mcp_allowed_hosts is set"
+    assert security.enable_dns_rebinding_protection is True
+    assert "myapp.example.com:4444" in security.allowed_hosts
+    assert "https://myapp.example.com" in security.allowed_origins
