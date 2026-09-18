@@ -15,23 +15,31 @@ from unittest.mock import patch
 
 # Third-Party
 import httpx
-from PIL import Image
+from PIL import Image, PngImagePlugin
 import pytest
 import yaml
 
 # Local
 from scripts.fetch_catalog_icons import (
     _fetch,
+    _fetch_icon,
     _has_normalized_icon_bounds,
     _image_to_png,
+    _looks_like_svg,
     _parse_args,
+    _rasterize_svg,
     _registrable_domain,
     _safe_asset_id,
     _set_logo_urls,
+    _strip_pale_backdrop,
     _validate_public_https_url,
+    BACKDROP_STRIPPED_MARKER,
     generate_icons,
     IconFetchError,
     IconLinkParser,
+    NORMALIZED_ICON_MARKER,
+    SCALE_BOOSTED_MARKER,
+    SCALE_SHRUNK_MARKER,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -74,7 +82,9 @@ def test_image_to_png_trims_transparent_padding() -> None:
 
     normalized = Image.open(BytesIO(_image_to_png(raw.getvalue())))
 
-    assert normalized.getchannel("A").getbbox() == (48, 48, 80, 80)
+    # Cropped 16x16 content upscales (capped at 8x) to fill the 128px canvas,
+    # so trimmed padding no longer leaves the icon visually smaller than peers.
+    assert normalized.getchannel("A").getbbox() == (0, 0, 128, 128)
 
 
 def test_image_to_png_caps_upscale_and_marks_result() -> None:
@@ -85,8 +95,212 @@ def test_image_to_png_caps_upscale_and_marks_result() -> None:
     normalized_bytes = _image_to_png(raw.getvalue())
     normalized = Image.open(BytesIO(normalized_bytes))
 
-    assert normalized.getchannel("A").getbbox() == (48, 56, 80, 72)
+    assert normalized.getchannel("A").getbbox() == (0, 32, 128, 96)
     assert _has_normalized_icon_bounds(normalized_bytes) is True
+    with Image.open(BytesIO(normalized_bytes)) as decoded:
+        assert decoded.info.get(NORMALIZED_ICON_MARKER) == "3"
+
+
+def test_strip_pale_backdrop_removes_white_badge_around_smaller_mark() -> None:
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    # A pale circle "badge" filling the canvas, with a small colored mark in the center.
+    source.paste(Image.new("RGBA", (128, 128), (250, 250, 250, 255)), (0, 0))
+    source.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+
+    stripped = _strip_pale_backdrop(source)
+
+    bbox = stripped.getchannel("A").getbbox()
+    assert bbox == (52, 52, 76, 76)
+    assert stripped.getpixel((0, 0))[3] == 0
+    assert stripped.getpixel((60, 60)) == (30, 120, 220, 255)
+
+
+def test_strip_pale_backdrop_strips_at_the_documented_floor() -> None:
+    """A backdrop at exactly PALE_BACKDROP_FLOOR (225) must strip.
+
+    Flooring each channel to a multiple of 8 before comparing against the
+    floor previously shifted the effective threshold up to 232, silently
+    leaving raw values 225-231 untouched.
+    """
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    source.paste(Image.new("RGBA", (128, 128), (225, 225, 225, 255)), (0, 0))
+    source.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getchannel("A").getbbox() == (52, 52, 76, 76)
+    assert stripped.getpixel((0, 0))[3] == 0
+
+
+def test_strip_pale_backdrop_leaves_fragmented_perimeter_untouched() -> None:
+    """No single pale color dominates PALE_BACKDROP_MIN_PERIMETER_SHARE of the
+
+    perimeter, so the image must be left untouched even though every
+    candidate color individually clears the paleness floor.
+    """
+    size = 40
+    source = Image.new("RGBA", (size, size), (10, 20, 200, 255))
+    pixels = source.load()
+    pale_colors = [(255, 255, 255, 255), (255, 255, 231, 255), (255, 231, 255, 255), (231, 255, 255, 255), (231, 231, 231, 255)]
+    perimeter = [(x, 0) for x in range(size)] + [(x, size - 1) for x in range(size)] + [(0, y) for y in range(size)] + [(size - 1, y) for y in range(size)]
+    for index, (x, y) in enumerate(perimeter):
+        pixels[x, y] = pale_colors[index % len(pale_colors)]
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getchannel("A").getbbox() == (0, 0, size, size)
+    assert stripped.getpixel((0, 0)) == pale_colors[0]
+
+
+def test_strip_pale_backdrop_leaves_saturated_badge_untouched() -> None:
+    """A deliberate brand-color block (not padding) must not be stripped."""
+    source = Image.new("RGBA", (128, 128), (10, 20, 200, 255))
+    source.paste(Image.new("RGBA", (24, 24), (255, 255, 255, 255)), (52, 52))
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getchannel("A").getbbox() == (0, 0, 128, 128)
+    assert stripped.getpixel((0, 0)) == (10, 20, 200, 255)
+
+
+def test_strip_pale_backdrop_leaves_off_hue_corner_accent_untouched() -> None:
+    """A light but distinctly-hued corner accent must not match the white majority.
+
+    Seeding a perimeter cell's match reference with its own color would make the
+    tolerance check compare that pixel to itself, letting any sufficiently light
+    pixel pass regardless of hue.
+    """
+    source = Image.new("RGBA", (128, 128), (250, 250, 250, 255))
+    source.paste(Image.new("RGBA", (20, 20), (255, 200, 220, 255)), (0, 0))
+    source.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getpixel((5, 5)) == (255, 200, 220, 255)
+    assert stripped.getpixel((100, 5))[3] == 0
+    assert stripped.getpixel((60, 60)) == (30, 120, 220, 255)
+
+
+def test_strip_pale_backdrop_reverts_when_result_would_be_blank() -> None:
+    source = Image.new("RGBA", (128, 128), (250, 250, 250, 255))
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getchannel("A").getbbox() == (0, 0, 128, 128)
+
+
+def test_strip_pale_backdrop_follows_a_vignette_gradient() -> None:
+    """A GitHub-avatar-style vignette (top corners near-white, bottom corners
+
+    noticeably darker) must not leave disconnected pale islands behind: a
+    fixed-reference match stops mid-sweep once the drift exceeds tolerance,
+    but the sweep must track the gradient locally instead.
+    """
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    top, bottom = 254, 217
+    for y in range(128):
+        shade = round(top + (bottom - top) * (y / 127))
+        for x in range(128):
+            source.putpixel((x, y), (shade, shade, shade, 255))
+    source.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getpixel((0, 0))[3] == 0
+    assert stripped.getpixel((0, 127))[3] == 0
+    assert stripped.getpixel((127, 127))[3] == 0
+    assert stripped.getpixel((60, 60)) == (30, 120, 220, 255)
+
+
+def test_image_to_png_strips_pale_backdrop_only_when_requested() -> None:
+    source = Image.new("RGBA", (128, 128), (250, 250, 250, 255))
+    source.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    untouched = Image.open(BytesIO(_image_to_png(raw.getvalue())))
+    assert untouched.getchannel("A").getbbox() == (0, 0, 128, 128)
+
+    stripped = Image.open(BytesIO(_image_to_png(raw.getvalue(), strip_pale_backdrop=True)))
+    # The 24x24 mark upscales (capped at 8x) to fill the canvas once the badge is gone.
+    assert stripped.getchannel("A").getbbox() == (0, 0, 128, 128)
+    assert stripped.getpixel((64, 64)) == (30, 120, 220, 255)
+
+
+def test_image_to_png_scale_boost_zooms_past_a_natural_fit() -> None:
+    """A square crop already reaches a natural 1:1 fit on its own (the larger
+
+    dimension exactly matches the canvas), so scale_boost must deliberately
+    zoom in past that fit and let the resulting overflow crop away, rather
+    than being a no-op once the unboosted scale already "fits".
+    """
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    content = Image.new("RGBA", (100, 100), (30, 120, 220, 255))
+    content.paste(Image.new("RGBA", (6, 6), (220, 30, 30, 255)), (0, 0))
+    source.paste(content, (14, 14))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    fitted = Image.open(BytesIO(_image_to_png(raw.getvalue())))
+    assert fitted.getpixel((2, 2))[:3] == (220, 30, 30)
+
+    boosted_bytes = _image_to_png(raw.getvalue(), scale_boost=True)
+    boosted = Image.open(BytesIO(boosted_bytes))
+    # The corner marker that survived a natural fit is cropped away by the boost.
+    assert boosted.getpixel((2, 2))[:3] != (220, 30, 30)
+    assert boosted.getpixel((64, 64))[:3] == (30, 120, 220)
+    with Image.open(BytesIO(boosted_bytes)) as decoded:
+        assert decoded.info.get(SCALE_BOOSTED_MARKER) == "1"
+
+
+def test_looks_like_svg_sniffs_markup_regardless_of_declared_type() -> None:
+    assert _looks_like_svg(b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>') is True
+    assert _looks_like_svg(b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>') is True
+    assert _looks_like_svg(b"\x89PNG\r\n\x1a\n") is False
+    assert _looks_like_svg(b"GIF89a") is False
+
+
+def test_rasterize_svg_renders_fill_on_path() -> None:
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#1e78dc"/></svg>'
+
+    rendered = Image.open(BytesIO(_rasterize_svg(svg.encode("utf-8")))).convert("RGBA")
+
+    assert rendered.getpixel((rendered.width // 2, rendered.height // 2)) == (30, 120, 220, 255)
+
+
+def test_rasterize_svg_rejects_invalid_markup() -> None:
+    with pytest.raises(IconFetchError, match="SVG rasterization failed"):
+        _rasterize_svg(b"<svg><not-closed>")
+
+
+def test_rasterize_svg_rejects_non_utf8_bytes() -> None:
+    with pytest.raises(IconFetchError, match="not valid UTF-8"):
+        _rasterize_svg(b"<svg>\xff\xfe</svg>")
+
+
+def test_image_to_png_rasterizes_svg_source_before_normalizing() -> None:
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#1e78dc"/></svg>'
+
+    normalized = Image.open(BytesIO(_image_to_png(svg.encode("utf-8"))))
+
+    assert normalized.size == (128, 128)
+    assert normalized.mode == "RGBA"
+    assert normalized.getpixel((64, 64)) == (30, 120, 220, 255)
+
+
+def test_image_to_png_does_not_rasterize_svg_style_fill() -> None:
+    """A `<style>`-driven fill (e.g. `:root { fill: ... }`) is not applied by the
+
+    rasterizer: the shape renders with the SVG default fill (black) instead of
+    the intended brand color. Such sources must be hand-replaced and moved to
+    the `skip` override list, not relied on through the automated fetch
+    pipeline.
+    """
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>:root { fill: #1e78dc; }</style><rect width="10" height="10"/></svg>'
+
+    normalized = Image.open(BytesIO(_image_to_png(svg.encode("utf-8"))))
+
+    assert normalized.getpixel((64, 64)) != (30, 120, 220, 255)
 
 
 def test_icon_normalization_rejects_empty_canvas() -> None:
@@ -179,6 +393,319 @@ def test_normalize_existing_reports_corrupt_assets_and_continues(tmp_path: Path,
     assert generate_icons(args) == 1
 
 
+def test_normalize_existing_upgrades_assets_marked_by_older_cap(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Assets normalized under a lower MAX_UPSCALE_FACTOR must be revisited, not trusted forever."""
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: legacy\n    url: https://legacy.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    legacy = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    legacy.paste(Image.new("RGBA", (32, 32), "red"), (48, 48))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "1")
+    legacy.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "legacy.png").write_bytes(raw.getvalue())
+
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=tmp_path / "overrides.json",
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "NORMALIZE legacy:" in output
+
+    upgraded_bytes = (output_dir / "legacy.png").read_bytes()
+    with Image.open(BytesIO(upgraded_bytes)) as upgraded:
+        assert upgraded.getchannel("A").getbbox() == (0, 0, 128, 128)
+        assert upgraded.info.get(NORMALIZED_ICON_MARKER) == "3"
+
+
+def test_normalize_existing_forces_reprocessing_for_strip_backdrop_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A pale-backdrop candidate can already have full alpha bounds (the badge fills the
+
+    canvas, not the mark), so the geometry fast-path must not skip it.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: badged\n    url: https://badged.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    badged = Image.new("RGBA", (128, 128), (250, 250, 250, 255))
+    badged.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    badged.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "badged.png").write_bytes(raw.getvalue())
+    assert _has_normalized_icon_bounds(raw.getvalue()) is True
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"strip_pale_backdrop": ["badged"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "NORMALIZE badged:" in output
+
+    with Image.open(output_dir / "badged.png") as result:
+        rgba = result.convert("RGBA")
+        # The badge is gone and the mark now fills the canvas (128/24 upscale < the 8x cap).
+        assert rgba.getpixel((0, 0))[:3] == (30, 120, 220)
+        assert rgba.getpixel((64, 64))[:3] == (30, 120, 220)
+
+
+def test_normalize_existing_trusts_an_already_stripped_backdrop_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Once an asset records that the backdrop sweep already ran, a later
+
+    --normalize-existing run must not reprocess it just because its catalog id
+    stays on the strip_pale_backdrop allowlist — that would silently undo a
+    manual touch-up (padding, size) applied to the asset afterward.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: badged\n    url: https://badged.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    # Padded well below the 8x-cap fill a fresh strip+upscale would produce;
+    # if this got reprocessed, the mark would end up filling the canvas.
+    stripped = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    stripped.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    png_info.add_text(BACKDROP_STRIPPED_MARKER, "1")
+    stripped.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "badged.png").write_bytes(raw.getvalue())
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"strip_pale_backdrop": ["badged"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "KEEP badged:" in output
+
+    assert (output_dir / "badged.png").read_bytes() == raw.getvalue()
+
+
+def test_normalize_existing_forces_reprocessing_for_scale_boost_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A scale-boost candidate can already look fully normalized (128x128, marker
+
+    version "3") from a prior run before the boost existed, so the geometry
+    fast-path must not skip it once its id joins the scale_boost allowlist.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: small\n    url: https://small.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    fitted = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    content = Image.new("RGBA", (100, 100), (30, 120, 220, 255))
+    content.paste(Image.new("RGBA", (6, 6), (220, 30, 30, 255)), (0, 0))
+    fitted.paste(content, (14, 14))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    fitted.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "small.png").write_bytes(raw.getvalue())
+    assert _has_normalized_icon_bounds(raw.getvalue()) is True
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_boost": ["small"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "NORMALIZE small:" in output
+
+    with Image.open(output_dir / "small.png") as result:
+        rgba = result.convert("RGBA")
+        # The corner marker that would survive a natural fit is cropped away by the boost.
+        assert rgba.getpixel((2, 2))[:3] != (220, 30, 30)
+        assert result.info.get(SCALE_BOOSTED_MARKER) == "1"
+
+
+def test_normalize_existing_trusts_an_already_boosted_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Once an asset records that the scale boost already ran, a later
+
+    --normalize-existing run must not reprocess it just because its catalog id
+    stays on the scale_boost allowlist — that would silently undo a manual
+    touch-up applied to the asset afterward.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: small\n    url: https://small.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    # A corner marker that a fresh boost would crop away; if this got
+    # reprocessed, the marker would disappear.
+    fitted = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    content = Image.new("RGBA", (100, 100), (30, 120, 220, 255))
+    content.paste(Image.new("RGBA", (6, 6), (220, 30, 30, 255)), (0, 0))
+    fitted.paste(content, (14, 14))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    png_info.add_text(SCALE_BOOSTED_MARKER, "1")
+    fitted.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "small.png").write_bytes(raw.getvalue())
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_boost": ["small"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "KEEP small:" in output
+
+    assert (output_dir / "small.png").read_bytes() == raw.getvalue()
+
+
+def test_image_to_png_scale_shrink_reduces_fill_within_canvas() -> None:
+    """A full-bleed icon (100% fill) is reduced to roughly SCALE_SHRINK_FACTOR of the canvas."""
+    source = Image.new("RGBA", (128, 128), (30, 120, 220, 255))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    shrunk_bytes = _image_to_png(raw.getvalue(), scale_shrink=True)
+    shrunk = Image.open(BytesIO(shrunk_bytes))
+
+    bbox = shrunk.getchannel("A").getbbox()
+    assert bbox is not None
+    # The icon must be smaller than the full canvas (16 px margin on each side).
+    assert bbox[0] > 0 and bbox[1] > 0
+    assert bbox[2] < 128 and bbox[3] < 128
+    with Image.open(BytesIO(shrunk_bytes)) as decoded:
+        assert decoded.info.get(SCALE_SHRUNK_MARKER) == "1"
+
+
+def test_normalize_existing_forces_reprocessing_for_scale_shrink_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A scale-shrink candidate can already look fully normalized (128x128, marker
+    version "3") from a prior run before the shrink existed, so the geometry
+    fast-path must not skip it once its id joins the scale_shrink list.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: heavy\n    url: https://heavy.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    fitted = Image.new("RGBA", (128, 128), (30, 120, 220, 255))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    fitted.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "heavy.png").write_bytes(raw.getvalue())
+    assert _has_normalized_icon_bounds(raw.getvalue()) is True
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_shrink": ["heavy"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "NORMALIZE heavy:" in output
+
+    with Image.open(output_dir / "heavy.png") as result:
+        bbox = result.convert("RGBA").getchannel("A").getbbox()
+        assert bbox is not None
+        assert bbox[0] > 0 and bbox[1] > 0
+        assert result.info.get(SCALE_SHRUNK_MARKER) == "1"
+
+
+def test_normalize_existing_trusts_an_already_shrunk_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Once an asset records that the scale shrink already ran, a later
+    --normalize-existing run must not reprocess it just because its catalog id
+    stays on the scale_shrink list — that would silently undo a manual
+    touch-up applied to the asset afterward.
+    """
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers:\n  - id: heavy\n    url: https://heavy.example/mcp\n", encoding="utf-8")
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+
+    shrunk = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    shrunk.paste(Image.new("RGBA", (96, 96), (30, 120, 220, 255)), (16, 16))
+    raw = BytesIO()
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text(NORMALIZED_ICON_MARKER, "3")
+    png_info.add_text(SCALE_SHRUNK_MARKER, "1")
+    shrunk.save(raw, format="PNG", pnginfo=png_info)
+    (output_dir / "heavy.png").write_bytes(raw.getvalue())
+
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text('{"scale_shrink": ["heavy"]}', encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=overrides_path,
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    assert generate_icons(args) == 0
+    output = capsys.readouterr().out
+    assert "KEEP heavy:" in output
+
+    assert (output_dir / "heavy.png").read_bytes() == raw.getvalue()
+
+
 def test_set_logo_urls_preserves_comments_and_updates_existing_field() -> None:
     source = (
         "catalog_servers:\n"
@@ -263,6 +790,74 @@ def test_icon_fetch_revalidates_each_redirect_before_connecting() -> None:
                 _fetch(client, "https://catalog.example/logo.png", expected_image=True)
 
     assert len(requests) == 1
+
+
+def test_fetch_icon_ignores_link_tags_from_off_domain_redirect() -> None:
+    """A homepage redirect to an unrelated site (e.g. an API host redirecting to
+
+    its GitHub repo) must not donate that other site's <link rel="icon"> as
+    this catalog entry's icon; the domain-anchored favicon.ico must win instead.
+    """
+    icon = Image.new("RGBA", (32, 32), "red")
+    icon_bytes = BytesIO()
+    icon.save(icon_bytes, format="PNG")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.headers.get("host")
+        path = request.url.path
+        if host == "mcp.example.com" and path == "/":
+            return httpx.Response(302, headers={"location": "https://other-site.example/repo"})
+        if host == "other-site.example" and path == "/repo":
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=b'<link rel="icon" href="/wrong-icon.png">')
+        if host == "mcp.example.com" and path == "/favicon.ico":
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=icon_bytes.getvalue())
+        raise AssertionError(f"unexpected request: host={host} path={path}")
+
+    def resolve(host: str, *_: object, **__: object) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    with patch("scripts.fetch_catalog_icons.socket.getaddrinfo", side_effect=resolve):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            _body, source_url = _fetch_icon(client, {"id": "example", "url": "https://mcp.example.com/sse"})
+
+    assert source_url == "https://mcp.example.com/favicon.ico"
+
+
+def test_fetch_icon_rejects_off_domain_favicon_redirect() -> None:
+    """A domain-anchored candidate (favicon.ico) that redirects off domain must
+
+    not donate an unrelated site's icon, mirroring the origin-page guard: the
+    entry's own DuckDuckGo fallback must win instead, not the evil redirect
+    target (which the pre-guard code would have accepted as a valid PNG).
+    """
+    evil_icon = Image.new("RGBA", (32, 32), "red")
+    evil_icon_bytes = BytesIO()
+    evil_icon.save(evil_icon_bytes, format="PNG")
+    ddg_icon = Image.new("RGBA", (32, 32), "blue")
+    ddg_icon_bytes = BytesIO()
+    ddg_icon.save(ddg_icon_bytes, format="PNG")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.headers.get("host")
+        path = request.url.path
+        if host == "mcp.example.com" and path == "/":
+            return httpx.Response(404)
+        if host == "mcp.example.com" and path == "/favicon.ico":
+            return httpx.Response(302, headers={"location": "https://evil-unrelated.example/brand-icon.png"})
+        if host == "evil-unrelated.example" and path == "/brand-icon.png":
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=evil_icon_bytes.getvalue())
+        if host == "icons.duckduckgo.com" and path == "/ip3/example.com.ico":
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=ddg_icon_bytes.getvalue())
+        raise AssertionError(f"unexpected request: host={host} path={path}")
+
+    def resolve(host: str, *_: object, **__: object) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    with patch("scripts.fetch_catalog_icons.socket.getaddrinfo", side_effect=resolve):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            _body, source_url = _fetch_icon(client, {"id": "example", "url": "https://mcp.example.com/sse"})
+
+    assert source_url == "https://icons.duckduckgo.com/ip3/example.com.ico"
 
 
 def test_icon_generation_disables_environment_proxies(tmp_path: Path) -> None:
