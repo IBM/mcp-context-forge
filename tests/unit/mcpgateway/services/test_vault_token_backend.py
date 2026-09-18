@@ -2330,6 +2330,16 @@ async def test_r7_get_token_info_vault_auth_error():
 
 
 @pytest.mark.asyncio
+async def test_r7_get_token_info_returns_none_for_header_only_record():
+    """get_token_info treats a non-OAuth Vault record as no token."""
+    backend, _ = _make_backend_r7()
+    header_only = {"data": {"data": {"headers": {"X-Api-Key": "abc123"}}}}  # pragma: allowlist secret
+    with patch.object(backend, "_vault_request", new_callable=AsyncMock, return_value=header_only):
+        result = await backend.get_token_info("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_r7_revoke_user_tokens_generic_exception_returns_false():
     """revoke_user_tokens returns False on generic non-Vault exception (line 620)."""
     backend, _ = _make_backend_r7()
