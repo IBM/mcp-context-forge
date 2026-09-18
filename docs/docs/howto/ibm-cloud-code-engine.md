@@ -105,6 +105,7 @@ IBMCLOUD_IMG_PROD=mcpgateway/mcpgateway                  # local tag produced by
 
 # Authentication
 IBMCLOUD_API_KEY=***your-api-key***    # leave blank to use SSO flow at login
+IBMCLOUD_ICR_API_KEY=***icr-api-key*** # long-lived key for the ICR pull secret; required for SSO users
 
 # Resource combo - see https://cloud.ibm.com/docs/codeengine?topic=codeengine-mem-cpu-combo
 IBMCLOUD_CPU=1                         # vCPU for the container
@@ -160,6 +161,12 @@ grep -q JWT_SECRET_KEY .env && echo "OK: JWT_SECRET_KEY set" || echo "WARNING: J
 **Typical first deploy**
 
 ```bash
+# Load .env.ce into your shell so that the raw ibmcloud command below
+# can read $IBMCLOUD_REGISTRY_SECRET and $IBMCLOUD_ICR_API_KEY.
+# (make targets load .env.ce automatically; this one-liner is only needed
+# for the manual secret-create step.)
+set -a; . ./.env.ce; set +a
+
 make ibmcloud-check-env
 make ibmcloud-cli-install
 make ibmcloud-login
@@ -168,8 +175,6 @@ make podman            # or: make docker
 make ibmcloud-tag
 make ibmcloud-push
 # First time only: create the registry pull secret (see note below)
-# Use a long-lived IAM API key as the password — NOT $IBMCLOUD_API_KEY, which may
-# be blank for SSO users. See the note below for how to create a service ID key.
 ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
     --format registry \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
@@ -199,7 +204,8 @@ make ibmcloud-deploy
         --roles Reader --service-name container-registry
     ibmcloud iam service-api-key-create icr-reader-key contextforge-icr-reader \
         --output json | jq -r .apikey
-    # Use the printed key as --password in the secret create command above
+    # Export the printed key: export IBMCLOUD_ICR_API_KEY=<printed-value>
+    # then re-run the secret create command above
     ```
 
     Create the secret once; subsequent deploys reuse it.
@@ -242,7 +248,7 @@ ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
     Export them once before running any step:
 
     ```bash
-    export $(grep -v '^#' .env.ce | grep -v '^$' | xargs)
+    set -a; . ./.env.ce; set +a
     ```
 
     Without this step every `$IBMCLOUD_*` reference expands to an empty string and
