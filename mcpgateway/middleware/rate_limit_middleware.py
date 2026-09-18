@@ -39,7 +39,9 @@ from starlette.responses import JSONResponse
 from mcpgateway import auth
 from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.config import settings
+from mcpgateway.middleware.token_scoping import _normalize_scope_path, _strip_v1_prefix
 from mcpgateway.services.security_logger import SecurityEventType, SecurityLogger, SecuritySeverity
+from mcpgateway.utils.paths import replace_api_path_alias
 
 logger = logging.getLogger(__name__)
 
@@ -189,10 +191,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         methods = config.get("methods")
         return not methods or (method is not None and method.upper() in methods)
 
+    def _normalize_path_for_matching(self, path: str) -> str:
+        """Normalize path for tier matching by stripping root path, aliases, and /v1 prefix."""
+        normalized = _normalize_scope_path(path or "/", settings.app_root_path or "")
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        normalized = replace_api_path_alias(normalized)
+        return _strip_v1_prefix(normalized)
+
     def get_endpoint_tier(self, path: str, method: Optional[str] = None) -> Dict[str, Any]:
         """Get tier config for endpoint and request method."""
+        normalized_path = self._normalize_path_for_matching(path)
         for pattern, config in self.compiled_tiers:
-            if pattern.match(path) and self._tier_allows_method(config, method):
+            if pattern.match(normalized_path) and self._tier_allows_method(config, method):
                 return config
         return self.default_tier
 
@@ -296,8 +307,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _get_tier_name(self, path: str, method: Optional[str] = None) -> str:
         """Get tier name for logging by endpoint and request method."""
+        normalized_path = self._normalize_path_for_matching(path)
         for tier_name, config in self.endpoint_tiers.items():
-            if re.match(config["pattern"], path) and self._tier_allows_method(config, method):
+            if re.match(config["pattern"], normalized_path) and self._tier_allows_method(config, method):
                 return tier_name
         return "LOW"
 

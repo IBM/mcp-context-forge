@@ -1266,6 +1266,63 @@ class TestRateLimitMiddlewareTiers:
         assert middleware.get_endpoint_tier("/auth/email/reset-password")["limit"] == 10
         assert middleware.get_endpoint_tier("/auth/sso/login")["limit"] == 10
 
+    def test_endpoint_tier_matches_v1_versioned_paths(self, middleware):
+        """Test tier matching for versioned (/v1) endpoints across all tiers."""
+        # CRITICAL tier
+        assert middleware.get_endpoint_tier("/v1/auth/email/login")["limit"] == 10
+        assert middleware.get_endpoint_tier("/v1/auth/email/register")["limit"] == 10
+        assert middleware.get_endpoint_tier("/v1/auth/email/forgot-password")["limit"] == 10
+        assert middleware.get_endpoint_tier("/v1/auth/email/reset-password")["limit"] == 10
+        assert middleware._get_tier_name("/v1/auth/email/login") == "CRITICAL"
+        assert middleware._get_tier_name("/v1/auth/email/register") == "CRITICAL"
+
+        # CRITICAL_SSO tier
+        assert middleware.get_endpoint_tier("/v1/auth/sso/login")["limit"] == 10
+        assert middleware.get_endpoint_tier("/v1/auth/sso/providers")["limit"] == 10
+        assert middleware._get_tier_name("/v1/auth/sso/login") == "CRITICAL_SSO"
+
+        # CRITICAL_INVITATION tier
+        assert middleware.get_endpoint_tier("/v1/teams/t1/invitations", "POST")["limit"] == 10
+        assert middleware._get_tier_name("/v1/teams/t1/invitations", "POST") == "CRITICAL_INVITATION"
+
+        # SESSION_REFRESH tier
+        assert middleware.get_endpoint_tier("/v1/auth/refresh")["limit"] == 10
+        assert middleware._get_tier_name("/v1/auth/refresh") == "SESSION_REFRESH"
+
+        # HIGH tier
+        assert middleware.get_endpoint_tier("/v1/tokens")["limit"] == 30
+        assert middleware.get_endpoint_tier("/v1/tokens/list")["limit"] == 30
+        assert middleware.get_endpoint_tier("/v1/oauth/token")["limit"] == 30
+        assert middleware.get_endpoint_tier("/v1/rbac/roles")["limit"] == 30
+        assert middleware._get_tier_name("/v1/tokens") == "HIGH"
+        assert middleware._get_tier_name("/v1/oauth/token") == "HIGH"
+        assert middleware._get_tier_name("/v1/rbac/roles") == "HIGH"
+
+        # HIGH_APPBRIDGE tier
+        assert middleware.get_endpoint_tier("/v1/appbridge/sessions")["limit"] == 30
+        assert middleware.get_endpoint_tier("/v1/appbridge/sessions/s1/rpc")["limit"] == 30
+        assert middleware._get_tier_name("/v1/appbridge/sessions") == "HIGH_APPBRIDGE"
+
+        # MEDIUM tier (tools, resources, prompts, servers, gateways, mcp, llmchat)
+        assert middleware.get_endpoint_tier("/v1/tools")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/resources")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/prompts")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/servers")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/gateways")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/mcp")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/llmchat")["limit"] == 100
+        # Product aliases
+        assert middleware.get_endpoint_tier("/v1/virtual-servers")["limit"] == 100
+        assert middleware.get_endpoint_tier("/v1/mcp-servers")["limit"] == 100
+        assert middleware._get_tier_name("/v1/tools") == "MEDIUM"
+
+        # LOW tier (health, metrics, docs, openapi)
+        assert middleware.get_endpoint_tier("/v1/health")["limit"] == 500
+        assert middleware.get_endpoint_tier("/v1/metrics")["limit"] == 500
+        assert middleware.get_endpoint_tier("/v1/docs")["limit"] == 500
+        assert middleware.get_endpoint_tier("/v1/openapi.json")["limit"] == 500
+        assert middleware._get_tier_name("/v1/health") == "LOW"
+
     def test_should_lockout_uses_both_redis_and_memory(self, middleware):
         """Test lockout check tries Redis first then memory."""
         import asyncio
