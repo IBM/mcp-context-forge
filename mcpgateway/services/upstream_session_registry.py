@@ -818,7 +818,7 @@ class UpstreamSessionRegistry:
         try:
             async with session.operation_lock:
                 yield session
-        except (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
+        except (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError, McpError) as exc:
             logger.info(
                 "acquire() caller raised %s for gateway=%s; evicting upstream so next acquire rebuilds",
                 type(exc).__name__,
