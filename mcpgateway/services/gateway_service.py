@@ -8446,13 +8446,25 @@ async def test_gateway_handshake(
     hostname_url = _gateway_test_endpoint_url(validated_base_url, path_suffix)
     full_url = _gateway_test_endpoint_url(target["pinned_base_url"], path_suffix)
 
+    exact_gateway_requested = request.gateway_id is not None
     try:
-        query = select(DbGateway).where(DbGateway.url.in_(_gateway_url_match_variants(validated_base_url)), DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
+        if exact_gateway_requested:
+            query = select(DbGateway).where(DbGateway.id == request.gateway_id, DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
+        else:
+            query = select(DbGateway).where(DbGateway.url.in_(_gateway_url_match_variants(validated_base_url)), DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
         if team_id:
             query = query.where(DbGateway.team_id == team_id)
         gateway = db.execute(query).scalars().first()
     except Exception:
         gateway = None
+
+    if exact_gateway_requested and (gateway is None or gateway.url not in _gateway_url_match_variants(validated_base_url)):
+        return GatewayHandshakeResponse(
+            success=False,
+            latency_ms=_latency_ms(),
+            failure_class="transport",
+            error="The requested MCP gateway is unavailable for this handshake.",
+        )
 
     credential_source: Literal["stored", "form", "none"] = "none"
     headers: Dict[str, str] = {}
@@ -8461,10 +8473,11 @@ async def test_gateway_handshake(
     # A caller-supplied Host would aim the stored credentials at another virtual host on the
     # pinned address, and a differently-cased key would be sent as a second Host header.
     form_headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    candidate_only = request.credential_mode == "candidate_only"
     # A form-supplied Authorization header replaces stored credentials, so don't fail the
     # handshake on an unobtainable stored OAuth token the caller is not going to use.
     form_supplies_authorization = any(key.lower() == "authorization" for key in form_headers)
-    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
+    if not candidate_only and gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
         grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
         try:
             if grant_type == "authorization_code":
@@ -8494,7 +8507,7 @@ async def test_gateway_handshake(
                 failure_class="auth",
                 error=f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL.",
             )
-    elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+    elif not candidate_only and gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
         if isinstance(gateway.auth_value, dict):
             headers.update(gateway.auth_value)
         elif isinstance(gateway.auth_value, str):
@@ -8512,12 +8525,14 @@ async def test_gateway_handshake(
             # instead of both being sent to the target.
             headers = {key: value for key, value in headers.items() if key.lower() not in overridden_stored_keys}
         headers.update(form_headers)
-        if "authorization" in form_header_keys or overridden_stored_keys:
+        if candidate_only or "authorization" in form_header_keys or overridden_stored_keys:
             credential_source = "form"
 
     handshake_verify: Any = get_default_verify()
     if gateway and gateway.ca_certificate and not validated_base_url.lower().startswith("http://"):
-        handshake_verify = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+        client_cert = None if candidate_only else gateway.client_cert
+        client_key = None if candidate_only else gateway.client_key
+        handshake_verify = get_cached_ssl_context(gateway.ca_certificate, client_cert=client_cert, client_key=client_key)
 
     def get_httpx_client_factory(
         headers: Optional[Dict[str, str]] = None,
