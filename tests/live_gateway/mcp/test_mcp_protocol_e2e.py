@@ -20,9 +20,14 @@ Requirements:
         PLATFORM_ADMIN_EMAIL   Admin email (default: admin@example.com)
         MCPGATEWAY_MCP_APPS_ENABLED
                                Set true in both gateway and test process to run MCP Apps cases
+        GATEWAY_TOOL_NAME_SEPARATOR
+                               Expected gateway separator (default: -)
+        MCP_RESOURCE_NAME_EXPANSION
+                               Set true to enable the dedicated -- expansion case
 
 Usage:
     make test-mcp-protocol-e2e
+    GATEWAY_TOOL_NAME_SEPARATOR=-- MCP_RESOURCE_NAME_EXPANSION=true make test-mcp-protocol-e2e K=postgres_expansion
     pytest tests/e2e/test_mcp_protocol_e2e.py -v -s
 """
 
@@ -226,13 +231,31 @@ def resource_namespacing_upstreams():
 
 
 @pytest.mark.asyncio
-async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resource_namespacing_upstreams):
+@pytest.mark.parametrize(
+    "require_expansion",
+    [
+        pytest.param(False, id="configured_separator"),
+        pytest.param(
+            True,
+            id="postgres_expansion",
+            marks=pytest.mark.skipif(
+                os.getenv("MCP_RESOURCE_NAME_EXPANSION", "false").lower() != "true",
+                reason="Dedicated PostgreSQL expansion run requires MCP_RESOURCE_NAME_EXPANSION=true and a -- gateway",
+            ),
+        ),
+    ],
+)
+async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resource_namespacing_upstreams, require_expansion):
     """Federate colliding URIs and verify prefixing, full bases, and scoped reads.
 
-    Run the gateway and migration services with GATEWAY_TOOL_NAME_SEPARATOR=--.
-    The normal resource assertion checks the effective separator before the
-    expansion assertion. The pre-merge Compose deployment uses PostgreSQL.
+    Set GATEWAY_TOOL_NAME_SEPARATOR to match the running gateway. The separate
+    postgres_expansion case requires a PostgreSQL-backed stack using -- and
+    explicitly asserts the 382-character base; it is opt-in for the normal gate.
     """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    assert separator in ("-", "--", "_", ".")
+    if require_expansion:
+        assert separator == "--", "The dedicated expansion run requires GATEWAY_TOOL_NAME_SEPARATOR=--"
     headers = {"Authorization": f"Bearer {jwt_token}"}
     gateway_ids = []
     server_ids = []
@@ -257,12 +280,13 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
                     await asyncio.sleep(0.5)
                 assert len(rows) == 2, f"Gateway did not discover both upstream resources: {rows}; check MCP_NAMESPACING_UPSTREAM_HOST"
                 resource = next(row for row in rows if row["uri"] == peer["uri"])
-                expected = f"{gateway_name}--shared--report"
-                assert resource["name"] == expected, "Gateway must run with GATEWAY_TOOL_NAME_SEPARATOR=-- for this regression"
+                expected = f"{gateway_name}{separator}shared{separator}report"
+                assert resource["name"] == expected, "GATEWAY_TOOL_NAME_SEPARATOR must match the running gateway"
                 expected_names.append(expected)
                 expanded = next(row for row in rows if row["uri"].endswith("/long"))
-                assert expanded["customNameSlug"] == "a--" * 127 + "a"
-                assert len(expanded["customNameSlug"]) == 382
+                assert expanded["customNameSlug"] == f"a{separator}" * 127 + "a"
+                if require_expansion:
+                    assert len(expanded["customNameSlug"]) == 382
                 assert len(expanded["name"]) == 255
                 response = await http.post(
                     "/servers",
