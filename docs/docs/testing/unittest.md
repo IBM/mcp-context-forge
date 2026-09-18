@@ -224,7 +224,6 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | tests/unit/mcpgateway/plugins/plugins/file_type_allowlist/test_file_type_allowlist.py           |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/markdown_cleaner/test_markdown_cleaner.py                 |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/json_repair/test_json_repair.py                           |      1 |       0 |        1 |
-| tests/unit/mcpgateway/plugins/plugins/output_length_guard/test_output_length_guard.py           |      5 |       0 |        5 |
 | tests/unit/mcpgateway/plugins/plugins/resource_filter/test_resource_filter.py                   |     15 |       0 |       15 |
 | tests/unit/mcpgateway/plugins/plugins/response_cache_by_prompt/test_response_cache_by_prompt.py |     19 |       0 |       19 |
 | tests/unit/mcpgateway/plugins/plugins/schema_guard/test_schema_guard.py                         |      1 |       0 |        1 |

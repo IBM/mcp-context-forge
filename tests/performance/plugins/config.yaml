@@ -567,7 +567,7 @@ plugins:
 
   # Output Length Guard - sequential bounds or truncate tool outputs
   - name: OutputLengthGuardPlugin
-    kind: plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin
+    kind: cpex_output_length_guard.output_length_guard.OutputLengthGuardPlugin
     description: Guards tool outputs by enforcing min/max length; block or truncate
     version: 0.1.0
     author: ContextForge

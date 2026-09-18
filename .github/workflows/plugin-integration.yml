@@ -143,6 +143,16 @@ jobs:
                       tests: tests/live_gateway/plugins/test_sql_sanitizer_e2e.py
                       enforcement: binding
                       config_override: 'fields=["sql","query","statement","message"]'
+                    - name: output-length-guard
+                      plugin_name: OutputLengthGuardPlugin
+                      tests: tests/live_gateway/plugins/test_output_length_guard_e2e.py
+                      enforcement: static
+                      config_override: 'strategy="block"'
+                    - name: output-length-guard
+                      plugin_name: OutputLengthGuardPlugin
+                      tests: tests/live_gateway/plugins/test_output_length_guard_e2e.py
+                      enforcement: binding
+                      config_override: 'strategy="block"'
 
         steps:
             - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5

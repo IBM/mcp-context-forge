@@ -13,6 +13,7 @@ exclude-newer-span = "P10D"
 [options.exclude-newer-package]
 cpex = "2026-09-07T23:59:59Z"
 cpex-retry-with-backoff = "2026-09-07T23:59:59Z"
+cpex-output-length-guard = "2026-09-15T23:59:59Z"
 cpex-pii-filter = "2026-09-07T23:59:59Z"
 cpex-url-reputation = "2026-09-07T23:59:59Z"
 cpex-rate-limiter = "2026-09-07T23:59:59Z"
@@ -837,6 +838,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/b2/3a206d7669056f0b3d9b6445bb72b7201c9f06ba47afe9c74b00c6b6ef20/cpex_encoded_exfil_detection-0.3.8-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:daf001473ed99fbadd2a3f47289282ed38b82f34fdeb84e679f67cbe3786f853", size = 881534, upload-time = "2026-09-07T11:11:17.962Z" },
     { url = "https://files.pythonhosted.org/packages/2c/02/0294abf10ce3b93a4e278415c8649c56e492f4ea840abd2e55c923b58a0a/cpex_encoded_exfil_detection-0.3.8-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:9cb9f65916019f80564dca074c5c1924397c7fc350b5d8592d5692993ca71fc7", size = 840071, upload-time = "2026-09-07T11:11:19.303Z" },
     { url = "https://files.pythonhosted.org/packages/6e/46/2975c8beaed1403bc68a7b8b041f317dd74e3412b0540a1c7c76039809a1/cpex_encoded_exfil_detection-0.3.8-cp311-abi3-win_amd64.whl", hash = "sha256:4d70a43123b8db3490dde8302469f2c9168ef53bb2387aee28699b6bb8231272", size = 758303, upload-time = "2026-09-07T11:11:20.627Z" },
+]
+
+[[package]]
+name = "cpex-output-length-guard"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cpex" },
+    { name = "mcp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/c8/3793e1c0901003ade650e9f17783ae657dfc6134486ecb002e1e70566987/cpex_output_length_guard-0.1.0.tar.gz", hash = "sha256:a942f38642a8d55a0c41aaefb860191b6a4110adfc7eb480eafcb2e0a64d61bc", size = 143248, upload-time = "2026-09-15T12:28:13.489Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/df/1757e8cf0b783c607ecdf42bbc09d0b0be5d7f7c7901472b43810d215c29/cpex_output_length_guard-0.1.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:3d7c67930e628d7d895804b7f6c193b7fd4556bc2af31af01beb2cd97341868c", size = 267620, upload-time = "2026-09-15T12:28:04.822Z" },
+    { url = "https://files.pythonhosted.org/packages/54/26/d92b2b1977843d0501935d3b3545ae2a70806da9f7db7dabf452639964f9/cpex_output_length_guard-0.1.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:18b736e7e43e7ee693cf9b6bc97158ed548c8d2dab4bfe5ca38a7b53d3e02e8c", size = 279320, upload-time = "2026-09-15T12:28:06.409Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/f4/9517fbcd81be1009070dde9c399e871bfcada9326d4ff48acb61df897bce/cpex_output_length_guard-0.1.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:af79af656cf43f39f707c8292185724ca76092c0cf6145437dbfcf7871694e29", size = 322241, upload-time = "2026-09-15T12:28:08.262Z" },
+    { url = "https://files.pythonhosted.org/packages/44/09/6f6cc851dc2b4672abf1800a5448b723f583de6619ad51eaca0b20347882/cpex_output_length_guard-0.1.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:a51e7b2e912bf59c112457188c5dea8a4ecb5895e4d6a40869263d9565f69be8", size = 323918, upload-time = "2026-09-15T12:28:09.64Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/30/8af8b0619a7d57ea66f62a78c548aa6e99601728b734c44cef602693bdf5/cpex_output_length_guard-0.1.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:266de17e8e627d7e9b12bd028ba55ec0930ab271033970af32945f33aef87781", size = 294488, upload-time = "2026-09-15T12:28:11.106Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/d3/413c132792d1b4e3e0a59b301b52de66cc2be5b7d4f4df88474b543da0d1/cpex_output_length_guard-0.1.0-cp311-abi3-win_amd64.whl", hash = "sha256:48bd132b6da6180ee5640bd37cf551565efbdc694632f4d60d7d075147e60efc", size = 209524, upload-time = "2026-09-15T12:28:12.455Z" },
 ]
 
 [[package]]
@@ -2632,6 +2651,7 @@ asyncpg = [
 ]
 dev-all = [
     { name = "cpex-encoded-exfil-detection" },
+    { name = "cpex-output-length-guard" },
     { name = "cpex-pii-filter" },
     { name = "cpex-rate-limiter" },
     { name = "cpex-retry-with-backoff" },
@@ -2665,6 +2685,7 @@ observability = [
 ]
 plugins = [
     { name = "cpex-encoded-exfil-detection" },
+    { name = "cpex-output-length-guard" },
     { name = "cpex-pii-filter" },
     { name = "cpex-rate-limiter" },
     { name = "cpex-retry-with-backoff" },
@@ -2779,6 +2800,7 @@ requires-dist = [
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex", specifier = "==0.1.3" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.8" },
+    { name = "cpex-output-length-guard", marker = "extra == 'plugins'", specifier = ">=0.1.0" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.8" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.9" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.9" },
