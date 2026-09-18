@@ -6155,7 +6155,8 @@ ibmcloud-check-env:
 		missing=0; \
 		for var in IBMCLOUD_REGION IBMCLOUD_PROJECT IBMCLOUD_RESOURCE_GROUP \
 		           IBMCLOUD_CODE_ENGINE_APP IBMCLOUD_IMAGE_NAME IBMCLOUD_IMG_PROD \
-		           IBMCLOUD_CPU IBMCLOUD_MEMORY IBMCLOUD_REGISTRY_SECRET; do \
+		           IBMCLOUD_CPU IBMCLOUD_MEMORY IBMCLOUD_REGISTRY_SECRET \
+		           IBMCLOUD_ICR_API_KEY; do \
 			if [ -z "$${!var}" ]; then \
 				echo "❌  Missing: $$var"; \
 				missing=1; \
@@ -6259,7 +6260,31 @@ ibmcloud-push:
 ibmcloud-deploy:
 	@test -f .env || { echo "❌ Missing .env — run: cp .env.example .env"; exit 1; }
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
-	@# Create the runtime env secret from .env if it does not exist yet
+	@# Verify the registry pull secret exists. Check CLI availability first so
+	@# infrastructure errors are distinguished from a genuinely absent secret.
+	@if ! command -v ibmcloud > /dev/null 2>&1; then \
+		echo "❌ ibmcloud CLI not found. Install it and the code-engine plugin first:"; \
+		echo "   make ibmcloud-cli-install"; \
+		exit 1; \
+	fi; \
+	if ! _secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); then \
+		if echo "$$_secret_err" | grep -qiF "Secret $(IBMCLOUD_REGISTRY_SECRET) not found"; then \
+			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
+			echo "   Create it first (first-time setup only):"; \
+			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
+			echo "       --format registry \\"; \
+			echo "       --server $$(echo $(IBMCLOUD_IMAGE_NAME) | cut -d/ -f1) \\"; \
+			echo "       --username iamapikey --password \$$IBMCLOUD_ICR_API_KEY"; \
+			echo "   (Use a long-lived IAM API key — IBMCLOUD_API_KEY may be blank for SSO users.)"; \
+			echo "   See the docs for service ID key setup and alternative credential types."; \
+		else \
+			echo "❌ Could not verify registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)'."; \
+			echo "   Diagnostic: $$_secret_err"; \
+			echo "   Check your IBM Cloud login, region, CE project selection, and plugin installation."; \
+		fi; \
+		exit 1; \
+	fi
+	@# Sync the runtime env secret from .env — create on first deploy, update thereafter.
 	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
 		echo "🔐 Creating runtime env secret from .env..."; \
 		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
