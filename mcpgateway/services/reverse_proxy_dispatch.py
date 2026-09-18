@@ -163,6 +163,8 @@ async def _read_reverse_proxied_resource(
     uri: str,
     effective_timeout: float,
     downstream_auth: Optional[DownstreamAuth] = None,
+    *,
+    error_factory: Callable[[str], Exception],
 ) -> ResourceContents:
     """Dispatch ``resources/read`` to a PROXIED gateway over its reverse-proxy session.
 
@@ -179,20 +181,21 @@ async def _read_reverse_proxied_resource(
         uri: Upstream resource URI sent as ``params.uri``.
         effective_timeout: Per-request timeout in seconds.
         downstream_auth: Optional stored gateway credentials to forward downstream.
+        error_factory: Constructs the caller's typed exception for failure
+            paths; keeps this module free of resource-service imports (the
+            resource service imports this module, so the dependency must stay
+            one-directional).
 
     Returns:
         The typed first ``result.contents`` entry, preserving blob/text and MIME metadata.
 
     Raises:
-        ResourceError: If no live connection exists for the gateway, the
-            connection drops mid-read, the read exceeds ``effective_timeout``,
-            the downstream server returns a JSON-RPC error, or the upstream
-            result carries no contents.
+        Exception: Whatever ``error_factory`` produces — if no live connection
+            exists for the gateway, the connection drops mid-read, the read
+            exceeds ``effective_timeout``, the downstream server returns a
+            JSON-RPC error, or the upstream result carries no contents.
         ValidationError: If the upstream ``resources/read`` result is malformed.
     """
-    # First-Party
-    from mcpgateway.services.resource_service import ResourceError  # pylint: disable=import-outside-toplevel  # lazy: resource_service imports this module
-
     request_payload = JsonRpcRequest(jsonrpc="2.0", id=uuid.uuid4().hex, method="resources/read", params={"uri": uri})
 
     correlation_id = get_correlation_id()
@@ -205,12 +208,12 @@ async def _read_reverse_proxied_resource(
             StableGatewayId(gateway_id_str),
             request_payload,
             timeout_seconds=effective_timeout,
-            error_factory=ResourceError,
+            error_factory=error_factory,
             telemetry=telemetry,
             auth=downstream_auth,
         )
     except TimeoutError as timeout_err:
-        raise ResourceError(f"Resource read timed out after {effective_timeout}s") from timeout_err
+        raise error_factory(f"Resource read timed out after {effective_timeout}s") from timeout_err
 
     try:
         validated_result = types.ReadResourceResult.model_validate(response.payload.result)
@@ -238,7 +241,7 @@ async def _read_reverse_proxied_resource(
             error_details={"error_type": "EmptyContentsError", "error_message": "upstream resources/read result carried no contents"},
             metadata={"event": "mcp_call_failed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
         )
-        raise ResourceError(f"Upstream resources/read for gateway '{gateway_id_str}' returned no contents")
+        raise error_factory(f"Upstream resources/read for gateway '{gateway_id_str}' returned no contents")
 
     first_content = validated_result.contents[0]
     content_uri = str(first_content.uri)
