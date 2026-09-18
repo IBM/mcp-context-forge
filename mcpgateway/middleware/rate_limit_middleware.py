@@ -108,13 +108,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "burst": settings.rate_limit_critical_burst,
             },
             "CRITICAL_INVITATION": {
-                "pattern": r"^/(?:v1/)?teams/[^/]+/invitations/?$",
+                "pattern": r"^/teams/[^/]+/invitations/?$",
                 "methods": {"POST"},
                 "limit": settings.rate_limit_critical_rpm,
                 "burst": settings.rate_limit_critical_burst,
             },
             "SESSION_REFRESH": {
-                "pattern": r"^(/v1)?/auth/refresh$",
+                "pattern": r"^/auth/refresh$",
                 "limit": settings.session_refresh_rate_limit,
                 "burst": settings.session_refresh_rate_limit,
             },
@@ -201,7 +201,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def get_endpoint_tier(self, path: str, method: Optional[str] = None) -> Dict[str, Any]:
         """Get tier config for endpoint and request method."""
-        normalized_path = self._normalize_path_for_matching(path)
+        return self._get_tier_for_normalized(self._normalize_path_for_matching(path), method)
+
+    def _get_tier_for_normalized(self, normalized_path: str, method: Optional[str] = None) -> Dict[str, Any]:
+        """Get tier config for an already-normalized path."""
         for pattern, config in self.compiled_tiers:
             if pattern.match(normalized_path) and self._tier_allows_method(config, method):
                 return config
@@ -237,10 +240,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
-        tier = self.get_endpoint_tier(request.url.path, request.method)
+        normalized_path = self._normalize_path_for_matching(request.url.path)
+        tier = self._get_tier_for_normalized(normalized_path, request.method)
         dimensions = self._get_client_dimensions(request)
 
-        tier_name = self._get_tier_name(request.url.path, request.method)
+        tier_name = self._get_tier_name_for_normalized(normalized_path, request.method)
 
         # Check lockout first — a locked-out dimension blocks regardless of
         # whether the sliding window has cleared.
@@ -307,7 +311,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _get_tier_name(self, path: str, method: Optional[str] = None) -> str:
         """Get tier name for logging by endpoint and request method."""
-        normalized_path = self._normalize_path_for_matching(path)
+        return self._get_tier_name_for_normalized(self._normalize_path_for_matching(path), method)
+
+    def _get_tier_name_for_normalized(self, normalized_path: str, method: Optional[str] = None) -> str:
+        """Get tier name for an already-normalized path."""
         for tier_name, config in self.endpoint_tiers.items():
             if re.match(config["pattern"], normalized_path) and self._tier_allows_method(config, method):
                 return tier_name

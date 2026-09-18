@@ -141,7 +141,9 @@ class TestRateLimitMiddlewareTiers:
         """A forged HMAC fails the trust gate, so the rate-limit path runs."""
         request = _trusted_internal_request("/_internal/mcp/rpc", hmac_value="forged")
         call_next = AsyncMock(return_value="passthrough")
-        middleware.get_endpoint_tier = MagicMock(side_effect=RuntimeError("reached rate-limit path"))
+        # dispatch calls _get_tier_for_normalized directly after extracting the normalized path;
+        # patch that inner method to confirm the rate-limit code path is reached.
+        middleware._get_tier_for_normalized = MagicMock(side_effect=RuntimeError("reached rate-limit path"))
 
         with pytest.raises(RuntimeError, match="reached rate-limit path"):
             await middleware.dispatch(request, call_next)
@@ -1322,6 +1324,17 @@ class TestRateLimitMiddlewareTiers:
         assert middleware.get_endpoint_tier("/v1/docs")["limit"] == 500
         assert middleware.get_endpoint_tier("/v1/openapi.json")["limit"] == 500
         assert middleware._get_tier_name("/v1/health") == "LOW"
+
+        # Regression: versioned auth/token paths must NOT fall through to the 500 rpm LOW default.
+        # Before the fix every /v1/* path returned the LOW default (500 rpm) instead of its
+        # intended tier, silently weakening brute-force protection on exactly these endpoints.
+        low_rpm = middleware.default_tier["limit"]  # 500
+        assert middleware.get_endpoint_tier("/v1/auth/email/login")["limit"] != low_rpm, "/v1 login must not fall to LOW default"
+        assert middleware.get_endpoint_tier("/v1/tokens")["limit"] != low_rpm, "/v1/tokens must not fall to LOW default"
+        assert middleware.get_endpoint_tier("/v1/oauth/token")["limit"] != low_rpm, "/v1/oauth must not fall to LOW default"
+        assert middleware.get_endpoint_tier("/v1/rbac/roles")["limit"] != low_rpm, "/v1/rbac must not fall to LOW default"
+        assert middleware._get_tier_name("/v1/auth/email/login") != "LOW", "/v1 login tier name must not be LOW"
+        assert middleware._get_tier_name("/v1/tokens") != "LOW", "/v1/tokens tier name must not be LOW"
 
     def test_should_lockout_uses_both_redis_and_memory(self, middleware):
         """Test lockout check tries Redis first then memory."""
