@@ -6155,7 +6155,8 @@ ibmcloud-check-env:
 		missing=0; \
 		for var in IBMCLOUD_REGION IBMCLOUD_PROJECT IBMCLOUD_RESOURCE_GROUP \
 		           IBMCLOUD_CODE_ENGINE_APP IBMCLOUD_IMAGE_NAME IBMCLOUD_IMG_PROD \
-		           IBMCLOUD_CPU IBMCLOUD_MEMORY IBMCLOUD_REGISTRY_SECRET; do \
+		           IBMCLOUD_CPU IBMCLOUD_MEMORY IBMCLOUD_REGISTRY_SECRET \
+		           IBMCLOUD_ICR_API_KEY; do \
 			if [ -z "$${!var}" ]; then \
 				echo "❌  Missing: $$var"; \
 				missing=1; \
@@ -6267,7 +6268,7 @@ ibmcloud-deploy:
 		exit 1; \
 	fi; \
 	if ! _secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); then \
-		if echo "$$_secret_err" | grep -qiE "Secret ['\"]?$(IBMCLOUD_REGISTRY_SECRET)['\"]? not found"; then \
+		if echo "$$_secret_err" | grep -qiF "Secret $(IBMCLOUD_REGISTRY_SECRET) not found"; then \
 			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
 			echo "   Create it first (first-time setup only):"; \
 			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
