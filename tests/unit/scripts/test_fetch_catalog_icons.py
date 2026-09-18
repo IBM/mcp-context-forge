@@ -132,6 +132,26 @@ def test_strip_pale_backdrop_strips_at_the_documented_floor() -> None:
     assert stripped.getpixel((0, 0))[3] == 0
 
 
+def test_strip_pale_backdrop_leaves_fragmented_perimeter_untouched() -> None:
+    """No single pale color dominates PALE_BACKDROP_MIN_PERIMETER_SHARE of the
+
+    perimeter, so the image must be left untouched even though every
+    candidate color individually clears the paleness floor.
+    """
+    size = 40
+    source = Image.new("RGBA", (size, size), (10, 20, 200, 255))
+    pixels = source.load()
+    pale_colors = [(255, 255, 255, 255), (255, 255, 231, 255), (255, 231, 255, 255), (231, 255, 255, 255), (231, 231, 231, 255)]
+    perimeter = [(x, 0) for x in range(size)] + [(x, size - 1) for x in range(size)] + [(0, y) for y in range(size)] + [(size - 1, y) for y in range(size)]
+    for index, (x, y) in enumerate(perimeter):
+        pixels[x, y] = pale_colors[index % len(pale_colors)]
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getchannel("A").getbbox() == (0, 0, size, size)
+    assert stripped.getpixel((0, 0)) == pale_colors[0]
+
+
 def test_strip_pale_backdrop_leaves_saturated_badge_untouched() -> None:
     """A deliberate brand-color block (not padding) must not be stripped."""
     source = Image.new("RGBA", (128, 128), (10, 20, 200, 255))
@@ -251,6 +271,11 @@ def test_rasterize_svg_renders_fill_on_path() -> None:
 def test_rasterize_svg_rejects_invalid_markup() -> None:
     with pytest.raises(IconFetchError, match="SVG rasterization failed"):
         _rasterize_svg(b"<svg><not-closed>")
+
+
+def test_rasterize_svg_rejects_non_utf8_bytes() -> None:
+    with pytest.raises(IconFetchError, match="not valid UTF-8"):
+        _rasterize_svg(b"<svg>\xff\xfe</svg>")
 
 
 def test_image_to_png_rasterizes_svg_source_before_normalizing() -> None:

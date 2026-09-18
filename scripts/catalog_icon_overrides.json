@@ -1,5 +1,6 @@
 {
   "skip": [
+    "metro-mcp",
     "neon",
     "rube",
     "tweetsave",

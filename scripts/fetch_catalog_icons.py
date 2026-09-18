@@ -378,25 +378,14 @@ def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False, scale_boost
             output = BytesIO()
             png_info = PngImagePlugin.PngInfo()
             png_info.add_text(NORMALIZED_ICON_MARKER, NORMALIZED_ICON_VERSION)
-            if strip_pale_backdrop:
-                # Records that this exact asset has already had the pale-backdrop
-                # sweep applied, so a later --normalize-existing run can trust it
-                # even though its catalog id stays on the strip_pale_backdrop
-                # allowlist (needed for ids newly added to that list, whose
-                # existing asset was never actually stripped).
-                png_info.add_text(BACKDROP_STRIPPED_MARKER, "1")
-            if scale_boost:
-                # Mirrors BACKDROP_STRIPPED_MARKER: records that the boost was
-                # actually applied to this exact asset, so --normalize-existing
-                # can tell a newly-added id (needs reprocessing) from one it
-                # already boosted (safe to trust the geometry fast-path).
-                png_info.add_text(SCALE_BOOSTED_MARKER, "1")
-            if scale_shrink:
-                # Mirrors SCALE_BOOSTED_MARKER: records that the shrink was
-                # actually applied to this exact asset, so --normalize-existing
-                # can tell a newly-added id (needs reprocessing) from one it
-                # already shrunk (safe to trust the geometry fast-path).
-                png_info.add_text(SCALE_SHRUNK_MARKER, "1")
+            # Records that this exact asset already had the given treatment
+            # applied, so a later --normalize-existing run can tell a newly
+            # opted-in id (needs reprocessing) from one already treated (safe
+            # to trust the geometry fast-path) even though the id stays on the
+            # corresponding override list either way.
+            for applied, marker in ((strip_pale_backdrop, BACKDROP_STRIPPED_MARKER), (scale_boost, SCALE_BOOSTED_MARKER), (scale_shrink, SCALE_SHRUNK_MARKER)):
+                if applied:
+                    png_info.add_text(marker, "1")
             canvas.save(output, format="PNG", optimize=True, pnginfo=png_info)
             return output.getvalue()
     except IconFetchError:
@@ -456,6 +445,12 @@ def _icon_candidates(page: FetchResult | None, origin: str, domain: str) -> Iter
             yield candidate
 
 
+def _landed_off_domain(url: str, domain: str) -> bool:
+    """Return whether url's hostname resolves to a different registrable domain."""
+    hostname = urlsplit(url).hostname
+    return not hostname or _registrable_domain(hostname) != domain
+
+
 def _load_overrides(path: Path) -> tuple[set[str], dict[str, str], set[str], set[str], set[str]]:
     """Load optional skip, explicit source, pale-backdrop-strip, scale-boost, and scale-shrink overrides."""
     if not path.exists():
@@ -487,8 +482,7 @@ def _fetch_icon(
     page: FetchResult | None = None
     try:
         page = _fetch(client, origin)
-        landed_hostname = urlsplit(page.url).hostname
-        if not landed_hostname or _registrable_domain(landed_hostname) != domain:
+        if _landed_off_domain(page.url, domain):
             # A redirect landed on an unrelated site (e.g. an API host redirecting
             # to its GitHub repo); that page's <link rel="icon"> belongs to the
             # OTHER site's brand, not this catalog entry's, so it must not be
@@ -500,24 +494,20 @@ def _fetch_icon(
 
     last_error: IconFetchError | None = None
     for candidate in _icon_candidates(page, origin, domain):
-        candidate_hostname = urlsplit(candidate).hostname
-        candidate_is_domain_anchored = candidate_hostname is not None and _registrable_domain(candidate_hostname) == domain
+        # A candidate anchored to the entry's own domain (favicon.ico, or a
+        # same-domain <link> href) must not redirect off domain either, same as
+        # the origin page above. A candidate that is intentionally off-domain to
+        # begin with (the DuckDuckGo lookup) is exempt, since it is never
+        # expected to land on this entry's own domain.
+        candidate_is_domain_anchored = not _landed_off_domain(candidate, domain)
         try:
             result = _fetch(client, candidate, expected_image=True)
         except IconFetchError as exc:
             last_error = exc
             continue
-        if candidate_is_domain_anchored:
-            landed_hostname = urlsplit(result.url).hostname
-            if not landed_hostname or _registrable_domain(landed_hostname) != domain:
-                # Mirrors the origin-page guard above: a domain-anchored candidate
-                # (favicon.ico, or a same-domain <link> href) that redirects off
-                # domain must not donate an unrelated site's icon either. A
-                # candidate that is intentionally off-domain to begin with (the
-                # DuckDuckGo lookup) is exempt, since it is never expected to
-                # land on this entry's own domain.
-                last_error = IconFetchError(f"Icon candidate redirected off-domain: {candidate} -> {result.url}")
-                continue
+        if candidate_is_domain_anchored and _landed_off_domain(result.url, domain):
+            last_error = IconFetchError(f"Icon candidate redirected off-domain: {candidate} -> {result.url}")
+            continue
         return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink), result.url
     raise last_error or IconFetchError("No icon candidate succeeded")
 
@@ -607,10 +597,9 @@ def generate_icons(args: argparse.Namespace) -> int:
                     # other id — this also protects manual touch-ups (padding, size)
                     # applied to the asset afterward from being silently undone by a
                     # later --normalize-existing run.
-                    needs_backdrop_strip = strip_pale_backdrop and not _has_marker(existing, BACKDROP_STRIPPED_MARKER)
-                    needs_scale_boost = scale_boost and not _has_marker(existing, SCALE_BOOSTED_MARKER)
-                    needs_scale_shrink = scale_shrink and not _has_marker(existing, SCALE_SHRUNK_MARKER)
-                    if not needs_backdrop_strip and not needs_scale_boost and not needs_scale_shrink and _has_normalized_icon_bounds(existing):
+                    treatments = ((strip_pale_backdrop, BACKDROP_STRIPPED_MARKER), (scale_boost, SCALE_BOOSTED_MARKER), (scale_shrink, SCALE_SHRUNK_MARKER))
+                    needs_reprocessing = any(opted_in and not _has_marker(existing, marker) for opted_in, marker in treatments)
+                    if not needs_reprocessing and _has_normalized_icon_bounds(existing):
                         print(f"KEEP {catalog_id}: normalized bounds")
                     else:
                         if not args.dry_run:

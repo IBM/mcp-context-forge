@@ -248,6 +248,13 @@ exception remains:
   instead. `zip1.io` was also unreachable when this was bundled, so `zip1` is
   on the `skip` list so `--force` does not fail trying to reach it or, if it
   comes back with the same source asset, reintroduce the corners.
+- `metro-mcp`: unlike the other entries here, the bundled PNG *is* currently
+  reproducible — `metro-mcp.anuragd.me/favicon.ico` fed through the ordinary
+  `strip_pale_backdrop` sweep reproduces it byte for byte. But that endpoint
+  is a single maintainer's personal deployment with no stability guarantee,
+  not a brand's own domain, so `metro-mcp` is on the `skip` list to keep a
+  future favicon change on that site from silently replacing the catalog
+  icon via `--force`.
 
 Re-derive these by hand if their upstream source changes; do not expect
 `--force` to pick them up automatically.
