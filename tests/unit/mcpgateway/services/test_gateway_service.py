@@ -2167,6 +2167,49 @@ class TestGatewayService:
             test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_omitting_auth_preserves_stored_credential(self, gateway_service, mock_gateway, test_db):
+        """Omitting every auth field must leave the stored credential unchanged (#6446).
+
+        The API masks auth on read, so a GET → change one field → PUT round-trip
+        never saw the real credential and cannot send it back. Treating that
+        omission as an explicit clear wiped auth_value to {} while leaving
+        auth_type intact.
+        """
+        stored_auth = {"X-Api-Key": "a-real-credential"}
+        mock_gateway.auth_type = "authheaders"
+        mock_gateway.auth_value = stored_auth
+        mock_gateway.enabled = True
+        mock_gateway.reachable = True
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        # Only a non-auth field — every auth field is omitted, matching what a
+        # client that has only ever seen the masked credential must send.
+        gateway_update = GatewayUpdate(passthrough_headers=["X-Tenant-Id", "X-Trace-Id"])
+        assert gateway_update.auth_value is None
+        assert gateway_update.auth_token is None
+        assert gateway_update.auth_password is None
+        assert gateway_update.auth_header_value is None
+        assert gateway_update.auth_headers is None
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert mock_gateway.auth_value is stored_auth
+        assert mock_gateway.auth_type == "authheaders"
+        assert mock_gateway.passthrough_headers == ["X-Tenant-Id", "X-Trace-Id"]
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_integrity_error(self, gateway_service, mock_gateway, test_db):
         """Test IntegrityError during gateway update."""
         # Third-Party
