@@ -1422,12 +1422,32 @@ class TestMcpToolCallByRole:
             print(f"    -> Outsider denied tools.execute (expected): {result.content[0].text}")
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
+        """An outsider calling an unknown tool gets an error, never a result.
+
+        The outsider holds no team membership, so RBAC denies the call before the
+        gateway resolves the tool name. Both the returned-result path and the
+        raised path assert the reason. ``isError`` alone would stay true for a
+        plain name-resolution failure, so it cannot detect an RBAC regression.
+        """
+        # The except clause lists transport errors only. Catching bare Exception here
+        # would swallow the AssertionError below and the test could never fail (#6839).
+        # The asserts sit outside this try, so the tuple cannot swallow them.
+        _DENIED_STATUSES = (401, 403)
+        result = None
         try:
             result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
+        except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
+            leaves = _unwrap_exception_group(exc)
+            denied_by_status = any(getattr(getattr(leaf, "response", None), "status_code", None) in _DENIED_STATUSES for leaf in leaves)
+            denied_by_text = any("access denied" in str(leaf).lower() for leaf in leaves)
+            assert denied_by_status or denied_by_text, f"expected an access denial, got: {leaves!r}"
+            print(f"    -> Outsider nonexistent tool rejected at the transport (expected): {leaves[0]}")
+
+        if result is not None:
             assert result.isError, f"Nonexistent tool should return error, got: {result}"
-        except Exception:
-            pass  # McpError — expected for outsider with no permissions
-        print("    -> Outsider nonexistent tool: error (expected)")
+            detail = result.content[0].text.lower()
+            assert "access denied" in detail, f"expected an access denial, got: {result.content[0].text}"
+            print(f"    -> Outsider nonexistent tool: error (expected): {result.content[0].text}")
 
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
