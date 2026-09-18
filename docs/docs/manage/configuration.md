@@ -1446,13 +1446,15 @@ metadata:
 data:
   DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
   REDIS_URL: "redis://redis-service:6379/0"
-  JWT_SECRET_KEY: "your-secret-key"
+  JWT_SECRET_KEY: "__REPLACE_ME__openssl_rand_hex_32"
   BASIC_AUTH_USER: "admin"
   BASIC_AUTH_PASSWORD: "__REPLACE_ME__run_make_init-secrets-patch-env"
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
 ```
+
+`JWT_SECRET_KEY` is checked unconditionally: the gateway refuses to start with a placeholder, empty, known-weak, or too-short value (below the 32-character minimum). Replace the `__REPLACE_ME__...` placeholder with a generated value (e.g. `openssl rand -hex 32`). A ConfigMap cannot run shell substitution, so generate the secret out-of-band or source it from a Secret instead of inlining it here.
 
 `BASIC_AUTH_PASSWORD` is only enforced when `API_ALLOW_BASIC_AUTH` or `DOCS_ALLOW_BASIC_AUTH` is `true`. Replace the `__REPLACE_ME__...` placeholder with a strong value (e.g. `openssl rand -hex 32`) before enabling either — the gateway refuses to start with a placeholder, empty, or known-weak secret.
 
