@@ -2271,7 +2271,7 @@ class ResourceService(BaseService):
                                 downstream_auth = build_downstream_auth(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
                             except GatewayAuthValueError as auth_err:
                                 raise ResourceError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
-                            resource_text = await _read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth)
+                            resource_text = await _read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth, error_factory=ResourceError)
                         elif (gateway_transport).lower() == "sse":
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:

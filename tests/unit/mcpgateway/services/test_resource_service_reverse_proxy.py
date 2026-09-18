@@ -264,7 +264,7 @@ class TestReadResourceReverseProxied:
 
         with patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             with pytest.raises(ResourceError) as direct_exc:
-                await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
+                await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0, error_factory=ResourceError)
         assert str(direct_exc.value) == "MCP error -32001"
 
         with (
@@ -382,7 +382,7 @@ class TestReadResourceReverseProxied:
             patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ValidationError),
         ):
-            await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
+            await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0, error_factory=ResourceError)
 
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert events["mcp_call_started"]["transport"] == "proxied"
@@ -402,7 +402,7 @@ class TestReadResourceReverseProxied:
             patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
             pytest.raises(ResourceError, match=r"returned no contents"),
         ):
-            await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0)
+            await _read_reverse_proxied_resource("proxied-gw-1", PROXIED_RESOURCE_URI, 30.0, error_factory=ResourceError)
 
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert "mcp_call_completed" not in events
