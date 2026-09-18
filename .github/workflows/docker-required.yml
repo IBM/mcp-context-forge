@@ -19,7 +19,7 @@ name: Docker Build Skip Reporter
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths-ignore:
       - '.dockerignore'
       - 'Containerfile'
