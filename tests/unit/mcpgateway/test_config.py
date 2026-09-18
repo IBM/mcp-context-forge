@@ -2498,3 +2498,71 @@ def test_min_secret_length_below_floor_raises_validation_error():
         )
     # Confirm the error is about min_secret_length, not some other field
     assert "min_secret_length" in str(exc_info.value).lower() or "greater than or equal" in str(exc_info.value).lower()
+
+
+# --------------------------------------------------------------------------- #
+#                    _parse_mcp_origin_sets                                    #
+# --------------------------------------------------------------------------- #
+def test_parse_mcp_origin_sets_json_array():
+    """JSON array string is parsed into a set."""
+    result = Settings._parse_mcp_origin_sets('["https://a.com","https://b.com"]')
+    assert result == {"https://a.com", "https://b.com"}
+
+
+def test_parse_mcp_origin_sets_csv_string():
+    """Comma-separated string is parsed into a set."""
+    result = Settings._parse_mcp_origin_sets("https://x.com , https://y.com")
+    assert result == {"https://x.com", "https://y.com"}
+
+
+def test_parse_mcp_origin_sets_empty_string():
+    """Blank string returns empty set."""
+    assert Settings._parse_mcp_origin_sets("") == set()
+    assert Settings._parse_mcp_origin_sets("   ") == set()
+
+
+def test_parse_mcp_origin_sets_quoted_string():
+    """Outer quote pair is stripped before parsing."""
+    result = Settings._parse_mcp_origin_sets('"https://a.com,https://b.com"')
+    assert "https://a.com" in result
+    assert "https://b.com" in result
+
+
+def test_parse_mcp_origin_sets_set_passthrough():
+    """An already-parsed set is returned as-is."""
+    assert Settings._parse_mcp_origin_sets({"https://a.com"}) == {"https://a.com"}
+
+
+def test_parse_mcp_origin_sets_list_passthrough():
+    """A list is converted to a set."""
+    assert Settings._parse_mcp_origin_sets(["https://a.com", "https://b.com"]) == {"https://a.com", "https://b.com"}
+
+
+def test_parse_mcp_origin_sets_unknown_type_returns_empty():
+    """An unrecognised type (e.g. int) falls back to empty set."""
+    assert Settings._parse_mcp_origin_sets(42) == set()  # type: ignore[arg-type]
+
+
+def test_mcp_allowed_origins_settings_field():
+    """mcp_allowed_origins is parsed correctly when passed to Settings."""
+    s = Settings(mcp_allowed_origins="https://trusted.example.com", environment="development", _env_file=None)
+    assert "https://trusted.example.com" in s.mcp_allowed_origins
+
+
+def test_mcp_allowed_hosts_settings_field():
+    """mcp_allowed_hosts is parsed correctly when passed to Settings."""
+    s = Settings(mcp_allowed_hosts="myapp.example.com:4444,myapp.example.com:*", environment="development", _env_file=None)
+    assert "myapp.example.com:4444" in s.mcp_allowed_hosts
+    assert "myapp.example.com:*" in s.mcp_allowed_hosts
+
+
+def test_mcp_allowed_origins_default_empty():
+    """mcp_allowed_origins defaults to empty set."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.mcp_allowed_origins == set()
+
+
+def test_mcp_allowed_hosts_default_empty():
+    """mcp_allowed_hosts defaults to empty set."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.mcp_allowed_hosts == set()
