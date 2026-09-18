@@ -14,7 +14,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from importlib import import_module
 import logging
 import os
 import socket
@@ -59,7 +58,20 @@ _worker_identity: _WorkerIdentity | None = None
 _default_relay: ReverseProxyRelay | None = None
 _relay_pid: int | None = None
 _relay_lock = anyio.Lock()
+_reachability_service: _GatewayReachabilityService | None = None
 LOGGER = logging.getLogger(__name__)
+
+
+def configure_reverse_proxy_reachability(service: _GatewayReachabilityService) -> None:
+    """Inject the catalog-backed reachability persister from the composition root.
+
+    ``main.py`` constructs :class:`~mcpgateway.services.reverse_proxy_catalog.ReverseProxyCatalogService`
+    during startup (ahead of relay construction) and hands it here; authority-loss
+    persistence is skipped with a warning when unset, preserving the callback's
+    best-effort contract.
+    """
+    global _reachability_service
+    _reachability_service = service
 
 
 def current_reverse_proxy_worker_id() -> str:
@@ -108,19 +120,21 @@ async def run_reverse_proxy_relay_heartbeat(relay: ReverseProxyRelay | None = No
 
 
 async def _persist_lost_authority(evictions: tuple[ReverseProxyEviction, ...]) -> None:
-    """Persist authority loss through the replacement-aware catalog policy."""
-    # The catalog owns the replacement-aware reachability write; the gateway and
-    # server services it wraps are PEP 562 lazy module attributes, resolved on
-    # first authority loss rather than at module import time.
-    from mcpgateway.services.reverse_proxy_catalog import ReverseProxyCatalogService  # pylint: disable=import-outside-toplevel
+    """Persist authority loss through the replacement-aware catalog policy.
 
-    gateway_service = getattr(import_module("mcpgateway.services.gateway_service"), "gateway_service")
-    server_service = getattr(import_module("mcpgateway.services.server_service"), "server_service")
-    catalog: _GatewayReachabilityService = ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service)
+    The catalog service is injected by the composition root (``main.py``'s
+    reaper, which constructs it before the relay) via
+    :func:`configure_reverse_proxy_reachability`; this module must not import
+    the catalog — the dispatch module imports this one, and the catalog wraps
+    the gateway service, so a static import here closes an import cycle.
+    """
+    if _reachability_service is None:
+        LOGGER.warning("Reverse-proxy reachability persister not configured; skipping authority-loss persistence")
+        return
     manager = await get_reverse_proxy_session_manager()
     relay = await get_reverse_proxy_relay()
     try:
-        await catalog.mark_reverse_proxy_gateways_unreachable(
+        await _reachability_service.mark_reverse_proxy_gateways_unreachable(
             manager,
             evictions,
             seen_at=datetime.now(tz=timezone.utc),
