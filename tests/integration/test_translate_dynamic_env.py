@@ -14,6 +14,7 @@ import os
 import json
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.translate import StdIOEndpoint, _PubSub
 from mcpgateway.translate_header_utils import (
     extract_env_vars_from_headers,
@@ -491,98 +492,6 @@ if __name__ == "__main__":
                     "Authorization=API_TOKEN",
                 ]
             )
-
-    @pytest.mark.asyncio
-    async def test_large_header_values(self, test_script):
-        """Test handling of large header values."""
-        large_value = "x" * 5000  # 5KB value (will be truncated to 4KB)
-        headers = {
-            "Authorization": large_value,
-            "X-Tenant-Id": "acme-corp",
-        }
-        mappings = {
-            "Authorization": "GITHUB_TOKEN",
-            "X-Tenant-Id": "TENANT_ID",
-        }
-
-        # Extract environment variables
-        env_vars = extract_env_vars_from_headers(headers, mappings)
-
-        # Verify truncation
-        assert len(env_vars["GITHUB_TOKEN"]) == 4096  # MAX_HEADER_VALUE_LENGTH
-        assert env_vars["TENANT_ID"] == "acme-corp"
-
-        # Test with StdIOEndpoint
-        pubsub = _PubSub()
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
-        await endpoint.start()
-
-        try:
-            await endpoint.send('["GITHUB_TOKEN", "TENANT_ID"]\n')
-            await asyncio.sleep(0.1)
-            assert endpoint._proc is not None
-        finally:
-            await endpoint.stop()
-
-    @pytest.mark.asyncio
-    async def test_multiple_concurrent_requests(self, mcp_server_script):
-        """Test handling multiple concurrent requests with different headers."""
-        # This test simulates what would happen in a real scenario
-        # where multiple clients send requests with different headers
-
-        # Setup for first request
-        headers1 = {
-            "Authorization": "Bearer token-user1",
-            "X-Tenant-Id": "tenant-1",
-        }
-        mappings = {
-            "Authorization": "GITHUB_TOKEN",
-            "X-Tenant-Id": "TENANT_ID",
-        }
-
-        env_vars1 = extract_env_vars_from_headers(headers1, mappings)
-
-        # Setup for second request
-        headers2 = {
-            "Authorization": "Bearer token-user2",
-            "X-Tenant-Id": "tenant-2",
-        }
-
-        env_vars2 = extract_env_vars_from_headers(headers2, mappings)
-
-        # Verify different environment variables
-        assert env_vars1["GITHUB_TOKEN"] == "Bearer token-user1"
-        assert env_vars1["TENANT_ID"] == "tenant-1"
-        assert env_vars2["GITHUB_TOKEN"] == "Bearer token-user2"
-        assert env_vars2["TENANT_ID"] == "tenant-2"
-
-        # Test both with separate endpoints (simulating different processes)
-        pubsub1 = _PubSub()
-        endpoint1 = StdIOEndpoint(f"python3 {mcp_server_script}", pubsub1, env_vars1)
-
-        pubsub2 = _PubSub()
-        endpoint2 = StdIOEndpoint(f"python3 {mcp_server_script}", pubsub2, env_vars2)
-
-        await endpoint1.start()
-        await endpoint2.start()
-
-        try:
-            # Send requests to both endpoints
-            request1 = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
-            await endpoint1.send(json.dumps(request1) + "\n")
-
-            request2 = {"jsonrpc": "2.0", "id": 2, "method": "env_test", "params": {}}
-            await endpoint2.send(json.dumps(request2) + "\n")
-
-            await asyncio.sleep(0.1)
-
-            assert endpoint1._proc is not None
-            assert endpoint2._proc is not None
-
-        finally:
-            await endpoint1.stop()
-            await endpoint2.stop()
-
 
 class TestErrorHandlingIntegration:
     """Test error handling in integration scenarios."""

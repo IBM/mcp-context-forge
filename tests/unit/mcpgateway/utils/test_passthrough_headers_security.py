@@ -11,9 +11,9 @@ from unittest.mock import Mock, patch
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
+from mcpgateway.config import settings
 from mcpgateway.utils.passthrough_headers import (
     get_passthrough_headers,
-    MAX_HEADER_VALUE_LENGTH,
     sanitize_header_value,
     validate_header_name,
 )
@@ -29,6 +29,7 @@ class TestHeaderSecurity:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_feature_flag_disabled_by_default(self, mock_settings):
         """Test that the feature is disabled by default for security."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
 
         mock_db = Mock()
@@ -67,11 +68,15 @@ class TestHeaderSecurity:
 
     def test_sanitize_header_value_length_limit(self):
         """Test that header values are limited to prevent DoS attacks."""
-        oversized_value = "A" * (MAX_HEADER_VALUE_LENGTH * 2)
+        try:
+            max_length = settings.max_header_value_length
+        except (AttributeError, TypeError):
+            max_length = 16384
+        oversized_value = "A" * (max_length * 2)
         result = sanitize_header_value(oversized_value)
 
-        assert len(result) == MAX_HEADER_VALUE_LENGTH
-        assert result == "A" * MAX_HEADER_VALUE_LENGTH
+        assert len(result) == max_length
+        assert result == "A" * max_length
 
     def test_validate_header_name_injection_prevention(self):
         """Test that header name validation prevents injection."""
@@ -108,6 +113,7 @@ class TestHeaderSecurity:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_header_validation_applied_in_passthrough(self, mock_settings, caplog):
         """Test that header validation is applied during passthrough."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -133,6 +139,7 @@ class TestHeaderSecurity:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_header_sanitization_applied_in_passthrough(self, mock_settings, caplog):
         """Test that header sanitization is applied during passthrough."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -152,6 +159,7 @@ class TestHeaderSecurity:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_empty_sanitized_header_skipped(self, mock_settings, caplog):
         """Test that headers that become empty after sanitization are skipped."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -225,6 +233,7 @@ class TestHeaderSecurity:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_header_security(self, mock_settings, caplog):
         """Test security around Authorization header handling."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         # Test that Authorization header is properly blocked with gateway auth
@@ -265,6 +274,7 @@ class TestHeaderSecurity:
         for config_case, request_case in test_cases:
             # Test that request headers are properly matched regardless of case
             mock_settings = Mock()
+            mock_settings.max_header_value_length = 4096
             mock_settings.enable_header_passthrough = True
             mock_settings.default_passthrough_headers = [config_case]
 
@@ -285,6 +295,7 @@ class TestHeaderSecurity:
         large_allowed_headers = [f"X-Header-{i}" for i in range(1000)]
 
         mock_settings = Mock()
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = large_allowed_headers
 
@@ -390,6 +401,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_content_type_denied_via_default_passthrough(self, mock_settings, caplog):
         """Test that Content-Type is denied even when in default_passthrough_headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False
         mock_settings.default_passthrough_headers = ["Content-Type", "X-Safe-Header"]
@@ -416,6 +428,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_content_type_denied_via_gateway_passthrough(self, mock_settings, caplog):
         """Test that Content-Type is denied via gateway-specific passthrough_headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False
 
@@ -446,6 +459,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_host_header_denied(self, mock_settings, caplog):
         """Test that Host header is denied (vhost/cache-poisoning protection)."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Host", "X-Safe-Header"]
 
@@ -471,6 +485,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_transfer_encoding_denied(self, mock_settings, caplog):
         """Test that Transfer-Encoding is denied (request-smuggling protection)."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Transfer-Encoding"]
 
@@ -495,6 +510,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_content_length_denied(self, mock_settings, caplog):
         """Test that Content-Length is denied (defence-in-depth)."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Content-Length"]
 
@@ -519,6 +535,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_hop_by_hop_headers_denied(self, mock_settings, caplog):
         """Test that hop-by-hop headers are denied."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = [
             "Connection",
@@ -564,6 +581,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_all_denylist_headers_blocked_together(self, mock_settings, caplog):
         """Test that all denylist headers are blocked when configured together."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = [
             "Content-Type",
@@ -621,6 +639,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_not_in_denylist(self, mock_settings):
         """Test that Authorization is NOT in the denylist (has special handling)."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Authorization"]
 
@@ -644,6 +663,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_denylist_case_insensitive(self, mock_settings, caplog):
         """Test that denylist matching is case-insensitive."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["CONTENT-TYPE", "content-length", "HoSt"]
 
@@ -674,6 +694,7 @@ class TestInboundPassthroughDenylist:
         from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
             mock_settings.enable_header_passthrough = True
             mock_settings.enable_overwrite_base_headers = False
 
@@ -708,6 +729,7 @@ class TestInboundPassthroughDenylist:
         from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
             mock_settings.enable_header_passthrough = True
             mock_settings.enable_overwrite_base_headers = False
 
@@ -745,6 +767,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_host_header_denied_via_gateway_passthrough(self, mock_settings, caplog):
         """Test that Host header is denied via gateway-specific passthrough_headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -774,6 +797,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_transfer_encoding_denied_via_gateway_passthrough(self, mock_settings, caplog):
         """Test that Transfer-Encoding is denied via gateway-specific passthrough_headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -803,6 +827,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_content_length_denied_via_gateway_passthrough(self, mock_settings, caplog):
         """Test that Content-Length is denied via gateway-specific passthrough_headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -832,6 +857,7 @@ class TestInboundPassthroughDenylist:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_hop_by_hop_headers_denied_via_gateway_passthrough(self, mock_settings, caplog):
         """Test that hop-by-hop headers are denied via gateway-specific passthrough_headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
