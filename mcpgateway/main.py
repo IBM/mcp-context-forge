@@ -1462,6 +1462,12 @@ async def _run_reverse_proxy_reaper() -> None:
     interval_seconds = timeout_seconds / 3
     session_manager = await get_reverse_proxy_session_manager()
     catalog = ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service)
+    # Composition-root wiring: the relay runtime must not import the catalog
+    # (it sits behind the dispatch module the services import, so a static
+    # import closes a cycle). Injected here, before the relay is constructed.
+    from mcpgateway.services.reverse_proxy_relay_runtime import configure_reverse_proxy_reachability  # pylint: disable=import-outside-toplevel
+
+    configure_reverse_proxy_reachability(catalog)
     relay = None
     release_owners = None
     if settings.mcpgateway_reverse_proxy_distributed_enabled:
