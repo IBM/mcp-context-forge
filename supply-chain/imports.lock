@@ -217,8 +217,8 @@ user-login = "newpavlov"
 user-name = "Artyom Pavlov"
 
 [[publisher.h2]]
-version = "0.4.15"
-when = "2026-06-15"
+version = "0.4.16"
+when = "2026-08-17"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
