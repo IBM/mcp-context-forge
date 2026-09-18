@@ -115,7 +115,7 @@ class TestQueryParamAuthRegistration:
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         url = url_normalize("https://api.tavily.com/mcp")
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], [], None))
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
@@ -171,7 +171,7 @@ class TestQueryParamAuthRegistration:
 
         async def capture_init(*args, **kwargs):
             captured_params.update(kwargs.get("auth_query_params", {}) or {})
-            return ({"tools": {"listChanged": True}}, [], [], [], [])
+            return ({"tools": {"listChanged": True}}, [], [], [], [], None)
 
         gateway_service._initialize_gateway = AsyncMock(side_effect=capture_init)
         gateway_service._notify_gateway_added = AsyncMock()
@@ -265,7 +265,7 @@ class TestQueryParamAuthUpdate:
             ]
         )
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], [], None))
         gateway_service._notify_gateway_changed = AsyncMock()
 
         mock_model = Mock()

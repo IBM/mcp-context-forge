@@ -246,6 +246,7 @@ async def test_sqlite_async_gateway_lifecycle_happy_path(lifecycle_client):
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -280,6 +281,7 @@ async def test_sqlite_async_gateway_lifecycle_happy_path(lifecycle_client):
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -324,6 +326,7 @@ async def test_sqlite_async_gateway_update_bad_url_defers_failure_to_worker(life
             [],
             [],
             [],
+            None,
         )
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
@@ -432,7 +435,8 @@ async def test_gateway_resource_cold_cache_failure_end_to_end(lifecycle_client, 
                     )
                 ],
                 [],
-                [],
+            [],
+            None,
             )
         ),
     )
