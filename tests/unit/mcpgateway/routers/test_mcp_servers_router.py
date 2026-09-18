@@ -1337,7 +1337,7 @@ def test_handshake_candidate_only_requires_gateway_id():
     with pytest.raises(ValueError, match="gateway_id is required"):
         GatewayHandshakeRequest(
             base_url="http://example.com",
-            headers={"X-Api-Key": "candidate"},
+            headers={"X-Api-Key": "candidate"},  # pragma: allowlist secret
             credential_mode="candidate_only",
         )
 
@@ -1428,7 +1428,7 @@ async def test_handshake_exact_gateway_url_mismatch_does_not_probe(user_ctx, tea
     request = GatewayHandshakeRequest(
         gateway_id="gw-team-b",
         base_url="http://example.com",
-        headers={"X-Api-Key": "candidate"},
+        headers={"X-Api-Key": "candidate"},  # pragma: allowlist secret
         credential_mode="candidate_only",
     )
     mock_client = _mock_resilient_client()
@@ -1449,7 +1449,7 @@ async def test_handshake_exact_gateway_respects_visibility(narrowed_user, team_b
     request = GatewayHandshakeRequest(
         gateway_id="gw-team-b",
         base_url="http://example.com",
-        headers={"X-Api-Key": "candidate"},
+        headers={"X-Api-Key": "candidate"},  # pragma: allowlist secret
         credential_mode="candidate_only",
     )
     mock_client = _mock_resilient_client()
