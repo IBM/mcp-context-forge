@@ -28,7 +28,7 @@ name: Multiplatform Docker Build
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "support/**"]
     tags: ["v*"]
     paths:
       - '.dockerignore'
@@ -41,7 +41,7 @@ on:
       - '.github/workflows/docker-multiplatform.yml'
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths:
       - '.dockerignore'
       - 'Containerfile'

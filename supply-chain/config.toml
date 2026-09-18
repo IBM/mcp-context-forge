@@ -297,6 +297,10 @@ criteria = "safe-to-deploy"
 version = "0.2.17"
 criteria = "safe-to-deploy"
 
+[[exemptions.pkg-config]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+
 [[exemptions.portable-atomic]]
 version = "1.13.1"
 criteria = "safe-to-deploy"
@@ -354,7 +358,7 @@ version = "2.1.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls]]
-version = "0.23.40"
+version = "0.23.45"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-platform-verifier-android]]

@@ -17,13 +17,13 @@ name: "Helm chart - lint and publish"
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths:
       - "charts/mcp-stack/**"
       - ".github/workflows/helm-publish.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths:
       - "charts/mcp-stack/**"
       - ".github/workflows/helm-publish.yml"

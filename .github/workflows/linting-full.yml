@@ -1,10 +1,14 @@
 name: linting-full
 
 on:
+  # support/** branches have no merge queue, so the full lint suite runs on PRs there.
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["support/**"]
   merge_group:
     branches: ["main"]
   push:
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths:
       - ".github/workflows/**"
       - "charts/**"
