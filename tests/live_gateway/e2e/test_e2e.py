@@ -19,6 +19,8 @@ Requirements:
         PLATFORM_ADMIN_EMAIL   Admin email (default: admin@example.com)
         MCPGATEWAY_MCP_APPS_ENABLED
                                Set true in both gateway and test process to run MCP Apps cases
+        MCP_E2E_GATEWAY_SYNC_DEADLINE
+                               Gateway tool-sync poll deadline in seconds (default: 30.0)
 
 Usage:
     make test-e2e
@@ -847,7 +849,7 @@ def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, N
 @pytest.fixture(scope="module")
 def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
     """Register fast_time_server and wait for a stable Streamable HTTP tool catalog."""
-    streamable_http_url = "http://fast_time_server:9080/mcp"
+    streamable_http_url = _GATEWAY_UPSTREAM_URL
 
     # Delete any pre-existing gateway with same name or same URL (gateway_service
     # rejects a second public gateway at the same URL), but remember what was
@@ -3186,10 +3188,6 @@ _GATEWAY_UPSTREAM_URL = "http://fast_time_server:9080/mcp"
 def _gateway_tool_names(admin_api: APIRequestContext, gateway_id: str) -> set[str]:
     """Return the names of tools currently synced from one gateway.
 
-    ``gateway_id`` filters server-side and ``limit=0`` disables the default
-    page size, so a busy catalog cannot hide a synced or removed tool from
-    this read the way an unpaginated ``GET /tools`` would.
-
     Args:
         admin_api: Authenticated admin API context.
         gateway_id: Gateway id to filter by.
@@ -3197,10 +3195,7 @@ def _gateway_tool_names(admin_api: APIRequestContext, gateway_id: str) -> set[st
     Returns:
         Names of the gateway's currently synced tools.
     """
-    resp = admin_api.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
-    assert resp.status == 200, f"GET /tools returned {resp.status}: {resp.text()[:500]}"
-    tools = _json_or_fail(resp, "GET /tools")
-    return {tool["name"] for tool in tools}
+    return {tool["name"] for tool in _gateway_tools(admin_api, gateway_id)}
 
 
 def _gateway_tools(admin_api: APIRequestContext, gateway_id: str) -> list[dict[str, Any]]:
@@ -3240,7 +3235,7 @@ def _wait_for_gateway_tool_names(admin_api: APIRequestContext, gateway_id: str, 
 
 
 @pytest.fixture
-def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
+def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[APIResponse, None, None]:
     """Register a throwaway gateway against ``fast_time_server`` and delete it after.
 
     Registered ``private`` so it never collides with the suite's shared
