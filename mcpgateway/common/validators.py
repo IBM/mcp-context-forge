@@ -1269,7 +1269,7 @@ class SecurityValidator:
             raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
 
         # Check allowed schemes (lowercase value once, not per scheme).
-        allowed_schemes = cls.ALLOWED_URL_SCHEMES
+        allowed_schemes = settings.validation_allowed_url_schemes
         value_lower = value.lower()
         if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
             raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
