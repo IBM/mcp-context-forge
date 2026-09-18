@@ -55,6 +55,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
 from sqlalchemy import select
@@ -118,6 +119,26 @@ from mcpgateway.utils.verify_credentials import (
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _check_mcp_origin(origin: Optional[str]) -> bool:
+    """Return True when the Origin header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Origin is always accepted. When ``mcp_allowed_origins`` is empty, all
+    origins are accepted (opt-in enforcement). Otherwise the origin must be an exact
+    member of the configured set or the request must be rejected with HTTP 403.
+
+    Args:
+        origin: Value of the Origin header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if origin is None:
+        return True
+    if not settings.mcp_allowed_origins:
+        return True
+    return origin in settings.mcp_allowed_origins
 
 
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
@@ -4085,11 +4106,26 @@ class SessionManagerWrapper:
             event_store = None
             stateless = True
 
+        # Enable SDK Host validation only when mcp_allowed_hosts is set.
+        _sdk_security: Optional[TransportSecuritySettings] = None
+        if settings.mcp_allowed_hosts:
+            _sdk_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=sorted(settings.mcp_allowed_hosts),
+                allowed_origins=sorted(settings.mcp_allowed_origins),
+            )
+            logger.info(
+                "MCP SDK TransportSecuritySettings active — allowed_hosts=%s allowed_origins=%s",
+                sorted(settings.mcp_allowed_hosts),
+                sorted(settings.mcp_allowed_origins),
+            )
+
         self.session_manager = StreamableHTTPSessionManager(
             app=mcp_app,
             event_store=event_store,
             json_response=settings.json_response_enabled,
             stateless=stateless,
+            security_settings=_sdk_security,
         )
         self.stack = AsyncExitStack()
 
@@ -4226,6 +4262,19 @@ class SessionManagerWrapper:
                 continue
             # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
             headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+
+        # Reject unapproved Origin before any session or backend logic (MCP §transport-security).
+        # Loopback-forwarded requests from the gateway itself skip this check.
+        _raw_origin: Optional[str] = headers.get("origin") or None
+        _is_loopback_forward = scope.get("client") and scope["client"][0] in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
+        if not _is_loopback_forward and not _check_mcp_origin(_raw_origin):
+            logger.warning("Rejecting MCP Streamable HTTP request — invalid Origin: %s", sanitize_for_log(str(_raw_origin)))
+            response = ORJSONResponse(
+                {"detail": "Forbidden: Origin not allowed"},
+                status_code=HTTP_403_FORBIDDEN,
+            )
+            await response(scope, receive, send)
+            return
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"

@@ -2117,6 +2117,32 @@ class Settings(BaseSettings):
             return parsed
         return set(v)
 
+    @field_validator("mcp_allowed_origins", "mcp_allowed_hosts", mode="before")
+    @classmethod
+    def _parse_mcp_origin_sets(cls, v: Any) -> Set[str]:
+        """Parse mcp_allowed_origins / mcp_allowed_hosts from JSON array, CSV string, or collection.
+
+        Args:
+            v: Raw env-var string, set, list, or other iterable.
+
+        Returns:
+            Set[str]: Parsed values, empty set for blank input.
+        """
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:1] in "\"'" and v[-1:] == v[:1]:
+                v = v[1:-1]
+            if not v:
+                return set()
+            try:
+                parsed = set(orjson.loads(v))
+            except orjson.JSONDecodeError:
+                parsed = {s.strip() for s in v.split(",") if s.strip()}
+            return parsed
+        if isinstance(v, (set, frozenset, list, tuple)):
+            return set(v)
+        return set()
+
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
     log_requests: bool = Field(default=False, description="Enable request payload logging with sensitive data masking")
@@ -3122,6 +3148,14 @@ class Settings(BaseSettings):
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
+
+    # MCP Origin allowlist — present-but-unlisted Origin returns HTTP 403 (MCP §transport-security).
+    # Empty (default) disables enforcement. Set via MCP_ALLOWED_ORIGINS.
+    mcp_allowed_origins: Annotated[Set[str], NoDecode] = set()
+
+    # MCP Host allowlist — enables SDK-level Host validation when non-empty.
+    # Set via MCP_ALLOWED_HOSTS. Entries: "host:port" or "host:*" for wildcard port.
+    mcp_allowed_hosts: Annotated[Set[str], NoDecode] = set()
 
     # GET /mcp server-to-client stream (ADR-052)
     # When True, GET /mcp returns an SSE stream that delivers server-initiated
