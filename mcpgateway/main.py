@@ -1606,10 +1606,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Standing subscriptions/listen streams to modern (2026-07-28) servers
     if settings.gateway_modern_listeners_enabled:
-        if settings.mcp_client_connect_mode == "legacy":
-            logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
-        else:
-            await init_modern_listener_service(_notification_svc).initialize()
+        await init_modern_listener_service(_notification_svc).initialize()
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
