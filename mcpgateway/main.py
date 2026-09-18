@@ -1453,6 +1453,47 @@ def _restore_default_sighup_handler() -> None:
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 
+def _check_url_scheme_compliance() -> None:
+    """Check active gateway, tool, and A2A agent URLs against the configured scheme allowlist.
+
+    Logs a WARNING per non-compliant record. When ``STRICT_SCHEME_ENFORCEMENT``
+    is ``True``, raises ``SystemExit`` instead so the process refuses to start.
+    """
+    # First-Party
+    from mcpgateway.db import A2AAgent as _A2AAgent  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import Gateway as _Gateway  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import Tool as _Tool  # pylint: disable=import-outside-toplevel
+
+    allowed = [s.lower() for s in settings.validation_allowed_url_schemes]
+    violations: list[str] = []
+
+    with SessionLocal() as db:
+        # ponytail: O(n) scan over enabled rows; index query if table exceeds ~10k rows
+        for gw in db.query(_Gateway.id, _Gateway.name, _Gateway.url).filter(_Gateway.enabled.is_(True)).all():
+            if gw.url and not any(gw.url.lower().startswith(s) for s in allowed):
+                msg = f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {gw.url}"
+                violations.append(msg)
+
+        for tool in db.query(_Tool.id, _Tool.original_name, _Tool.url).filter(_Tool.enabled.is_(True)).all():
+            if tool.url and not any(tool.url.lower().startswith(s) for s in allowed):
+                msg = f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {tool.url}"
+                violations.append(msg)
+
+        for agent in db.query(_A2AAgent.id, _A2AAgent.name, _A2AAgent.endpoint_url).filter(_A2AAgent.enabled.is_(True)).all():
+            if agent.endpoint_url and not any(agent.endpoint_url.lower().startswith(s) for s in allowed):
+                msg = f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {agent.endpoint_url}"
+                violations.append(msg)
+
+    if not violations:
+        return
+
+    for v in violations:
+        logger.warning(v)
+
+    if settings.strict_scheme_enforcement:
+        raise SystemExit(f"STRICT_SCHEME_ENFORCEMENT is enabled and {len(violations)} record(s) violate the URL scheme allowlist. Fix records or disable enforcement to start.")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1798,6 +1839,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
 
         refresh_slugs_on_startup()
+
+        # Issue #6264: warn (or fail) on existing records whose URL schemes
+        # violate the current VALIDATION_ALLOWED_URL_SCHEMES allowlist.
+        _check_url_scheme_compliance()
 
         # Initialize experimental dataplane publisher to send config data to redis
         if settings.dataplane_publisher:
