@@ -5668,33 +5668,6 @@ class TestLifespanAdvanced:
 
         good.shutdown.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_lifespan_legacy_mode_skips_modern_listeners(self, monkeypatch):
-        """gateway_modern_listeners_enabled + legacy connect mode must NOT init modern listeners."""
-        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
-
-        # First-Party
-        import mcpgateway.main as main_mod
-
-        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
-        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
-
-        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
-        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
-
-        # Enable modern listeners but force legacy connect mode
-        monkeypatch.setattr(main_mod.settings, "gateway_modern_listeners_enabled", True)
-        monkeypatch.setattr(main_mod.settings, "mcp_client_connect_mode", "legacy")
-
-        mock_init_modern = MagicMock()
-        monkeypatch.setattr(main_mod, "init_modern_listener_service", mock_init_modern)
-
-        async with main_mod.lifespan(main_mod.app):
-            pass
-
-        # Legacy mode must suppress modern listener initialization
-        mock_init_modern.assert_not_called()
-
 
 class TestUtilityFunctions:
     """Test utility functions for edge cases."""

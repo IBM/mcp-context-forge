@@ -12,7 +12,7 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
-from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, LATEST_HANDSHAKE_VERSION, LATEST_PROTOCOL_VERSION
+from mcp_types.version import LATEST_PROTOCOL_VERSION
 from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -67,9 +67,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             >>> resp.status_code
             200
 
-            MCP endpoints default to the latest handshake version (legacy mode is the default):
+            MCP endpoints default the version when the header is missing:
 
-            >>> from mcp_types.version import LATEST_HANDSHAKE_VERSION
+            >>> from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION
             >>> scope_rpc = {
             ...     "type": "http",
             ...     "asgi": {"version": "3.0"},
@@ -84,7 +84,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ... }
             >>> req = Request(scope_rpc)
             >>> _ = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(req, call_next))
-            >>> req.state.mcp_protocol_version == LATEST_HANDSHAKE_VERSION
+            >>> req.state.mcp_protocol_version == DEFAULT_PROTOCOL_VERSION
             True
 
             Unsupported versions return `400`:
@@ -114,26 +114,15 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
         # Get the protocol version from headers (case-insensitive)
         protocol_version = request.headers.get("mcp-protocol-version")
 
-        # Resolve accepted versions based on inbound protocol mode
-        # Import here to avoid circular import at module level
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-        if settings.mcp_inbound_protocol_mode == "legacy":
-            accepted_versions = HANDSHAKE_PROTOCOL_VERSIONS
-            default_version = LATEST_HANDSHAKE_VERSION
-        else:
-            accepted_versions = SUPPORTED_PROTOCOL_VERSIONS
-            default_version = DEFAULT_PROTOCOL_VERSION
-
         # If no protocol version provided, assume default version (backwards compatibility)
         if protocol_version is None:
-            protocol_version = default_version
-            logger.debug("No MCP-Protocol-Version header, assuming %s", default_version)
+            protocol_version = DEFAULT_PROTOCOL_VERSION
+            logger.debug(f"No MCP-Protocol-Version header, assuming {DEFAULT_PROTOCOL_VERSION}")
 
         # Validate protocol version
-        if protocol_version not in accepted_versions:
-            supported = ", ".join(accepted_versions)
-            logger.warning("Unsupported protocol version: %s", protocol_version)
+        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            supported = ", ".join(SUPPORTED_PROTOCOL_VERSIONS)
+            logger.warning(f"Unsupported protocol version: {protocol_version}")
             return ORJSONResponse(
                 status_code=400,
                 content={"error": "Bad Request", "message": f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"},

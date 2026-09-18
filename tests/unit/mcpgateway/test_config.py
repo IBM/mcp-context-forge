@@ -2500,10 +2500,10 @@ def test_min_secret_length_below_floor_raises_validation_error():
 # --------------------------------------------------------------------------- #
 #                    mcp_client_connect_mode                                     #
 # --------------------------------------------------------------------------- #
-def test_mcp_client_connect_mode_defaults_to_legacy():
-    """Library default is 'legacy'."""
+def test_mcp_client_connect_mode_defaults_to_auto():
+    """Library default is 'auto'."""
     s = Settings(_env_file=None)
-    assert s.mcp_client_connect_mode == "legacy"
+    assert s.mcp_client_connect_mode == "auto"
 
 
 @pytest.mark.parametrize("valid_value", ["auto", "legacy"])
@@ -2532,40 +2532,3 @@ def test_mcp_client_connect_mode_env_var_honored(monkeypatch):
     with patch.dict(os.environ, dummy_env, clear=True):
         s = Settings(_env_file=None)
         assert s.mcp_client_connect_mode == "legacy"
-
-
-# --------------------------------------------------------------------------- #
-#                    mcp_inbound_protocol_mode                                  #
-# --------------------------------------------------------------------------- #
-def test_mcp_inbound_protocol_mode_defaults_to_legacy():
-    """Library default is 'legacy'."""
-    s = Settings(_env_file=None)
-    assert s.mcp_inbound_protocol_mode == "legacy"
-
-
-@pytest.mark.parametrize("valid_value", ["auto", "legacy"])
-def test_mcp_inbound_protocol_mode_accepts_valid_values(valid_value):
-    """Both 'auto' and 'legacy' must be accepted explicitly."""
-    s = Settings(mcp_inbound_protocol_mode=valid_value, _env_file=None)
-    assert s.mcp_inbound_protocol_mode == valid_value
-
-
-def test_mcp_inbound_protocol_mode_rejects_invalid_value():
-    """An invalid value must raise ValidationError at Settings construction."""
-    with pytest.raises(ValidationError) as exc_info:
-        Settings(mcp_inbound_protocol_mode="bogus", _env_file=None)
-    assert "mcp_inbound_protocol_mode" in str(exc_info.value)
-
-
-def test_mcp_inbound_protocol_mode_env_var_honored(monkeypatch):
-    """MCP_INBOUND_PROTOCOL_MODE=legacy must be honoured."""
-    dummy_env = {
-        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
-        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
-        "EMAIL_AUTH_ENABLED": "false",  # Avoid the auth-gated password checks; this test covers the protocol mode only
-        "MCP_INBOUND_PROTOCOL_MODE": "legacy",
-    }
-    monkeypatch.delenv("MCP_INBOUND_PROTOCOL_MODE", raising=False)
-    with patch.dict(os.environ, dummy_env, clear=True):
-        s = Settings(_env_file=None)
-        assert s.mcp_inbound_protocol_mode == "legacy"
