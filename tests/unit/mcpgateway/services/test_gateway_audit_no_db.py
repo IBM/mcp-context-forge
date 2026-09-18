@@ -109,8 +109,10 @@ class TestGatewayAuditNoDb:
                 await gateway_service.register_gateway(db, GatewayCreate(name="g", url="https://example.com", transport="SSE"))
             db.commit.assert_called_once()
 
+    @pytest.mark.parametrize("async_lifecycle", [False, True])
     @pytest.mark.asyncio
-    async def test_update_gateway(self, gateway_service, db, gateway_db):
+    async def test_update_gateway(self, gateway_service, db, gateway_db, monkeypatch, async_lifecycle):
+        monkeypatch.setattr("mcpgateway.services.gateway_service.settings.gateway_async_lifecycle_enabled", async_lifecycle)
         with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger"):
             mock_audit.log_action = MagicMock(return_value=None)
             db.execute = Mock(return_value=_make_execute_result(scalar=gateway_db))
@@ -135,8 +137,10 @@ class TestGatewayAuditNoDb:
             mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="set_gateway_state", resource_type="gateway")
 
+    @pytest.mark.parametrize("async_lifecycle", [False, True])
     @pytest.mark.asyncio
-    async def test_delete_gateway(self, gateway_service, db, gateway_db):
+    async def test_delete_gateway(self, gateway_service, db, gateway_db, monkeypatch, async_lifecycle):
+        monkeypatch.setattr("mcpgateway.services.gateway_service.settings.gateway_async_lifecycle_enabled", async_lifecycle)
         with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger"):
             mock_audit.log_action = MagicMock(return_value=None)
             db.execute = Mock(return_value=_make_execute_result(scalar=gateway_db, rowcount=1))
