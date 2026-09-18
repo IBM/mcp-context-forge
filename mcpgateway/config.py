@@ -2247,7 +2247,7 @@ class Settings(BaseSettings):
         default=32,
         ge=0,
         le=128,
-        description=("Max per-control result records exported per tool invocation. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
+        description=("Max per-control result records exported per tool invocation. Denials take priority; zero emits only the summary. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
     )
     cpex_control_telemetry_max_attributes: int = Field(
         default=256,
@@ -2264,8 +2264,9 @@ class Settings(BaseSettings):
     cpex_control_telemetry_emit_reason: bool = Field(
         default=False,
         description=(
-            "Emit cpex.control.result.reason and cpex.control.result.error_code on "
-            "per-control spans. Disabled by default because these fields may contain "
+            "Emit free-form execution reasons and error codes on per-control spans. "
+            "Validated denial outcome codes are emitted independently of this flag. "
+            "Disabled by default because free-form fields may contain "
             "PII, tool argument values, or exception content. Enable only when the "
             "observability sink is appropriately secured and a redaction boundary is "
             "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
