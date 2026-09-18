@@ -802,7 +802,7 @@ wheels = [
 [[package]]
 name = "cpex"
 version = "0.1.4"
-source = { git = "https://github.com/contextforge-org/cpex?branch=0.1.x-mcp-2.0.0#6f0c580c55f888aebcb4cd18326f8921fdfda3c9" }
+source = { git = "https://github.com/contextforge-org/cpex?rev=6f0c580c55f888aebcb4cd18326f8921fdfda3c9#6f0c580c55f888aebcb4cd18326f8921fdfda3c9" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx2" },
@@ -2799,7 +2799,7 @@ requires-dist = [
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "click", specifier = ">=8.4.2" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
-    { name = "cpex", git = "https://github.com/contextforge-org/cpex?branch=0.1.x-mcp-2.0.0" },
+    { name = "cpex", git = "https://github.com/contextforge-org/cpex?rev=6f0c580c55f888aebcb4cd18326f8921fdfda3c9" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.7" },
