@@ -3895,6 +3895,106 @@ class TestGatewayRefresh:
         assert by_name["customer_data"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-search"}}
         assert by_name["customer_record"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-record"}}
 
+    @pytest.mark.asyncio
+    async def test_resource_template_validation_failure_does_not_drop_siblings(self, gateway_service):
+        """A template whose uriTemplate fails validation is skipped, not batch-fatal.
+
+        RFC 6570 list-expansion templates (e.g. ``{?offset,limit}``) contain a comma,
+        which the default ``validation_safe_uri_pattern`` rejects. The ingest loop used
+        to validate the whole batch inside one try, so the invalid template and every
+        template listed after it were silently dropped.
+        """
+        mock_session = AsyncMock()
+        mock_init = MagicMock()
+        mock_init.capabilities.model_dump.return_value = {"resources": {"subscribe": False}}
+        mock_session.initialize.return_value = mock_init
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
+        mock_list_tools = MagicMock(nextCursor=None)
+        mock_list_tools.tools = [tool]
+        mock_session.list_tools.return_value = mock_list_tools
+
+        mock_session.list_resources.return_value = MagicMock(resources=[], nextCursor=None)
+
+        invalid_template = MagicMock()
+        invalid_template.model_dump.return_value = {
+            "uriTemplate": "stub://sliced/{section}{?offset,limit}",
+            "name": "sliced",
+        }
+        valid_template = MagicMock()
+        valid_template.model_dump.return_value = {
+            "uriTemplate": "https://example.com/items/{item_id}",
+            "name": "items",
+        }
+        mock_list_templates = MagicMock(nextCursor=None)
+        mock_list_templates.resourceTemplates = [invalid_template, valid_template]
+        mock_session.list_resource_templates.return_value = mock_list_templates
+
+        mock_session.list_prompts.return_value = MagicMock(prompts=[])
+
+        mock_sse_cm = AsyncMock()
+        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
+        mock_sse_cm.__aexit__.return_value = None
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_session
+        mock_client_cm.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
+                _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
+
+        assert [resource.name for resource in resources] == ["items"]
+        assert resources[0].uri_template == "https://example.com/items/{item_id}"
+
+    @pytest.mark.asyncio
+    async def test_resource_validation_failure_does_not_drop_siblings(self, gateway_service):
+        """A resource whose uri fails validation is skipped, not batch-fatal.
+
+        The resources loop already had a per-item try, but its fallback rebuilt
+        ``ResourceCreate`` with the very same rejected uri, so the field validator
+        raised a second time and the exception still reached the batch handler -
+        losing every resource listed after the offending one.
+        """
+        mock_session = AsyncMock()
+        mock_init = MagicMock()
+        mock_init.capabilities.model_dump.return_value = {"resources": {"subscribe": False}}
+        mock_session.initialize.return_value = mock_init
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
+        mock_list_tools = MagicMock(nextCursor=None)
+        mock_list_tools.tools = [tool]
+        mock_session.list_tools.return_value = mock_list_tools
+
+        first_ok = MagicMock()
+        first_ok.model_dump.return_value = {"uri": "https://example.com/first", "name": "first_ok"}
+        rejected = MagicMock()
+        rejected.model_dump.return_value = {"uri": "https://example.com/report?cols=name,size", "name": "rejected"}
+        last_ok = MagicMock()
+        last_ok.model_dump.return_value = {"uri": "https://example.com/last", "name": "last_ok"}
+        mock_list_resources = MagicMock(nextCursor=None)
+        mock_list_resources.resources = [first_ok, rejected, last_ok]
+        mock_session.list_resources.return_value = mock_list_resources
+
+        mock_session.list_resource_templates.return_value = MagicMock(resourceTemplates=[], nextCursor=None)
+        mock_session.list_prompts.return_value = MagicMock(prompts=[])
+
+        mock_sse_cm = AsyncMock()
+        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
+        mock_sse_cm.__aexit__.return_value = None
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_session
+        mock_client_cm.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
+                _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
+
+        assert [resource.name for resource in resources] == ["first_ok", "last_ok"]
+
     def test_validate_tools_all_invalid(self, gateway_service):
         """Test failure when all tools are invalid."""
         tools = [
