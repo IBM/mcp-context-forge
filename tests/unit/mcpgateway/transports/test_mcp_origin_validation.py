@@ -10,6 +10,10 @@ Covers:
 - handle_streamable_http integration: 403 returned before any session/backend logic
   when MCP_ALLOWED_ORIGINS is configured and the Origin header is rejected.
 - Internally-forwarded requests (loopback + x-forwarded-internally) bypass the check.
+- SDK TransportSecuritySettings wiring: security_settings passed when mcp_allowed_hosts is
+  set; None when mcp_allowed_hosts is empty.
+- Split-enforcement path: mcp_allowed_hosts set, mcp_allowed_origins empty — custom gate
+  enforces origins while SDK receives allowed_origins=[].
 """
 
 # Future
@@ -17,7 +21,6 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
-from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -382,10 +385,69 @@ def test_session_manager_wrapper_builds_sdk_security_settings(monkeypatch):
     monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://myapp.example.com"})
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
 
-    wrapper = SessionManagerWrapper()
+    SessionManagerWrapper()
 
     security = captured_kwargs.get("security_settings")
     assert security is not None, "security_settings must be passed when mcp_allowed_hosts is set"
     assert security.enable_dns_rebinding_protection is True
     assert "myapp.example.com:4444" in security.allowed_hosts
     assert "https://myapp.example.com" in security.allowed_origins
+
+
+def test_session_manager_wrapper_no_sdk_security_when_hosts_empty(monkeypatch):
+    """SessionManagerWrapper passes security_settings=None to the SDK when mcp_allowed_hosts is empty."""
+    captured_kwargs: dict = {}
+
+    class CapturingSessionManager(DummySessionManager):
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", set())
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://myapp.example.com"})
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
+
+    SessionManagerWrapper()
+
+    assert captured_kwargs.get("security_settings") is None, (
+        "security_settings must be None when mcp_allowed_hosts is empty — "
+        "enabling SDK host validation with an empty allowlist would reject all requests"
+    )
+
+
+@pytest.mark.asyncio
+async def test_origin_enforced_by_custom_gate_when_sdk_hosts_not_configured(monkeypatch):
+    """When mcp_allowed_hosts is empty but mcp_allowed_origins is set, the custom gate still rejects
+    unapproved origins (the SDK receives allowed_origins=[] and enforces nothing on its own)."""
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", set())
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    scope = _make_scope(
+        "/mcp",
+        headers=[(b"origin", b"https://attacker.invalid")],
+    )
+    await wrapper.handle_streamable_http(scope, receive, send)
+    await wrapper.shutdown()
+
+    # The custom _check_mcp_origin gate must reject this — the SDK is not configured for
+    # Origin enforcement in this path (allowed_origins=[] is not passed to TransportSecuritySettings
+    # because mcp_allowed_hosts is empty and _sdk_security is None).
+    assert sent, "Expected at least one ASGI message"
+    start_msg = sent[0]
+    assert start_msg["type"] == "http.response.start"
+    assert start_msg["status"] == 403, (
+        f"Custom origin gate must reject unapproved origins even when mcp_allowed_hosts is empty, got {sent}"
+    )
+    assert not wrapper.session_manager.called, "Session manager must NOT be called when origin is rejected"
