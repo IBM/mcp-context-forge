@@ -84,7 +84,7 @@ def _build_test_w3c_traceparent() -> tuple[str, str, str]:
 @pytest_asyncio.fixture
 async def create_traced_app_olg(monkeypatch, tmp_path):
     """Factory fixture to create a real temp-DB gateway app with configurable OutputLengthGuardPlugin."""
-    async def _make_app(plugin_config_overrides: dict | None = None):
+    async def _make_app(plugin_config_overrides: dict | None = None, upstream_response: httpx.Response | None = None):
         engine = create_engine(
             "sqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -202,15 +202,15 @@ async def create_traced_app_olg(monkeypatch, tmp_path):
         test_app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
         test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
-        oversized_text = "A" * 500
-        upstream_response = httpx.Response(
-            200,
-            json={
-                "content": [{"type": "text", "text": oversized_text}],
-                "isError": False,
-            },
-            request=httpx.Request("POST", UPSTREAM_TOOL_URL),
-        )
+        if upstream_response is None:
+            upstream_response = httpx.Response(
+                200,
+                json={
+                    "content": [{"type": "text", "text": "A" * 500}],
+                    "isError": False,
+                },
+                request=httpx.Request("POST", UPSTREAM_TOOL_URL),
+            )
 
         from tests.e2e.test_otel_plugin_metadata_e2e import _mock_outbound_rest_request
         mock_request = AsyncMock(return_value=upstream_response)
@@ -344,6 +344,68 @@ class TestOutputLengthGuardE2E:
             rpc_data = rpc_resp.json()
             # In JSON-RPC format, error is returned on violation
             assert "error" in rpc_data or rpc_data.get("isError") is True
+
+        test_app.dependency_overrides.clear()
+        engine.dispose()
+
+    async def test_traced_tool_call_truncates_oversized_structured_output(
+        self, create_traced_app_olg
+    ):
+        """Oversized text nested inside a list-of-MCP-content-items is truncated through the full gateway stack.
+
+        The upstream tool returns a content array with two oversized text items.
+        The plugin must truncate both items and return modified content through
+        the gateway's /rpc endpoint.
+        """
+        structured_upstream = httpx.Response(
+            200,
+            json={
+                "content": [
+                    {"type": "text", "text": "B" * 500},
+                    {"type": "text", "text": "C" * 500},
+                ],
+                "isError": False,
+            },
+            request=httpx.Request("POST", UPSTREAM_TOOL_URL),
+        )
+        client, test_app, engine = await create_traced_app_olg(
+            {"strategy": "truncate", "max_chars": 50},
+            upstream_response=structured_upstream,
+        )
+        async with client:
+            token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
+            auth_headers = make_auth_headers(token)
+
+            tool_payload = {
+                "tool": {
+                    "name": "e2e_structured_tool_trunc",
+                    "description": "Tool returning two oversized text items",
+                    "integrationType": "REST",
+                    "url": UPSTREAM_TOOL_URL,
+                    "requestType": "POST",
+                    "visibility": "public",
+                },
+                "team_id": None,
+            }
+            reg_resp = await client.post("/tools", json=tool_payload, headers=auth_headers)
+            assert reg_resp.status_code == 200
+            assigned_name = reg_resp.json().get("name", "e2e-structured-tool-trunc")
+
+            rpc_payload = {
+                "jsonrpc": "2.0",
+                "id": "e2e-test-3",
+                "method": "tools/call",
+                "params": {"name": assigned_name, "arguments": {}},
+            }
+            rpc_resp = await client.post("/rpc", json=rpc_payload, headers=auth_headers)
+            assert rpc_resp.status_code == 200
+            rpc_data = rpc_resp.json()
+            assert "result" in rpc_data
+            result_content = rpc_data["result"]["content"]
+            assert len(result_content) == 2
+            for item in result_content:
+                assert item["type"] == "text"
+                assert len(item["text"]) <= 50
 
         test_app.dependency_overrides.clear()
         engine.dispose()
