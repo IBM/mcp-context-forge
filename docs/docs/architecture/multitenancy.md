@@ -793,7 +793,7 @@ ContextForge now supports:
   - `POST /auth/email/reset-password/{token}`
 - Admin unlock flow:
   - `POST /auth/email/admin/users/{email}/unlock`
-- Admin password reset via UI and API (`PUT /auth/email/admin/users/{email}`)
+- Admin password reset via UI and API (`PATCH /auth/email/admin/users/{email}`)
 
 Operational guidance, Kubernetes recovery commands, emergency SQL procedures, and
 SMTP/reset configuration are documented in:
