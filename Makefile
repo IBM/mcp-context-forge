@@ -6266,17 +6266,16 @@ ibmcloud-deploy:
 		echo "   make ibmcloud-cli-install"; \
 		exit 1; \
 	fi; \
-	_secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); \
-	_secret_rc=$$?; \
-	if [ $$_secret_rc -ne 0 ]; then \
+	if ! _secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); then \
 		if echo "$$_secret_err" | grep -qiE "Secret ['\"]?$(IBMCLOUD_REGISTRY_SECRET)['\"]? not found"; then \
 			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
 			echo "   Create it first (first-time setup only):"; \
 			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
 			echo "       --format registry \\"; \
 			echo "       --server $$(echo $(IBMCLOUD_IMAGE_NAME) | cut -d/ -f1) \\"; \
-			echo "       --username iamapikey --password \$$IBMCLOUD_API_KEY"; \
-			echo "   See the docs for alternative credential types (service ID keys, etc.)."; \
+			echo "       --username iamapikey --password \$$IBMCLOUD_ICR_API_KEY"; \
+			echo "   (Use a long-lived IAM API key — IBMCLOUD_API_KEY may be blank for SSO users.)"; \
+			echo "   See the docs for service ID key setup and alternative credential types."; \
 		else \
 			echo "❌ Could not verify registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)'."; \
 			echo "   Diagnostic: $$_secret_err"; \
