@@ -16,7 +16,7 @@ import base64
 import binascii
 from datetime import datetime, timezone
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 # Third-Party
@@ -38,7 +38,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
+from mcpgateway.services.a2a_protocol import is_streaming_a2a_method, PinnedA2AInvocation, prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
@@ -1996,6 +1996,124 @@ class A2AAgentService(BaseService):
             return _filter_sensitive_headers(whitelisted)
         return whitelisted
 
+    @staticmethod
+    def _aggregate_a2a_stream_events(events: List[Dict[str, Any]], request_id: Any = 1) -> Dict[str, Any]:
+        """Merge A2A streaming events into a single JSON-RPC Task response.
+
+        Streaming agents emit incremental artifact deltas. Each event carries an
+        ``append`` flag: ``True`` extends the artifact's parts, ``False`` replaces
+        them. The final status event supplies the terminal task state.
+
+        Args:
+            events: Decoded ``result`` payloads from the SSE ``data:`` lines.
+            request_id: JSON-RPC id to echo back on the aggregated response.
+
+        Returns:
+            A JSON-RPC response envelope wrapping one aggregated A2A Task.
+
+        Examples:
+            >>> A2AAgentService._aggregate_a2a_stream_events([
+            ...     {"taskId": "t1", "artifact": {"artifactId": "a", "parts": [{"text": "Hel"}]}},
+            ...     {"taskId": "t1", "artifact": {"artifactId": "a", "parts": [{"text": "lo"}]}, "append": True},
+            ...     {"taskId": "t1", "status": {"state": "completed"}},
+            ... ])["result"]["artifacts"][0]["parts"]
+            [{'text': 'Hel'}, {'text': 'lo'}]
+
+            A non-append delta replaces what came before:
+
+            >>> A2AAgentService._aggregate_a2a_stream_events([
+            ...     {"artifact": {"artifactId": "a", "parts": [{"text": "draft"}]}},
+            ...     {"artifact": {"artifactId": "a", "parts": [{"text": "final"}]}, "append": False},
+            ... ])["result"]["artifacts"][0]["parts"]
+            [{'text': 'final'}]
+        """
+        artifacts: Dict[str, Dict[str, Any]] = {}
+        order: List[str] = []
+        state = "completed"
+        task_id = None
+        context_id = None
+
+        for result in events:
+            task_id = result.get("taskId") or result.get("id") or task_id
+            context_id = result.get("contextId") or context_id
+
+            artifact = result.get("artifact")
+            if artifact:
+                artifact_id = artifact.get("artifactId")
+                if artifact_id not in artifacts:
+                    artifacts[artifact_id] = {"artifactId": artifact_id, "name": artifact.get("name"), "parts": []}
+                    order.append(artifact_id)
+                parts = artifact.get("parts") or []
+                if result.get("append", True):
+                    artifacts[artifact_id]["parts"].extend(parts)
+                else:
+                    artifacts[artifact_id]["parts"] = list(parts)
+
+            status = result.get("status")
+            if isinstance(status, dict) and status.get("state"):
+                state = status["state"]
+
+        task = {
+            "id": task_id,
+            "contextId": context_id,
+            "status": {"state": state},
+            "artifacts": [artifacts[artifact_id] for artifact_id in order],
+            "kind": "task",
+        }
+        return {"jsonrpc": "2.0", "result": task, "id": request_id}
+
+    async def _invoke_agent_streaming(
+        self,
+        client: Any,
+        pinned: PinnedA2AInvocation,
+        request_data: Dict[str, Any],
+    ) -> Tuple[int, Optional[Dict[str, Any]], str]:
+        """Invoke an A2A agent that answers with an SSE stream.
+
+        The default passthrough posts and calls ``.json()`` on the body, which cannot
+        read a ``text/event-stream`` reply: the agent either fails JSON decoding or,
+        when it holds the connection open while reasoning, dies at the upstream idle
+        timeout. This consumes the stream to completion and reassembles the artifact
+        deltas into one Task, so the rest of ``invoke_agent`` handles the result
+        exactly as it handles a non-streaming reply.
+
+        The response body is read INSIDE the stream context; ``.text`` is not
+        available once the context exits.
+
+        Args:
+            client: Isolated SSRF-pinned httpx client.
+            pinned: Connection-pinned invocation target.
+            request_data: JSON-RPC request body to send.
+
+        Returns:
+            Tuple of (status_code, response_json, response_text). ``response_json``
+            is ``None`` when the agent returned a non-200 status.
+        """
+        headers = dict(pinned.headers)
+        headers.setdefault("Accept", "text/event-stream")
+
+        events: List[Dict[str, Any]] = []
+
+        async with client.stream("POST", pinned.endpoint_url, json=request_data, headers=headers, extensions=pinned.extensions) as response:
+            if response.status_code != 200:
+                body = (await response.aread()).decode(errors="replace")
+                return response.status_code, None, body
+
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                try:
+                    event = json.loads(line[5:].strip())
+                except (ValueError, TypeError):
+                    # A malformed or keep-alive frame must not abort the stream.
+                    continue
+                result = event.get("result") or {}
+                if result:
+                    events.append(result)
+
+        response_json = self._aggregate_a2a_stream_events(events, (request_data or {}).get("id", 1))
+        return 200, response_json, json.dumps(response_json)
+
     async def invoke_agent(
         self,
         db: Session,
@@ -2465,11 +2583,17 @@ class A2AAgentService(BaseService):
                     raise A2AAgentError(error_message) from validation_error
 
                 # Make HTTP request to the agent endpoint using an isolated SSRF-sensitive client.
+                # Streaming methods answer with text/event-stream and must be consumed
+                # as a stream; the body is read inside the context in both branches
+                # because a streamed response exposes no body once it closes.
                 async with get_isolated_http_client(follow_redirects=False) as client:
-                    http_response = await client.post(pinned.endpoint_url, json=prepared.request_data, headers=pinned.headers, extensions=pinned.extensions)
-                status_code = http_response.status_code
-                response_json = http_response.json() if status_code == 200 else None
-                response_text = http_response.text
+                    if is_streaming_a2a_method(prepared.request_data.get("method") if isinstance(prepared.request_data, dict) else None):
+                        status_code, response_json, response_text = await self._invoke_agent_streaming(client, pinned, prepared.request_data)
+                    else:
+                        http_response = await client.post(pinned.endpoint_url, json=prepared.request_data, headers=pinned.headers, extensions=pinned.extensions)
+                        status_code = http_response.status_code
+                        response_json = http_response.json() if status_code == 200 else None
+                        response_text = http_response.text
 
                 call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
