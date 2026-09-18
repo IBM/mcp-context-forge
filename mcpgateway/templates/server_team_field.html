@@ -1,0 +1,29 @@
+{# Team assignment field for virtual-server create/edit forms. #}
+{% if user_teams %}
+<div class="mt-4">
+  <label
+    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+    for="{{ select_id }}"
+    >Team</label
+  >
+  <select
+    name="team_id"
+    id="{{ select_id }}"
+    class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+  >
+    <option value="">Select a team...</option>
+    {% for team in user_teams %}
+    <option
+      value="{{ team.id }}"
+      {% if default_team_id and default_team_id == team.id %}selected{% endif %}
+    >
+      {{ team.name }}{% if team.is_personal %} (personal){% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+    Assign the virtual server to a shared team so other members can manage it.
+    When left unset, the platform assigns your personal team.
+  </p>
+</div>
+{% endif %}
