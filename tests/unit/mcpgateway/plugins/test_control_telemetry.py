@@ -22,24 +22,27 @@ Covers:
 """
 
 # Standard
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+# Third-Party
+import pytest
 
 # First-Party
 import mcpgateway.config as cfg_mod
 from mcpgateway.plugins.control_telemetry import (
-    _MAX_CONFIG_KEYS,
-    _MAX_RECORDS_PER_CALL,
-    ControlTelemetryAccumulator,
     _build_flattened_attributes,
     _enforcement_point,
     _get_max_results,
+    _MAX_CONFIG_KEYS,
+    _MAX_RECORDS_PER_CALL,
     _per_control_attributes,
+    _safe_denial_details,
     _safe_str,
     _sanitize_config_key,
+    ControlTelemetryAccumulator,
     record_control_telemetry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -160,6 +163,7 @@ class TestAccumulatorAdd:
 
     def test_noop_when_executions_not_iterable(self):
         """add() returns [] without raising when executions is truthy but non-iterable."""
+        # Standard
         import types
 
         result = types.SimpleNamespace(executions=42, continue_processing=True)
@@ -253,9 +257,14 @@ class TestAggregate:
         skipped = _make_rec(status="skipped")
         disabled = _make_rec(status="disabled")
         cancelled = _make_rec(status="cancelled")
-        acc = self._make_acc_with_records([
-            ("pre", completed), ("pre", skipped), ("pre", disabled), ("pre", cancelled),
-        ])
+        acc = self._make_acc_with_records(
+            [
+                ("pre", completed),
+                ("pre", skipped),
+                ("pre", disabled),
+                ("pre", cancelled),
+            ]
+        )
         assert acc.aggregate()["cpex.control.invocation_count"] == 1  # only completed counts
 
     def test_matched_count(self):
@@ -340,10 +349,11 @@ class TestAggregate:
         assert len(acc.records) == 1
         attrs = _per_control_attributes("pre", denying_record, acc.denial_details_for(denying_record))
         assert attrs["cpex.control.result.allowed"] is False
-        assert attrs["cpex.control.result.violation_code"] == "RATE_LIMIT"
+        assert attrs["cpex.control.result.error_code"] == "RATE_LIMIT"
         assert attrs["cpex.control.result.mcp_error_code"] == -32029
         assert attrs["cpex.control.result.http_status_code"] == 429
-        assert attrs["cpex.control.result.metadata.backend"] == "redis"
+        assert attrs["cpex.control.result.metadata.throttled"] is True
+        assert "cpex.control.result.metadata.backend" not in attrs
         assert "token" not in str(attrs)
 
     def test_add_violation_rejects_unsafe_outcome_data(self):
@@ -354,13 +364,13 @@ class TestAggregate:
             violation_code="RATE_LIMIT secret=abc",
             mcp_error_code=True,
             http_status_code=99,
-            metadata={"allowed": 0, "backend": "custom", "headers": {"Authorization": "secret"}},
+            metadata={"allowed": "false", "backend": "custom", "headers": {"Authorization": "secret"}},
         )
         acc = ControlTelemetryAccumulator()
         acc.add_violation(SimpleNamespace(executions=[], denial_outcome=outcome), hook="pre")
 
         attrs = _per_control_attributes("pre", denying_record, acc.denial_details_for(denying_record))
-        assert "cpex.control.result.violation_code" not in attrs
+        assert "cpex.control.result.error_code" not in attrs
         assert "cpex.control.result.mcp_error_code" not in attrs
         assert "cpex.control.result.http_status_code" not in attrs
         assert "metadata" not in str(attrs)
@@ -391,7 +401,7 @@ class TestAggregate:
         acc.add_violation(SimpleNamespace(executions=[prior_record, denying_record], denial_outcome=outcome), hook="pre")
 
         assert [record for _hook, record in acc.records] == [prior_record, denying_record]
-        assert acc.denial_details_for(denying_record) == {"violation_code": "RATE_LIMIT"}
+        assert acc.denial_details_for(denying_record) == {"error_code": "RATE_LIMIT"}
 
     def test_add_violation_ignores_unreadable_execution_history(self):
         """A malformed CPEX exception must still produce denied summary telemetry."""
@@ -477,7 +487,7 @@ class TestAggregateExceptionPath:
         bad.status = "completed"
         bad.duration_ns = property(lambda self: (_ for _ in ()).throw(ValueError("bad")))
         good = _make_rec(status="completed", duration_ns=100)
-        acc._records.append(("pre", bad))   # pylint: disable=protected-access
+        acc._records.append(("pre", bad))  # pylint: disable=protected-access
         acc._records.append(("pre", good))  # pylint: disable=protected-access
         agg = acc.aggregate()
         # bad record was counted (status read succeeded) but its duration is 0 (exception caught)
@@ -609,9 +619,9 @@ class TestEnforcementPoint:
     def _acc(self, pre: bool = False, post: bool = False):
         acc = ControlTelemetryAccumulator()
         if pre:
-            acc._records.append(("pre", _make_rec()))    # pylint: disable=protected-access
+            acc._records.append(("pre", _make_rec()))  # pylint: disable=protected-access
         if post:
-            acc._records.append(("post", _make_rec()))   # pylint: disable=protected-access
+            acc._records.append(("post", _make_rec()))  # pylint: disable=protected-access
         return acc
 
     def test_pre_only(self):
@@ -679,7 +689,7 @@ class TestBuildFlattenedAttributes:
     def test_collision_drops_both_and_emits_counter(self):
         """Two records with the same plugin_name cause both to be dropped."""
         acc = ControlTelemetryAccumulator()
-        acc._records.append(("pre", _make_rec(plugin_name="myctrl")))   # pylint: disable=protected-access
+        acc._records.append(("pre", _make_rec(plugin_name="myctrl")))  # pylint: disable=protected-access
         acc._records.append(("post", _make_rec(plugin_name="myctrl")))  # pylint: disable=protected-access
         flat = _build_flattened_attributes(acc, 32)
         assert not any("cpex.control.results.myctrl." in k for k in flat)
@@ -733,8 +743,8 @@ class TestBuildFlattenedAttributesEdgeCases:
         bad = MagicMock()
         bad.plugin_name = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
         good_rec = _make_rec(plugin_name="good_ctrl", status="completed")
-        acc._records.append(("pre", bad))        # pylint: disable=protected-access
-        acc._records.append(("pre", good_rec))   # pylint: disable=protected-access
+        acc._records.append(("pre", bad))  # pylint: disable=protected-access
+        acc._records.append(("pre", good_rec))  # pylint: disable=protected-access
         flat = _build_flattened_attributes(acc, 32)
         assert "cpex.control.results.good_ctrl.status" in flat
 
@@ -1101,12 +1111,17 @@ class TestAggregateRecordsReceived:
     def test_records_received_includes_skipped_disabled_cancelled(self):
         """records_received counts ALL accumulated records, including non-active statuses."""
         acc = ControlTelemetryAccumulator()
-        acc.add(_make_result([
-            _make_rec(plugin_name="a", status="completed"),
-            _make_rec(plugin_name="b", status="skipped"),
-            _make_rec(plugin_name="c", status="disabled"),
-            _make_rec(plugin_name="d", status="cancelled"),
-        ]), hook="pre")
+        acc.add(
+            _make_result(
+                [
+                    _make_rec(plugin_name="a", status="completed"),
+                    _make_rec(plugin_name="b", status="skipped"),
+                    _make_rec(plugin_name="c", status="disabled"),
+                    _make_rec(plugin_name="d", status="cancelled"),
+                ]
+            ),
+            hook="pre",
+        )
         agg = acc.aggregate()
         assert agg["cpex.control.records_received"] == 4
         # invocation_count only counts active statuses
@@ -1114,7 +1129,9 @@ class TestAggregateRecordsReceived:
 
     def test_results_count_capped_at_max_results(self):
         """results_count = min(records_received, max_results)."""
+        # First-Party
         import mcpgateway.config as cfg_mod  # noqa: PLC0415
+
         mock_settings = MagicMock()
         mock_settings.cpex_control_telemetry_max_results = 3
         original = cfg_mod.settings
@@ -1143,7 +1160,9 @@ class TestEmitReasonFlag:
 
     def _attrs_with_reason_flag(self, flag: bool) -> dict:
         rec = _make_rec(reason="PII found", error_code="DENY_001")
+        # First-Party
         import mcpgateway.config as cfg_mod  # noqa: PLC0415
+
         mock_settings = MagicMock()
         mock_settings.cpex_control_telemetry_emit_reason = flag
         original = cfg_mod.settings
@@ -1172,7 +1191,9 @@ class TestEmitReasonFlag:
         rec.artifact_name = None
         rec.artifact_id = None
         acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        # First-Party
         import mcpgateway.config as cfg_mod  # noqa: PLC0415
+
         mock_settings = MagicMock()
         mock_settings.cpex_control_telemetry_emit_reason = False
         original = cfg_mod.settings
@@ -1191,7 +1212,9 @@ class TestEmitReasonFlag:
         rec.artifact_name = None
         rec.artifact_id = None
         acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        # First-Party
         import mcpgateway.config as cfg_mod  # noqa: PLC0415
+
         mock_settings = MagicMock()
         mock_settings.cpex_control_telemetry_emit_reason = True
         original = cfg_mod.settings
@@ -1205,13 +1228,17 @@ class TestEmitReasonFlag:
 
     def test_emit_reason_enabled_returns_bool(self):
         """_emit_reason_enabled() always returns a plain bool."""
+        # First-Party
         from mcpgateway.plugins.control_telemetry import _emit_reason_enabled  # noqa: PLC0415
+
         assert isinstance(_emit_reason_enabled(), bool)
 
     def test_emit_reason_enabled_default_false(self):
         """Default value is False when setting is absent."""
-        from mcpgateway.plugins.control_telemetry import _emit_reason_enabled  # noqa: PLC0415
+        # First-Party
         import mcpgateway.config as cfg_mod  # noqa: PLC0415
+        from mcpgateway.plugins.control_telemetry import _emit_reason_enabled  # noqa: PLC0415
+
         mock_settings = MagicMock(spec=[])  # no cpex_control_telemetry_emit_reason attr
         original = cfg_mod.settings
         try:
@@ -1293,9 +1320,7 @@ class TestMarkPluginError:
         assert captured_attributes.get("cpex.control.plugin_error") is True
         # result.allowed must be ABSENT — the decision is indeterminate when a PluginError
         # fires with no denial flag set.  Dashboards must treat absence as "unknown".
-        assert "cpex.control.result.allowed" not in captured_attributes, (
-            "cpex.control.result.allowed must be absent when decision is indeterminate (PluginError, no denial)"
-        )
+        assert "cpex.control.result.allowed" not in captured_attributes, "cpex.control.result.allowed must be absent when decision is indeterminate (PluginError, no denial)"
 
 
 # ---------------------------------------------------------------------------
@@ -1308,19 +1333,25 @@ class TestEnforcementPointDenialFlags:
 
     def test_enforcement_point_pre_from_flag_no_records(self):
         """mark_denied(hook='pre') with no records should yield enforcement_point='pre'."""
+        # First-Party
         from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
+
         acc = ControlTelemetryAccumulator()
         acc.mark_denied(hook="pre")
         assert _enforcement_point(acc) == "pre"
 
     def test_enforcement_point_post_from_flag_no_records(self):
+        # First-Party
         from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
+
         acc = ControlTelemetryAccumulator()
         acc.mark_denied(hook="post")
         assert _enforcement_point(acc) == "post"
 
     def test_enforcement_point_none_no_records_no_flags(self):
+        # First-Party
         from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
+
         acc = ControlTelemetryAccumulator()
         assert _enforcement_point(acc) == "none"
 
@@ -1459,3 +1490,202 @@ class TestPluginErrorIndeterminate:
         acc = ControlTelemetryAccumulator()
         acc.mark_plugin_error()
         assert _enforcement_point(acc) == "none"
+
+
+class TestDenialMetricContract:
+    """Validate the opt-in CPEX contract without depending on a future CPEX release."""
+
+    def test_generic_metrics_preserve_exact_types_and_zero(self):
+        metrics = {"policy.matched": False, "rejected_count": 0, "score": 0.75, "zero": 0.0, "minimum": -(2**63), "maximum": 2**63 - 1}
+        details = _safe_denial_details(SimpleNamespace(metadata=MappingProxyType(metrics)))
+        assert details == {f"metadata.{key}": value for key, value in metrics.items()}
+        assert {key: type(value) for key, value in details.items()} == {f"metadata.{key}": type(value) for key, value in metrics.items()}
+
+    @pytest.mark.parametrize("value", ["redis", None, [1], {"nested": 1}, float("nan"), float("inf"), float("-inf"), -(2**63) - 1, 2**63, object()])
+    def test_unsafe_values_dropped_without_losing_safe_metrics(self, value):
+        details = _safe_denial_details(SimpleNamespace(metadata={"unsafe": value, "kept": False}))
+        assert details == {"metadata.kept": False}
+
+    @pytest.mark.parametrize("key", ["", "x" * 65, "bad key", "newline\n", "é", 42])
+    def test_invalid_names_dropped(self, key):
+        assert _safe_denial_details(SimpleNamespace(metadata={key: 1, "kept": 0})) == {"metadata.kept": 0}
+
+    def test_metadata_input_cap_and_key_boundary(self):
+        metrics = {f"metric_{index}": index for index in range(15)}
+        metrics["x" * 64] = False
+        assert len(_safe_denial_details(SimpleNamespace(metadata=metrics))) == 16
+        metrics["overflow"] = "discarded"
+        assert _safe_denial_details(SimpleNamespace(metadata=metrics, violation_code="DENIED")) == {"error_code": "DENIED"}
+
+    def test_numeric_subclasses_are_not_coerced(self):
+        class CustomInt(int):
+            """A non-primitive plugin value."""
+
+        class CustomFloat(float):
+            """A non-primitive plugin value."""
+
+        assert _safe_denial_details(SimpleNamespace(metadata={"int": CustomInt(1), "float": CustomFloat(0.5)})) == {}
+
+    @pytest.mark.parametrize("metadata", [None, [], "text", 1])
+    def test_invalid_metadata_container_preserves_protocol_fields(self, metadata):
+        assert _safe_denial_details(SimpleNamespace(metadata=metadata, violation_code="DENIED", http_status_code=403)) == {"error_code": "DENIED", "http_status_code": 403}
+
+    @pytest.mark.parametrize("code,expected", [("DENIED", "DENIED"), (None, "FALLBACK"), ("bad code", "FALLBACK"), ("newline\n", "FALLBACK")])
+    def test_canonical_code_uses_validated_fallback_without_reason_opt_in(self, code, expected):
+        rec = _make_rec(effective_allow=False, error_code="FALLBACK", reason="sensitive input")
+        details = _safe_denial_details(SimpleNamespace(execution=rec, violation_code=code))
+        with patch.object(cfg_mod.settings, "cpex_control_telemetry_emit_reason", False):
+            attrs = _per_control_attributes("pre", rec, details)
+        assert attrs["cpex.control.result.error_code"] == expected
+        assert "cpex.control.result.violation_code" not in attrs
+        assert "cpex.control.result.reason" not in attrs
+
+
+class TestDenialRetention:
+    """Denials survive collection and export limits without exceeding those limits."""
+
+    @pytest.mark.parametrize("prior_count", [32, 64, 128])
+    @pytest.mark.parametrize("with_outcome", [False, True])
+    def test_denial_survives_hook_call_and_export_caps(self, prior_count, with_outcome):
+        acc = ControlTelemetryAccumulator()
+        if prior_count == 128:
+            acc.add(_make_result([_make_rec(plugin_id=f"pre-{i}") for i in range(64)]), hook="pre")
+        prior = [_make_rec(plugin_id=f"allow-{i}") for i in range(min(prior_count, 64))]
+        denial = _make_rec(plugin_id="denier", plugin_name="DenyingPlugin", effective_allow=False)
+        outcome = SimpleNamespace(execution=denial, violation_code="DENIED", metadata={"score": 0.5}) if with_outcome else None
+        acc.add_violation(SimpleNamespace(executions=prior + [denial], denial_outcome=outcome), hook="post")
+        selected = acc.export_records(32)
+        assert len(selected) == 32
+        assert sum(rec is denial for _, rec in selected) == 1
+        assert selected[-1] == ("post", denial)
+        assert len(acc.records) <= _MAX_RECORDS_PER_CALL
+        assert acc.truncated == (1 if prior_count >= 64 else 0)
+        if with_outcome:
+            assert acc.denial_details_for(denial) == {"error_code": "DENIED", "metadata.score": 0.5}
+        flattened = _build_flattened_attributes(acc, 32)
+        assert flattened["cpex.control.results.DenyingPlugin.result.allowed"] is False
+
+    def test_post_denial_displaces_allow_from_full_call(self):
+        acc = ControlTelemetryAccumulator()
+        for hook in ("pre", "post"):
+            acc.add(_make_result([_make_rec(plugin_id=f"{hook}-{i}") for i in range(64)]), hook=hook)
+        denial = _make_rec(effective_allow=False)
+        acc.add_violation(SimpleNamespace(executions=[denial]), hook="post")
+        assert len(acc.records) == 128
+        assert acc.truncated == 1
+        assert acc.export_records(1) == [("post", denial)]
+
+    @pytest.mark.parametrize("limit", [0, 1, 2, 3])
+    def test_multiple_denials_respect_cap_and_execution_order(self, limit):
+        allow = _make_rec()
+        first = _make_rec(plugin_id="first", effective_allow=False)
+        last = _make_rec(plugin_id="last", effective_allow=False)
+        acc = ControlTelemetryAccumulator()
+        acc.add(_make_result([allow, first, last], continue_processing=False), hook="pre")
+        expected = {0: [], 1: [("pre", first)], 2: [("pre", first), ("pre", last)], 3: [("pre", allow), ("pre", first), ("pre", last)]}
+        assert acc.export_records(limit) == expected[limit]
+
+
+@pytest.fixture
+def denial_otel_exporter(monkeypatch):
+    """Use a real SDK exporter when the optional observability extra is installed."""
+    trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+    if not hasattr(trace_sdk, "TracerProvider"):
+        pytest.skip("OpenTelemetry SDK is not installed")
+    # Third-Party
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    # First-Party
+    from mcpgateway import observability
+
+    provider = trace_sdk.TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("denial-test"))
+    monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_enabled", True)
+    monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_flatten_results", False)
+    monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_emit_reason", False)
+    yield exporter
+    provider.shutdown()
+
+
+class TestDenialOtelExport:
+    """Verify actual exported attributes and parentage, not only mocked emitter calls."""
+
+    @pytest.mark.parametrize("trace_id,db_enabled", [(None, True), (None, False), ("db-trace", False)])
+    def test_otel_export_does_not_require_db_tracing(self, denial_otel_exporter, monkeypatch, trace_id, db_enabled):
+        # First-Party
+        from mcpgateway import observability
+
+        monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_db_enabled", db_enabled)
+        denial = _make_rec(plugin_name="ContentGuard", effective_allow=False)
+        outcome = SimpleNamespace(execution=denial, violation_code="DENIED", http_status_code=403, metadata={"score": 0.75, "matched": False})
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[denial], denial_outcome=outcome), hook="pre")
+        with patch("mcpgateway.services.observability_service.ObservabilityService") as service:
+            with observability.create_span("request") as parent:
+                record_control_telemetry(trace_id, acc)
+            service.assert_not_called()
+        spans = {span.name: span for span in denial_otel_exporter.get_finished_spans()}
+        result = spans["cpex.control.result"]
+        summary = spans["cpex.control.summary"]
+        assert result.attributes["cpex.control.name"] == "ContentGuard"
+        assert result.attributes["cpex.control.result.allowed"] is False
+        assert result.attributes["cpex.control.result.error_code"] == "DENIED"
+        assert result.attributes["cpex.control.result.metadata.score"] == 0.75
+        assert result.attributes["cpex.control.result.metadata.matched"] is False
+        assert summary.attributes["cpex.control.result.allowed"] is False
+        assert summary.parent.span_id == parent.get_span_context().span_id
+        assert result.parent.span_id == summary.context.span_id
+
+    def test_db_and_otel_export_same_denier_under_cap(self, denial_otel_exporter, monkeypatch):
+        # First-Party
+        from mcpgateway import observability
+
+        monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_db_enabled", True)
+        monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_max_results", 2)
+        denial = _make_rec(plugin_id="denier", effective_allow=False)
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[_make_rec(plugin_id=f"allow-{i}") for i in range(32)] + [denial]), hook="pre")
+        with patch("mcpgateway.services.observability_service.ObservabilityService") as service, patch("mcpgateway.db.SessionLocal"):
+            with observability.create_span("request"):
+                record_control_telemetry("db-trace", acc)
+        db_attrs = [call.kwargs["attributes"] for call in service.return_value.start_span.call_args_list if call.kwargs["name"] == "cpex.control.result"]
+        otel_attrs = [span.attributes for span in denial_otel_exporter.get_finished_spans() if span.name == "cpex.control.result"]
+        assert [attrs["cpex.control.plugin_id"] for attrs in db_attrs] == [attrs["cpex.control.plugin_id"] for attrs in otel_attrs] == ["allow-0", "denier"]
+        summary = next(span for span in denial_otel_exporter.get_finished_spans() if span.name == "cpex.control.summary")
+        assert summary.attributes["cpex.control.truncated"] == 31
+        assert summary.attributes["cpex.control.results_count"] == 2
+
+    def test_zero_cap_keeps_denied_summary_without_results(self, denial_otel_exporter, monkeypatch):
+        """Explicit summary-only configuration still reports the denied decision."""
+        # First-Party
+        from mcpgateway import observability
+
+        monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_max_results", 0)
+        acc = ControlTelemetryAccumulator()
+        acc.add_violation(SimpleNamespace(executions=[_make_rec(effective_allow=False)]), hook="pre")
+        with observability.create_span("request"):
+            record_control_telemetry(None, acc)
+        spans = [span for span in denial_otel_exporter.get_finished_spans() if span.name.startswith("cpex.control.")]
+        assert len(spans) == 1
+        assert spans[0].name == "cpex.control.summary"
+        assert spans[0].attributes["cpex.control.result.allowed"] is False
+        assert spans[0].attributes["cpex.control.results_count"] == 0
+        assert spans[0].attributes["cpex.control.truncated"] == 1
+
+    @pytest.mark.parametrize("feature_enabled,active_context", [(False, True), (True, False)])
+    def test_export_stays_disabled_without_feature_or_context(self, denial_otel_exporter, monkeypatch, feature_enabled, active_context):
+        # Standard
+        from contextlib import nullcontext
+
+        # First-Party
+        from mcpgateway import observability
+
+        monkeypatch.setattr(cfg_mod.settings, "cpex_control_telemetry_enabled", feature_enabled)
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        with observability.create_span("request") if active_context else nullcontext():
+            record_control_telemetry(None, acc)
+        assert not any(span.name.startswith("cpex.control.") for span in denial_otel_exporter.get_finished_spans())
