@@ -1391,13 +1391,35 @@ class TestMcpToolCallByRole:
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
-        """Outsider has no team membership, so no tools.execute anywhere — denied."""
+        """Outsider has no team membership, so no tools.execute anywhere — denied.
+
+        The gateway denies in either of two shapes. It answers the JSON-RPC call
+        with ``isError`` set, or it fails the call at the transport. Each shape
+        gets its own assertion, and each assertion checks the denial reason. A
+        bare ``isError`` check would also pass for an unrelated error, so it
+        cannot detect an RBAC regression.
+        """
+        # The except clause lists transport errors only. Catching bare Exception here
+        # would swallow the AssertionError below and the test could never fail (#6839).
+        # ExceptionGroup is included because the SDK's ClientSession runs call_tool()
+        # inside an anyio TaskGroup, which wraps a single McpError on the way out.
+        # The asserts sit outside this try, so the tuple cannot swallow them.
+        _DENIED_STATUSES = (401, 403)
+        result = None
         try:
-            result = _mcp_tool_call(outsider_user["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
+            result = _mcp_tool_call(outsider_user["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
+        except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
+            leaves = _unwrap_exception_group(exc)
+            denied_by_status = any(getattr(getattr(leaf, "response", None), "status_code", None) in _DENIED_STATUSES for leaf in leaves)
+            denied_by_text = any("access denied" in str(leaf).lower() for leaf in leaves)
+            assert denied_by_status or denied_by_text, f"expected an access denial, got: {leaves!r}"
+            print(f"    -> Outsider denied tools.execute at the transport (expected): {leaves[0]}")
+
+        if result is not None:
             assert result.isError, f"Outsider should be denied tools.execute, got: {result}"
-        except Exception:
-            pass  # McpError or connection error — both valid denials
-        print("    -> Outsider denied tools.execute (expected)")
+            detail = result.content[0].text.lower()
+            assert "access denied" in detail, f"expected an access denial, got: {result.content[0].text}"
+            print(f"    -> Outsider denied tools.execute (expected): {result.content[0].text}")
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
         try:
