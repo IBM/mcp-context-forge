@@ -94,6 +94,9 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.reverse_proxy_dispatch import dispatch_proxied_rpc, ProxiedCallTelemetry
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_proxied_transport, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_sessions import StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
@@ -103,7 +106,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
+from mcpgateway.utils.gateway_access import build_downstream_auth, build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GatewayAuthValueError
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
@@ -4473,6 +4476,12 @@ class ToolService(BaseService):
             if not server_match:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
+        gateway_transport = gateway_payload.get("transport") if gateway_payload else None
+        if is_proxied_transport(gateway_transport):
+            # PROXIED gateways dispatch over the reverse-proxy session, never a direct
+            # upstream connection; the tool request_type is only a schema placeholder.
+            return {"eligible": False, "fallbackReason": "reverse-proxy-transport"}
+
         tool_integration_type = tool_payload.get("integration_type")
         if tool_integration_type != "MCP":
             return {"eligible": False, "fallbackReason": f"unsupported-integration:{tool_integration_type or 'unknown'}"}
@@ -5078,6 +5087,89 @@ class ToolService(BaseService):
                 retry_attempt=retry_attempt + 1,
             )
 
+    async def _invoke_reverse_proxied_tool(
+        self,
+        gateway_id_str: str,
+        tool_name_original: str,
+        arguments: Dict[str, Any],
+        meta_data: Optional[Dict[str, Any]],
+        effective_timeout: float,
+        downstream_auth: Optional[DownstreamAuth] = None,
+    ) -> types.CallToolResult:
+        """Dispatch ``tools/call`` to a PROXIED gateway over its reverse-proxy session.
+
+        The request resolves the process-local connection for the persisted stable
+        gateway ID and sends the persisted ``original_name`` (never the namespaced
+        public name) downstream. When the gateway row carries stored auth material,
+        ``downstream_auth`` rides the request envelope as ``authentication``/
+        ``authType`` for the client to apply downstream; when ``None`` the members
+        are omitted. The material is never logged.
+
+        Args:
+            gateway_id_str: Stable gateway identifier used to resolve the live connection.
+            tool_name_original: Persisted upstream tool name sent as ``params.name``.
+            arguments: Tool arguments sent as ``params.arguments``.
+            meta_data: Optional MCP ``_meta`` merged into the request params.
+            effective_timeout: Per-request timeout in seconds.
+            downstream_auth: Optional stored gateway credentials to forward downstream.
+
+        Returns:
+            The upstream ``tools/call`` result.
+
+        Raises:
+            ToolInvocationError: If no live connection exists for the gateway, the
+                connection drops mid-call, or the downstream server returns a
+                JSON-RPC error.
+            ToolTimeoutError: If the downstream call exceeds ``effective_timeout``.
+        """
+        params: Dict[str, Any] = {"name": tool_name_original, "arguments": arguments}
+        if meta_data is not None:
+            params["_meta"] = meta_data
+        request_payload = JsonRpcRequest(jsonrpc="2.0", id=uuid.uuid4().hex, method="tools/call", params=params)
+
+        correlation_id = get_correlation_id()
+        mcp_start_time = time.time()
+        telemetry = ProxiedCallTelemetry(component="tool_service", noun="tool", name=tool_name_original, gateway_id=gateway_id_str)
+        try:
+            # Timeout policy: tool invocations use the per-request effective_timeout
+            # computed by invoke_tool (settings.tool_timeout unless overridden).
+            response = await dispatch_proxied_rpc(
+                StableGatewayId(gateway_id_str),
+                request_payload,
+                timeout_seconds=effective_timeout,
+                error_factory=ToolInvocationError,
+                telemetry=telemetry,
+                auth=downstream_auth,
+            )
+        except TimeoutError as timeout_err:
+            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
+
+        try:
+            validated_result = types.CallToolResult.model_validate(response.payload.result)
+        except ValidationError as validation_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP tool call failed: {tool_name_original}",
+                component="tool_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": "ValidationError", "error_message": "malformed upstream tools/call result"},
+                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
+            raise validation_err
+
+        mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+        structured_logger.log(
+            level="INFO",
+            message=f"MCP tool call completed: {tool_name_original}",
+            component="tool_service",
+            correlation_id=correlation_id,
+            duration_ms=mcp_duration_ms,
+            metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "success": True},
+        )
+        return validated_result
+
     async def _resolve_tool_for_invocation(
         self,
         db: Session,
@@ -5485,6 +5577,7 @@ class ToolService(BaseService):
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+        gateway_transport = gateway_payload.get("transport") if has_gateway else None
 
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
@@ -6763,7 +6856,22 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
-                        if transport == "sse":
+                        if is_proxied_transport(gateway_transport):
+                            if gateway_id_str is None:
+                                # Fail-closed: a PROXIED payload without its stable ID is corrupt; never dispatch.
+                                raise ToolInvocationError("PROXIED gateway payload is missing its stable ID")
+                            # Forward stored downstream credentials only; inbound passthrough headers never ride the
+                            # proxy envelope. ``gateway_auth_value`` is always the encoded string form at this seam
+                            # (ORM dict material is normalized via ``encode_auth`` before dispatch; the ORM row itself
+                            # is deliberately unavailable on warm-cache invokes). The strict normalizer applies the
+                            # same decrypt step the SSE/streamable-HTTP branches use, and rejects unsupported modes
+                            # and malformed material with code-only errors instead of silently omitting. Never logged.
+                            try:
+                                downstream_auth = build_downstream_auth(gateway_auth_type, gateway_auth_value)
+                            except GatewayAuthValueError as auth_err:
+                                raise ToolInvocationError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
+                            tool_call_result = await self._invoke_reverse_proxied_tool(gateway_id_str, tool_name_original, arguments, meta_data, effective_timeout, downstream_auth)
+                        elif transport == "sse":
                             tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
                         elif transport == "streamablehttp":
                             tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
