@@ -115,6 +115,23 @@ def test_strip_pale_backdrop_removes_white_badge_around_smaller_mark() -> None:
     assert stripped.getpixel((60, 60)) == (30, 120, 220, 255)
 
 
+def test_strip_pale_backdrop_strips_at_the_documented_floor() -> None:
+    """A backdrop at exactly PALE_BACKDROP_FLOOR (225) must strip.
+
+    Flooring each channel to a multiple of 8 before comparing against the
+    floor previously shifted the effective threshold up to 232, silently
+    leaving raw values 225-231 untouched.
+    """
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    source.paste(Image.new("RGBA", (128, 128), (225, 225, 225, 255)), (0, 0))
+    source.paste(Image.new("RGBA", (24, 24), (30, 120, 220, 255)), (52, 52))
+
+    stripped = _strip_pale_backdrop(source)
+
+    assert stripped.getchannel("A").getbbox() == (52, 52, 76, 76)
+    assert stripped.getpixel((0, 0))[3] == 0
+
+
 def test_strip_pale_backdrop_leaves_saturated_badge_untouched() -> None:
     """A deliberate brand-color block (not padding) must not be stripped."""
     source = Image.new("RGBA", (128, 128), (10, 20, 200, 255))
@@ -779,6 +796,43 @@ def test_fetch_icon_ignores_link_tags_from_off_domain_redirect() -> None:
             _body, source_url = _fetch_icon(client, {"id": "example", "url": "https://mcp.example.com/sse"})
 
     assert source_url == "https://mcp.example.com/favicon.ico"
+
+
+def test_fetch_icon_rejects_off_domain_favicon_redirect() -> None:
+    """A domain-anchored candidate (favicon.ico) that redirects off domain must
+
+    not donate an unrelated site's icon, mirroring the origin-page guard: the
+    entry's own DuckDuckGo fallback must win instead, not the evil redirect
+    target (which the pre-guard code would have accepted as a valid PNG).
+    """
+    evil_icon = Image.new("RGBA", (32, 32), "red")
+    evil_icon_bytes = BytesIO()
+    evil_icon.save(evil_icon_bytes, format="PNG")
+    ddg_icon = Image.new("RGBA", (32, 32), "blue")
+    ddg_icon_bytes = BytesIO()
+    ddg_icon.save(ddg_icon_bytes, format="PNG")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.headers.get("host")
+        path = request.url.path
+        if host == "mcp.example.com" and path == "/":
+            return httpx.Response(404)
+        if host == "mcp.example.com" and path == "/favicon.ico":
+            return httpx.Response(302, headers={"location": "https://evil-unrelated.example/brand-icon.png"})
+        if host == "evil-unrelated.example" and path == "/brand-icon.png":
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=evil_icon_bytes.getvalue())
+        if host == "icons.duckduckgo.com" and path == "/ip3/example.com.ico":
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=ddg_icon_bytes.getvalue())
+        raise AssertionError(f"unexpected request: host={host} path={path}")
+
+    def resolve(host: str, *_: object, **__: object) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    with patch("scripts.fetch_catalog_icons.socket.getaddrinfo", side_effect=resolve):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            _body, source_url = _fetch_icon(client, {"id": "example", "url": "https://mcp.example.com/sse"})
+
+    assert source_url == "https://icons.duckduckgo.com/ip3/example.com.ico"
 
 
 def test_icon_generation_disables_environment_proxies(tmp_path: Path) -> None:

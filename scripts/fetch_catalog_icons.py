@@ -11,7 +11,7 @@ from __future__ import annotations
 
 # Standard
 import argparse
-from collections import Counter, deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from io import BytesIO
@@ -234,11 +234,24 @@ def _strip_pale_backdrop(image: Image.Image) -> Image.Image:
     def quantize(channels: tuple[int, int, int]) -> tuple[int, int, int]:
         return tuple(channel // 8 * 8 for channel in channels)  # type: ignore[return-value]
 
-    border_colors = Counter(quantize(pixels[x, y][:3]) for x, y in perimeter if pixels[x, y][3] >= 10)
-    if not border_colors:
+    # Quantized only to group anti-aliased perimeter pixels into one majority
+    # bucket; the floor check below compares the bucket's actual (unquantized)
+    # colors, since flooring each channel to a multiple of 8 before comparing
+    # against PALE_BACKDROP_FLOOR shifts the effective threshold up by up to 7
+    # (e.g. a raw 225 floors to 224 and would wrongly fail a >=225 pale check).
+    raw_by_bucket: dict[tuple[int, int, int], list[tuple[int, int, int]]] = defaultdict(list)
+    for x, y in perimeter:
+        r, g, b, a = pixels[x, y]
+        if a < 10:
+            continue
+        raw: tuple[int, int, int] = (r, g, b)
+        raw_by_bucket[quantize(raw)].append(raw)
+    if not raw_by_bucket:
         return image
-    backdrop, count = border_colors.most_common(1)[0]
-    if count / len(perimeter) < PALE_BACKDROP_MIN_PERIMETER_SHARE or min(backdrop) < PALE_BACKDROP_FLOOR:
+    backdrop, raw_samples = max(raw_by_bucket.items(), key=lambda item: len(item[1]))
+    count = len(raw_samples)
+    representative = tuple(sum(channel) / count for channel in zip(*raw_samples))
+    if count / len(perimeter) < PALE_BACKDROP_MIN_PERIMETER_SHARE or min(representative) < PALE_BACKDROP_FLOOR:
         return image
 
     # A vignette or gradient backdrop (common on GitHub org avatars) can drift far
@@ -392,29 +405,11 @@ def _image_to_png(body: bytes, *, strip_pale_backdrop: bool = False, scale_boost
         raise IconFetchError(f"Image decode failed: {exc}") from exc
 
 
-def _has_backdrop_stripped_marker(body: bytes) -> bool:
-    """Return whether this exact asset already had the pale-backdrop sweep applied."""
+def _has_marker(body: bytes, key: str) -> bool:
+    """Return whether this exact asset already carries the given PNG text marker."""
     try:
         with Image.open(BytesIO(body)) as source:
-            return source.info.get(BACKDROP_STRIPPED_MARKER) == "1"
-    except Exception:  # Pillow raises several format-specific exceptions.
-        return False
-
-
-def _has_scale_boost_marker(body: bytes) -> bool:
-    """Return whether this exact asset already had the scale boost applied."""
-    try:
-        with Image.open(BytesIO(body)) as source:
-            return source.info.get(SCALE_BOOSTED_MARKER) == "1"
-    except Exception:  # Pillow raises several format-specific exceptions.
-        return False
-
-
-def _has_scale_shrunk_marker(body: bytes) -> bool:
-    """Return whether this exact asset already had the scale shrink applied."""
-    try:
-        with Image.open(BytesIO(body)) as source:
-            return source.info.get(SCALE_SHRUNK_MARKER) == "1"
+            return source.info.get(key) == "1"
     except Exception:  # Pillow raises several format-specific exceptions.
         return False
 
@@ -475,7 +470,9 @@ def _load_overrides(path: Path) -> tuple[set[str], dict[str, str], set[str], set
     )
 
 
-def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | None = None, *, strip_pale_backdrop: bool = False, scale_boost: bool = False, scale_shrink: bool = False) -> tuple[bytes, str]:
+def _fetch_icon(
+    client: httpx.Client, server: dict[str, Any], override: str | None = None, *, strip_pale_backdrop: bool = False, scale_boost: bool = False, scale_shrink: bool = False
+) -> tuple[bytes, str]:
     """Resolve and normalize one catalog icon."""
     if override:
         result = _fetch(client, override, expected_image=True)
@@ -503,11 +500,25 @@ def _fetch_icon(client: httpx.Client, server: dict[str, Any], override: str | No
 
     last_error: IconFetchError | None = None
     for candidate in _icon_candidates(page, origin, domain):
+        candidate_hostname = urlsplit(candidate).hostname
+        candidate_is_domain_anchored = candidate_hostname is not None and _registrable_domain(candidate_hostname) == domain
         try:
             result = _fetch(client, candidate, expected_image=True)
-            return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink), result.url
         except IconFetchError as exc:
             last_error = exc
+            continue
+        if candidate_is_domain_anchored:
+            landed_hostname = urlsplit(result.url).hostname
+            if not landed_hostname or _registrable_domain(landed_hostname) != domain:
+                # Mirrors the origin-page guard above: a domain-anchored candidate
+                # (favicon.ico, or a same-domain <link> href) that redirects off
+                # domain must not donate an unrelated site's icon either. A
+                # candidate that is intentionally off-domain to begin with (the
+                # DuckDuckGo lookup) is exempt, since it is never expected to
+                # land on this entry's own domain.
+                last_error = IconFetchError(f"Icon candidate redirected off-domain: {candidate} -> {result.url}")
+                continue
+        return _image_to_png(result.body, strip_pale_backdrop=strip_pale_backdrop, scale_boost=scale_boost, scale_shrink=scale_shrink), result.url
     raise last_error or IconFetchError("No icon candidate succeeded")
 
 
@@ -596,9 +607,9 @@ def generate_icons(args: argparse.Namespace) -> int:
                     # other id — this also protects manual touch-ups (padding, size)
                     # applied to the asset afterward from being silently undone by a
                     # later --normalize-existing run.
-                    needs_backdrop_strip = strip_pale_backdrop and not _has_backdrop_stripped_marker(existing)
-                    needs_scale_boost = scale_boost and not _has_scale_boost_marker(existing)
-                    needs_scale_shrink = scale_shrink and not _has_scale_shrunk_marker(existing)
+                    needs_backdrop_strip = strip_pale_backdrop and not _has_marker(existing, BACKDROP_STRIPPED_MARKER)
+                    needs_scale_boost = scale_boost and not _has_marker(existing, SCALE_BOOSTED_MARKER)
+                    needs_scale_shrink = scale_shrink and not _has_marker(existing, SCALE_SHRUNK_MARKER)
                     if not needs_backdrop_strip and not needs_scale_boost and not needs_scale_shrink and _has_normalized_icon_bounds(existing):
                         print(f"KEEP {catalog_id}: normalized bounds")
                     else:

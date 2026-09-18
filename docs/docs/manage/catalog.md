@@ -210,6 +210,13 @@ checking the result does not clip legible content (a wordmark's outer letters,
 for instance) — it is not a substitute for `strip_pale_backdrop` on artwork
 that is merely padded.
 
+The `scale_shrink` list is the opposite adjustment: some source artwork fills
+its full bounding box on every side (no padding to trim) but still reads
+visually heavier than its peers at tile size once every other icon has
+breathing room. These ids render at `SCALE_SHRINK_FACTOR` of the natural fit
+instead, leaving margin on all sides — the safe direction, since shrinking
+never clips content the way `scale_boost` can.
+
 SVG override sources are rasterized via `resvg-py` before normalization, so
 `--force` reproduces them like any raster source (`linear`, `supabase`, and
 the `microsoft-*`/`azure-*`/`google-*` overrides all resolve this way). One
