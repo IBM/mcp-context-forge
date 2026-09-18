@@ -83,6 +83,7 @@ function parseDataAttributes(element) {
  * @param {string} action - The function name to call
  * @param {Array} args - Arguments to pass to the function
  * @param {Event} event - The original event object
+ * @param {boolean} eventFirst - Whether to pass the event before the declared arguments
  * @returns {*} - The return value of the called function
  */
 function executeAction(action, args, event, eventFirst = false) {
@@ -161,13 +162,14 @@ function handleDelegatedInput(event) {
 
   const action = target.dataset.actionInput;
   const args = parseDataAttributes(target);
+  const eventFirst = target.dataset.eventFirst === 'true';
 
-  // Add the input value as first argument if no args specified
-  if (args.length === 0) {
+  // Add the input value when the handler does not explicitly request the event first
+  if (args.length === 0 && !eventFirst) {
     args.push(target.value);
   }
 
-  executeAction(action, args, event);
+  executeAction(action, args, event, eventFirst);
 }
 
 /**
@@ -181,9 +183,10 @@ function handleDelegatedChange(event) {
 
   const action = target.dataset.actionChange;
   const args = parseDataAttributes(target);
+  const eventFirst = target.dataset.eventFirst === 'true';
 
-  // Add the changed value as first argument if no args specified
-  if (args.length === 0) {
+  // Add the changed value when the handler does not explicitly request the event first
+  if (args.length === 0 && !eventFirst) {
     if (target.type === 'checkbox') {
       args.push(target.checked);
     } else {
@@ -191,7 +194,7 @@ function handleDelegatedChange(event) {
     }
   }
 
-  executeAction(action, args, event);
+  executeAction(action, args, event, eventFirst);
 }
 
 /**
