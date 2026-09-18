@@ -10,6 +10,14 @@ Follow this guide when you need to add or update markdown pages under `docs/` an
 * `make` (GNU Make 4+)
 * (First-time only) **[`mkdocs-material`](https://squidfunk.github.io/mkdocs-material/)** and plugins are installed automatically by the *docs* `Makefile`.
 * One-time GitHub setup, e.g. [gitconfig setup](./github.md#16-personal-git-configuration-recommended)
+* **Pango and its GLib dependencies**, required by WeasyPrint, which the PDF export plugin loads on every build:
+
+    ```bash
+    brew install pango                      # macOS
+    sudo apt install libpango-1.0-0 libpangoft2-1.0-0   # Debian/Ubuntu
+    ```
+
+    Without them, `make serve` and `make build` stop while loading the plugin, with an error such as `cannot load library 'libgobject-2.0-0'` or `cannot load library 'libpango-1.0-0'`. WeasyPrint documents the platform packages in its [installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation).
 
 ---
 
