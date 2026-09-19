@@ -165,6 +165,19 @@ describe("ManageTeamMembersDialog", () => {
     expect(roleTrigger).toHaveTextContent("owner");
   });
 
+  it("translates role options in the manage members picker", async () => {
+    localStorage.setItem("user-locale", "pt-BR");
+    const user = userEvent.setup();
+    hookState.members = [newRow({ id: "new-1", role: "member" })];
+    renderDialog(<ManageTeamMembersDialog {...baseProps()} />);
+
+    expect(screen.getAllByRole("combobox")[1]).toHaveTextContent("membro");
+    await user.click(screen.getAllByRole("combobox")[1]);
+    expect(await screen.findByRole("option", { name: "membro" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "proprietário" })).toBeInTheDocument();
+    localStorage.removeItem("user-locale");
+  });
+
   it("closes the dialog via the onClose passed to the hook", () => {
     const props = baseProps();
     renderDialog(<ManageTeamMembersDialog {...props} />);

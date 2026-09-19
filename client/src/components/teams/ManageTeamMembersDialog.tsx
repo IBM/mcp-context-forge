@@ -128,7 +128,7 @@ export function ManageTeamMembersDialog({
                         <SelectContent>
                           {AVAILABLE_ROLES.map((role) => (
                             <SelectItem key={role} value={role}>
-                              {role}
+                              {intl.formatMessage({ id: `teams.create.role.${role}` })}
                             </SelectItem>
                           ))}
                         </SelectContent>
