@@ -38,16 +38,7 @@ from mcpgateway.utils.verify_credentials import (
 )
 
 
-class TestGetDb:
-    """Test cases for the get_db dependency function."""
-
-    def test_get_db_yields_session(self):
-        """Test that get_db yields a database session."""
-        with patch("mcpgateway.auth.SessionLocal") as mock_session_local:
-            mock_session = MagicMock(spec=Session)
-            mock_session_local.return_value = mock_session
-
-            db = next(get_db())
+_THROWAWAY_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
 
 
 class TestGetDb:
@@ -5516,7 +5507,7 @@ class TestTryOAuthAccessTokenDbErrors:
         # Third-Party
         import jwt as _jwt  # pylint: disable=import-outside-toplevel
 
-        return _jwt.encode({"iss": issuer, "sub": "user@example.com"}, "unused", algorithm="HS256")
+        return _jwt.encode({"iss": issuer, "sub": "user@example.com"}, _THROWAWAY_SIGNING_KEY, algorithm="HS256")
 
     @pytest.fixture
     def oauth_server_row(self):
@@ -5725,7 +5716,7 @@ def _make_idp_token(issuer: str = IDP_ISSUER) -> str:
     # Third-Party
     import jwt as _jwt  # pylint: disable=import-outside-toplevel
 
-    return _jwt.encode({"iss": issuer, "sub": "user@example.com"}, "unused-key", algorithm="HS256")
+    return _jwt.encode({"iss": issuer, "sub": "user@example.com"}, _THROWAWAY_SIGNING_KEY, algorithm="HS256")
 
 
 def _response_body(responses: list) -> bytes:
@@ -6622,7 +6613,7 @@ class TestLegacyJwtOnOauthEnabledServer:
         import jwt as _jwt  # pylint: disable=import-outside-toplevel
 
         handler, responses = _make_handler()
-        token = _jwt.encode({"sub": "user@example.com"}, "unused", algorithm="HS256")
+        token = _jwt.encode({"sub": "user@example.com"}, _THROWAWAY_SIGNING_KEY, algorithm="HS256")
 
         with (
             _patched_get_db(self._oauth_server()),

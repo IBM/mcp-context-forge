@@ -69,6 +69,8 @@ def upgrade() -> None:
     # Process results and insert history records
     for row in result:
         history_id = uuid.uuid4().hex
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
         bind.execute(
             sa.text(
                 "INSERT INTO email_team_member_history (id, team_member_id, team_id, user_email, role, action, action_by, action_timestamp) "
@@ -82,7 +84,7 @@ def upgrade() -> None:
                 "role": row[3] if row[3] else "member",
                 "action": "migrated",
                 "action_by": None,
-                "action_timestamp": datetime.now(timezone.utc),
+                "action_timestamp": (datetime.now(timezone.utc) if bind.dialect.name == "postgresql" else datetime.now(timezone.utc).isoformat(" ")),
             },
         )
     # ### end Alembic commands ###

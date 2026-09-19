@@ -669,8 +669,11 @@ asyncio_mode = "auto"
 filterwarnings = [
   "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
   "ignore:Use `streamable_http_client` instead\\.:DeprecationWarning",
-  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:DeprecationWarning",
+  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:UserWarning", # StarletteDeprecationWarning subclasses UserWarning
   "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
+  "ignore:\\w+\\.headers is deprecated; use extensions\\.http\\.headers instead\\.:DeprecationWarning", # cpex payloads have no extensions field yet; gateway + tests must keep using headers=
+  "ignore:Using `httpx` with `starlette\\.testclient` is deprecated:UserWarning", # StarletteDeprecationWarning subclasses UserWarning; dependency drift until httpx2 migration
+  "ignore:rbac\\.get_db\\(\\) is deprecated\\.:DeprecationWarning", # doctest documents the deprecated helper itself
 ]
 
 # Set environment variables for all tests.

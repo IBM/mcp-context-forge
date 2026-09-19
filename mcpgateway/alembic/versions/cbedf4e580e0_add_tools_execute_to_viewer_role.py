@@ -110,18 +110,22 @@ def _update_role_permissions(conn, role_name: str, scope: str, permissions: list
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
             """)
+        updated_at: object = datetime.now(timezone.utc)
     else:
         update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
             """)
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
+        updated_at = datetime.now(timezone.utc).isoformat(" ")
 
     conn.execute(
         update_query,
         {
             "permissions": json.dumps(updated_permissions),
-            "updated_at": datetime.now(timezone.utc),
+            "updated_at": updated_at,
             "role_id": role_id,
         },
     )

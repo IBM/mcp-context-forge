@@ -16,6 +16,9 @@ import pytest
 from mcpgateway.config import Settings
 
 
+_TEST_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
+
+
 def test_sso_api_token_auth_disabled_by_default():
     s = Settings()
     assert s.sso_api_token_auth_enabled is False
@@ -203,7 +206,7 @@ async def test_verify_external_idp_token_unknown_issuer(monkeypatch):
     from mcpgateway.utils import verify_credentials as vc
 
     # token with an issuer that resolves to no provider
-    token = pyjwt.encode({"iss": "https://evil.example.com", "sub": "x"}, "k", algorithm="HS256")
+    token = pyjwt.encode({"iss": "https://evil.example.com", "sub": "x"}, _TEST_SIGNING_KEY, algorithm="HS256")
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: None)
     db = MagicMock()
     result = await vc.verify_external_idp_token(token, db)
@@ -218,7 +221,7 @@ async def test_verify_external_idp_token_valid(monkeypatch):
     # First-Party
     from mcpgateway.utils import verify_credentials as vc
 
-    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, _TEST_SIGNING_KEY, algorithm="HS256")
     prov = _fake_provider("https://kc/realms/m")
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
@@ -249,7 +252,7 @@ async def test_verify_external_idp_token_denies_missing_audience(monkeypatch):
     # First-Party
     from mcpgateway.utils import verify_credentials as vc
 
-    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, _TEST_SIGNING_KEY, algorithm="HS256")
     prov = _fake_provider("https://kc/realms/m")
     prov.api_audience = None
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
@@ -276,7 +279,7 @@ async def test_verify_external_idp_token_no_issuer_claim(monkeypatch):
     # First-Party
     from mcpgateway.utils import verify_credentials as vc
 
-    token = pyjwt.encode({"sub": "x"}, "k", algorithm="HS256")
+    token = pyjwt.encode({"sub": "x"}, _TEST_SIGNING_KEY, algorithm="HS256")
     db = MagicMock()
     assert await vc.verify_external_idp_token(token, db) == (None, None)
 
@@ -313,7 +316,7 @@ async def test_verify_external_idp_token_provider_missing_issuer(monkeypatch):
     # First-Party
     from mcpgateway.utils import verify_credentials as vc
 
-    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "x"}, "k", algorithm="HS256")
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "x"}, _TEST_SIGNING_KEY, algorithm="HS256")
     prov = _fake_provider("https://kc/realms/m")
     prov.issuer = None
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
@@ -329,7 +332,7 @@ async def test_verify_external_idp_token_verification_fails(monkeypatch):
     # First-Party
     from mcpgateway.utils import verify_credentials as vc
 
-    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "x"}, "k", algorithm="HS256")
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "x"}, _TEST_SIGNING_KEY, algorithm="HS256")
     prov = _fake_provider("https://kc/realms/m")
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
@@ -532,7 +535,7 @@ async def test_dispatch_internal_token_skips_external(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "mcpgateway", "sub": "internal"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "mcpgateway", "sub": "internal"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     async def fake_verify_jwt_token_cached(token, request=None):
         return {"sub": "internal", "iss": "mcpgateway"}
@@ -568,7 +571,7 @@ async def test_dispatch_external_token_routes_to_external(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     result = await vc.verify_credentials_cached(tok, request=None)
     assert result["token_use"] == "external_idp"
@@ -602,7 +605,7 @@ async def test_p2_identity_cache_skips_reprovision(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent", "exp": 9999999999}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent", "exp": 9999999999}, _TEST_SIGNING_KEY, algorithm="HS256")
     p1 = await vc._maybe_verify_external(tok, request=None)
     p2 = await vc._maybe_verify_external(tok, request=None)
     assert p1["sub"] == "agent@corp.com" and p2["sub"] == "agent@corp.com"
@@ -742,7 +745,7 @@ async def test_L1_deny_reason_logged_for_untrusted_issuer(monkeypatch, caplog):
     from mcpgateway.utils import verify_credentials as vc
 
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: None)
-    tok = pyjwt.encode({"iss": "https://evil.example.com", "sub": "x"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://evil.example.com", "sub": "x"}, _TEST_SIGNING_KEY, algorithm="HS256")
     with caplog.at_level(logging.WARNING):
         result = await vc.verify_external_idp_token(tok, MagicMock())
     assert result == (None, None)
@@ -863,7 +866,7 @@ async def test_E3_unexpected_error_fails_closed(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "a"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "a"}, _TEST_SIGNING_KEY, algorithm="HS256")
     assert await vc._maybe_verify_external(tok, request=None) is None  # fail closed
 
 
@@ -903,7 +906,7 @@ async def test_deny_flag_off(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, _TEST_SIGNING_KEY, algorithm="HS256")
     assert await vc._maybe_verify_external(tok, request=None) is None
 
 
@@ -932,7 +935,7 @@ async def test_deny_untrusted_issuer(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://evil/realms/m", "sub": "x"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://evil/realms/m", "sub": "x"}, _TEST_SIGNING_KEY, algorithm="HS256")
     assert await vc._maybe_verify_external(tok, request=None) is None
     assert build_calls["n"] == 0  # claims is None -> must short-circuit before provisioning
 
@@ -960,7 +963,7 @@ async def test_deny_unprovisioned_user(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "ghost"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "ghost"}, _TEST_SIGNING_KEY, algorithm="HS256")
     assert await vc._maybe_verify_external(tok, request=None) is None
 
 
@@ -980,7 +983,7 @@ async def test_deny_id_token_rejected(monkeypatch):
     # Third-Party
     import jwt as pyjwt
 
-    tok = pyjwt.encode({"iss": "https://kc/realms/m", "nonce": "abc"}, "k", algorithm="HS256")
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "nonce": "abc"}, _TEST_SIGNING_KEY, algorithm="HS256")
     db = MagicMock()
     assert await vc.verify_external_idp_token(tok, db) == (None, None)
 

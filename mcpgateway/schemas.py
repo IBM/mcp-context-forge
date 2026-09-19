@@ -9398,11 +9398,6 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
     endpoint_url: Optional[str] = Field(None, description="Registered endpoint URL for the agent, as configured at registration time")
 
-    class Config:
-        """Pydantic config for A2A agent metadata."""
-
-        from_attributes = True  # SQLAlchemy ORM compatibility
-
 
 class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):
     """Request schema for creating/updating A2A agent plugin bindings.
