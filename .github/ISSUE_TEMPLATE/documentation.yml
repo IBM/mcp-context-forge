@@ -1,0 +1,62 @@
+name: Documentation update
+description: Fix, clarify, or extend documentation.
+labels: ["triage", "documentation"]
+type: Task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation updates are Tasks. This template applies the
+        `documentation` label.
+
+        Preview suggested changes locally with `cd docs && make serve`.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this documentation problem
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Documentation issue
+      description: What is wrong, missing, or unclear.
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Location
+      description: Affected files, sections, or pages. Use one line per location.
+      placeholder: |
+        docs/docs/using/agents/crewai.md
+        https://ibm.github.io/mcp-context-forge/overview/features/
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of issue
+      description: Select every kind that applies.
+      multiple: true
+      options:
+        - Typo or formatting
+        - Outdated or incorrect information
+        - Missing explanation or example
+        - Unclear instructions
+        - New page or section
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Suggested fix
+      description: The correction or new text. Use markdown.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, platform notes, or related issues.

@@ -546,9 +546,11 @@ When `detect-secrets` identifies false positives:
 
 ## GitHub Issues
 
-- Start from the matching template in `.github/ISSUE_TEMPLATE/`; the template's fields define the body.
-- Title style includes a type prefix: `[BUG]: ...`, `[FEATURE]: ...`, `[DOCS]: ...`, `[TESTING]: ...`, `[CHORE]: ...`. Epics: `[EPIC][SCOPE]: ...`.
-- Label baseline: one primary type label (`bug`, `enhancement`, `documentation`, `testing`, `chore`) plus `triage` on new issues. Add 1-3 optional scope labels (`security`, `performance`, `ui`, `api`, `python`, `devops`, `a2a`, `mcp-protocol`); epics add `epic`.
+- Start from the matching template in `.github/ISSUE_TEMPLATE/`. The template sets the GitHub Issue Type (`Epic`, `Feature`, `Story`, `Task`, `Bug`); its fields define the body.
+- Hierarchy: an Epic holds Features, a Feature holds Stories, a Story holds Tasks. Link children with GitHub sub-issues on the parent. Bugs stand alone or nest anywhere in that chain.
+- Titles carry no type prefix. Write a plain imperative summary: `Gateway drops WebSocket sessions on restart`.
+- Labels carry no issue types. New issues start with `triage`. The Chore and Documentation templates also apply `chore` and `documentation`. Add 1-3 optional scope labels (`security`, `performance`, `ui`, `api`, `python`, `devops`, `a2a`, `mcp-protocol`).
+- Issue types are defined at the organization level. Template `type` values must match those names exactly.
 - Bodies and comments follow *Agent Prose*. For public tone, see *PR Review → Tone*.
 
 ## Maintenance Guardrails (Brief)

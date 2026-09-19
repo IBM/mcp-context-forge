@@ -1,0 +1,66 @@
+name: Task
+description: A unit of work that completes a Story or stands alone.
+labels: ["triage"]
+type: Task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tasks are the leaves of the hierarchy. A Task completes a Story or
+        stands alone.
+
+        Use the Chore and Documentation templates for maintenance work and
+        documentation updates.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this work
+          required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Parent Story
+      description: Issue number of the Story this Task completes. Leave empty for standalone work.
+      placeholder: "#123"
+    validations:
+      required: false
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of work
+      options:
+        - Implementation
+        - Testing
+        - DevOps or CI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this Task exists and what it unblocks.
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: Work required
+      description: The change to make. Name known files, commands, or docs.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      description: The checkable state that closes this Task.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Related issues, pull requests, docs, or commands.

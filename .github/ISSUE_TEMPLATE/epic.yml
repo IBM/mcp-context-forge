@@ -1,0 +1,72 @@
+name: Epic
+description: A large outcome that several Features deliver.
+labels: ["triage"]
+type: Epic
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Epics sit at the top of the issue hierarchy.
+
+        An Epic holds Features. A Feature holds Stories. A Story holds Tasks.
+        Link each child as a sub-issue on this issue after filing. Track
+        progress through the sub-issue list.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this work
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: The situation that motivates this Epic.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: What changes for users or operators when this Epic closes.
+    validations:
+      required: true
+  - type: textarea
+    id: scope-in
+    attributes:
+      label: In scope
+      description: Capabilities and areas this Epic covers.
+    validations:
+      required: true
+  - type: textarea
+    id: scope-out
+    attributes:
+      label: Out of scope
+      description: Excluded work. State it to prevent scope drift.
+  - type: textarea
+    id: features
+    attributes:
+      label: Feature breakdown
+      description: List the Features that deliver this Epic. After filing, create each Feature. Link it here as a sub-issue.
+      placeholder: |
+        - #123 Feature: ...
+        - Feature: ...
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      description: How you measure the outcome after delivery.
+  - type: textarea
+    id: risks
+    attributes:
+      label: Dependencies and risks
+      description: Blocking work, external dependencies, or known hazards.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, discussions, or earlier designs.

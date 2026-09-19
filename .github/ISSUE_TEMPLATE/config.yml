@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/IBM/mcp-context-forge/discussions
+    about: Use Discussions for questions and proposals before you open an issue.
+  - name: Security vulnerability
+    url: https://github.com/IBM/mcp-context-forge/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue for them.
