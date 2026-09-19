@@ -1,0 +1,62 @@
+name: Story
+description: A slice of user-visible behavior inside a Feature.
+labels: ["triage"]
+type: Story
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A Story belongs to a Feature and decomposes into Tasks.
+
+        After filing, link this issue as a sub-issue of its Feature. Link each
+        Task as a sub-issue of this Story.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this behavior
+          required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Parent Feature
+      description: Issue number of the Feature this Story delivers. Leave empty when no Feature exists.
+      placeholder: "#123"
+    validations:
+      required: false
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      value: |
+        As a <role>,
+        I want <capability>,
+        so that <benefit>.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Use Given / When / Then for each scenario.
+      placeholder: |
+        Given <starting state>
+        When <action occurs>
+        Then <result>
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Task breakdown
+      description: List the Tasks that implement this Story. After filing, create each Task. Link it here as a sub-issue.
+      placeholder: |
+        - #789 Task: ...
+        - Task: ...
+  - type: textarea
+    id: notes
+    attributes:
+      label: Out of scope and notes
+      description: Excluded behavior, constraints, or references.
