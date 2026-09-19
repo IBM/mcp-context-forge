@@ -137,71 +137,6 @@ class TestTeamInvitationService:
     # Invitation Creation Tests
     # =========================================================================
 
-    @pytest.mark.skip("Complex integration test - main functionality covered by simpler tests")
-    @pytest.mark.asyncio
-    async def test_create_invitation_success(self, service, mock_db):
-        """Test successful invitation creation."""
-        # Create fresh mocks with proper attributes
-        mock_team = MagicMock(spec=EmailTeam)
-        mock_team.id = "team123"
-        mock_team.is_personal = False
-        mock_team.max_members = 100
-
-        mock_inviter = MagicMock(spec=EmailUser)
-        mock_inviter.email = "admin@example.com"
-
-        mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "owner"
-
-        # Simple query side effect that returns appropriate values
-        call_counts = {"team": 0, "user": 0, "member": 0, "invitation": 0}
-
-        def simple_query_side_effect(model):
-            mock_query = MagicMock()
-            if model == EmailTeam:
-                call_counts["team"] += 1
-                mock_query.filter.return_value.first.return_value = mock_team
-            elif model == EmailUser:
-                call_counts["user"] += 1
-                mock_query.filter.return_value.first.return_value = mock_inviter
-            elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
-                    # Inviter membership check
-                    mock_query.filter.return_value.first.return_value = mock_membership
-                elif call_counts["member"] == 2:
-                    # Check if invitee is already a member
-                    mock_query.filter.return_value.first.return_value = None
-                else:
-                    # Member count check
-                    mock_query.filter.return_value.count.return_value = 5
-            elif model == EmailTeamInvitation:
-                call_counts["invitation"] += 1
-                if call_counts["invitation"] == 1:
-                    # Check existing invitations
-                    mock_query.filter.return_value.first.return_value = None
-                else:
-                    # Pending invitation count
-                    mock_query.filter.return_value.count.return_value = 2
-
-            return mock_query
-
-        mock_db.query.side_effect = simple_query_side_effect
-
-        with (
-            patch("mcpgateway.services.team_invitation_service.EmailTeamInvitation") as MockInvitation,
-            patch("mcpgateway.services.team_invitation_service.utc_now"),
-            patch("mcpgateway.services.team_invitation_service.timedelta"),
-        ):
-            mock_invitation_instance = MagicMock()
-            MockInvitation.return_value = mock_invitation_instance
-
-            result = await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
-
-            assert result == mock_invitation_instance
-            mock_db.add.assert_called_once_with(mock_invitation_instance)
-            mock_db.commit.assert_called_once()
-
     @pytest.mark.asyncio
     async def test_create_invitation_invalid_role(self, service):
         """Test creating invitation with invalid role."""
@@ -461,55 +396,6 @@ class TestTeamInvitationService:
     # =========================================================================
     # Invitation Acceptance Tests
     # =========================================================================
-
-    @pytest.mark.skip("Complex integration test - main functionality covered by simpler tests")
-    @pytest.mark.asyncio
-    async def test_accept_invitation_success(self, service, mock_db):
-        """Test successful invitation acceptance."""
-        # Create fresh mocks
-        mock_invitation = MagicMock(spec=EmailTeamInvitation)
-        mock_invitation.team_id = "team123"
-        mock_invitation.email = "user@example.com"
-        mock_invitation.role = "member"
-        mock_invitation.is_valid.return_value = True
-        mock_invitation.is_active = True
-
-        mock_team = MagicMock(spec=EmailTeam)
-        mock_team.max_members = 100
-
-        call_counts = {"team": 0, "member": 0}
-
-        def query_side_effect(model):
-            mock_query = MagicMock()
-            if model == EmailTeam:
-                call_counts["team"] += 1
-                mock_query.filter.return_value.first.return_value = mock_team
-            elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
-                    # Check if user is already a member
-                    mock_query.filter.return_value.first.return_value = None
-                else:
-                    # Member count check
-                    mock_query.filter.return_value.count.return_value = 5
-            return mock_query
-
-        mock_db.query.side_effect = query_side_effect
-
-        with (
-            patch.object(service, "get_invitation_by_token", return_value=mock_invitation),
-            patch("mcpgateway.services.team_invitation_service.EmailTeamMember") as MockMember,
-            patch("mcpgateway.services.team_invitation_service.utc_now"),
-        ):
-            mock_membership_instance = MagicMock()
-            MockMember.return_value = mock_membership_instance
-
-            result = await service.accept_invitation("secure_token_123")
-
-            assert result is mock_membership_instance
-            assert mock_invitation.is_active is False
-            mock_db.add.assert_called_once_with(mock_membership_instance)
-            mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_accept_invitation_not_found(self, service):
@@ -1065,65 +951,6 @@ class TestTeamInvitationService:
     # Edge Case Tests
     # =========================================================================
 
-    @pytest.mark.skip("Complex integration test - main functionality covered by simpler tests")
-    @pytest.mark.asyncio
-    async def test_deactivate_existing_invitation_before_creating_new(self, service, mock_db):
-        """Test that existing expired invitations are deactivated before creating new ones."""
-        # Create fresh mocks
-        mock_team = MagicMock(spec=EmailTeam)
-        mock_team.is_personal = False
-        mock_team.max_members = 100
-
-        mock_inviter = MagicMock(spec=EmailUser)
-        mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "owner"
-
-        mock_invitation = MagicMock(spec=EmailTeamInvitation)
-        mock_invitation.is_expired.return_value = True
-        mock_invitation.is_active = True
-
-        call_counts = {"team": 0, "user": 0, "member": 0, "invitation": 0}
-
-        def query_side_effect(model):
-            mock_query = MagicMock()
-            if model == EmailTeam:
-                call_counts["team"] += 1
-                mock_query.filter.return_value.first.return_value = mock_team
-            elif model == EmailUser:
-                call_counts["user"] += 1
-                mock_query.filter.return_value.first.return_value = mock_inviter
-            elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
-                    mock_query.filter.return_value.first.return_value = mock_membership
-                elif call_counts["member"] == 2:
-                    mock_query.filter.return_value.first.return_value = None
-                else:
-                    mock_query.filter.return_value.count.return_value = 5
-            elif model == EmailTeamInvitation:
-                call_counts["invitation"] += 1
-                if call_counts["invitation"] == 1:
-                    mock_query.filter.return_value.first.return_value = mock_invitation
-                else:
-                    mock_query.filter.return_value.count.return_value = 2
-            return mock_query
-
-        mock_db.query.side_effect = query_side_effect
-
-        with (
-            patch("mcpgateway.services.team_invitation_service.EmailTeamInvitation") as MockInvitation,
-            patch("mcpgateway.services.team_invitation_service.utc_now"),
-            patch("mcpgateway.services.team_invitation_service.timedelta"),
-        ):
-            mock_new_invitation = MagicMock()
-            MockInvitation.return_value = mock_new_invitation
-
-            result = await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
-
-            # Should deactivate existing invitation and create new one
-            assert mock_invitation.is_active is False
-            assert result == mock_new_invitation
-
     def test_role_validation_values(self, service):
         """Test that role validation accepts all valid values."""
         valid_roles = ["owner", "member"]
@@ -1132,65 +959,6 @@ class TestTeamInvitationService:
             # Should not raise an exception during validation
             # This is tested implicitly in create_invitation tests
             assert role in valid_roles
-
-    @pytest.mark.skip("Complex integration test - main functionality covered by simpler tests")
-    @pytest.mark.asyncio
-    async def test_expiry_days_from_settings(self, service, mock_db):
-        """Test that invitation expiry uses settings default."""
-        # Create fresh mocks
-        mock_team = MagicMock(spec=EmailTeam)
-        mock_team.is_personal = False
-        mock_team.max_members = 100
-
-        mock_inviter = MagicMock(spec=EmailUser)
-        mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "owner"
-
-        call_counts = {"team": 0, "user": 0, "member": 0, "invitation": 0}
-
-        def query_side_effect(model):
-            mock_query = MagicMock()
-            if model == EmailTeam:
-                call_counts["team"] += 1
-                mock_query.filter.return_value.first.return_value = mock_team
-            elif model == EmailUser:
-                call_counts["user"] += 1
-                mock_query.filter.return_value.first.return_value = mock_inviter
-            elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
-                    mock_query.filter.return_value.first.return_value = mock_membership
-                elif call_counts["member"] == 2:
-                    mock_query.filter.return_value.first.return_value = None
-                else:
-                    mock_query.filter.return_value.count.return_value = 5
-            elif model == EmailTeamInvitation:
-                call_counts["invitation"] += 1
-                if call_counts["invitation"] == 1:
-                    mock_query.filter.return_value.first.return_value = None
-                else:
-                    mock_query.filter.return_value.count.return_value = 2
-            return mock_query
-
-        mock_db.query.side_effect = query_side_effect
-
-        with (
-            patch("mcpgateway.services.team_invitation_service.settings") as mock_settings,
-            patch("mcpgateway.services.team_invitation_service.EmailTeamInvitation") as MockInvitation,
-            patch("mcpgateway.services.team_invitation_service.utc_now"),
-            patch("mcpgateway.services.team_invitation_service.timedelta"),
-        ):
-            mock_settings.invitation_expiry_days = 14
-            mock_invitation_instance = MagicMock()
-            MockInvitation.return_value = mock_invitation_instance
-
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
-
-            # Should use settings default for expiry
-            MockInvitation.assert_called_once()
-            call_kwargs = MockInvitation.call_args[1]
-            # Check that expires_at was set (we can't easily check the exact value due to datetime)
-            assert "expires_at" in call_kwargs
 
     @pytest.mark.asyncio
     async def test_deliver_invitation_email_builds_shared_result(self, service):
