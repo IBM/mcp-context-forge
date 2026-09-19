@@ -19,6 +19,8 @@ import mcpgateway.utils.verify_credentials as vc
 from mcpgateway.utils import create_jwt_token as cjt
 from mcpgateway.utils.jwt_config_helper import JWTConfigurationError, _derive_env_key
 
+_RAW_HS_SECRET = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -111,11 +113,11 @@ def test_explicit_secret_is_derived_when_on(monkeypatch):
     monkeypatch.setattr(cjt.settings, "derive_key_per_environment", True, raising=False)
     monkeypatch.setattr(cjt.settings, "environment", "production", raising=False)
     monkeypatch.setattr(cjt.settings, "jwt_algorithm", "HS256", raising=False)
-    token = cjt._create_jwt_token({"sub": "alice"}, 1, "explicit-secret", "HS256")
-    derived = jch._derive_env_key("explicit-secret", "production")
+    token = cjt._create_jwt_token({"sub": "alice"}, 1, _RAW_HS_SECRET, "HS256")
+    derived = jch._derive_env_key(_RAW_HS_SECRET, "production")
     assert pyjwt.decode(token, derived, algorithms=["HS256"], options={"verify_aud": False})["sub"] == "alice"
     with pytest.raises(pyjwt.InvalidSignatureError):
-        pyjwt.decode(token, "explicit-secret", algorithms=["HS256"], options={"verify_aud": False})
+        pyjwt.decode(token, _RAW_HS_SECRET, algorithms=["HS256"], options={"verify_aud": False})
 
 
 # ---------------------------------------------------------------------------
@@ -124,19 +126,19 @@ def test_explicit_secret_is_derived_when_on(monkeypatch):
 
 
 def test_real_mint_embeds_env_when_on(monkeypatch):
-    _set(monkeypatch, jwt_algorithm="HS256", jwt_secret_key="base", derive_key_per_environment=False, environment="production", embed_environment_in_tokens=True)
+    _set(monkeypatch, jwt_algorithm="HS256", jwt_secret_key=_RAW_HS_SECRET, derive_key_per_environment=False, environment="production", embed_environment_in_tokens=True)
     monkeypatch.setattr(cjt.settings, "embed_environment_in_tokens", True, raising=False)
     monkeypatch.setattr(cjt.settings, "environment", "production", raising=False)
-    token = asyncio.run(cjt.create_jwt_token({"sub": "x"}, expires_in_minutes=1, secret="base", algorithm="HS256"))  # pragma: allowlist secret
-    payload = pyjwt.decode(token, "base", algorithms=["HS256"], options={"verify_aud": False})
+    token = asyncio.run(cjt.create_jwt_token({"sub": "x"}, expires_in_minutes=1, secret=_RAW_HS_SECRET, algorithm="HS256"))
+    payload = pyjwt.decode(token, _RAW_HS_SECRET, algorithms=["HS256"], options={"verify_aud": False})
     assert payload["env"] == "production"
 
 
 def test_real_mint_omits_env_when_off(monkeypatch):
     monkeypatch.setattr(cjt.settings, "embed_environment_in_tokens", False, raising=False)
     monkeypatch.setattr(cjt.settings, "jwt_algorithm", "HS256", raising=False)
-    token = asyncio.run(cjt.create_jwt_token({"sub": "x"}, expires_in_minutes=1, secret="base", algorithm="HS256"))  # pragma: allowlist secret
-    payload = pyjwt.decode(token, "base", algorithms=["HS256"], options={"verify_aud": False})
+    token = asyncio.run(cjt.create_jwt_token({"sub": "x"}, expires_in_minutes=1, secret=_RAW_HS_SECRET, algorithm="HS256"))
+    payload = pyjwt.decode(token, _RAW_HS_SECRET, algorithms=["HS256"], options={"verify_aud": False})
     assert "env" not in payload
 
 
@@ -199,7 +201,7 @@ def test_env_claim_mismatch_rejected(monkeypatch):
     _set(
         monkeypatch,
         jwt_algorithm="HS256",
-        jwt_secret_key="same",
+        jwt_secret_key=_RAW_HS_SECRET,
         derive_key_per_environment=False,
         environment="production",
         validate_token_environment=True,
@@ -219,7 +221,7 @@ def test_missing_env_claim_allowed(monkeypatch):
     _set(
         monkeypatch,
         jwt_algorithm="HS256",
-        jwt_secret_key="same",
+        jwt_secret_key=_RAW_HS_SECRET,
         derive_key_per_environment=False,
         environment="production",
         validate_token_environment=True,
@@ -263,7 +265,7 @@ def test_env_mismatch_logs_warning(monkeypatch, caplog):
     _set(
         monkeypatch,
         jwt_algorithm="HS256",
-        jwt_secret_key="same",
+        jwt_secret_key=_RAW_HS_SECRET,
         derive_key_per_environment=False,
         environment="production",
         validate_token_environment=True,

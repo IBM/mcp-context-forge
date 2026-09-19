@@ -57,7 +57,7 @@ def sample_claims() -> dict[str, Any]:
 @pytest.fixture
 def sample_jwt_token(sample_claims: dict[str, Any]) -> str:
     """Create a sample JWT token."""
-    return jwt.encode(sample_claims, "secret", algorithm="HS256")
+    return jwt.encode(sample_claims, "unit-test-signing-key-0123456789abcdef", algorithm="HS256")  # pragma: allowlist secret
 
 
 def _make_context(request_id: str = "test-123") -> PluginContext:
@@ -130,7 +130,7 @@ class TestJwtClaimsExtractionPlugin:
                     }
                 ],
             },
-            "secret",
+            "unit-test-signing-key-0123456789abcdef",  # pragma: allowlist secret
             algorithm="HS256",
         )
         payload = HttpAuthResolveUserPayload(

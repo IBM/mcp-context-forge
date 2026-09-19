@@ -120,20 +120,22 @@ def upgrade() -> None:
         print("team_admin role already has all token permissions. Nothing to do.")
         return
 
-    now = datetime.now(timezone.utc)
-
     if dialect_name == "postgresql":
         update_query = text("""
             UPDATE roles
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
             """)
+        now: object = datetime.now(timezone.utc)
     else:
         update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
             """)
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
+        now = datetime.now(timezone.utc).isoformat(" ")
 
     conn.execute(
         update_query,
@@ -180,20 +182,22 @@ def downgrade() -> None:
     if len(updated_permissions) == len(current_permissions):
         return
 
-    now = datetime.now(timezone.utc)
-
     if dialect_name == "postgresql":
         update_query = text("""
             UPDATE roles
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
             """)
+        now: object = datetime.now(timezone.utc)
     else:
         update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
             """)
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
+        now = datetime.now(timezone.utc).isoformat(" ")
 
     conn.execute(
         update_query,

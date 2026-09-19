@@ -21,9 +21,12 @@ from mcpgateway.services.token_validation_service import (
 )
 
 
+TEST_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
+
+
 def _make_jwt(claims: dict) -> str:
     """Create an unsigned JWT for testing (HS256 with a dummy key)."""
-    return jwt.encode(claims, "test-key", algorithm="HS256")
+    return jwt.encode(claims, TEST_SIGNING_KEY, algorithm="HS256")
 
 
 # ---------- TokenValidationResult ----------
