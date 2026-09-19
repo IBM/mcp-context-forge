@@ -195,10 +195,69 @@ network access, run:
 python scripts/fetch_catalog_icons.py --normalize-existing
 ```
 
-The command crops visible content, upscales source artwork by at most 2×, and
+The command crops visible content, upscales source artwork by at most 8×, and
 centers it on a 128px transparent canvas. It skips missing assets and reports
 fully transparent assets as unresolved. Do not combine it with `--force`,
 which refreshes existing assets from remote candidates.
+
+Catalog ids on the `scale_boost` list in `scripts/catalog_icon_overrides.json`
+get one further, deliberate step: some source artwork carries a lot of visual
+weight in a small area of its own bounding box (a thin-stroked mark, say), so
+even a full-bleed crop still reads smaller than its peers at tile size. For
+these ids, normalization zooms in past the natural fit and crops the overflow,
+the same way CSS `background-size: cover` does. Only add an id here after
+checking the result does not clip legible content (a wordmark's outer letters,
+for instance) — it is not a substitute for `strip_pale_backdrop` on artwork
+that is merely padded.
+
+The `scale_shrink` list is the opposite adjustment: some source artwork fills
+its full bounding box on every side (no padding to trim) but still reads
+visually heavier than its peers at tile size once every other icon has
+breathing room. These ids render at `SCALE_SHRINK_FACTOR` of the natural fit
+instead, leaving margin on all sides — the safe direction, since shrinking
+never clips content the way `scale_boost` can.
+
+SVG override sources are rasterized via `resvg-py` before normalization, so
+`--force` reproduces them like any raster source (`linear`, `supabase`, and
+the `microsoft-*`/`azure-*`/`google-*` overrides all resolve this way). One
+exception remains:
+
+- `neon`: its favicon SVG sets fill through a `<style>` rule (including a
+  `prefers-color-scheme` variant), which resvg does not evaluate, so a fresh
+  fetch renders blank. The bundled PNG was hand-rendered once, offline, from
+  a variant with the fill on the path itself, and `neon` is on the
+  `skip` list in `scripts/catalog_icon_overrides.json` so `--force` does not
+  overwrite it with the blank render.
+- `tweetsave`: the only brand asset is a wide icon+wordmark lockup
+  (`https://tweetsave.org/logoType.webp`), not a standalone icon. The bundled
+  PNG was hand-cropped to the mark once, offline, and `tweetsave` is on the
+  `skip` list so `--force` does not overwrite it with the full lockup
+  (wordmark included) squeezed into a square canvas.
+- `rube`, `waystation`: both upstream sites (`rube.app`, `waystation.ai`)
+  were unreachable when the assets were bundled (DNS failure and a disabled
+  Vercel deployment, respectively). Both PNGs were rendered once, offline,
+  from a Wayback Machine snapshot of the site's own favicon/logo asset, and
+  both ids are on the `skip` list so `--force` does not fail trying to reach
+  the live, currently-down source.
+- `zip1`: the source badge is a near-full-bleed rounded square whose only
+  pale pixels are the four small corner triangles outside the rounding — the
+  perimeter majority `_strip_pale_backdrop` looks for is the badge's own dark
+  fill, not those corners, so it correctly declines to touch it (a majority
+  vote is not the right tool for a minority pale region). The corners were
+  cleared once, offline, by flood-filling from each corner pixel independently
+  instead. `zip1.io` was also unreachable when this was bundled, so `zip1` is
+  on the `skip` list so `--force` does not fail trying to reach it or, if it
+  comes back with the same source asset, reintroduce the corners.
+- `metro-mcp`: unlike the other entries here, the bundled PNG *is* currently
+  reproducible — `metro-mcp.anuragd.me/favicon.ico` fed through the ordinary
+  `strip_pale_backdrop` sweep reproduces it byte for byte. But that endpoint
+  is a single maintainer's personal deployment with no stability guarantee,
+  not a brand's own domain, so `metro-mcp` is on the `skip` list to keep a
+  future favicon change on that site from silently replacing the catalog
+  icon via `--force`.
+
+Re-derive these by hand if their upstream source changes; do not expect
+`--force` to pick them up automatically.
 
 ---
 
@@ -288,6 +347,30 @@ The body is optional; `name` and `api_key` override the catalog defaults. Respon
 `404` unknown catalog id (or catalog feature disabled), `409` already registered,
 `200` with `success: false` and a descriptive `message` for connectivity or auth failures,
 `200` with `success: true` on registration (OAuth servers register disabled until configured).
+
+For catalog entries with an OAuth `auth_type`, submit `oauth_credentials` instead of `api_key`.
+Whatever isn't supplied - client ID/secret, token/authorization URLs - is filled in later,
+automatically where the provider supports discovery/DCR, via the OAuth authorization flow:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"oauth_credentials": {"issuer": "https://github.com", "scopes": ["repo", "read:user"]}}' \
+  http://localhost:4444/v1/catalog/github/register
+```
+
+`oauth_credentials` accepts `issuer`, `client_id`, `client_secret`, `token_url`,
+`authorization_url`, `redirect_uri`, `audience`, `scopes`, and `resource`; any other key is
+silently ignored. `grant_type` is always forced to `authorization_code` regardless of what is
+submitted - it cannot be overridden through this endpoint, including for the privileged
+`token-exchange` grant. Each string value is capped at 4096 characters. For an `"OAuth2.1 & API
+Key"` entry, submitting `api_key` and `oauth_credentials` together registers the gateway with the
+API key only; `oauth_credentials` is ignored (logged) rather than persisted, since a gateway can't
+correctly carry both an active bearer auth and an unused OAuth config at once - switch to OAuth
+explicitly via `PUT /gateways/{id}` afterward if needed.
+
+The admin endpoint `POST /admin/mcp-registry/{server_id}/register` accepts the same
+`oauth_credentials` field with the same validation.
 
 #### Visibility and ownership
 

@@ -45,6 +45,7 @@ import asyncio
 import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 import json
 import logging
 import mimetypes
@@ -145,6 +146,47 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
+
+
+class MCPListMethod(Enum):
+    """MCP list method suffixes and response collection attributes.
+    Each value is `(method_suffix, response_attribute)` where `list_{method_suffix}`
+    is the SDK method and `response_attribute` is the camelCase attribute on the response object.
+    """
+
+    TOOLS = ("tools", "tools")
+    PROMPTS = ("prompts", "prompts")
+    RESOURCES = ("resources", "resources")
+    RESOURCE_TEMPLATES = ("resource_templates", "resourceTemplates")
+
+
+async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
+    """Collect MCP list results until the server returns no next cursor.
+
+    Args:
+        session: MCP client session
+        mcp_method: MCPListMethod Enum for list_* method and response
+
+    Returns:
+        list of MCP objects across all pages
+
+    Raises:
+        ValueError: If the server repeats a pagination cursor.
+    """
+    method_suffix, response_attribute = mcp_method.value
+    list_method = getattr(session, f"list_{method_suffix}")
+    response = await list_method()
+    mcp_responses = list(getattr(response, response_attribute, None) or [])
+    seen_cursors = set()
+    while getattr(response, "nextCursor", None) is not None:
+        cursor = response.nextCursor
+        if cursor in seen_cursors:
+            logger.warning("Repeated pagination cursor from list_%s", method_suffix)
+            break
+        seen_cursors.add(cursor)
+        response = await list_method(cursor=cursor)
+        mcp_responses.extend(getattr(response, response_attribute, []))
+    return mcp_responses
 
 
 def _resolve_tool_title(tool) -> Optional[str]:
@@ -759,7 +801,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._file_lock_pid = os.getpid()
 
     @staticmethod
-    async def _auto_discover_oauth_endpoints(raw_oauth_config: dict) -> dict:
+    async def _auto_discover_oauth_endpoints(raw_oauth_config: Optional[dict]) -> Optional[dict]:
         """Auto-discover OAuth endpoints from issuer metadata if needed.
 
         Args:
@@ -830,7 +872,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
 
     @staticmethod
-    def _validate_token_exchange_config(oauth_config: dict) -> dict:
+    def _validate_token_exchange_config(oauth_config: Optional[dict]) -> Optional[dict]:
         """Validate and default RFC 8693 token-exchange config. No-op for other grants.
 
         Args:
@@ -884,9 +926,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             oauth_config: Raw gateway oauth_config dict being applied (create or update).
             requester_email: Email of the user performing the create/update. ``None``/empty
                 means the call originates from a trusted internal flow (config import, which
-                is already gated behind the platform-admin-only ``admin.import`` permission;
-                catalog registration, which applies a bundled/static definition) rather than
-                a request-scoped HTTP caller, so the gate is skipped.
+                is already gated behind the platform-admin-only ``admin.import`` permission)
+                rather than a request-scoped HTTP caller, so the gate is skipped. Catalog
+                registration now passes the real caller's ``owner_email`` here rather than an
+                empty string, so it goes through this gate like any other caller - harmless
+                today since catalog-built oauth_config always hardcodes grant_type to
+                authorization_code, never token-exchange.
 
         Raises:
             PermissionError: If grant_type is token-exchange, a requester_email is present,
@@ -902,6 +947,34 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         is_platform_admin = await permission_service.check_permission(requester_email, "*", allow_admin_bypass=True)
         if not is_platform_admin:
             raise PermissionError("Configuring a token-exchange gateway requires platform administrator privileges.")
+
+    async def prepare_oauth_config_for_storage(self, db: Session, raw_oauth_config: Optional[dict], requester_email: Optional[str]) -> Optional[dict]:
+        """Run the shared enforce/discover/validate/encrypt pipeline for a gateway's oauth_config.
+
+        Every write path that persists a gateway's ``oauth_config`` (interactive gateway
+        registration and catalog registration) must apply the same token-exchange admin gate,
+        issuer-discovery, and token-exchange defaulting before encrypting for storage - otherwise
+        a path that hand-rolls a subset silently loses those checks the moment it needs to support
+        a grant type beyond the one it was written for.
+
+        Instance method (rather than static/classmethod) so callers - and unit tests - can patch
+        the discovery/validation steps per-instance the same way ``register_gateway`` already
+        allows.
+
+        Args:
+            db: Database session, forwarded to the token-exchange admin-only gate.
+            raw_oauth_config: Raw OAuth config dict to prepare, or None.
+            requester_email: Email of the user performing the create/update, for the
+                token-exchange admin-only gate. None/empty skips that gate (see
+                ``_enforce_token_exchange_admin_only``).
+
+        Returns:
+            The encrypted-for-storage oauth_config dict, or None.
+        """
+        await self._enforce_token_exchange_admin_only(db, raw_oauth_config, requester_email)
+        raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
+        raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
+        return await protect_oauth_config_for_storage(raw_oauth_config)
 
     @staticmethod
     def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
@@ -1541,11 +1614,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             decoded = decode_auth(auth_value)
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
-        raw_oauth_config = getattr(gateway, "oauth_config", None)
-        await self._enforce_token_exchange_admin_only(db, raw_oauth_config, owner_email)
-        raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
-        raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
-        oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
+        oauth_config = await self.prepare_oauth_config_for_storage(db, getattr(gateway, "oauth_config", None), owner_email)
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
         init_client_key = getattr(gateway, "client_key", None)
@@ -1877,11 +1946,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing.mime_type = mime_type
                         existing.uri_template = r.uri_template or None
                         existing.extension_metadata = r_extension_metadata
-                        existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
-                        existing.binary_content = (
-                            r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                        )
-                        existing.size = len(r.content) if r.content else 0
+                        # MCP resources/list carries metadata only; ResourceCreate.content
+                        # is a schema placeholder here and real content is fetched on read.
+                        existing.text_content = None
+                        existing.binary_content = None
+                        existing.size = None
                         existing.title = getattr(r, "title", None)
                         existing.tags = getattr(r, "tags", []) or []
                         existing.federation_source = gateway.name
@@ -1904,15 +1973,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 mime_type=mime_type,
                                 uri_template=r.uri_template or None,
                                 extension_metadata=r_extension_metadata,
-                                text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                                binary_content=(
-                                    r.content.encode()
-                                    if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
-                                    else r.content
-                                    if isinstance(r.content, bytes)
-                                    else None
-                                ),
-                                size=len(r.content) if r.content else 0,
+                                # MCP resources/list carries metadata only; ResourceCreate.content
+                                # is a schema placeholder here and real content is fetched on read.
+                                text_content=None,
+                                binary_content=None,
+                                size=None,
                                 tags=getattr(r, "tags", []) or [],
                                 created_by=created_by or "system",
                                 created_from_ip=created_from_ip,
@@ -3691,7 +3756,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
-    async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def set_gateway_state(
+        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, last_error: Optional[str] = None
+    ) -> GatewayRead:
         """
         Set the activation status of a gateway.
 
@@ -3702,6 +3769,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            last_error: Optional sanitized failure reason to persist. Written
+            atomically with the state change when reachability changes; written
+            in a standalone commit when only the error text differs (no state
+            transition occurred).
 
         Returns:
             The updated GatewayRead object
@@ -3741,6 +3812,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
+                if last_error is not None:
+                    gateway.last_error = last_error
                 # Update tracking
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
@@ -3921,6 +3994,28 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "gateway_name": gateway.name,
                         "enabled": gateway.enabled,
                         "reachable": gateway.reachable,
+                    },
+                )
+
+            elif last_error is not None and gateway.last_error != last_error:
+                gateway.last_error = last_error
+                gateway.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(gateway)
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="set_gateway_state",
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    resource_name=gateway.name,
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    new_values={
+                        "last_error": gateway.last_error,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                        "only_update_reachable": only_update_reachable,
                     },
                 )
 
@@ -4527,12 +4622,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email=None,
         )
 
-    async def _handle_gateway_failure(self, gateway: DbGateway) -> None:
+    async def _handle_gateway_failure(self, gateway: DbGateway, error: Optional[BaseException] = None, auth_query_params: Optional[Dict[str, str]] = None) -> None:
         """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
 
         Args:
             gateway: The gateway object that failed its health check.
+            error: The health-check failure. It is sanitized before persistence.
+            auth_query_params: Decrypted query-auth params used for sanitizing
+                embedded URLs. Falls back to the gateway's stored params when
+                absent (redaction is name-based, so both redact identically;
+                the explicit dict keeps the plaintext material visible at the
+                call site instead of reaching back to the encrypted column).
 
         Returns:
             None
@@ -4573,9 +4674,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
+            raw_error = (str(error).strip() or type(error).__name__) if error is not None else "Unknown health-check failure"
+            sanitized_error = sanitize_exception_message(raw_error, auth_query_params or getattr(gateway, "auth_query_params", None))
+            # Reset before the DB call: if set_gateway_state raises, a stale
+            # count would retry the deactivation (and its audit entry) forever.
+            self._gateway_failure_counts[gateway.id] = 0
             with cast(Any, SessionLocal)() as db:
-                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
-                self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
+                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
         """Check health of a batch of gateways.
@@ -4665,7 +4770,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except asyncio.TimeoutError:
                     logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
-                    await self._handle_gateway_failure(gateway)
+                    await self._handle_gateway_failure(gateway, error=asyncio.TimeoutError(f"health check timed out after {settings.gateway_health_check_timeout}s"))
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
@@ -4717,6 +4822,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if db_gateway:
                     db_gateway.last_seen = datetime.now(timezone.utc)
+                    # Only clear the outage reason for enabled gateways. Disabled
+                    # gateways are still probed (include_inactive=True), and a
+                    # successful probe must not silently wipe why the operator
+                    # sees the gateway as down (its recorded outage reason).
+                    # NOTE: read enabled from the freshly-loaded row, not the
+                    # gateway_enabled snapshot captured before the probe, which
+                    # can be stale if the gateway was disabled mid-probe.
+                    if db_gateway.enabled:
+                        db_gateway.last_error = None
                     update_db.commit()
         except Exception as update_error:
             logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
@@ -4911,7 +5025,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if span:
                                     set_span_attribute(span, "health.status", "unhealthy")
                                     set_span_error(span, e)
-                                await self._handle_gateway_failure(gateway)
+                                await self._handle_gateway_failure(gateway, error=e, auth_query_params=auth_query_params_decrypted)
                                 return
                     else:
                         # Handle non-OAuth authentication (existing logic)
@@ -5073,8 +5187,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             set_span_error(span, e)
 
                         # Set the logger as debug as this check happens for each interval
-                        logger.debug("Health check failed for gateway %s: %s", gateway_name, e)
-                        await self._handle_gateway_failure(gateway)
+                        safe_error = sanitize_exception_message(str(exc_to_inspect), auth_query_params_decrypted or gateway_auth_query_params)
+                        logger.debug("Health check failed for gateway %s: %s", gateway_name, safe_error)
+                        await self._handle_gateway_failure(gateway, error=exc_to_inspect, auth_query_params=auth_query_params_decrypted)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """
@@ -7121,9 +7236,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     response = await session.initialize()
                     capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                     logger.debug("Server capabilities: %s", capabilities)
+                    tools = await get_list_paginated(session, MCPListMethod.TOOLS)
 
-                    response = await session.list_tools()
-                    tools = response.tools
                     tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                     tools, validation_errors = self._validate_tools(tools, context="oauth")
@@ -7133,10 +7247,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     resources = []
-                    if capabilities.get("resources"):
+                    if "resources" in capabilities:
                         try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
+                            raw_resources = await get_list_paginated(session, MCPListMethod.RESOURCES)
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
                                 merge_mcp_protocol_meta(resource_data)
@@ -7167,8 +7280,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # resource template URI
                         try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
+                            raw_resources_templates = await get_list_paginated(session, MCPListMethod.RESOURCE_TEMPLATES)
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
@@ -7190,10 +7302,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Fetch prompts if supported
                     prompts = []
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
+                    if "prompts" in capabilities:
                         try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
+                            raw_prompts = await get_list_paginated(session, MCPListMethod.PROMPTS)
                             for prompt in raw_prompts:
                                 prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
                                 # Add default template if not present
@@ -7302,8 +7413,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
+                tools = await get_list_paginated(session, MCPListMethod.TOOLS)
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools)
@@ -7313,10 +7423,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resources = []
                 if include_resources:
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
+                    if "resources" in capabilities:
                         try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
+                            raw_resources = await get_list_paginated(session, MCPListMethod.RESOURCES)
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
                                 merge_mcp_protocol_meta(resource_data)
@@ -7347,8 +7456,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # resource template URI
                         try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
+                            raw_resources_templates = await get_list_paginated(session, MCPListMethod.RESOURCE_TEMPLATES)
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
@@ -7371,10 +7479,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 prompts = []
                 if include_prompts:
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
+                    if "prompts" in capabilities:
                         try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
+                            raw_prompts = await get_list_paginated(session, MCPListMethod.PROMPTS)
                             for prompt in raw_prompts:
                                 prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
                                 # Add default template if not present
@@ -7471,8 +7578,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
+                tools = await get_list_paginated(session, MCPListMethod.TOOLS)
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools)
@@ -7485,10 +7591,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resources = []
                 if include_resources:
                     logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
+                    if "resources" in capabilities:
                         try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
+                            raw_resources = await get_list_paginated(session, MCPListMethod.RESOURCES)
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
                                 merge_mcp_protocol_meta(resource_data)
@@ -7519,8 +7624,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # resource template URI
                         try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
+                            raw_resources_templates = await get_list_paginated(session, MCPListMethod.RESOURCE_TEMPLATES)
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
@@ -7543,10 +7647,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 prompts = []
                 if include_prompts:
                     logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
+                    if "prompts" in capabilities:
                         try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
+                            raw_prompts = await get_list_paginated(session, MCPListMethod.PROMPTS)
                             for prompt in raw_prompts:
                                 prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
                                 # Add default template if not present

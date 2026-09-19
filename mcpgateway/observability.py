@@ -152,6 +152,18 @@ try:
     HTTP_EXPORTER = getattr(_im("opentelemetry.exporter.otlp.proto.http.trace_exporter"), "OTLPSpanExporter")
 except Exception:
     HTTP_EXPORTER = None
+try:
+    HTTPX_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.httpx"), "HTTPXClientInstrumentor")
+except Exception:
+    HTTPX_INSTRUMENTOR = None
+try:
+    HTTPX2_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.httpx"), "HTTPX2ClientInstrumentor")
+except Exception:
+    HTTPX2_INSTRUMENTOR = None
+try:
+    REDIS_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.redis"), "RedisInstrumentor")
+except Exception:
+    REDIS_INSTRUMENTOR = None
 
 logger = logging.getLogger(__name__)
 
@@ -877,6 +889,16 @@ class OpenTelemetryRequestMiddleware:
                 parent_context = otel_extract(carrier=carrier)
             except Exception as exc:
                 logger.debug("Failed to extract W3C trace context for %s %s: %s", method, path, exc)
+        # Determine whether the inbound request carried a valid W3C trace envelope.
+        # otel_extract returns a context even when no traceparent is present, so
+        # check for a valid REMOTE span context explicitly.
+        has_remote_parent = False
+        if parent_context is not None and OTEL_AVAILABLE and trace is not None:
+            try:
+                remote_span_context = trace.get_span_context(parent_context)
+                has_remote_parent = bool(remote_span_context and remote_span_context.is_valid and remote_span_context.is_remote)
+            except Exception:  # pylint: disable=broad-exception-caught
+                has_remote_parent = False
 
         server = scope.get("server") or ("", None)
         client = scope.get("client") or ("", None)
@@ -936,6 +958,24 @@ class OpenTelemetryRequestMiddleware:
             await send(message)
 
         with _TRACER.start_as_current_span(span_name, **start_span_kwargs) as span:
+            # No valid inbound envelope: publish this new root span's context into
+            # the ASGI headers so downstream raw-header copies (session-task handoff,
+            # affinity envelopes, trusted-internal dispatch) carry the trace and
+            # internal spans nest under it instead of rooting detached traces.
+            if not has_remote_parent and otel_inject is not None:
+                try:
+                    envelope_carrier: Dict[str, str] = {}
+                    otel_inject(carrier=envelope_carrier)
+                    envelope_traceparent = envelope_carrier.get("traceparent")
+                    if envelope_traceparent:
+                        new_scope_headers = list(scope.get("headers", []) or [])
+                        new_scope_headers.append((b"traceparent", envelope_traceparent.encode("latin-1")))
+                        envelope_tracestate = envelope_carrier.get("tracestate")
+                        if envelope_tracestate:
+                            new_scope_headers.append((b"tracestate", envelope_tracestate.encode("latin-1")))
+                        scope["headers"] = new_scope_headers
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.debug("Failed to publish trace envelope into ASGI scope: %s", exc)
             if span is not None:
                 for key, value in span_attributes.items():
                     if value is not None:
@@ -1187,6 +1227,32 @@ def init_telemetry() -> Optional[Any]:
             logger.info(f"   Endpoint: {cfg.otel_exporter_jaeger_endpoint or 'default'}")
         elif exporter_type == "zipkin":
             logger.info(f"   Endpoint: {cfg.otel_exporter_zipkin_endpoint or 'default'}")
+
+        # Auto-instrument outbound httpx/httpx2 clients so downstream hops (federation,
+        # upstream MCP calls, internal loopbacks) appear as nested client spans
+        # with W3C trace context injected automatically.
+        if cfg.otel_httpx_instrumentation_enabled:
+            for _instrumentor_cls, _label in ((HTTPX_INSTRUMENTOR, "httpx"), (HTTPX2_INSTRUMENTOR, "httpx2")):
+                if _instrumentor_cls is not None:
+                    try:
+                        _instrumentor_cls().instrument()
+                        logger.info("   %s client auto-instrumentation enabled", _label)
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        logger.warning("Failed to instrument %s clients: %s", _label, exc)
+                else:
+                    logger.warning("%s instrumentation enabled but package unavailable (install opentelemetry-instrumentation-httpx)", _label)
+        # Auto-instrument redis/redis.asyncio clients: per-command CLIENT spans
+        # (owner lookups, envelope publishes) nested under the active trace. The
+        # pub/sub receive loop is not instrumented, so listeners produce no noise.
+        if cfg.otel_redis_instrumentation_enabled:
+            if REDIS_INSTRUMENTOR is not None:
+                try:
+                    REDIS_INSTRUMENTOR().instrument()
+                    logger.info("   redis client auto-instrumentation enabled")
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.warning("Failed to instrument redis clients: %s", exc)
+            else:
+                logger.warning("redis instrumentation enabled but package unavailable (install opentelemetry-instrumentation-redis)")
 
         return _TRACER
 

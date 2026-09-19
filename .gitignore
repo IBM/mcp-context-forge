@@ -78,6 +78,7 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+.integration/
 .playwright-mcp/
 output
 htmlcov
@@ -205,6 +206,7 @@ CLAUDE.local.md
 # ========================================
 docs/_build/
 /site
+docs/mcpgateway-docs.html-e
 paper/
 spec/
 stats/
@@ -289,7 +291,6 @@ cookies*
 
 # LLM output
 llms-full.txt
-llms/NOTES.md
 
 # Task tracking
 todo/*

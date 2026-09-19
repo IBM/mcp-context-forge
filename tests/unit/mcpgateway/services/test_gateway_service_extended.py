@@ -87,7 +87,7 @@ class TestGatewayServiceExtended:
             mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0"}
             mock_session_instance.initialize.return_value = mock_init_response
 
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
@@ -135,7 +135,7 @@ class TestGatewayServiceExtended:
             mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0"}
             mock_session_instance.initialize.return_value = mock_init_response
 
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
@@ -204,7 +204,7 @@ class TestGatewayServiceExtended:
             mock_init_response.capabilities.model_dump.return_value = {}
             mock_session_instance.initialize.return_value = mock_init_response
 
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 

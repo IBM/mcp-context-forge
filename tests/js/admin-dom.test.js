@@ -294,14 +294,6 @@ describe("getCatalogUrl", () => {
 // generateConfig
 // ---------------------------------------------------------------------------
 describe("generateConfig", () => {
-  test("generates stdio config", () => {
-    const result = generateConfig({ id: "s1", name: "My Server" }, "stdio");
-    expect(result.mcpServers).toBeDefined();
-    expect(
-      result.mcpServers["mcpgateway-wrapper"].env.MCP_SERVER_URL
-    ).toContain("/servers/s1");
-  });
-
   test("generates sse config", () => {
     const result = generateConfig({ id: "s1", name: "My Server" }, "sse");
     expect(result.servers).toBeDefined();

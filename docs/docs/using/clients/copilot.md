@@ -9,8 +9,7 @@ With Copilot → MCP you can:
 * 📂 pull live resources (configs, docs, snippets)
 * 🧩 render prompts or templates directly inside the IDE
 
-Copilot supports **SSE** streams out-of-the-box; for environments that forbid long-lived
-HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`** bridge.
+Copilot supports both **SSE** streams and **Streamable HTTP** out-of-the-box.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -71,61 +70,6 @@ python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --
 
 ---
 
-## 🔗 Option 3 - Local stdio bridge (`mcpgateway.wrapper`)
-
-Perfect when:
-
-* the IDE cannot add HTTP headers, or
-* you're offline / behind a corp proxy.
-
-### 1 - Install the wrapper (one-liner)
-
-```bash
-pipx install --include-deps mcp-contextforge-gateway          # isolates in ~/.local/pipx/venvs
-#   - or -
-uv pip install mcp-contextforge-gateway                       # inside any uv/venv you like
-```
-
-### 2 - Create `.vscode/mcp.json`
-
-```json
-{
-  "servers": {
-    "mcp-wrapper": {
-      "type": "stdio",
-      "command": "python3",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
-        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
-```
-
-That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready to roll.
-
-<details>
-<summary><strong>🐳 Docker alternative</strong></summary>
-
-```jsonc
-{
-  "command": "docker",
-  "args": [
-    "run", "--rm", "--network=host", "-i",
-    "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
-    "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3",
-    "python3", "-m", "mcpgateway.wrapper"
-  ]
-}
-```
-
-</details>
-
----
 
 ## 🧪 Verify inside Copilot
 

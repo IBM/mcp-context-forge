@@ -17,23 +17,22 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-08-24T23:59:59Z"
-cpex-url-reputation = "2026-08-24T23:59:59Z"
-cpex-rate-limiter = "2026-08-24T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-08-24T23:59:59Z"
-cpex-pii-filter = "2026-08-24T23:59:59Z"
-cpex-retry-with-backoff = "2026-08-24T23:59:59Z"
-cpex-secrets-detection = "2026-08-24T23:59:59Z"
-cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
-# additional packages below this: remove before next upgrade cycle starts
-
+cpex = "2026-09-07T23:59:59Z"
+cpex-url-reputation = "2026-09-07T23:59:59Z"
+cpex-rate-limiter = "2026-09-07T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-09-07T23:59:59Z"
+cpex-pii-filter = "2026-09-07T23:59:59Z"
+cpex-retry-with-backoff = "2026-09-07T23:59:59Z"
+cpex-output-length-guard = "2026-09-15T23:59:59Z"
+cpex-secrets-detection = "2026-09-07T23:59:59Z"
+cpex-sql-sanitizer = "2026-09-07T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.9"
+version = "1.0.10"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -72,7 +71,7 @@ dependencies = [
     "base58>=2.1.1",
     "brotli>=1.2.0",
     "click>=8.4.2", # Transitive pin
-    "cpex>=0.1.2",
+    "cpex==0.1.3",
     "cryptography>=50.0.0",
     "fastapi>=0.140.0",
     "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
@@ -120,6 +119,7 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp>=3.14.3",
     "argparse-manpage>=4.7",
+    "authlib>=1.7.2", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes
     "autoflake>=2.3.3",
     "bandit>=1.9.4",
     "bump2version>=1.0.1",
@@ -167,6 +167,7 @@ dev = [
     "pyupgrade>=3.21.2",
     "radon>=6.0.1",
     "redis>=8.0.1",
+    "resvg-py>=0.5.0", # SVG-to-PNG rasterizer for scripts/fetch_catalog_icons.py; pure prebuilt wheels, no system cairo/rsvg
     "rich>=15.0.0",
     "Pillow>=12.2.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
@@ -234,6 +235,9 @@ observability = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-instrumentation-httpx>=0.65b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
+    "opentelemetry-instrumentation-redis>=0.65b0",
 ]
 
 # Async SQLite Driver (optional)
@@ -265,13 +269,14 @@ templating = [
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
-    "cpex-encoded-exfil-detection>=0.3.6", # 0.3.6 is the first release that emits result.metadata
-    "cpex-pii-filter>=0.3.6", # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
-    "cpex-rate-limiter>=0.1.7", # 0.1.7 is the first release that emits result.metadata
-    "cpex-retry-with-backoff>=0.3.7", # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
-    "cpex-secrets-detection>=0.3.10", # 0.3.10 preserves secret field names during redaction; 0.3.9 adds field filters; 0.3.7 first emits result.metadata
-    "cpex-sql-sanitizer>=0.1.0", # Rust-backed SQL sanitizer; 0.1.0 is the only release
-    "cpex-url-reputation>=0.3.5", # 0.3.5 is the first release that emits result.metadata
+    "cpex-encoded-exfil-detection>=0.3.8", # 0.3.6 is the first release that emits result.metadata
+    "cpex-pii-filter>=0.3.8", # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
+    "cpex-rate-limiter>=0.1.9", # 0.1.7 is the first release that emits result.metadata
+    "cpex-retry-with-backoff>=0.3.9", # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
+    "cpex-output-length-guard>=0.1.0", # Rust-backed output length guard
+    "cpex-secrets-detection>=0.3.12", # 0.3.10 preserves secret field names during redaction; 0.3.9 adds field filters; 0.3.7 first emits result.metadata
+    "cpex-sql-sanitizer>=0.1.2", # Rust-backed SQL sanitizer
+    "cpex-url-reputation>=0.3.7", # 0.3.5 is the first release that emits result.metadata
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -285,11 +290,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.9",
+    "mcp-contextforge-gateway[redis]>=1.0.10",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.9",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.10",
 ]
 
 # --------------------------------------------------------------------

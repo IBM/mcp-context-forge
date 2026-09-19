@@ -7,6 +7,83 @@
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
 
+## [Unreleased]
+
+### Added
+
+- **Tool preview endpoint** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Added `POST /tools/preview/{name}` (and its `/v1` mount), a dry-run counterpart to tool invocation that validates arguments against the tool's `input_schema`, resolves local vs. federated targeting, and reports which plugin pre-invoke hooks would run, without ever dispatching the tool. Gated behind `MCPGATEWAY_TOOL_PREVIEW_ENABLED` (off by default) and the `tools.preview` RBAC permission. Only plugins tagged `preview_safe` actually run during a preview; every other hook that would run live is reported as a warning instead.
+
+### Breaking Changes
+
+- **stdio wrapper removed in favour of FastMCP** - `mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust `crates/wrapper/` binary are removed. Clients that already speak Streamable HTTP need no bridge — point them at `/servers/<server_id>/mcp/` directly. For stdio clients such as Claude Desktop, use FastMCP's bridge (`uvx fastmcp-remote`); see [`docs/docs/using/clients/`](docs/docs/using/clients/) for per-client configuration.
+- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+- **`invoke_tool` now enforces input-schema validation** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Live tool invocation (`tools/call`) now validates `arguments` against the tool's `input_schema` before dispatch, raising `ToolInvocationError` on a mismatch, via the same `_validate_tool_input_arguments` check `POST /tools/preview/{name}` uses (#5629). Previously `invoke_tool` never checked `arguments` against `input_schema` at all, so a tool whose callers relied on that gap will now reject calls it previously accepted. To find affected callers before enabling, preview the same arguments against `POST /tools/preview/{name}`: a `validated: false` response with an `invalid_arguments` warning is exactly what live invocation will now reject. Remediate by correcting the caller's arguments or by relaxing the tool's published `input_schema` to match what it actually accepts.
+
+### Fixed
+
+- **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).
+
+- **OAuth token scope resolution fails closed for indeterminate state** - Admin users with missing or malformed `token_teams` state and no cached JWT payload now fail closed to public-only scope (`[]`/403) instead of receiving unrestricted admin bypass (`None`). This prevents indeterminate scope from being silently promoted to unrestricted access ([#5980](https://github.com/IBM/mcp-context-forge/issues/5980)).
+
+- **Schema validation no longer resolves remote `$ref`s** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Tool input/output schemas are tool-controlled data, and `jsonschema`'s default registry resolves remote `$ref` URIs by fetching them over the network, which is reachable from tool preview and from every live invocation with an output schema. Non-local references are now refused outright, and validators are built against a registry that never retrieves, so an unresolvable reference fails validation closed instead of issuing a request.
+
+## [1.0.10] - 2026-09-07 - OAuth Security, Observability, Plugin Context, and Reliability
+
+### Overview
+
+Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliability**, **observability and session-affinity performance**, **plugin context propagation**, **Vault support for A2A agents**, **team management reliability**, and **dependency security**:
+
+- **Security & Auth** - Rejects default passwords when authentication features are enabled, adds a strict post-OAuth redirect allowlist, and fixes cached team-membership checks during gateway OAuth authorization.
+- **Gateway & Plugins** - Preserves plugin context across MCP tool, prompt, and resource hooks; supports Vault token injection for A2A agents exposed as MCP tools; and uses the configured public application domain for Vault OAuth callbacks.
+- **Observability & Performance** - Adds affinity-path tracing, W3C trace propagation, optional Redis/HTTPX/SQLAlchemy instrumentation, and bounded concurrent affinity forwarding while preserving per-session ordering.
+- **Reliability & Tooling** - Returns clear client errors for duplicate active team names, centralizes interrogate configuration, and refreshes Python and Node.js dependencies with security updates.
+
+### Added
+
+#### **Security & OAuth**
+
+- **Post-OAuth redirect allowlist** ([#6411](https://github.com/IBM/mcp-context-forge/pull/6411)) - Added optional `redirect_uri_after_oauth` gateway configuration for returning users to an external application after Authorization Code OAuth. Redirects require an exact HTTPS origin configured by `OAUTH_REDIRECT_ALLOWED_ORIGIN` and are validated at configuration and callback time.
+
+#### **Observability & Performance**
+
+- **Affinity-path tracing and concurrent forwarding** ([#6164](https://github.com/IBM/mcp-context-forge/pull/6164)) - Added affinity-path spans, W3C trace propagation across affinity hops, optional Redis/HTTPX/SQLAlchemy auto-instrumentation, and bounded concurrent forwarding while preserving per-session FIFO ordering and timeout fallback.
+
+#### **Plugins**
+
+- **Vault support for A2A agents exposed as MCP tools** ([#6395](https://github.com/IBM/mcp-context-forge/pull/6395)) - Vault plugin now detects A2A-backed MCP tools, injects matching bearer tokens for tagged agents, and strips `X-Vault-Tokens` headers from forwarded requests.
+
+### Breaking Changes
+
+- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+
+### Fixed
+
+#### **OAuth & Gateway Access**
+
+- **Team gateway OAuth access with cached users** ([#6589](https://github.com/IBM/mcp-context-forge/pull/6589)) - Gateway OAuth authorization now checks team membership through `TeamManagementService`, avoiding false `403` responses caused by detached cached user records.
+- **Vault OAuth callback origin behind reverse proxies** ([#6556](https://github.com/IBM/mcp-context-forge/pull/6556)) - Vault authorization now builds its callback URI from `APP_DOMAIN` instead of the internal request origin, preventing identity providers from rejecting redirects behind ingress proxies.
+
+#### **MCP Transport & Plugins**
+
+- **Plugin context propagation over `/mcp`** ([#6140](https://github.com/IBM/mcp-context-forge/pull/6140)) - Streamable HTTP tool calls, prompt fetches, and resource reads now receive context created by `HTTP_PRE_REQUEST`, preserving cross-hook plugin state on the MCP transport.
+
+#### **Teams & API Reliability**
+
+- **Active team name collision handling** ([#6558](https://github.com/IBM/mcp-context-forge/pull/6558)) - Duplicate active team names now return controlled client errors instead of an internal server error. Platform administrators receive a specific `400`; other callers receive a non-disclosing `409`, including during concurrent insert races.
+
+### Chores
+
+| PR | Description |
+|----|-------------|
+| [#6530](https://github.com/IBM/mcp-context-forge/pull/6530) | remove pre-commit interrogate arguments so checks use the shared `pyproject.toml` configuration |
+| [#6658](https://github.com/IBM/mcp-context-forge/pull/6658) | update Python and Node.js dependencies, rebuild the Admin UI bundle, and bump `fast-uri` to address four high-severity advisories |
+
+
+### Fixed
+
+- **SSO cross-provider relink misconfiguration and admin carryover** ([#6431](https://github.com/IBM/mcp-context-forge/issues/6431)) - Cross-provider sign-in for an already-linked email is now gated behind an explicit, fail-closed `SSO_ALLOW_PROVIDER_LINKING` setting (default `false`) instead of an always-on, misleadingly-logged auto-link. When linking is enabled, relinking now re-vets admin status against the new provider and demotes regardless of how admin was originally granted (`api`, manual, or `sso`), closing a privilege-carryover path where a manually-granted admin could relink to a provider that never vets for admin and silently keep `*` permissions. The refuse-path log message wording changed from "account-linking required" to "login refused"; update any log-based alerting that matched the old string.
+- **Catalog OAuth credential persistence on registration** ([#6588](https://github.com/IBM/mcp-context-forge/pull/6588)) - OAuth credentials submitted with a catalog server registration now persist onto the created gateway's `oauth_config` in the same call, and "OAuth2.1 & API Key" catalog entries registered with no API key skip the doomed connection test instead of failing registration ([#5967](https://github.com/IBM/mcp-context-forge/issues/5967)). `requires_oauth_config` no longer clears just because `oauth_config` is set - it now means "disabled OAuth gateway", so a previously-authorized OAuth gateway that was manually disabled (credential rotation, maintenance) now shows the "OAuth Config Required" card instead of "Already Registered". Display-only; no data or access is lost.
+
 ## [1.0.9] - 2026-08-31 - mTLS, OAuth Quick Wins, Tool Preview, Catalog Actions, and Security Hardening
 
 ### Overview
@@ -45,6 +122,10 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 - **SSL/TLS exposed for gateway pods** ([#6362](https://github.com/IBM/mcp-context-forge/pull/6362)) - SSL/TLS exposed for gateway pods.
 - **TLS cipher suite exposure** ([#6483](https://github.com/IBM/mcp-context-forge/pull/6483)) - Exposed TLS cipher suite configuration.
 - **Automated MCP server catalog icon generation** ([#6397](https://github.com/IBM/mcp-context-forge/pull/6397)) - Automated MCP server catalog icon generation.
+
+### Breaking Changes
+
+- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md).
 
 ### Fixed
 
@@ -94,6 +175,7 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 | [#6306](https://github.com/IBM/mcp-context-forge/pull/6306) | add MCP Apps live stack tests to TestRawJsonRpc |
 | [#6398](https://github.com/IBM/mcp-context-forge/pull/6398) | fix Playwright gateway OAuth and team flakiness |
 | [#6375](https://github.com/IBM/mcp-context-forge/pull/6375) | routine python/node dependency updates |
+
 
 ## [1.0.8] - 2026-08-17 - Plugin Discovery, MCP Apps Bridge, Catalog Registration, and Security Hardening
 

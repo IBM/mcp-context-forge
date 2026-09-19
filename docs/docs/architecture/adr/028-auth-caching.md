@@ -4,6 +4,11 @@
 - *Date:* 2025-01-15
 - *Deciders:* Platform Team
 
+!!! note
+    A later role-cache extension added `{cache_prefix}auth:role:{email}:{team_id}` entries,
+    controlled by `AUTH_CACHE_ROLE_TTL` (default: 60 seconds). A cached non-membership is
+    represented internally by a negative sentinel and returned to callers as `None`.
+
 ## Context
 
 Under high-concurrency load testing (1000+ concurrent users), authentication became a significant performance bottleneck. Every authenticated request triggered 3-4 separate database queries via `asyncio.to_thread()`:

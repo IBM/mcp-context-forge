@@ -73,7 +73,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -104,6 +104,7 @@ from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
@@ -987,14 +988,7 @@ def _build_server_resource_url(scope: Scope, server_id: str) -> str:
         Fully-qualified resource URL string, or ``""`` if construction fails.
     """
     del scope  # intentionally ignored — see docstring
-    try:
-        raw = str(settings.app_domain).rstrip("/")
-    except (AttributeError, ValueError) as exc:
-        logger.warning("settings.app_domain is not a usable URL: %s: %s", type(exc).__name__, exc)
-        return ""
-    if not raw:
-        return ""
-    return f"{raw}/servers/{server_id}/mcp"
+    return build_server_mcp_url(server_id)
 
 
 def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
@@ -1899,11 +1893,12 @@ async def call_tool(
             # Carry the verified edge identity so the owner dispatches to the trusted internal
             # endpoint without re-authenticating (OAuth / public-only survive the rpc forward).
             encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
-            forwarded_response = await pool.forward_request_to_owner(
-                mcp_session_id,
-                {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
-                encoded_auth_context,
-            )
+            with create_span("mcp.affinity.forward_rpc", {"mcp.session_id": mcp_session_id[:8], "mcp.tool.name": name}):
+                forwarded_response = await pool.forward_request_to_owner(
+                    mcp_session_id,
+                    {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+                    encoded_auth_context,
+                )
             if forwarded_response is not None:
                 # Request was handled by another worker - convert response to expected format
                 if "error" in forwarded_response:
@@ -2415,6 +2410,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                                         "is_admin": bool(getattr(user_record, "is_admin", False)),
                                         "is_active": bool(getattr(user_record, "is_active", True)),
                                         "auth_provider": getattr(user_record, "auth_provider", "local"),
+                                        "password_hash_type": getattr(user_record, "password_hash_type", "argon2id"),
                                         "password_change_required": bool(getattr(user_record, "password_change_required", False)),
                                         "email_verified_at": getattr(user_record, "email_verified_at", None),
                                         "created_at": getattr(user_record, "created_at", None),
@@ -4209,6 +4205,11 @@ class SessionManagerWrapper:
             >>> list(sig.parameters.keys())
             ['scope', 'receive', 'send']
         """
+        # Entry marker: zero-duration span so traces reveal how much time passed
+        # between the request root span and the transport handler actually
+        # beginning execution (event-loop / middleware scheduling delay).
+        with create_span("mcp.transport.enter", {"http.route": scope.get("path", "")}):
+            pass
 
         path = scope["modified_path"]
         # Uses precompiled regex for server ID extraction
@@ -4512,7 +4513,13 @@ class SessionManagerWrapper:
                 from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
-                owner = await pool.get_session_owner(mcp_session_id)
+                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": WORKER_ID}) as affinity_span:
+                    # The span wraps the Redis owner lookup itself — that round-trip
+                    # is the latency this instrumentation exists to measure.
+                    owner = await pool.get_session_owner(mcp_session_id)
+                    if affinity_span is not None:
+                        set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
+                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
                 logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
 
                 if owner and owner != WORKER_ID:
@@ -4540,16 +4547,17 @@ class SessionManagerWrapper:
                     body = b"".join(body_parts)
 
                     # Forward to owner worker
-                    response = await pool.forward_to_owner(
-                        owner_worker_id=owner,
-                        mcp_session_id=mcp_session_id,
-                        method=method,
-                        path=path,
-                        headers=headers,
-                        body=body,
-                        query_string=query_string,
-                        auth_context=encoded_auth_context,
-                    )
+                    with create_span("mcp.affinity.forward_http", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.owner": owner}):
+                        response = await pool.forward_to_owner(
+                            owner_worker_id=owner,
+                            mcp_session_id=mcp_session_id,
+                            method=method,
+                            path=path,
+                            headers=inject_trace_context_headers(headers),
+                            body=body,
+                            query_string=query_string,
+                            auth_context=encoded_auth_context,
+                        )
 
                     if response:
                         # Send forwarded response back to client
@@ -4636,21 +4644,17 @@ class SessionManagerWrapper:
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
                         # Owner-direct path: dispatch to the trusted internal
-                        # /_internal/mcp/rpc endpoint carrying the edge-validated auth
-                        # context, so OAuth and public-only sessions are honored without
+                        # /_internal/mcp/rpc endpoint via the shared helper (carries trust
+                        # headers, edge auth context, and the active W3C trace context),
+                        # so OAuth and public-only sessions are honored without
                         # re-authenticating against public /rpc (JWTs/cookies only).
                         # First-Party
-                        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
-                        from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
-                        from mcpgateway.utils.internal_http import internal_loopback_base_url  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
                         from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
                         rpc_headers = {
                             "content-type": "application/json",
                             "x-mcp-session-id": mcp_session_id,
-                            "x-contextforge-mcp-runtime": "affinity",
-                            "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
-                            "x-contextforge-auth-context": encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
                         }
                         # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
                         # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
@@ -4666,14 +4670,12 @@ class SessionManagerWrapper:
                         # Dispatch in-process so the request runs on this worker, the
                         # session owner that holds the bound upstream session, instead of
                         # looping back over the shared socket to a random worker.
-                        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
-                        async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
-                            response = await client.post(
-                                "/_internal/mcp/rpc",
-                                content=body,
-                                headers=rpc_headers,
-                                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                            )
+                        response = await post_rpc_in_process(
+                            content=body,
+                            headers=rpc_headers,
+                            timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                            auth_context=encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
+                        )
 
                         # Note: Content-Length is NOT manually set to allow compression
                         # middleware to set it correctly after compression (issue #5457)
@@ -4711,6 +4713,12 @@ class SessionManagerWrapper:
         # Enrich with session ID BEFORE SDK handling so tool invocations can access it
         # Set request_headers_var BEFORE server_id_var to ensure ContextVars are captured together
         enriched_headers = dict(headers)
+
+        # Carry the active W3C trace context across the SDK task boundary: the
+        # session task group was created at startup, so handler tasks never see
+        # this request's contextvars. Everything downstream (tool handler,
+        # affinity forward envelope, trusted-internal dispatch) reads these headers.
+        enriched_headers = inject_trace_context_headers(enriched_headers)
         request_headers_var.set(enriched_headers)
 
         server_id_var.set(validated)
@@ -5453,6 +5461,7 @@ class _StreamableHttpAuthHandler:
                                             "is_admin": bool(user_record.is_admin),
                                             "is_active": bool(user_record.is_active),
                                             "auth_provider": user_record.auth_provider,
+                                            "password_hash_type": user_record.password_hash_type,
                                             "password_change_required": bool(user_record.password_change_required),
                                             "email_verified_at": user_record.email_verified_at,
                                             "created_at": user_record.created_at,

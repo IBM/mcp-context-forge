@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Gateway
+from mcpgateway.db import EmailTeamMember, Gateway
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import (
     ADMIN_CSRF_COOKIE_NAME,
@@ -34,6 +34,22 @@ from mcpgateway.routers.oauth_router import (
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.utils.oauth_resource import derive_resource_origin
+
+
+class _AttrDict(dict):
+    """dict subclass exposing keys as attributes.
+
+    ``@require_permission`` requires ``isinstance(current_user, dict)`` (it's a real
+    dict at runtime - see ``get_current_user_with_permissions``), while some router
+    helpers and test assertions use attribute access (``user.email``). This satisfies
+    both without duplicating fixtures per access style.
+    """
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
 
 
 class TestDeriveResourceOrigin:
@@ -327,7 +343,7 @@ class TestOAuthRouter:
         gateway = Mock(spec=Gateway)
         gateway.id = "gateway123"
         gateway.name = "Test Gateway"
-        gateway.url = "https://mcp.example.com"  # MCP server URL
+        gateway.url = "https://mcp.example.com/deep/path"  # MCP server URL
         gateway.visibility = "public"
         gateway.owner_email = None
         gateway.team_id = None  # No team restriction - allow all authenticated users
@@ -344,14 +360,14 @@ class TestOAuthRouter:
 
     @pytest.fixture
     def mock_current_user(self):
-        """Create mock current user."""
-        user = Mock(spec=EmailUserResponse)
-        user.get = Mock(return_value="test@example.com")
-        user.email = "test@example.com"
-        user.full_name = "Test User"
-        user.is_active = True
-        user.is_admin = False
-        return user
+        """Create mock current user.
+
+        A real dict (not ``Mock(spec=EmailUserResponse)``) since ``get_oauth_status``/
+        ``get_oauth_status_batch`` are RBAC-decorated (``@require_permission``), which
+        requires ``isinstance(current_user, dict)`` - matching the actual runtime type
+        returned by ``get_current_user_with_permissions``.
+        """
+        return _AttrDict(email="test@example.com", full_name="Test User", is_active=True, is_admin=False)
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_success(self, mock_db, mock_request, mock_gateway, mock_current_user):
@@ -388,9 +404,10 @@ class TestOAuthRouter:
                 call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
                 assert call_args[0][0] == "gateway123"
                 assert call_args[1]["app_user_email"] == mock_current_user.get("email")
-                # oauth_config should have resource set to gateway.url
+                # oauth_config should have resource set to the origin of gateway.url,
+                # not the full URL — derive_resource_origin strips the path component.
                 oauth_config_passed = call_args[0][1]
-                assert oauth_config_passed["resource"] == mock_gateway.url
+                assert oauth_config_passed["resource"] == "https://mcp.example.com"
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_gateway_not_found(self, mock_db, mock_request, mock_current_user):
@@ -1161,7 +1178,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute (now requires current_user for authentication)
-        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         # Assert
         assert result["oauth_enabled"] is True
@@ -1183,7 +1200,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute (now requires current_user for authentication)
-        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         # Assert
         assert result["oauth_enabled"] is False
@@ -1196,7 +1213,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == 404
 
@@ -1210,7 +1227,7 @@ class TestOAuthRouter:
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+        result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert result["grant_type"] == "client_credentials"
         assert "configured for client_credentials" in result["message"]
@@ -1222,9 +1239,442 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+            await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == 500
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "backend_info,expected_status,expected_authorized",
+        [
+            ({"scopes": ["read"], "expires_at": "2030-01-01T00:00:00", "status": "valid", "updated_at": "2026-01-01T00:00:00"}, "valid", True),
+            ({"scopes": ["read"], "expires_at": "2026-01-01T00:04:00", "status": "near_expiry", "updated_at": "2026-01-01T00:00:00"}, "near_expiry", True),
+            ({"scopes": ["read"], "expires_at": "2020-01-01T00:00:00", "status": "expired", "updated_at": "2026-01-01T00:00:00"}, "expired", False),
+            (None, "missing", False),
+        ],
+    )
+    async def test_get_oauth_status_includes_user_token_status(self, mock_db, mock_gateway, mock_current_user, mock_request, backend_info, expected_status, expected_authorized):
+        """user_token_status reflects the caller's own stored token state, sourced from TokenStorageService."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(return_value=backend_info)
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
+
+        assert result["user_token_status"]["status"] == expected_status
+        assert result["user_token_status"]["authorized"] is expected_authorized
+        mock_token_storage.get_token_info.assert_awaited_once_with("gateway123", mock_current_user.email)
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_user_token_status_not_shared_across_users(self, mock_db, mock_gateway, mock_request):
+        """Each caller only ever gets their own token state - lookup is keyed by the authenticated caller's email."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        other_user = _AttrDict(email="other@example.com", is_admin=False)
+
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage_class.return_value = mock_token_storage
+
+            await get_oauth_status("gateway123", mock_request, current_user=other_user, db=mock_db)
+
+        mock_token_storage.get_token_info.assert_awaited_once_with("gateway123", "other@example.com")
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_user_token_status_lookup_failure_logs_and_reads_unknown(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A backend lookup failure (e.g. a DB error) is logged with a traceback, distinguishing it
+        from a genuinely missing token in logs, while surfacing "unknown"/unauthorized to the client
+        rather than a 500 - and rather than the same "missing" shape a never-authorized caller sees,
+        so a UI doesn't mistake a transient outage for "never authorized" and prompt a fresh OAuth flow."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(side_effect=RuntimeError("db unavailable"))
+            mock_token_storage_class.return_value = mock_token_storage
+
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status("gateway123", mock_request, current_user=mock_current_user, db=mock_db)
+
+        assert result["user_token_status"] == {"status": "unknown", "authorized": False}
+        mock_logger.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_caller_token_status_unknown_identity_short_circuits(self, mock_db):
+        """A caller with no resolvable email (missing/empty email and sub) is reported as
+        an unauthorized/missing token without ever reaching TokenStorageService - there's no
+        identity to key the per-caller lookup on."""
+        from mcpgateway.routers.oauth_router import _get_caller_token_status
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            result = await _get_caller_token_status(mock_db, {}, "gateway123")
+
+        assert result == {"status": "missing", "authorized": False}
+        mock_token_storage_class.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_success(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """Batch endpoint returns the same per-gateway payload as the single endpoint, keyed by gateway id."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], current_user=mock_current_user, db=mock_db)
+
+        # Duplicate ids are deduped
+        assert list(result.keys()) == ["gateway123"]
+        assert result["gateway123"]["oauth_enabled"] is True
+        assert result["gateway123"]["user_token_status"]["status"] == "missing"
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_single_gateway_query(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """Batch endpoint issues one Gateway SELECT and one TokenStorageService for the whole batch, not one per id."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], current_user=mock_current_user, db=mock_db)
+
+        assert mock_db.execute.call_count == 1
+        mock_token_storage_class.assert_called_once()
+        mock_token_storage.get_token_info_bulk.assert_awaited_once()
+        assert result["gateway123"]["oauth_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_single_gateway_query_real_hex_ids(self, mock_db, mock_current_user, mock_request):
+        """Regression test: with real Gateway.id-shaped ids (32-char hex, as uuid4().hex
+        produces - unlike "gateway123" above, which never matches _RESOURCE_PATTERNS'
+        [a-f0-9\\-]+ regex and so never exercises the per-id ownership recheck), the batch
+        endpoint must still issue exactly one Gateway SELECT for the whole batch. The per-id
+        ownership recheck inside _enforce_gateway_access -> _check_resource_team_ownership
+        has to reuse the already-loaded gateway (preloaded_gateway) instead of re-fetching it,
+        or this regresses to N+1 for any non-admin or narrowed-admin caller."""
+        gw1 = Mock(spec=Gateway)
+        gw1.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        gw1.visibility = "public"
+        gw1.owner_email = None
+        gw1.team_id = None
+        gw1.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        gw2 = Mock(spec=Gateway)
+        gw2.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        gw2.visibility = "public"
+        gw2.owner_email = None
+        gw2.team_id = None
+        gw2.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], current_user=mock_current_user, db=mock_db)
+
+        assert mock_db.execute.call_count == 1
+        assert set(result.keys()) == {gw1.id, gw2.id}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_private_visibility_owner_included_non_owner_omitted(self, mock_current_user, mock_request):
+        """The batch endpoint's ownership check exercises the private-visibility branch, not just
+        the public fixtures used elsewhere: the caller's own private gateway is included, and a
+        private gateway owned by someone else is silently omitted rather than failing the batch."""
+        own_gateway = Mock(spec=Gateway)
+        own_gateway.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        own_gateway.visibility = "private"
+        own_gateway.owner_email = mock_current_user.email
+        own_gateway.team_id = None
+        own_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        others_gateway = Mock(spec=Gateway)
+        others_gateway.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        others_gateway.visibility = "private"
+        others_gateway.owner_email = "someone-else@example.com"
+        others_gateway.team_id = None
+        others_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db = Mock(spec=Session)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [own_gateway, others_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = AsyncMock(side_effect=lambda gateway_ids, app_user_email: {gid: None for gid in gateway_ids})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [own_gateway.id, others_gateway.id], current_user=mock_current_user, db=mock_db)
+
+        assert set(result.keys()) == {own_gateway.id}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_non_authorization_code_grant_omits_user_token_status(self, mock_current_user, mock_request):
+        """A non-authorization_code gateway in the batch still reports oauth_enabled config,
+        but user_token_status stays omitted - there's no per-caller token state to report."""
+        gateway = Mock(spec=Gateway)
+        gateway.id = "cccccccccccccccccccccccccccccc"
+        gateway.visibility = "public"
+        gateway.owner_email = None
+        gateway.team_id = None
+        gateway.oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
+
+        mock_db = Mock(spec=Session)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        result = await get_oauth_status_batch(mock_request, [gateway.id], current_user=mock_current_user, db=mock_db)
+
+        assert result[gateway.id]["grant_type"] == "client_credentials"
+        assert "user_token_status" not in result[gateway.id]
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_omits_inaccessible_gateways(self, mock_db, mock_current_user, mock_request):
+        """A gateway id that 404s or 403s for this caller is silently dropped, not surfaced as a batch failure."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []  # every id -> gateway not found
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        result = await get_oauth_status_batch(mock_request, ["missing1", "missing2"], current_user=mock_current_user, db=mock_db)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_logs_access_check_server_errors(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A 5xx from the per-gateway access check is logged and omitted, not silently swallowed like a 404/403."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=HTTPException(status_code=500, detail="boom"))):
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
+
+        assert result == {}
+        mock_logger.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_does_not_log_404_or_403(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A 404/403 from the per-gateway access check is omitted without an error log - it's an expected outcome, not a fault."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=HTTPException(status_code=403, detail="nope"))):
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
+
+        assert result == {}
+        mock_logger.error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_logs_and_omits_on_non_http_access_check_error(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A non-HTTPException raised by the access check (e.g. a DB error) is logged and the
+        gateway is omitted from the batch, rather than failing the whole request."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=RuntimeError("db unavailable"))):
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
+
+        assert result == {}
+        mock_logger.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_logs_and_omits_on_payload_build_error(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A failure while building an individual gateway's status payload (or its
+        user_token_status) is logged and that gateway is omitted, not surfaced as a batch failure."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router._build_oauth_status_payload", side_effect=RuntimeError("boom")):
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
+
+        assert result == {}
+        mock_logger.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_requires_gateway_ids(self, mock_db, mock_current_user, mock_request):
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_oauth_status_batch(mock_request, [], current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_rejects_too_many_ids(self, mock_db, mock_current_user, mock_request):
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch, OAUTH_STATUS_BATCH_MAX_IDS
+
+        too_many = [f"gw{i}" for i in range(OAUTH_STATUS_BATCH_MAX_IDS + 1)]
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_oauth_status_batch(mock_request, too_many, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_uses_bulk_token_lookup_not_per_id(self, mock_db, mock_current_user, mock_request):
+        """The batch endpoint calls get_token_info_bulk() once for every authorization_code
+        gateway id, not get_token_info() once per id - this is the fix for the batch endpoint's
+        N+1 token lookup (review #6620)."""
+        gw1 = Mock(spec=Gateway)
+        gw1.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        gw1.visibility = "public"
+        gw1.owner_email = None
+        gw1.team_id = None
+        gw1.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        gw2 = Mock(spec=Gateway)
+        gw2.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        gw2.visibility = "public"
+        gw2.owner_email = None
+        gw2.team_id = None
+        gw2.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock()  # must not be called
+            mock_token_storage.get_token_info_bulk = AsyncMock(return_value={gw1.id: {"scopes": ["read"], "expires_at": None, "status": "valid", "updated_at": "2026-01-01T00:00:00"}, gw2.id: None})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], current_user=mock_current_user, db=mock_db)
+
+        mock_token_storage.get_token_info_bulk.assert_awaited_once_with([gw1.id, gw2.id], mock_current_user.email)
+        mock_token_storage.get_token_info.assert_not_called()
+        assert result[gw1.id]["user_token_status"]["status"] == "valid"
+        assert result[gw2.id]["user_token_status"]["status"] == "missing"
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_one_id_lookup_failure_reports_unknown_others_unaffected(self, mock_db, mock_current_user, mock_request):
+        """A per-id failure captured by get_token_info_bulk() (e.g. the default loop-based
+        implementation isolating one Vault lookup's failure) surfaces as "unknown" for that
+        id only - a backend outage on one gateway doesn't read as "never authorized" and
+        doesn't take down the rest of the batch."""
+        gw1 = Mock(spec=Gateway)
+        gw1.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        gw1.visibility = "public"
+        gw1.owner_email = None
+        gw1.team_id = None
+        gw1.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        gw2 = Mock(spec=Gateway)
+        gw2.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        gw2.visibility = "public"
+        gw2.owner_email = None
+        gw2.team_id = None
+        gw2.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = AsyncMock(return_value={gw1.id: None, gw2.id: RuntimeError("vault unavailable")})
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], current_user=mock_current_user, db=mock_db)
+
+        assert result[gw1.id]["user_token_status"] == {"status": "missing", "authorized": False}
+        assert result[gw2.id]["user_token_status"] == {"status": "unknown", "authorized": False}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_bulk_lookup_timeout_reports_unknown(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A get_token_info_bulk() call that exceeds OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS
+        is abandoned rather than holding the request open - every pending id reports "unknown"
+        instead of the whole batch endpoint hanging or failing (review #6620: worst case is
+        OAUTH_STATUS_BATCH_MAX_IDS sequential per-id Vault lookups, each retried with backoff)."""
+        # Standard
+        import asyncio
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        async def _never_completes(*_args, **_kwargs):
+            await asyncio.sleep(10)
+            return {}
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info_bulk = _never_completes
+            mock_token_storage_class.return_value = mock_token_storage
+
+            with patch("mcpgateway.routers.oauth_router.OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS", 0.01):
+                with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                    result = await get_oauth_status_batch(mock_request, ["gateway123"], current_user=mock_current_user, db=mock_db)
+
+        assert result["gateway123"]["user_token_status"] == {"status": "unknown", "authorized": False}
+        mock_logger.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_denied_without_gateways_read_permission(self, mock_db, mock_request):
+        """A caller without gateways.read is rejected by the @require_permission decorator
+        before the handler's own ownership/visibility checks ever run (Layer 2 RBAC,
+        review #6620): Layer 1 token scoping and the per-gateway ownership check are
+        necessary but not sufficient - a visible gateway must not leak OAuth config and
+        per-caller token state to a principal who lacks gateways.read."""
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
+            mock_permission_service = Mock()
+            mock_permission_service.check_permission = AsyncMock(return_value=False)
+            mock_permission_service_class.return_value = mock_permission_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_oauth_status("gateway123", mock_request, current_user={"email": "no-perms@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_denied_without_gateways_read_permission(self, mock_db, mock_request):
+        """Same RBAC gate applies to the batch endpoint - a caller without gateways.read
+        is rejected before any per-gateway visibility check or gateway lookup runs."""
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.middleware.rbac.PermissionService") as mock_permission_service_class:
+            mock_permission_service = Mock()
+            mock_permission_service.check_permission = AsyncMock(return_value=False)
+            mock_permission_service_class.return_value = mock_permission_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_oauth_status_batch(mock_request, ["gateway123"], current_user={"email": "no-perms@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_success(self, mock_db, mock_current_user):
@@ -1477,7 +1927,10 @@ class TestOAuthRouter:
 
         assert exc_info.value.status_code == 403
 
-    def test_resolve_token_teams_for_scope_check_admin_attribute_fallback(self):
+    def test_resolve_token_teams_for_scope_check_admin_missing_state_fails_closed(self):
+        """Admin with missing token_teams attribute and no cached JWT payload
+        must fail closed to public-only scope, not unrestricted.
+        """
         request = Mock(spec=Request)
         request.state = SimpleNamespace()
         current_user = SimpleNamespace(email="admin@example.com", is_admin=True)
@@ -1485,6 +1938,271 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
 
         result = _resolve_token_teams_for_scope_check(request, current_user)
+        assert result == []
+
+
+class TestResolveTokenTeamsForScopeCheck:
+    """Comprehensive tests for ``_resolve_token_teams_for_scope_check`` covering all
+    acceptance criteria from issue #5980: explicit None, empty list, non-empty list,
+    missing state, malformed state, and cached-payload recovery.
+    """
+
+    def test_explicit_none_admin_unrestricted(self):
+        """Explicit ``token_teams=None`` remains unrestricted for eligible admins."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result is None
+
+    def test_explicit_none_non_admin_passes_through(self):
+        """Explicit ``token_teams=None`` for a non-admin passes through as ``None``.
+
+        The function does not downgrade non-admin ``None`` to ``[]`` — that is
+        the responsibility of callers (e.g. ``_enforce_gateway_access`` line 392-395).
+        This preserves the pre-existing contract where the function resolves state
+        and callers apply policy.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result is None
+
+    def test_empty_list_admin_public_only(self):
+        """Empty team list means public-only; admin bypass must NOT apply."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_non_empty_list_preserved(self):
+        """Non-empty team list is returned as-is."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-a", "team-b"])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == ["team-a", "team-b"]
+
+    def test_non_empty_list_admin_narrowed(self):
+        """Admin with non-empty team list is narrowed, not unrestricted."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-a"])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == ["team-a"]
+
+    def test_missing_state_admin_fails_closed(self):
+        """Missing ``token_teams`` attribute with no cached payload fails closed
+        to public-only even for admins — indeterminate scope must not become
+        unrestricted.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()  # no token_teams, no _jwt_verified_payload
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_missing_state_non_admin_fails_closed(self):
+        """Missing ``token_teams`` for non-admin also fails closed to public-only."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == []
+
+    @pytest.mark.parametrize(
+        "malformed_value,label",
+        [
+            ("team-1", "str"),
+            (42, "int"),
+            ({"teams": ["t1"]}, "dict"),
+            (True, "bool"),
+            (3.14, "float"),
+            (("team-1",), "tuple"),
+            ({"team-1"}, "set"),
+            (b"team-1", "bytes"),
+        ],
+    )
+    def test_malformed_state_fails_closed(self, malformed_value, label):
+        """Malformed ``token_teams`` (non-list/non-None type) with no cached payload
+        fails closed for admins.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=malformed_value)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == [], f"Expected public-only for malformed type {label}"
+
+    def test_list_with_non_string_items_passes_through(self):
+        """List containing non-string items (e.g. ``[123, None]``) is accepted as a
+        well-typed list by the fast path.  Downstream ``normalize_token_teams`` /
+        ownership checks are responsible for element-level validation.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[123, None])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        # The function treats any list as well-typed and returns it as-is;
+        # element validation is not its responsibility.
+        assert result == [123, None]
+
+    def test_missing_state_recovered_from_cached_jwt_admin(self):
+        """Missing ``token_teams`` with cached JWT payload recovers correctly for admin."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result is None
+
+    def test_missing_state_recovered_from_cached_jwt_narrowed(self):
+        """Missing ``token_teams`` with cached JWT payload recovers team narrowing."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": ["team-x"], "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == ["team-x"]
+
+    def test_malformed_state_recovered_from_cached_jwt(self):
+        """Malformed ``token_teams`` with available cached JWT payload recovers."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams="bad-value",
+            _jwt_verified_payload=("token", {"teams": ["team-1"], "is_admin": False}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == ["team-1"]
+
+    def test_malformed_state_recovered_admin_unrestricted_from_cached_jwt(self):
+        """Malformed ``token_teams`` recovers admin bypass from cached JWT payload."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams="bad",
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result is None
+
+    def test_cached_jwt_public_only_admin_stays_scoped(self):
+        """Cached JWT with ``teams=[]`` and ``is_admin=True`` stays public-only."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": [], "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_overrides_current_user_admin_flag(self):
+        """When recovering from cached JWT, the ``is_admin`` from the payload takes
+        precedence over the ``current_user`` flag, since the token is the authority.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        # current_user claims admin, but JWT payload says no
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": False}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        # normalize_token_teams with teams=None and is_admin=False -> []
+        assert result == []
+
+    def test_cached_jwt_user_claim_as_string_fails_closed(self):
+        """If the cached JWT payload contains a 'user' claim that is a string instead of a dict,
+        it should not raise an AttributeError and should safely fail closed to public-only scope.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams="bad",
+            _jwt_verified_payload=("token", {"teams": None, "user": "string_not_dict"}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_empty_dict_payload_fails_closed(self):
+        """Cached JWT tuple with an empty dict payload is treated as untrusted
+        and fails closed to public-only scope.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        # token_teams missing, cached payload is empty dict — not usable
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_non_dict_payload_fails_closed(self):
+        """Cached JWT tuple with a non-dict payload (e.g. a string) is treated
+        as untrusted and fails closed to public-only scope.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", "not-a-dict"),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_none_payload_in_tuple_fails_closed(self):
+        """Cached JWT tuple with ``None`` as payload fails closed to public-only scope."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", None),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_legitimate_admin_with_explicit_unrestricted_token_teams(self):
+        """Legitimate platform-admin with explicitly set ``token_teams=None`` still works."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        # Both dict and attribute-based user contexts
+        for current_user in [
+            {"email": "admin@example.com", "is_admin": True},
+            SimpleNamespace(email="admin@example.com", is_admin=True),
+        ]:
+            result = _resolve_token_teams_for_scope_check(request, current_user)
+            assert result is None, f"Failed for user type {type(current_user).__name__}"
+
+    def test_uses_extract_is_admin_helper(self):
+        """Delegates admin flag extraction to ``_extract_is_admin`` for consistency."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        # nested dict with user.is_admin
+        result = _resolve_token_teams_for_scope_check(request, {"user": {"is_admin": True}})
         assert result is None
 
     @pytest.mark.asyncio
@@ -1750,20 +2468,14 @@ class TestOAuthAccessHelpers:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_enforce_gateway_access_team_visibility_member_allowed(self, mock_db):
+    async def test_enforce_gateway_access_team_visibility_non_member_denied(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return True
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
-            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_unknown_visibility_owner_allowed(self, mock_db):
@@ -1776,6 +2488,111 @@ class TestOAuthAccessHelpers:
     async def test_enforce_gateway_access_unknown_visibility_team_member_allowed(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
+        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="member"):
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_unknown_visibility_team_non_member_denied(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_cache_hit_member_allowed(self, mock_db):
+        """Regression: the new TeamManagementService path must be the sole membership check.
+
+        Verifies that _enforce_gateway_access calls get_user_role_in_team (the
+        cache-aware path) and that the result determines access. If someone
+        reverted to the old EmailAuthService + user.is_team_member() pattern,
+        the patched get_user_role_in_team would never execute and the assertion
+        on mock_role would fail.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="member") as mock_role:
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+            # TeamManagementService was called with the correct args (new path)
+            mock_role.assert_called_once_with("user@example.com", "team-1")
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_unknown_visibility_with_request_team_member_allowed(self, mock_db):
+        """Unknown-visibility fallback with a request object carrying token_teams.
+
+        Exercises the interaction between _resolve_token_teams_for_scope_check (triggered
+        when request is not None) and the unknown-visibility team-member check.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
+        mock_request = Mock(spec=Request)
+        mock_request.state = SimpleNamespace(token_teams=["team-1"])
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="developer") as mock_role:
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=mock_request)
+            mock_role.assert_called_once_with("user@example.com", "team-1")
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_missing_token_teams_admin_fails_closed(self, mock_db):
+        """Admin with missing ``token_teams`` (no ``_jwt_verified_payload``) is denied
+        gateway access via the token-scoping path because ``_resolve_token_teams_for_scope_check``
+        fails closed to public-only scope.
+
+        This is the deny-path that exercises the actual missing/malformed state
+        through ``_enforce_gateway_access`` rather than testing the resolver alone.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()  # no token_teams, no _jwt_verified_payload
+        gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED) as ownership_check:
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "admin@example.com", "is_admin": True}, mock_db, request=request)
+
+        assert exc_info.value.status_code == 403
+        # Verify it was called with public-only scope (empty list), not None (unrestricted)
+        assert ownership_check.call_args.args[1] == []
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_malformed_token_teams_admin_fails_closed(self, mock_db):
+        """Admin with malformed ``token_teams`` (string instead of list) and no
+        cached JWT payload is denied gateway access via public-only fail-closed.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams="team-1")  # string instead of list
+        gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED) as ownership_check:
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "admin@example.com", "is_admin": True}, mock_db, request=request)
+
+        assert exc_info.value.status_code == 403
+        assert ownership_check.call_args.args[1] == []
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_cache_hit_member_allowed(self, mock_db):
+        """Team-visible gateway allows access when the requester is a team member
+        and the cached JWT payload provides a valid team-scoped ``token_teams``.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams=["team-1"],
+            _jwt_verified_payload=("token", {"teams": ["team-1"], "is_admin": False}),
+        )
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
         class _User:
             def is_team_member(self, _team_id):
                 return True
@@ -1784,28 +2601,185 @@ class TestOAuthAccessHelpers:
             async def get_user_by_email(self, _email):
                 return _User()
 
-        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
-            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        with patch(
+            "mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership",
+            return_value=ResourceOwnershipResult.ALLOWED,
+        ):
+            with patch(
+                "mcpgateway.services.email_auth_service.EmailAuthService",
+                return_value=_AuthService(),
+            ):
+                # Should not raise — member has access.
+                await _enforce_gateway_access(
+                    "gateway123",
+                    gateway,
+                    {"email": "user@example.com", "is_admin": False},
+                    mock_db,
+                    request=request,
+                )
 
-    @pytest.mark.asyncio
-    async def test_enforce_gateway_access_unknown_visibility_team_non_member_denied(self, mock_db):
-        from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
+class TestRecoverTokenTeamsFromJwt:
+    """Tests for ``_recover_token_teams_from_jwt`` helper in isolation."""
 
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
+    def test_no_cached_payload_returns_none(self):
+        """Returns ``None`` when no cached JWT payload exists."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
 
-        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
-            with pytest.raises(HTTPException) as exc_info:
-                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()
+        assert _recover_token_teams_from_jwt(request) is None
 
-        assert exc_info.value.status_code == 403
+    def test_cached_payload_none_returns_none(self):
+        """Returns ``None`` when ``_jwt_verified_payload`` is ``None``."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=None)
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_cached_payload_wrong_type_returns_none(self):
+        """Returns ``None`` when ``_jwt_verified_payload`` is not a tuple."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload="not-a-tuple")
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_cached_payload_wrong_tuple_length_returns_none(self):
+        """Returns ``None`` when the cached tuple has wrong length."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=("token",))
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_cached_payload_non_dict_returns_none(self):
+        """Returns ``None`` when the payload element is not a dict."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=("token", "not-a-dict"))
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_cached_payload_empty_dict_returns_none(self):
+        """Returns ``None`` when the payload dict is empty."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=("token", {}))
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_recovers_admin_unrestricted(self):
+        """Recovers unrestricted scope for admin with ``teams=None``."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": True}),
+        )
+        result = _recover_token_teams_from_jwt(request)
+        assert result is not None
+        token_teams, is_admin = result
+        assert token_teams is None
+        assert is_admin is True
+
+    def test_recovers_team_narrowed(self):
+        """Recovers a non-empty team list."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": ["team-a", "team-b"], "is_admin": False}),
+        )
+        result = _recover_token_teams_from_jwt(request)
+        assert result is not None
+        token_teams, is_admin = result
+        assert token_teams == ["team-a", "team-b"]
+        assert is_admin is False
+
+    def test_recovers_public_only(self):
+        """Recovers empty team list (public-only) when ``teams=[]``."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": [], "is_admin": True}),
+        )
+        result = _recover_token_teams_from_jwt(request)
+        assert result is not None
+        token_teams, is_admin = result
+        assert token_teams == []
+        assert is_admin is True
+
+    def test_nested_user_is_admin(self):
+        """Recovers admin flag from nested ``user.is_admin`` in JWT payload."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "user": {"is_admin": True}}),
+        )
+        result = _recover_token_teams_from_jwt(request)
+        assert result is not None
+        token_teams, is_admin = result
+        assert token_teams is None
+        assert is_admin is True
+
+    def test_user_claim_as_string_safe(self):
+        """Does not raise AttributeError when ``user`` claim is a string."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "user": "string_not_dict"}),
+        )
+        result = _recover_token_teams_from_jwt(request)
+        assert result is not None
+        token_teams, is_admin = result
+        # teams=None with no admin flag -> normalize_token_teams returns []
+        assert token_teams == []
+        assert is_admin is False
+
+    def test_malformed_teams_int_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is an int (not iterable)."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": 42, "is_admin": True}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_malformed_teams_bool_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is a bool."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": True, "is_admin": False}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_malformed_teams_string_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is a string (would iterate chars)."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": "team-1", "is_admin": False}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_malformed_teams_dict_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is a dict (would iterate keys)."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": {"id": "team-1"}, "is_admin": True}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
 
 
 class TestOAuthRouterAdditionalCoverage:
@@ -2064,15 +3038,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             # First-Party
             from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
@@ -2288,20 +3254,12 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             # First-Party
             from mcpgateway.routers.oauth_router import get_oauth_status
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_oauth_status("gateway123", mock_request, {"email": "user@example.com"}, mock_db)
+                await get_oauth_status("gateway123", mock_request, current_user={"email": "user@example.com"}, db=mock_db)
 
         assert exc_info.value.status_code == 403
 
@@ -3830,14 +4788,10 @@ class TestOAuthClientManagementScopeGuard:
             _require_unnarrowed_admin(request, non_admin_user)
         assert exc_info.value.status_code == 403
 
-    def test_malformed_token_teams_admin_allowed_characterization(self):
-        """Characterization test: a malformed (non-list, non-None) ``token_teams`` value
-        with no cached JWT payload to fall back on currently resets to the sentinel and
-        is treated as un-narrowed for an admin, so access is ALLOWED rather than denied.
-
-        This is a known inherited gap in ``_resolve_token_teams_for_scope_check`` (not
-        introduced by this guard). Asserted explicitly so a future tightening of that
-        helper fails this test loudly instead of silently changing behavior.
+    def test_malformed_token_teams_admin_denied(self):
+        """A malformed (non-list, non-None) ``token_teams`` value with no cached JWT
+        payload to fall back on now fails closed to public-only scope and denies
+        un-narrowed admin access.
         """
         from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
 
@@ -3845,16 +4799,13 @@ class TestOAuthClientManagementScopeGuard:
         request.state = SimpleNamespace(token_teams="team-1")
         admin_user = {"email": "admin@example.com", "is_admin": True}
 
-        assert _require_unnarrowed_admin(request, admin_user) is None
+        with pytest.raises(HTTPException) as exc_info:
+            _require_unnarrowed_admin(request, admin_user)
+        assert exc_info.value.status_code == 403
 
-    def test_missing_token_teams_admin_allowed_characterization(self):
-        """Characterization test: a request state with no ``token_teams`` attribute at
-        all, and no cached JWT payload to re-derive from, falls back to un-narrowed
-        scope for an admin, so access is ALLOWED.
-
-        This is a known inherited gap in ``_resolve_token_teams_for_scope_check`` (not
-        introduced by this guard). Asserted explicitly so a future tightening of that
-        helper fails this test loudly instead of silently changing behavior.
+    def test_missing_token_teams_admin_denied(self):
+        """A request state with no ``token_teams`` attribute and no cached JWT payload
+        now fails closed to public-only scope and denies un-narrowed admin access.
         """
         from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
 
@@ -3862,7 +4813,9 @@ class TestOAuthClientManagementScopeGuard:
         request.state = SimpleNamespace()  # no token_teams, no _jwt_verified_payload
         admin_user = {"email": "admin@example.com", "is_admin": True}
 
-        assert _require_unnarrowed_admin(request, admin_user) is None
+        with pytest.raises(HTTPException) as exc_info:
+            _require_unnarrowed_admin(request, admin_user)
+        assert exc_info.value.status_code == 403
 
     def test_narrowing_recovered_from_cached_jwt_payload_denied(self):
         """When ``token_teams`` is absent but a cached verified JWT payload is present,
@@ -3885,7 +4838,7 @@ class TestOAuthClientManagementScopeGuard:
             ({"token_teams": None}, False),
             ({"token_teams": ["team-1"]}, True),
             ({"token_teams": []}, True),
-            ({}, False),
+            ({}, True),
         ],
         ids=["unnarrowed-none", "narrowed-list", "public-only-empty", "absent-attribute"],
     )
@@ -3893,7 +4846,7 @@ class TestOAuthClientManagementScopeGuard:
         """Direct unit test of ``_require_unnarrowed_admin`` across every ``token_teams``
         shape an admin request can carry: ``None`` (un-narrowed, allowed), a non-empty
         list (narrowed, denied), an empty list (public-only, denied), and the attribute
-        being entirely absent with no cached payload (falls back to allowed for admins).
+        being entirely absent with no cached payload (fails closed to public-only, denied).
         """
         from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
 
@@ -4408,3 +5361,128 @@ def test_oauth_callback_scope_non_string_non_list():
     else:
         scopes_list = []
     assert scopes_list == []
+
+
+# ---------------------------------------------------------------------------
+# Cache-layer tests: _enforce_gateway_access with role cache
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceGatewayAccessCacheLayer:
+    """Cache-layer tests exercising _enforce_gateway_access through TeamManagementService.
+
+    Unlike the unit tests above (which mock get_user_role_in_team directly),
+    this test mocks at the cache layer to confirm the full call chain:
+    _enforce_gateway_access → TeamManagementService.get_user_role_in_team()
+    → _get_auth_cache().get_user_role() → cache hit (no DB fallback).
+    """
+
+    @pytest.mark.asyncio
+    async def test_team_visibility_warm_cache_grants_access(self):
+        """Warm auth_cache role entry grants access without DB query.
+
+        1. Mocks _get_auth_cache().get_user_role to return a cached role ("developer").
+        2. Calls _enforce_gateway_access with team-visibility gateway.
+        3. Asserts: access granted, no DB team_memberships query executed.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        mock_db = Mock(spec=Session)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        mock_cache = AsyncMock()
+        mock_cache.get_user_role = AsyncMock(return_value="developer")
+        mock_cache.set_user_role = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", return_value=mock_cache):
+            # Access should be granted via cached role — no exception raised
+            await _enforce_gateway_access(
+                "gateway123",
+                gateway,
+                {"email": "user@example.com", "is_admin": False},
+                mock_db,
+                request=None,
+            )
+
+        # Verify cache was consulted
+        mock_cache.get_user_role.assert_awaited_once_with("user@example.com", "team-1")
+        # DB must NOT be queried on a cache hit
+        mock_db.query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_team_visibility_cache_miss_falls_back_to_db(self):
+        """Cache miss triggers DB fallback and caches the result.
+
+        1. Mocks _get_auth_cache().get_user_role to return None (cache miss).
+        2. Mocks the DB query path to return a membership row.
+        3. Asserts: access granted via DB fallback, result cached.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        mock_db = MagicMock(spec=Session)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        # Simulate a DB membership row returned by db.query().filter().first()
+        mock_membership = Mock()
+        mock_membership.role = "member"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
+
+        mock_cache = AsyncMock()
+        mock_cache.get_user_role = AsyncMock(return_value=None)  # Cache miss
+        mock_cache.set_user_role = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", return_value=mock_cache):
+            await _enforce_gateway_access(
+                "gateway123",
+                gateway,
+                {"email": "user@example.com", "is_admin": False},
+                mock_db,
+                request=None,
+            )
+
+        # Cache was checked first
+        mock_cache.get_user_role.assert_awaited_once_with("user@example.com", "team-1")
+        mock_db.query.assert_called_once_with(EmailTeamMember)
+        criteria = mock_db.query.return_value.filter.call_args.args
+        assert len(criteria) == 3
+        assert criteria[0].left.compare(EmailTeamMember.__table__.c.user_email)
+        assert criteria[0].right.value == "user@example.com"
+        assert criteria[1].left.compare(EmailTeamMember.__table__.c.team_id)
+        assert criteria[1].right.value == "team-1"
+        assert str(criteria[2]) == "email_team_members.is_active IS true"
+        # Result was cached after DB lookup
+        mock_cache.set_user_role.assert_awaited_once_with("user@example.com", "team-1", "member")
+
+    @pytest.mark.asyncio
+    async def test_team_visibility_negative_cache_denies_access(self):
+        """Negative cache entry (empty string = 'not a member') must deny access.
+
+        TeamManagementService.get_user_role_in_team() converts the cache's
+        empty-string negative marker to ``None``. The resulting falsy role must
+        be denied by ``_enforce_gateway_access``.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        mock_db = Mock(spec=Session)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        mock_cache = AsyncMock()
+        # Empty string = cached negative result ("not a member")
+        mock_cache.get_user_role = AsyncMock(return_value="")
+        mock_cache.set_user_role = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", return_value=mock_cache):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access(
+                    "gateway123",
+                    gateway,
+                    {"email": "outsider@example.com", "is_admin": False},
+                    mock_db,
+                    request=None,
+                )
+
+        assert exc_info.value.status_code == 403
+        # Cache was consulted (negative hit)
+        mock_cache.get_user_role.assert_awaited_once_with("outsider@example.com", "team-1")
+        # No DB fallback on a negative cache hit
+        mock_db.query.assert_not_called()

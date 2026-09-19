@@ -2787,6 +2787,86 @@ class TestGatewayService:
     # ────────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
+    @pytest.mark.parametrize("advertised", ["omitted", "empty", "populated"])
+    async def test_catalog_discovery_uses_capability_presence(self, gateway_service, connector, advertised):
+        """Empty capability objects enable discovery; omitted capabilities skip it."""
+        capabilities_by_state = {
+            "omitted": {},
+            "empty": {"resources": {}, "prompts": {}},
+            "populated": {"resources": {"listChanged": True}, "prompts": {"listChanged": True}},
+        }
+        capabilities = capabilities_by_state[advertised]
+        client = AsyncMock()
+        initialized = MagicMock()
+        initialized.capabilities.model_dump.return_value = capabilities
+        client.initialize.return_value = initialized
+        client.list_tools.return_value = SimpleNamespace(tools=[])
+        client.list_resources.return_value = SimpleNamespace(resources=[MagicMock(model_dump=MagicMock(return_value={"uri": "test://static-text", "name": "static-text"}))])
+        client.list_resource_templates.return_value = SimpleNamespace(resourceTemplates=[])
+        client.list_prompts.return_value = SimpleNamespace(prompts=[MagicMock(model_dump=MagicMock(return_value={"name": "simple-prompt"}))])
+        proxy = AsyncMock()
+        proxy.__aenter__.return_value = client
+
+        sse = AsyncMock()
+        sse.__aenter__.return_value = (MagicMock(), MagicMock())
+        streamable = AsyncMock()
+        streamable.__aenter__.return_value = (MagicMock(), MagicMock(), MagicMock())
+
+        with (
+            patch("mcpgateway.services.gateway_service.ClientSession", return_value=proxy),
+            patch("mcpgateway.services.gateway_service.sse_client", return_value=sse),
+            patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=streamable),
+        ):
+            _, _, resources, prompts, _ = await getattr(gateway_service, connector)("https://test.example.com/mcp")
+
+        if advertised != "omitted":
+            client.list_resources.assert_awaited_once_with()
+            client.list_resource_templates.assert_awaited_once_with()
+            client.list_prompts.assert_awaited_once_with()
+            assert [resource.uri for resource in resources] == ["test://static-text"]
+            assert [prompt.name for prompt in prompts] == ["simple-prompt"]
+        else:
+            client.list_resources.assert_not_awaited()
+            client.list_resource_templates.assert_not_awaited()
+            client.list_prompts.assert_not_awaited()
+            assert resources == []
+            assert prompts == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
+    async def test_catalog_discovery_list_resources_exception_returns_empty_list(self, gateway_service, connector):
+        """Resource discovery failures remain isolated from prompt discovery."""
+        client = AsyncMock()
+        initialized = MagicMock()
+        initialized.capabilities.model_dump.return_value = {"resources": {}, "prompts": {}}
+        client.initialize.return_value = initialized
+        client.list_tools.return_value = SimpleNamespace(tools=[])
+        client.list_resources.side_effect = RuntimeError("resource discovery failed")
+        client.list_resource_templates.return_value = SimpleNamespace(resourceTemplates=[])
+        client.list_prompts.return_value = SimpleNamespace(prompts=[MagicMock(model_dump=MagicMock(return_value={"name": "simple-prompt"}))])
+        proxy = AsyncMock()
+        proxy.__aenter__.return_value = client
+
+        sse = AsyncMock()
+        sse.__aenter__.return_value = (MagicMock(), MagicMock())
+        streamable = AsyncMock()
+        streamable.__aenter__.return_value = (MagicMock(), MagicMock(), MagicMock())
+
+        with (
+            patch("mcpgateway.services.gateway_service.ClientSession", return_value=proxy),
+            patch("mcpgateway.services.gateway_service.sse_client", return_value=sse),
+            patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=streamable),
+        ):
+            _, _, resources, prompts, _ = await getattr(gateway_service, connector)("https://test.example.com/mcp")
+
+        assert resources == []
+        client.list_resources.assert_awaited_once_with()
+        client.list_resource_templates.assert_awaited_once_with()
+        client.list_prompts.assert_awaited_once_with()
+        assert [prompt.name for prompt in prompts] == ["simple-prompt"]
+
+    @pytest.mark.asyncio
     async def test_initialize_gateway_with_resources_and_prompts(self, gateway_service):
         """Test _initialize_gateway with full resources and prompts support."""
         with (
@@ -2817,21 +2897,21 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {"type": "object"}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response with URI handling
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(nextCursor=None)
             mock_resource = MagicMock()
             mock_resource.model_dump.return_value = {"uri": "file://test.txt", "name": "test_resource", "description": "Test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
             mock_session_instance.list_resources.return_value = mock_resources_response
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(nextCursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "Test prompt"}
             mock_prompts_response.prompts = [mock_prompt]
@@ -2881,12 +2961,12 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response with complex URI object
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(nextCursor=None)
             mock_resource = MagicMock()
 
             # Create a complex URI object that has unicode_string attribute
@@ -2940,12 +3020,12 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(nextCursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "complex_prompt", "description": "Complex prompt"}
             mock_prompts_response.prompts = [mock_prompt]
@@ -2994,7 +3074,7 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -3039,7 +3119,7 @@ class TestGatewayService:
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(nextCursor=None)
             mock_tools_response.tools = []
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -3731,7 +3811,7 @@ class TestGatewayRefresh:
         valid_tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
         long_name_tool = MagicMock()
         long_name_tool.model_dump.return_value = {"name": long_name, "inputSchema": {}}
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = [valid_tool, long_name_tool]
         mock_session.list_tools.return_value = mock_list_tools
 
@@ -3773,7 +3853,7 @@ class TestGatewayRefresh:
 
         tool = MagicMock()
         tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = [tool]
         mock_session.list_tools.return_value = mock_list_tools
 
@@ -3783,7 +3863,7 @@ class TestGatewayRefresh:
             "name": "customer_data",
             "_meta": {"ui/resourceUri": "ui://widgets/customer-search"},
         }
-        mock_list_resources = MagicMock()
+        mock_list_resources = MagicMock(nextCursor=None)
         mock_list_resources.resources = [resource]
         mock_session.list_resources.return_value = mock_list_resources
 
@@ -3793,7 +3873,7 @@ class TestGatewayRefresh:
             "name": "customer_record",
             "_meta": {"ui/resourceUri": "ui://widgets/customer-record"},
         }
-        mock_list_templates = MagicMock()
+        mock_list_templates = MagicMock(nextCursor=None)
         mock_list_templates.resourceTemplates = [template]
         mock_session.list_resource_templates.return_value = mock_list_templates
 
@@ -3868,16 +3948,16 @@ class TestGatewayRefresh:
         mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
         mock_session.initialize.return_value = mock_init_response
 
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
         mock_session.list_tools.return_value = mock_list_tools
 
-        mock_list_resources = MagicMock()
+        mock_list_resources = MagicMock(nextCursor=None)
         mock_list_resources.resources = [MagicMock(model_dump=MagicMock(return_value={"uri": "res1", "name": "res1"}))]
         mock_session.list_resources.return_value = mock_list_resources
         mock_session.list_resource_templates.return_value = MagicMock(resourceTemplates=[])
 
-        mock_list_prompts = MagicMock()
+        mock_list_prompts = MagicMock(nextCursor=None)
         mock_list_prompts.prompts = [MagicMock(model_dump=MagicMock(return_value={"name": "prompt1"}))]
         mock_session.list_prompts.return_value = mock_list_prompts
 
@@ -3911,7 +3991,7 @@ class TestGatewayRefresh:
         mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
         mock_session.initialize.return_value = mock_init_response
 
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(nextCursor=None)
         mock_list_tools.tools = []
         mock_session.list_tools.return_value = mock_list_tools
 
@@ -4003,7 +4083,9 @@ class TestGatewayHealth:
 
             assert result is True
             # Should have timed out and called failure handler
-            gateway_service._handle_gateway_failure.assert_awaited_once_with(mock_gateway_health)
+            gateway_service._handle_gateway_failure.assert_awaited_once()
+            error = gateway_service._handle_gateway_failure.await_args.kwargs["error"]
+            assert isinstance(error, asyncio.TimeoutError)
 
     @pytest.mark.asyncio
     async def test_health_triggers_auto_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
@@ -4485,6 +4567,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     added_gateway = db.add.call_args[0][0]
     assert existing in added_gateway.resources
     assert existing.title == "Resource Title"
+    assert existing.text_content is None
+    assert existing.binary_content is None
+    assert existing.size is None
     assert existing_prompt in added_gateway.prompts
     assert existing_prompt.title == "Prompt Title"
 
@@ -4953,6 +5038,9 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     added_gateway = db.add.call_args[0][0]
     assert len(added_gateway.resources) == 1
     assert added_gateway.resources[0].title == "Resource Title"
+    assert added_gateway.resources[0].text_content is None
+    assert added_gateway.resources[0].binary_content is None
+    assert added_gateway.resources[0].size is None
     assert len(added_gateway.prompts) == 1
     assert added_gateway.prompts[0].title == "Prompt Title"
 
@@ -6024,6 +6112,65 @@ class TestSetGatewayState:
         db.commit.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_state_change_persists_last_error_atomically(self, gateway_service, _mock_caches):
+        gw = _make_gateway(
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            last_error=None,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._event_service = AsyncMock()
+
+        await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=False, only_update_reachable=True, last_error="boom")
+
+        assert gw.reachable is False
+        assert gw.last_error == "boom"
+        for call in db.execute.call_args_list:
+            assert "UPDATE gateways" not in str(call.args[0])
+
+    @pytest.mark.asyncio
+    async def test_last_error_only_persists_without_state_change(self, gateway_service, _mock_caches):
+        gw = _make_gateway(
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            last_error="old",
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._event_service = AsyncMock()
+
+        await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True, last_error="new")
+
+        assert gw.last_error == "new"
+        assert gw.enabled is True and gw.reachable is True
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_activation_with_init_failure(self, gateway_service, _mock_caches):
         gw = _make_gateway(
             id="gw-1",
@@ -6349,6 +6496,156 @@ class TestHandleGatewayFailureThreshold:
         await gateway_service._handle_gateway_failure(gw)
         assert gateway_service._gateway_failure_counts["gw-2"] == 2
 
+    @pytest.mark.asyncio
+    async def test_threshold_persists_sanitized_health_error(self, gateway_service, monkeypatch):
+        """Reaching the threshold records the sanitized health-check reason."""
+        gw = SimpleNamespace(id="gw-error", name="test", enabled=True, reachable=True, auth_query_params={"api_key": "secret"})
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        error = RuntimeError("connection failed for https://gateway.test?api_key=secret")
+        await gateway_service._handle_gateway_failure(gw, error)
+
+        # last_error is folded into set_gateway_state's single transaction (F-1):
+        # no second execute/commit on the same session after its internal commit.
+        assert gateway_service.set_gateway_state.await_count == 1
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert kwargs.get("activate") is True and kwargs.get("reachable") is False
+        assert kwargs.get("last_error") is not None
+        assert "REDACTED" in kwargs["last_error"]
+        assert "secret" not in kwargs["last_error"]
+        db.execute.assert_not_called()
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_threshold_prefers_decrypted_params_over_ciphertext(self, gateway_service, monkeypatch):
+        """Ciphertext at rest must never weaken URL redaction (review B-1)."""
+        gw = SimpleNamespace(id="gw-enc", name="test", enabled=True, reachable=True, auth_query_params={"api_key": "ENCRYPTED_BLOB_FIXTURE"})
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        error = RuntimeError("connection failed for https://gateway.test?api_key=live-secret-123")
+        # Health-check call sites pass the decrypted dict explicitly:
+        await gateway_service._handle_gateway_failure(gw, error, {"api_key": "live-secret-123"})
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert "REDACTED" in kwargs["last_error"]
+        assert "live-secret-123" not in kwargs["last_error"]
+
+        # Fallback path (stored ciphertext only) redacts identically,
+        # because redaction is name-based:
+        gateway_service.set_gateway_state.reset_mock()
+        await gateway_service._handle_gateway_failure(gw, error)
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert "REDACTED" in kwargs["last_error"]
+        assert "live-secret-123" not in kwargs["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_whitespace_error_falls_back_to_type_name(self, gateway_service, monkeypatch):
+        """Whitespace-only str(error) must not persist as last_error (review B-2)."""
+        gw = SimpleNamespace(id="gw-ws", name="test", enabled=True, reachable=True, auth_query_params=None)
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        class BlankError(Exception):
+            def __str__(self):
+                return "   "
+
+        await gateway_service._handle_gateway_failure(gw, BlankError())
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert kwargs["last_error"] == "BlankError"
+
+
+class TestMarkGatewayReachableErrorCleanup:
+    @pytest.mark.asyncio
+    async def test_recovery_clears_last_error_for_enabled_gateway(self, gateway_service, monkeypatch):
+        """A successful probe of an enabled gateway removes the previous outage reason."""
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired", enabled=True)
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+        # Enabled + currently-unreachable also takes the reactivation branch.
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+        monkeypatch.setattr(gateway_service, "set_gateway_state", AsyncMock())
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", True, False)
+
+        assert recovered.last_error is None
+        assert recovered.last_seen is not None
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recovery_preserves_last_error_for_disabled_gateway(self, gateway_service, monkeypatch):
+        """A successful probe of a disabled gateway keeps its recorded outage reason.
+
+        Disabled gateways are still probed (include_inactive=True), so without
+        this a successful probe silently wipes why the operator sees it as down.
+        """
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired", enabled=False)
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", False, True)
+
+        assert recovered.last_error == "certificate has expired"
+        assert recovered.last_seen is not None
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recovery_uses_fresh_row_not_stale_param_disabled_mid_probe(self, gateway_service, monkeypatch):
+        """Stale gateway_enabled=True must not wipe a now-disabled gateway's reason."""
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired", enabled=False)
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+        monkeypatch.setattr(gateway_service, "set_gateway_state", AsyncMock())
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", True, False)
+
+        assert recovered.last_error == "certificate has expired"
+        assert recovered.last_seen is not None
+
+    @pytest.mark.asyncio
+    async def test_recovery_uses_fresh_row_not_stale_param_reenabled_mid_probe(self, gateway_service, monkeypatch):
+        """Stale gateway_enabled=False must not leave a stale error on a re-enabled gateway."""
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired", enabled=True)
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", False, True)
+
+        assert recovered.last_error is None
+        assert recovered.last_seen is not None
+        db.commit.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _check_single_gateway_health tests
@@ -6448,6 +6745,9 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service._handle_gateway_failure.assert_awaited_once()
+        error = gateway_service._handle_gateway_failure.await_args.kwargs["error"]
+        assert isinstance(error, ConnectionError)
+        assert str(error) == "refused"
 
     @pytest.mark.asyncio
     async def test_health_check_cleans_invisible_char_in_stored_credential(self, gateway_service, monkeypatch):
@@ -6657,6 +6957,9 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service._handle_gateway_failure.assert_awaited_once()
+        _, kwargs = gateway_service._handle_gateway_failure.await_args
+        assert isinstance(kwargs.get("error"), Exception)
+        assert str(kwargs["error"]) == "Token expired"
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_auth_code_no_user(self, gateway_service, monkeypatch):

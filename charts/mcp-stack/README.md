@@ -744,7 +744,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.LOG_SEARCH_MAX_RESULTS | string | `"1000"` |  |
 | mcpContextForge.config.MASKED_AUTH_VALUE | string | `"*****"` |  |
 | mcpContextForge.secret.BASIC_AUTH_USER | string | `"admin"` |  |
-| mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `"changeme"` |  |
+| mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `""` |  |
 | mcpContextForge.secret.API_ALLOW_BASIC_AUTH | string | `"false"` |  |
 | mcpContextForge.secret.AUTH_REQUIRED | string | `"true"` |  |
 | mcpContextForge.secret.MCP_REQUIRE_AUTH | string | `"false"` |  |
@@ -760,9 +760,9 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.secret.EMAIL_AUTH_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.PROTECT_ALL_ADMINS | string | `"true"` |  |
 | mcpContextForge.secret.PLATFORM_ADMIN_EMAIL | string | `"admin@example.com"` |  |
-| mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD | string | `"changeme"` |  |
+| mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD | string | `""` |  |
 | mcpContextForge.secret.PLATFORM_ADMIN_FULL_NAME | string | `"Platform Administrator"` |  |
-| mcpContextForge.secret.DEFAULT_USER_PASSWORD | string | `"changeme"` |  |
+| mcpContextForge.secret.DEFAULT_USER_PASSWORD | string | `""` |  |
 | mcpContextForge.secret.ARGON2ID_TIME_COST | string | `"3"` |  |
 | mcpContextForge.secret.ARGON2ID_MEMORY_COST | string | `"65536"` |  |
 | mcpContextForge.secret.ARGON2ID_PARALLELISM | string | `"1"` |  |
