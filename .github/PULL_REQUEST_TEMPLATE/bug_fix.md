@@ -54,5 +54,5 @@ _List exact commands, screenshots, videos, logs, reproduction steps, or manual v
 
 ## ✅ Checklist
 
-- [ ] Code formatted (`make black isort pre-commit`)
+- [ ] Code formatted (`make ruff isort pre-commit`)
 - [ ] No secrets/credentials committed
