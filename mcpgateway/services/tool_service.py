@@ -4681,24 +4681,32 @@ class ToolService(BaseService):
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
         #
-        # NOTE: CPEX control-execution telemetry is intentionally not emitted from this
-        # path.  prepare_rust_mcp_tool_execution() builds an execution plan and returns
-        # before the actual tool invocation — there is no downstream flush point where
-        # record_control_telemetry() can be called.  When the Rust runtime falls back to
-        # the Python invoke_tool() path (e.g. post-invoke hooks configured, ineligible
-        # transport) the Python path's own accumulator will capture all telemetry.
-        # Tracked in the Phase 5 attribute-policy follow-on issue.
+        # A successful plan still has no Rust-side control-telemetry flush point.
+        # A pre-invoke denial is different: no plan is returned and the upstream is
+        # never contacted, so persist its control evidence here before re-raising.
+        rust_ctl_acc = ControlTelemetryAccumulator()
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
-            pre_result, _ = await plugin_manager.invoke_hook(
-                ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                global_context=hook_global_context,
-                local_contexts=plugin_context_table,
-                violations_as_exceptions=True,
-                extensions=build_request_extensions(),
-            )
+            try:
+                pre_result, _ = await plugin_manager.invoke_hook(
+                    ToolHookType.TOOL_PRE_INVOKE,
+                    payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                    global_context=hook_global_context,
+                    local_contexts=plugin_context_table,
+                    violations_as_exceptions=True,
+                    extensions=build_request_extensions(),
+                )
+            except PluginViolationError as exc:
+                rust_ctl_acc.add_violation(exc, hook="pre")
+                record_control_telemetry(
+                    trace_id=current_trace_id.get(),
+                    accumulator=rust_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
+                raise
             record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
             _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
             if pre_result.modified_payload:
@@ -5787,12 +5795,12 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError (outage) is not caught here — it propagates to the outer
                             # except PluginError handler without mark_denied(), keeping enforcement
                             # denials and plugin crashes distinguishable in downstream dashboards.
-                            _ctl_acc.mark_denied(hook="pre")
+                            _ctl_acc.add_violation(exc, hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
@@ -6731,10 +6739,10 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError propagates to the outer handler without mark_denied().
-                            _ctl_acc.mark_denied(hook="pre")
+                            _ctl_acc.add_violation(exc, hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
@@ -6831,10 +6839,10 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError propagates to the outer handler without mark_denied().
-                            _ctl_acc.mark_denied(hook="pre")
+                            _ctl_acc.add_violation(exc, hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
@@ -7021,10 +7029,10 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError propagates to the outer handler without mark_denied().
-                            _ctl_acc.mark_denied(hook="post")
+                            _ctl_acc.add_violation(exc, hook="post")
                             raise
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
                         _ctl_acc.add(post_result, hook="post")
@@ -7081,11 +7089,8 @@ class ToolService(BaseService):
             except PluginViolationError:
                 # Deliberate policy denial — emit partial telemetry so the summary span captures
                 # result.allowed=False and any pre-denial execution records.
-                # Note: when violations_as_exceptions=True, CPEX raises PluginViolationError
-                # *before* appending a ControlExecutionRecord for the denying plugin to the
-                # executions list (see cpex/framework/manager.py:680-682).  _ctl_acc therefore
-                # contains only records from plugins that ran before the denier.
-                # Upstream CPEX gap tracked in issue #5785 follow-on.
+                # The hook-level handlers add CPEX's execution records and, when available,
+                # its immutable safe denial outcome before this outer handler flushes them.
                 _emit_ctl_telemetry()
                 raise
             except PluginError:

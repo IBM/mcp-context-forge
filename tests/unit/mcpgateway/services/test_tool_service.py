@@ -5211,6 +5211,160 @@ class TestToolService:
 
         assert "Plugin error" in str(exc_info.value)
 
+    async def test_invoke_tool_mcp_pre_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, test_db):
+        """MCP pre-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        gateway = SimpleNamespace(
+            id="gateway-1",
+            name="gateway-one",
+            slug="gateway-one",
+            url="http://gateway.example/mcp",
+            description="test gateway",
+            enabled=True,
+            reachable=True,
+            deprecated=False,
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+            capabilities={},
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            client_cert=None,
+            client_key=None,
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+            tags=[],
+            gateway_mode="cache",
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "STREAMABLEHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.gateway = gateway
+        mock_tool.gateway_id = gateway.id
+        mock_tool.name = "gateway-one-tool-one"
+        mock_tool.original_name = "tool-one"
+        setup_db_execute_mock(test_db, mock_tool, MagicMock(passthrough_headers=[]))
+
+        denial = PluginViolationError("rate limited")
+        denial.executions = []
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="rate limited"):
+                await tool_service.invoke_tool(test_db, "tool-one", {"param": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].pre_denied is True
+
+    async def test_invoke_tool_a2a_pre_invoke_violation_emits_control_telemetry(self, tool_service, test_db):
+        """A2A pre-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        # First-Party
+        from mcpgateway.services.tool_service import ResolvedTool
+
+        tool_payload = {
+            "id": "a2a-tool",
+            "name": "a2a-tool",
+            "original_name": "a2a-tool",
+            "url": "",
+            "integration_type": "A2A",
+            "request_type": "POST",
+            "headers": {},
+            "input_schema": {"type": "object"},
+            "annotations": {"a2a_agent_id": "agent-1"},
+            "enabled": True,
+            "reachable": True,
+            "gateway_id": None,
+        }
+        resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
+        agent = SimpleNamespace(
+            enabled=True,
+            name="agent-one",
+            endpoint_url="http://agent.example/a2a",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            passthrough_headers=[],
+        )
+        agent_query = MagicMock()
+        agent_query.scalar_one_or_none.return_value = agent
+        test_db.execute = MagicMock(return_value=agent_query)
+
+        denial = PluginViolationError("policy denied")
+        denial.executions = []
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch.object(tool_service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="policy denied"):
+                await tool_service.invoke_tool(test_db, "a2a-tool", {"query": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].pre_denied is True
+
+    async def test_invoke_tool_post_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Post-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        denial = PluginViolationError("response blocked")
+        denial.executions = []
+        mock_pm = MagicMock()
+
+        async def invoke_hook(hook, *_args, **_kwargs):
+            if hook == ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(continue_processing=True), None
+            raise denial
+
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm.invoke_hook = invoke_hook
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="response blocked"):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].post_denied is True
+
     async def test_invoke_tool_with_plugin_metadata_rest(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook error when fail_on_plugin_error is True."""
         # Configure tool as REST
@@ -11029,6 +11183,44 @@ class TestRustMcpExecutionPlan:
         assert plan["modifiedArgs"] == {"cleaned_arg": "value"}
         # Plugin-injected header should appear (lowercase normalized)
         assert plan["headers"]["x-injected-cred"] == "secret123"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_denial_emits_control_telemetry(self, tool_service):
+        """Rust-direct pre-invoke denials persist control telemetry before re-raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        cache = self._cache_mock(self._cache_payload())
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        denial = PluginViolationError("rate limited")
+        denial.executions = []
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-rust-deny"))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="rate limited"):
+                await tool_service.prepare_rust_mcp_tool_execution(
+                    MagicMock(),
+                    "tool-one",
+                    arguments={},
+                    app_user_email="user@example.com",
+                )
+
+        record_telemetry.assert_called_once()
+        kwargs = record_telemetry.call_args.kwargs
+        assert kwargs["trace_id"] == "trace-rust-deny"
+        assert kwargs["tool_name"] == "tool-one"
+        assert kwargs["agent_id"] == "user@example.com"
+        assert kwargs["binding_name"] == "gateway-one"
+        assert kwargs["accumulator"].pre_denied is True
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_hook_modifies_tool_name(self, tool_service):
