@@ -113,6 +113,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
@@ -762,13 +763,10 @@ def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
     """
     schema_json = _canonicalize_schema(schema)
     validator_cls, checked_schema = _get_validator_class_and_check(schema_json)
-    # Create fresh validator instance for thread safety. The registry never retrieves,
-    # so an unresolvable reference fails closed instead of triggering a network fetch.
-    validator = validator_cls(checked_schema, registry=_NO_RETRIEVE_REGISTRY)
-    # Use best_match to match jsonschema.validate() error selection behavior
-    error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
-    if error is not None:
-        raise error
+    # Validation runs behind a process boundary when the schema carries a regex keyword,
+    # because jsonschema reaches Python's backtracking engine from several places and a
+    # non-terminating match holds the GIL for the whole worker.
+    validate_safely(instance, checked_schema, validator_cls)
 
 
 def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Optional[Dict[str, Any]]) -> Optional[str]:
