@@ -43,6 +43,7 @@ __all__ = [
     "shutdown_validation_pool",
     "start_validation_pool",
     "validate_safely",
+    "warn_unprovable_pattern_source",
     "warn_unprovable_patterns",
 ]
 
@@ -242,3 +243,33 @@ def warn_unprovable_patterns(schema: Any, *, source: str) -> None:
             )
     except Exception:
         logger.warning("Schema regex inventory check failed for source=%s; continuing without a warning", source, exc_info=True)
+
+
+def warn_unprovable_pattern_source(pattern: str, *, source: str) -> None:
+    """Log one warning when an operator-supplied regex pattern is compiled without a time bound.
+
+    This covers plugin configuration sites, not schema storage. Plugin regex patterns come
+    from deploy-time operator configuration, not from an attacker, so a pathological pattern
+    here is administrator self-denial-of-service, not an attack surface reached by a request.
+    Routing these compiles through the validation sandbox would put IPC in a hot filter path
+    for no security gain, so this only gives an operator an inventory; it does not bound the
+    compile or any later match.
+
+    This function never raises. It sits immediately before a plugin's ``re.compile`` call,
+    which must not fail to load because a diagnostic failed. That guarantee is structural:
+    every exception raised anywhere in this function's body, including from logging itself,
+    is caught here and swallowed after being logged. Do not add a call-site ``try/except`` to
+    recreate this guarantee; fix it here instead, so every caller, present and future,
+    inherits it for free.
+
+    Args:
+        pattern: The operator-supplied regex source about to be compiled.
+        source: A short identifier for the log line, such as ``plugin:regex_filter``.
+    """
+    try:
+        logger.warning(
+            "Operator-supplied regex compiled without a time bound",
+            extra={"source": source, "pattern_length": len(pattern)},
+        )
+    except Exception:
+        logger.warning("Regex pattern compile warning failed for source=%s; continuing without a warning", source, exc_info=True)

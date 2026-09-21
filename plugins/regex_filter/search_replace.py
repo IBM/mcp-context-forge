@@ -14,9 +14,6 @@ import re
 from typing import Any
 
 # Third-Party
-from pydantic import BaseModel
-
-# First-Party
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -30,7 +27,11 @@ from cpex.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+from pydantic import BaseModel
+
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_pattern_source
 
 # Initialize logging service
 logging_service = LoggingService()
@@ -103,6 +104,7 @@ class SearchReplacePlugin(Plugin):
         self.__patterns = []
         for word in self._srconfig.words:
             try:
+                warn_unprovable_pattern_source(word.search, source="plugin:regex_filter")
                 compiled_pattern = re.compile(word.search)
                 self.__patterns.append((compiled_pattern, word.replace))
             except re.error:

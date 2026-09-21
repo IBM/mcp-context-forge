@@ -17,9 +17,6 @@ import re
 from typing import Any, List, Pattern
 
 # Third-Party
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-# Third-Party
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -28,6 +25,10 @@ from cpex.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# First-Party
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_pattern_source
 
 
 class CodeSafetyConfig(BaseModel):
@@ -63,6 +64,7 @@ class CodeSafetyConfig(BaseModel):
         compiled = []
         for item in v:
             if isinstance(item, str):
+                warn_unprovable_pattern_source(item, source="plugin:code_safety_linter")
                 compiled.append(re.compile(item))
             elif isinstance(item, Pattern):
                 compiled.append(item)
