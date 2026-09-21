@@ -11,6 +11,7 @@ and patterns reachable only through additionalProperties.
 """
 
 # Standard
+import logging
 import time
 from unittest.mock import patch
 
@@ -19,7 +20,8 @@ import jsonschema
 import pytest
 
 # First-Party
-from mcpgateway.utils.safe_jsonschema import schema_uses_regex, shutdown_validation_pool, start_validation_pool, validate_safely
+from mcpgateway.utils import safe_jsonschema
+from mcpgateway.utils.safe_jsonschema import sandbox_unavailable, schema_uses_regex, shutdown_validation_pool, start_validation_pool, validate_safely
 
 DRAFT = jsonschema.Draft202012Validator
 
@@ -31,6 +33,11 @@ HOSTILE = [
     ("negated class", r"^[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*$", "a" * 40 + ","),
     ("dot polynomial", r"^.*a.*a.*a$", "a" * 3000 + "!"),
 ]
+
+# The wording validate_safely produces when the sandbox stopped the work. A pattern that
+# merely fails to match produces a jsonschema mismatch message instead, so this phrase tells
+# "the budget bounded it" apart from "it happened to reject quickly".
+BOUNDED = "could not be completed safely"
 
 
 @pytest.fixture(autouse=True)
@@ -69,9 +76,28 @@ def test_regex_keyword_is_detected_at_any_depth(schema):
     assert schema_uses_regex(schema) is True
 
 
+def test_regex_schema_is_submitted_to_the_sandbox_and_plain_schema_is_not():
+    """The regex keyword, and only the regex keyword, puts a validation in the sandbox.
+
+    A timing test can only ever be circumstantial about routing. This asserts the
+    submission itself, so a change that validates a regex schema inline fails here even
+    when every elapsed-time ceiling still holds.
+    """
+    original = safe_jsonschema._SANDBOX.submit  # pylint: disable=protected-access
+    with patch.object(safe_jsonschema._SANDBOX, "submit", wraps=original) as submit:  # pylint: disable=protected-access
+        validate_safely({"n": 1}, {"type": "object", "properties": {"n": {"type": "integer"}}}, DRAFT)
+        assert submit.call_count == 0, "a schema with no regex keyword must not reach the sandbox"
+
+        validate_safely({"q": "abc"}, {"type": "object", "properties": {"q": {"type": "string", "pattern": "^[a-z]+$"}}}, DRAFT)
+        assert submit.call_count == 1, "a schema carrying a regex keyword must be validated in the sandbox, never inline"
+
+
 @pytest.mark.parametrize("label,pattern,subject", HOSTILE, ids=[c[0] for c in HOSTILE])
 def test_hostile_pattern_is_bounded_and_fails_closed(label, pattern, subject):
     """Every category that broke v1 must now be bounded and reported as a failure.
+
+    Elapsed time alone cannot prove this. A pattern that rejects quickly also finishes
+    under the ceiling, so the message must show the safety budget stopped the work.
 
     Args:
         label: Short name of the hostile category, used in the failure message.
@@ -80,10 +106,11 @@ def test_hostile_pattern_is_bounded_and_fails_closed(label, pattern, subject):
     """
     schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": pattern}}}
     start = time.perf_counter()
-    with pytest.raises(jsonschema.exceptions.ValidationError):
+    with pytest.raises(jsonschema.exceptions.ValidationError) as excinfo:
         validate_safely({"q": subject}, schema, DRAFT)
     elapsed = time.perf_counter() - start
     assert elapsed < 10.0, f"{label} took {elapsed:.1f}s; the sandbox did not bound it"
+    assert BOUNDED in str(excinfo.value), f"{label} failed for another reason, so nothing proves the sandbox bounded it: {excinfo.value}"
 
 
 def test_additional_properties_bypass_is_bounded():
@@ -159,6 +186,24 @@ def test_no_sandbox_refuses_regex_schema():
     with patch("mcpgateway.utils.safe_jsonschema.sandbox_unavailable", return_value=True):
         with pytest.raises(jsonschema.exceptions.ValidationError):
             validate_safely({"q": "aaa"}, schema, DRAFT)
+
+
+def test_start_failure_names_its_cause(caplog):
+    """A start failure names the real cause, rather than blaming the platform.
+
+    A configuration fault and an unsupported platform both stop the sandbox. An operator
+    reading only "unavailable on this platform" investigates the wrong thing.
+
+    Args:
+        caplog: The pytest log capture fixture.
+    """
+    with patch.object(safe_jsonschema._SANDBOX, "start", side_effect=RuntimeError("settings rejected a placeholder")):  # pylint: disable=protected-access
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+            start_validation_pool()
+
+    assert sandbox_unavailable() is True
+    assert "RuntimeError: settings rejected a placeholder" in caplog.text
+    start_validation_pool()
 
 
 def test_no_sandbox_still_validates_schema_without_regex():
