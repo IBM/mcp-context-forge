@@ -320,6 +320,21 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
                         if not cursor:
                             break
                     assert sorted(names) == sorted(expected_names)
+
+            # Explicit API bases win over legacy name while upstream identity stays intact.
+            for payload, base in (
+                ({"name": "Ignored", "custom_name": "Weekly Report"}, f"weekly{separator}report"),
+                ({"name": "Monthly Report", "custom_name": None}, f"monthly{separator}report"),
+                ({"customName": expected}, expected),
+            ):
+                response = await http.put(f"/resources/{resource['id']}", json=payload)
+                assert response.status_code == 200, response.text
+                updated = response.json()
+                assert updated["name"] == f"{gateway_name}{separator}{base}"
+                assert updated["customNameSlug"] == base
+                assert updated["originalName"] == "Shared Report"
+            response = await http.put(f"/resources/{resource['id']}", json={"custom_name": ""})
+            assert response.status_code == 422, response.text
         finally:
             for server_id in server_ids:
                 await http.delete(f"/servers/{server_id}")
