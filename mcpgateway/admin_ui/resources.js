@@ -671,6 +671,7 @@ export const editResource = async function (resourceId) {
 
     const uriField = safeGetElement("edit-resource-uri");
     const nameField = safeGetElement("edit-resource-name");
+    const customNameField = safeGetElement("edit-resource-custom-name");
     const descField = safeGetElement("edit-resource-description");
     const mimeField = safeGetElement("edit-resource-mime-type");
     // const contentField = safeGetElement("edit-resource-content");
@@ -680,6 +681,14 @@ export const editResource = async function (resourceId) {
     }
     if (nameField && nameValidation.valid) {
       nameField.value = nameValidation.value;
+    }
+    if (customNameField) {
+      const base = resource.gatewayId
+        ? (resource.customNameSlug ?? resource.originalName ?? resource.name)
+        : resource.name;
+      customNameField.value = base;
+      customNameField.dataset.originalValue = base;
+      customNameField.required = base !== "";
     }
     if (descField) {
       descField.value = decodeHtml(resource.description || "");
