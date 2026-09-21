@@ -467,6 +467,54 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 
 ---
 
+## Trust-Mode Inline-Groups Live Gateway Tests
+
+A second Entra test suite covers external-IdP trust mode
+(`JWT_TRUST_MODE=jwt-trust`). The module
+`tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py` reproduces
+the four inline-groups access cases:
+The tests run against a real Entra tenant. They use real v2 tokens, the real
+issuer and JWKS, and real Microsoft Graph for group-overage resolution. The
+tests do not mock any Entra component.
+
+This suite is separate from the SSO role-sync suite above. It exercises token
+dispatch, group-to-team mapping, and A2A agent visibility and invocation
+authorization. See [Token Dispatch Rule](../architecture/auth-token-dispatch.md).
+
+### Start the stack
+
+```bash
+# Start the testing stack with the gateway in Entra trust mode.
+# The docker-compose.entra.yml override applies trust mode.
+# The base compose file does not change.
+make testing-up-entra
+```
+
+### Token and environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ENTRA_LIVE_TOKEN_FILE` | Yes, or use the directory or ROPC variables | Path to a non-overage, unexpired Entra v2 end-user token with inline `groups` claims |
+| `ENTRA_LIVE_TOKEN_DIR` | Alternative to the file variable | Directory that contains `entra-token-valid-v2.txt` |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_TEST_USERNAME`, `ENTRA_TEST_PASSWORD` | Alternative to a token file | Acquire the token through ROPC. The flow requires public client flows and a test account without interactive MFA. |
+| `ENTRA_OVERAGE_TOKEN_FILE` | Use case 4 only | Entra v2 token for a user in more than 200 groups, with the group-overage marker |
+| `ENTRA_GRAPH_CLIENT_ID`, `ENTRA_GRAPH_CLIENT_SECRET` | Use case 4 only | App Registration with the admin-consented `GroupMember.Read.All` permission. The tests use `ENTRA_CLIENT_ID` and `ENTRA_CLIENT_SECRET` when these variables are unset. |
+| `ENTRA_OVERAGE_MAPPED_GROUP` | Use case 4 only | Group GUID that Microsoft Graph resolves. Set this variable when the overage token carries no inline groups. |
+| `STUB_AGENT_GATEWAY_HOST` | No | Host name that the gateway container uses to reach the in-process stub agent. The default is `host.docker.internal`. |
+
+### Run the tests
+
+```bash
+JWT_TRUST_MODE=jwt-trust \
+JWT_SECRET_KEY="$(docker compose exec -T gateway printenv JWT_SECRET_KEY)" \
+ENTRA_LIVE_TOKEN_FILE=/path/to/entra-token-valid-v2.txt \
+    uv run pytest tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py -v
+```
+
+A missing prerequisite causes a skip, not a failure. The skip message names
+the exact missing variables. The module docstring is the authoritative
+runbook.
+
 ## Summary
 
 | Step | Action |
@@ -487,3 +535,4 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 - [Microsoft Graph API - Groups](https://learn.microsoft.com/en-us/graph/api/resources/group)
 - [Azure AD App Registration](https://learn.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app)
 - [ContextForge SSO Configuration](../manage/sso.md)
+- [Token Dispatch Rule](../architecture/auth-token-dispatch.md)
