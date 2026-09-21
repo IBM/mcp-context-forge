@@ -5,7 +5,7 @@ ARG PYTHON_VERSION=3.12
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1770180700 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.2-1789952991 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -37,7 +37,7 @@ RUN set -euo pipefail \
 ###########################
 # Runtime stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1789645153 AS runtime
 
 ARG PYTHON_VERSION=3.12
 

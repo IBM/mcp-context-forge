@@ -66,20 +66,9 @@ cpex-secrets-detection = "2026-07-27T23:59:59Z"
 # [plugins] extra to nothing and the gateway would fail to load SQLSanitizer at boot.
 # Vetted ahead of the usual window for this reason.
 cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
-cryptography = "2026-08-01T23:59:59Z"
-langgraph = "2026-05-12T23:59:59Z"
-fastapi = "2026-07-27T23:59:59Z"
-filelock = "2026-07-27T23:59:59Z"
-grpcio = "2026-07-27T23:59:59Z"
-grpcio-reflection = "2026-07-27T23:59:59Z"
-grpcio-tools = "2026-07-27T23:59:59Z"
-langchain-core = "2026-07-27T23:59:59Z"
-langchain-openai = "2026-07-27T23:59:59Z"
-langsmith = "2026-07-27T23:59:59Z"
-prometheus-client = "2026-07-27T23:59:59Z"
-prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
-sse-starlette = "2026-07-27T23:59:59Z"
-starlette-compress = "2026-07-27T23:59:59Z"
+pip = "2026-09-21T23:59:59Z"
+tornado = "2026-09-21T23:59:59Z"
+h2 = "2026-09-21T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -90,7 +79,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.7"
+version = "1.0.7+20260921"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -241,7 +230,9 @@ dev = [
     "uv>=0.11.6",
     "websockets>=16.0",
     "pyasn1>=0.6.4", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
-    "tornado>=6.5.7",  # transitive via jupyter; CVE-2026-31958
+    "tornado>=6.5.8",  # transitive via jupyter; GHSA-wwv5-g3v4-889x / GHSA-8423-8fgw-73vq
+    "h2>=4.4.1",  # PYSEC-2026-3628
+    "pip>=26.2.0",  # PYSEC-2026-3721
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
     "grpcio>=1.81.1",
     "grpcio-reflection>=1.81.1",
