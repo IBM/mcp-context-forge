@@ -85,7 +85,19 @@ def seed_provider(
 
 
 def seed_agent(client: httpx.Client, name: str, team_id: str, endpoint_url: str, description: str) -> None:
-    """Register a team-visible A2A agent (idempotent)."""
+    """Register a team-visible A2A agent (delete-first idempotent).
+
+    The delete-first form matters across runs against a reused database:
+    the stub agent binds a fresh ephemeral port every session, and a 409
+    left in place would keep the previous run's dead endpoint_url.
+    """
+    listing = client.get(f"{BASE_URL}/a2a/")
+    if listing.status_code == 200:
+        rows = listing.json()
+        rows = rows if isinstance(rows, list) else rows.get("agents", [])
+        for row in rows:
+            if isinstance(row, dict) and row.get("name") == name:
+                client.delete(f"{BASE_URL}/a2a/{row['id']}")
     payload = {
         "agent": {
             "name": name,
