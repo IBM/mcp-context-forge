@@ -40,7 +40,7 @@ from pathlib import Path
 import socket
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 # Third-Party
 from cryptography import x509
@@ -160,6 +160,7 @@ def build_issuer_app(issuer_url: str, jwk: Dict[str, Any]) -> FastAPI:
     authorized ``POST /a2a/<agent>/invoke`` on the gateway yields 200.
     """
     app = FastAPI(title="cf-local-oidc-issuer")
+    app.state.stub_invocations: list = []
     metadata = {
         "issuer": issuer_url,
         "jwks_uri": f"{issuer_url}/jwks",
@@ -171,15 +172,18 @@ def build_issuer_app(issuer_url: str, jwk: Dict[str, Any]) -> FastAPI:
     }
 
     @app.get("/.well-known/openid-configuration")
-    async def oidc_configuration() -> Dict[str, Any]:  # noqa: D103
+    async def oidc_configuration() -> Dict[str, Any]:
+        """Serve the OIDC discovery document."""
         return metadata
 
     @app.get("/.well-known/oauth-authorization-server")
-    async def oauth_authorization_server() -> Dict[str, Any]:  # noqa: D103
+    async def oauth_authorization_server() -> Dict[str, Any]:
+        """Serve the RFC 8414 authorization-server metadata."""
         return metadata
 
     @app.get("/jwks")
-    async def jwks() -> Dict[str, Any]:  # noqa: D103
+    async def jwks() -> Dict[str, Any]:
+        """Serve the issuer's JWKS."""
         return {"keys": [jwk]}
 
     @app.post("/stub-agent/invoke")
@@ -190,11 +194,18 @@ def build_issuer_app(issuer_url: str, jwk: Dict[str, Any]) -> FastAPI:
         except Exception:  # pylint: disable=broad-except
             body = {}
         request_id = body.get("id", 1) if isinstance(body, dict) else 1
+        message_text = ""
+        if isinstance(body, dict):
+            for part in body.get("params", {}).get("message", {}).get("parts", []):
+                if isinstance(part, dict) and part.get("text"):
+                    message_text = str(part["text"])
+                    break
+        request.app.state.stub_invocations.append({"message_text": message_text, "received_at": time.time()})
         result = {
             "id": "task-local-oidc-1",
             "contextId": "ctx-local-oidc-1",
             "status": {"state": "completed"},
-            "artifacts": [],
+            "artifacts": [{"name": "response", "parts": [{"text": f"[Stub Agent] Received your message: '{message_text}'"}]}],
             "history": [],
         }
         return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": result})
@@ -212,8 +223,8 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _start_server(app: FastAPI, port: int, *, tls: bool) -> tuple[Any, threading.Thread]:
-    """Start uvicorn serving ``app`` on 127.0.0.1:port in a daemon thread.
+def _start_server(app: FastAPI, port: int, *, tls: bool, host: str = "127.0.0.1") -> tuple[Any, threading.Thread]:
+    """Start uvicorn serving ``app`` on host:port in a daemon thread.
 
     Returns ``(server, thread)`` once the server reports started. TLS servers
     use the material from :func:`ensure_tls_material`.
@@ -225,7 +236,7 @@ def _start_server(app: FastAPI, port: int, *, tls: bool) -> tuple[Any, threading
         ensure_tls_material()
         config_kwargs = {"ssl_certfile": str(TLS_CERT_FILE), "ssl_keyfile": str(TLS_KEY_FILE)}
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", **config_kwargs)
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning", **config_kwargs)
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, name=f"local-oidc-issuer:{port}", daemon=True)
     thread.start()
@@ -272,14 +283,18 @@ def local_oidc_issuer():
     app = build_issuer_app(issuer_url, jwk)
 
     issuer_server, issuer_thread = _start_server(app, tls_port, tls=True)
-    agent_port = _free_port()
-    agent_server, agent_thread = _start_server(app, agent_port, tls=False)
+    stub_port = _free_port()
+    agent_server, agent_thread = _start_server(app, stub_port, tls=False, host="0.0.0.0")
+    stub_gateway_host = os.getenv("STUB_AGENT_GATEWAY_HOST", "host.docker.internal")
 
     namespace = SimpleNamespace(
         issuer=issuer_url,
         jwks_uri=f"{issuer_url}/jwks",
         tls_cert_file=TLS_CERT_FILE,
-        stub_agent_url=f"http://127.0.0.1:{agent_port}/stub-agent/invoke",
+        stub_agent_url=f"http://127.0.0.1:{stub_port}/stub-agent/invoke",
+        stub_agent_port=stub_port,
+        stub_agent_url_for_gateway=f"http://{stub_gateway_host}:{stub_port}/stub-agent/invoke",
+        stub_agent_invocations=app.state.stub_invocations,
         kid=TOKEN_KID,
         mint_token=lambda claims: mint_token(claims, signing_key),
     )
