@@ -47,6 +47,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils.safe_jsonschema import validate_safely
 
 logger = logging.getLogger(__name__)
 
@@ -4194,7 +4195,7 @@ class Prompt(Base):
             True
         """
         try:
-            jsonschema.validate(args, self.argument_schema)
+            validate_safely(args, self.argument_schema, jsonschema.validators.validator_for(self.argument_schema))
         except jsonschema.exceptions.ValidationError as e:
             raise ValueError(f"Invalid prompt arguments: {str(e)}") from e
 
