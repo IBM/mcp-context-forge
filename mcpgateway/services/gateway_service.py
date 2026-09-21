@@ -46,7 +46,6 @@ import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-import json
 import logging
 import mimetypes
 import os
