@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-## [1.0.7+20260921] - 2026-09-21 - Upstream MCP Pagination Fix and Security Dependency Updates
+## [1.0.7-20260921] - 2026-09-21 - Upstream MCP Pagination Fix and Security Dependency Updates
 
 ### Overview
 

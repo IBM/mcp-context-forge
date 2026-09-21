@@ -2993,7 +2993,7 @@ wheels = [
 
 [[package]]
 name = "mcp-contextforge-gateway"
-version = "1.0.7+20260921"
+version = "1.0.7.post20260921"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
