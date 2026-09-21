@@ -188,19 +188,87 @@ def _ensure_group_claims(headers: dict[str, str], client_id: str) -> None:
         )
 
 
-def _cleanup_entra_test_identity(cleanup: dict[str, str]) -> None:
-    """Delete the provisioned user and group. Best effort; errors are logged only."""
+def _cleanup_entra_test_identity(cleanup: dict) -> None:
+    """Delete the provisioned user and groups. Best effort; errors are logged only."""
     if not cleanup:
         return
+    group_ids = list(cleanup.get("group_ids") or [])
+    if cleanup.get("group_id"):
+        group_ids.append(cleanup["group_id"])
     try:
         token = _azure_graph_token(cleanup["client_id"], cleanup["client_secret"], cleanup["tenant_id"])
         headers = {"Authorization": f"Bearer {token}"}
         if cleanup.get("user_id"):
             httpx.delete(f"https://graph.microsoft.com/v1.0/users/{cleanup['user_id']}", headers=headers, timeout=30)
-        if cleanup.get("group_id"):
-            httpx.delete(f"https://graph.microsoft.com/v1.0/groups/{cleanup['group_id']}", headers=headers, timeout=30)
+        for group_id in group_ids:
+            httpx.delete(f"https://graph.microsoft.com/v1.0/groups/{group_id}", headers=headers, timeout=30)
     except Exception as exc:  # noqa: BLE001 — cleanup failures never fail the session
-        print(f"WARNING: Entra cleanup incomplete ({exc}); delete these objects manually: {cleanup.get('user_id')} {cleanup.get('group_id')}")
+        print(f"WARNING: Entra cleanup incomplete ({exc}); delete these objects manually: {cleanup.get('user_id')} {group_ids}")
+
+
+def _resolve_default_domain(headers: dict[str, str]) -> str:
+    """Resolve the tenant's default verified domain via GET /organization."""
+    org = httpx.get("https://graph.microsoft.com/v1.0/organization", params={"$select": "verifiedDomains"}, headers=headers, timeout=30)
+    domain = None
+    if org.status_code == 200:
+        for org_row in org.json().get("value", []):
+            for verified in org_row.get("verifiedDomains", []):
+                if verified.get("isDefault"):
+                    domain = verified.get("name")
+                    break
+            if domain:
+                break
+    if not domain:
+        raise _ProvisioningError("the default tenant domain could not be resolved through GET /organization")
+    return domain
+
+
+def _generate_password() -> str:
+    """Generate a strong throwaway password for a provisioned test user."""
+    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20)) + "!E2e-Aa9"
+
+
+def _ropc_until_valid(token_url: str, client_id: str, client_secret: str, upn: str, password: str, validator, attempts: int = 4, delay: int = 15) -> tuple[str, list]:
+    """ROPC-acquire a token, retrying until the validator accepts it.
+
+    Returns ``(token, problems)``; ``problems`` is empty on success and
+    carries the validator's findings from the LAST attempt on exhaustion.
+    Raises ``_ProvisioningError`` when the grant itself fails.
+    """
+    problems: list = []
+    for attempt in range(1, attempts + 1):
+        print(f"[entra] token attempt {attempt}/{attempts} (claim propagation can lag)")
+        time.sleep(delay)
+        response = httpx.post(
+            token_url,
+            data={
+                "grant_type": "password",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "username": upn,
+                "password": password,
+                "scope": f"{client_id}/.default openid profile",
+            },
+            timeout=30,
+        )
+        if response.status_code != 200:
+            error = response.json().get("error", "unknown_error")
+            raise _ProvisioningError(f"ROPC acquisition failed with HTTP {response.status_code} ({error}); the tenant may block ROPC")
+        candidate = response.json()["access_token"]
+        problems = validator(inspect_token(candidate))
+        if not problems:
+            return candidate, problems
+    return "", problems
+
+
+def _azure_credentials() -> tuple[str, str, str, str]:
+    """Read and validate the AZURE_* triple; returns (client_id, client_secret, tenant_id, token_url)."""
+    client_id = os.getenv("AZURE_CLIENT_ID", "")
+    client_secret = os.getenv("AZURE_CLIENT_SECRET", "")
+    tenant_id = os.getenv("AZURE_TENANT_ID", "")
+    if not (client_id and client_secret and tenant_id):
+        raise _ProvisioningError("AZURE_CLIENT_ID, AZURE_CLIENT_SECRET and AZURE_TENANT_ID are not all set")
+    return client_id, client_secret, tenant_id, f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
 
 def provision_entra_test_identity() -> tuple[str, dict[str, str]]:
@@ -212,29 +280,13 @@ def provision_entra_test_identity() -> tuple[str, dict[str, str]]:
     on failure paths: this function cleans up its own partial state
     before re-raising.
     """
-    client_id = os.getenv("AZURE_CLIENT_ID", "")
-    client_secret = os.getenv("AZURE_CLIENT_SECRET", "")
-    tenant_id = os.getenv("AZURE_TENANT_ID", "")
-    if not (client_id and client_secret and tenant_id):
-        raise _ProvisioningError("AZURE_CLIENT_ID, AZURE_CLIENT_SECRET and AZURE_TENANT_ID are not all set")
+    client_id, client_secret, tenant_id, token_url = _azure_credentials()
     cleanup: dict[str, str] = {"client_id": client_id, "client_secret": client_secret, "tenant_id": tenant_id}
-    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     try:
         graph_token = _azure_graph_token(client_id, client_secret, tenant_id)
         headers = {"Authorization": f"Bearer {graph_token}", "Content-Type": "application/json"}
         _ensure_group_claims(headers, client_id)
-        org = httpx.get("https://graph.microsoft.com/v1.0/organization", params={"$select": "verifiedDomains"}, headers=headers, timeout=30)
-        domain = None
-        if org.status_code == 200:
-            for org_row in org.json().get("value", []):
-                for verified in org_row.get("verifiedDomains", []):
-                    if verified.get("isDefault"):
-                        domain = verified.get("name")
-                        break
-                if domain:
-                    break
-        if not domain:
-            raise _ProvisioningError("the default tenant domain could not be resolved through GET /organization")
+        domain = _resolve_default_domain(headers)
         unique = f"cf-live-e2e-{int(time.time())}"
         group = httpx.post(
             "https://graph.microsoft.com/v1.0/groups",
@@ -245,7 +297,7 @@ def provision_entra_test_identity() -> tuple[str, dict[str, str]]:
         if group.status_code not in (200, 201):
             raise _ProvisioningError(f"group creation failed with HTTP {group.status_code}; the Graph application permissions may be missing")
         cleanup["group_id"] = group.json()["id"]
-        password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20)) + "!E2e-Aa9"
+        password = _generate_password()
         user = httpx.post(
             "https://graph.microsoft.com/v1.0/users",
             headers=headers,
@@ -262,7 +314,7 @@ def provision_entra_test_identity() -> tuple[str, dict[str, str]]:
             raise _ProvisioningError(f"user creation failed with HTTP {user.status_code}; the Graph application permissions may be missing")
         cleanup["user_id"] = user.json()["id"]
         member = None
-        for attempt in range(3):
+        for _attempt in range(3):
             member = httpx.post(
                 f"https://graph.microsoft.com/v1.0/groups/{cleanup['group_id']}/members/$ref",
                 headers=headers,
@@ -275,29 +327,110 @@ def provision_entra_test_identity() -> tuple[str, dict[str, str]]:
         if member is None or member.status_code not in (200, 201, 204):
             raise _ProvisioningError(f"group membership failed with HTTP {member.status_code if member else 'n/a'}: {member.text[:200] if member else ''} (group={cleanup['group_id']} user={cleanup['user_id']})")
         # Group-claim propagation can lag membership by a short delay: retry ROPC.
-        last_problems: list[str] = []
-        for _ in range(3):
-            time.sleep(15)
-            response = httpx.post(
-                token_url,
-                data={
-                    "grant_type": "password",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "username": f"{unique}@{domain}",
-                    "password": password,
-                    "scope": f"{client_id}/.default openid profile",
-                },
+        token, problems = _ropc_until_valid(token_url, client_id, client_secret, f"{unique}@{domain}", password, validate_for_inline_groups)
+        if not token:
+            raise _ProvisioningError(f"the provisioned token never carried inline groups: {'; '.join(problems)}")
+        return token, cleanup
+    except _ProvisioningError:
+        _cleanup_entra_test_identity(cleanup)
+        raise
+
+
+def validate_for_overage(info: dict[str, Any]) -> list[str]:
+    """Return unmet requirements for the overage use case (UC4)."""
+    problems: list[str] = []
+    if not info["has_overage_marker"]:
+        problems.append("token carries no group-overage marker (the user must belong to more than 200 groups)")
+    if not isinstance(info["exp"], int) or info["exp"] <= int(time.time()):
+        problems.append("token is expired")
+    if not info["oid"]:
+        problems.append("token lacks oid (JWT_CLAIM_USER_ID target)")
+    if not info["uti"]:
+        problems.append("token lacks uti (JWT_TRUST_REVOCATION_CLAIM target)")
+    return problems
+
+
+OVERAGE_GROUP_COUNT = 201
+"""Memberships required to push a user past Entra's 200-group inline-claim limit."""
+
+
+def provision_entra_overage_identity() -> tuple[str, dict]:
+    """Provision a user in more than 200 groups; return (token, cleanup).
+
+    Creates one mapped group plus ``OVERAGE_GROUP_COUNT - 1`` filler
+    groups, adds the user to all of them, and ROPC-acquires a token that
+    carries the group-overage marker instead of inline groups. The mapped
+    group GUID is stashed in the returned info as
+    ``provisioned_mapped_group`` by the caller (see the fixture). Cleanup
+    deletes the user and every group.
+    """
+    client_id, client_secret, tenant_id, token_url = _azure_credentials()
+    cleanup: dict = {"client_id": client_id, "client_secret": client_secret, "tenant_id": tenant_id, "group_ids": [], "mapped_group_id": None}
+    try:
+        graph_token = _azure_graph_token(client_id, client_secret, tenant_id)
+        headers = {"Authorization": f"Bearer {graph_token}", "Content-Type": "application/json"}
+        _ensure_group_claims(headers, client_id)
+        domain = _resolve_default_domain(headers)
+        unique = f"cf-overage-{int(time.time())}"
+        password = _generate_password()
+        user = httpx.post(
+            "https://graph.microsoft.com/v1.0/users",
+            headers=headers,
+            json={
+                "accountEnabled": True,
+                "displayName": f"CF Overage E2E {int(time.time())}",
+                "mailNickname": unique,
+                "userPrincipalName": f"{unique}@{domain}",
+                "passwordProfile": {"password": password, "forceChangePasswordNextSignIn": False},
+            },
+            timeout=30,
+        )
+        if user.status_code not in (200, 201):
+            raise _ProvisioningError(f"user creation failed with HTTP {user.status_code}; the Graph application permissions may be missing")
+        cleanup["user_id"] = user.json()["id"]
+        stamp = int(time.time())
+        print(f"[entra-overage] user created; creating {OVERAGE_GROUP_COUNT} groups")
+        # Phase 1: create every group first (no per-group sleeps).
+        for index in range(OVERAGE_GROUP_COUNT):
+            if index % 25 == 0:
+                print(f"[entra-overage] create group {index}/{OVERAGE_GROUP_COUNT}")
+            filler = httpx.post(
+                "https://graph.microsoft.com/v1.0/groups",
+                headers=headers,
+                json={"displayName": f"ContextForge-Overage-{stamp}-{index:03d}", "mailNickname": f"{unique}-{index:03d}", "mailEnabled": False, "securityEnabled": True},
                 timeout=30,
             )
-            if response.status_code != 200:
-                error = response.json().get("error", "unknown_error")
-                raise _ProvisioningError(f"ROPC acquisition failed with HTTP {response.status_code} ({error}); the tenant may block ROPC")
-            candidate = response.json()["access_token"]
-            last_problems = validate_for_inline_groups(inspect_token(candidate))
-            if not last_problems:
-                return candidate, cleanup
-        raise _ProvisioningError(f"the provisioned token never carried inline groups: {'; '.join(last_problems)}")
+            if filler.status_code not in (200, 201):
+                raise _ProvisioningError(f"filler group {index} creation failed with HTTP {filler.status_code}: {filler.text[:200]}")
+            group_id = filler.json()["id"]
+            cleanup["group_ids"].append(group_id)
+            if index == 0:
+                cleanup["mapped_group_id"] = group_id
+        # Phase 2: add the user to every group. By now the groups have
+        # replicated; a straggler 404 retries with a short sleep.
+        print(f"[entra-overage] groups created; adding the user to {OVERAGE_GROUP_COUNT} groups")
+        for index, group_id in enumerate(cleanup["group_ids"]):
+            if index % 25 == 0:
+                print(f"[entra-overage] membership {index}/{OVERAGE_GROUP_COUNT}")
+            member = None
+            for _attempt in range(4):
+                member = httpx.post(
+                    f"https://graph.microsoft.com/v1.0/groups/{group_id}/members/$ref",
+                    headers=headers,
+                    json={"@odata.id": f"https://graph.microsoft.com/v1.0/users/{cleanup['user_id']}"},
+                    timeout=30,
+                )
+                if member.status_code in (200, 201, 204) or member.status_code != 404:
+                    break
+                time.sleep(2)  # a fresh group can 404 on members/$ref until replication lands
+            if member is None or member.status_code not in (200, 201, 204):
+                raise _ProvisioningError(f"filler membership {index} failed with HTTP {member.status_code if member else 'n/a'}")
+        print(f"[entra-overage] all {OVERAGE_GROUP_COUNT} groups and memberships done; acquiring overage token")
+        # Membership propagation can lag: retry until the overage marker appears.
+        token, problems = _ropc_until_valid(token_url, client_id, client_secret, f"{unique}@{domain}", password, validate_for_overage, attempts=5, delay=20)
+        if not token:
+            raise _ProvisioningError(f"the provisioned token never carried the overage marker: {'; '.join(problems)}")
+        return token, cleanup
     except _ProvisioningError:
         _cleanup_entra_test_identity(cleanup)
         raise
