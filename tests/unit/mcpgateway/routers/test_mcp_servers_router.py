@@ -1354,7 +1354,7 @@ async def test_handshake_candidate_only_uses_exact_gateway_without_stored_header
         gateway_id="gw-team-b",
         base_url="http://example.com",
         path="/mcp",
-        headers={"Api-Key": "candidate"},
+        headers={"Api-Key": "candidate"},  # pragma: allowlist secret
         credential_mode="candidate_only",
     )
     mock_client = _mock_resilient_client(_discover_success())
@@ -1371,8 +1371,8 @@ async def test_handshake_candidate_only_uses_exact_gateway_without_stored_header
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("configure_allowlist")
-async def test_handshake_exact_gateway_wins_when_visible_gateways_share_url(user_ctx, team_b_gateway_db, monkeypatch):
-    """An exact public gateway ID cannot resolve a visible team gateway with the same URL."""
+async def test_handshake_candidate_only_uses_exact_gateway_when_visible_gateways_share_url(user_ctx, team_b_gateway_db, monkeypatch):
+    """Candidate-only validation selects the exact gateway without its stored credentials."""
     from mcpgateway import config
 
     monkeypatch.setattr(config.settings, "platform_admin_email", "admin@example.com")
@@ -1415,6 +1415,25 @@ async def test_handshake_exact_gateway_wins_when_visible_gateways_share_url(user
     mock_sse.assert_called_once()
     sent_headers = mock_sse.call_args.kwargs["headers"]
     assert sent_headers == {"X-Candidate-Key": "candidate"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_exact_gateway_uses_stored_credentials_by_default(user_ctx, team_b_gateway_db, monkeypatch):
+    """Exact gateway selection retains stored credentials when credential mode is omitted."""
+    from mcpgateway import config
+
+    monkeypatch.setattr(config.settings, "platform_admin_email", "admin@example.com")
+    db = team_b_gateway_db(visibility="public")
+    request = GatewayHandshakeRequest(gateway_id="gw-team-b", base_url="http://example.com", path="/mcp")
+    mock_client = _mock_resilient_client(_discover_success())
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db)
+
+    assert result.success is True
+    assert result.credential_source == "stored"
+    assert "Authorization" in mock_client.request.call_args.kwargs["headers"]
 
 
 @pytest.mark.asyncio
@@ -1804,6 +1823,25 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
     assert mock_transport.call_args.kwargs["verify"] is ssl_context
     # The stateless discover probe runs first, so it needs the same TLS settings or it fails
     # the handshake before the SDK client is ever built.
+    assert mock_resilient.call_args.kwargs["client_args"]["verify"] is ssl_context
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_candidate_only_keeps_custom_ca_without_client_certificate(user_ctx, db_session):
+    """Candidate-only validation keeps server trust settings but excludes client credentials."""
+    gateway = _mock_gateway(id="gateway-1", url="https://example.com", ca_certificate="ca-pem", client_cert="client-pem", client_key="key-pem")
+    db_session.execute.return_value.scalars.return_value.first.return_value = gateway
+    request = GatewayHandshakeRequest(gateway_id="gateway-1", base_url="https://example.com", headers={}, credential_mode="candidate_only")
+    mock_client = _mock_resilient_client(_discover_success())
+    ssl_context = ssl.create_default_context()
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client) as mock_resilient:
+        with patch("mcpgateway.services.gateway_service.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
+            result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.success is True
+    mock_ssl.assert_called_once_with("ca-pem", client_cert=None, client_key=None)
     assert mock_resilient.call_args.kwargs["client_args"]["verify"] is ssl_context
 
 
