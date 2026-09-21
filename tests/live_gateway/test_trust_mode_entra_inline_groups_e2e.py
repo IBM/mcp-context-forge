@@ -12,7 +12,9 @@ Runbook (from the repo root):
     # 2. Token sourcing, first match wins:
     #    a) Export AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_TENANT_ID.
     #       The harness provisions a throwaway user and group, acquires a
-    #       v2 token through ROPC, and deletes both objects after the session.
+    #       token through ROPC, and deletes both objects after the session.
+    #       Use case 4 provisions a user in 201 groups. This adds three
+    #       minutes and prints [entra-overage] progress lines.
     #    b) Or set ENTRA_LIVE_TOKEN_FILE to a pre-acquired non-overage
     #       end-user token saved in an untracked file.
 
@@ -22,6 +24,7 @@ Runbook (from the repo root):
     TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com" \
     JWT_TRUST_MODE=jwt-trust \
     JWT_SECRET_KEY="$(docker compose exec -T gateway printenv JWT_SECRET_KEY)" \
+    JWT_TRUST_OVERAGE_POLICY=graph_lookup \
         uv run pytest tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py -v
 
 The gateway is the compose testing gateway behind nginx :8080
@@ -44,7 +47,7 @@ import httpx
 import pytest
 
 # Local
-from .helpers.entra_live import entra_inline_token, inspect_token  # noqa: F401  # fixture re-export
+from .helpers.entra_live import _ProvisioningError, _cleanup_entra_test_identity, entra_inline_token, inspect_token, provision_entra_overage_identity  # noqa: F401  # fixture re-export
 from .helpers.local_oidc_issuer import local_oidc_issuer  # noqa: F401  # fixture re-export
 from .helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 from .helpers.trust_mode_seed import admin_headers, seed_agent, seed_mapping, seed_provider, seed_team, update_mapping
@@ -160,21 +163,42 @@ def test_uc3_viewer_sees_but_cannot_invoke(entra_seeded):
 
 @pytest.fixture(scope="module")
 def entra_overage_token():
-    """Yield (token, info) from a REAL overage-marked Entra token; skip when absent."""
+    """Yield (token, info, mapped_group) from a REAL overage-marked Entra token.
+
+    Token sourcing, first match wins: ENTRA_OVERAGE_TOKEN_FILE (an
+    operator-provided token for a user in more than 200 groups), or
+    AZURE_* self-provisioning (a throwaway user plus 201 groups, deleted
+    after the session). Skips with an actionable reason otherwise.
+    """
     path = os.getenv("ENTRA_OVERAGE_TOKEN_FILE")
-    if not path or not os.path.isfile(path):
-        pytest.skip(
-            "UC4 needs a real overage token: set ENTRA_OVERAGE_TOKEN_FILE to a v2 token "
-            "for a user in more than 200 groups (group-overage marker present)"
-        )
-    with open(path, encoding="utf-8") as handle:
-        token = handle.read().strip()
-    info = inspect_token(token)
-    if not info["has_overage_marker"]:
-        pytest.skip("UC4 token has no overage marker; need a member of >200 groups")
-    if not isinstance(info["exp"], int) or info["exp"] <= int(time.time()):
-        pytest.skip("UC4 token is expired; re-acquire before running")
-    yield token, info
+    if path and os.path.isfile(path):
+        with open(path, encoding="utf-8") as handle:
+            token = handle.read().strip()
+        info = inspect_token(token)
+        if not info["has_overage_marker"]:
+            pytest.skip("UC4 token has no overage marker; need a member of >200 groups")
+        if not isinstance(info["exp"], int) or info["exp"] <= int(time.time()):
+            pytest.skip("UC4 token is expired; re-acquire before running")
+        yield token, info, os.getenv("ENTRA_OVERAGE_MAPPED_GROUP")
+        return
+    if os.getenv("AZURE_CLIENT_ID") and os.getenv("AZURE_CLIENT_SECRET") and os.getenv("AZURE_TENANT_ID"):
+        try:
+            token, cleanup = provision_entra_overage_identity()
+        except _ProvisioningError as exc:
+            pytest.skip(f"UC4 AZURE_* overage self-provisioning failed: {exc}")
+        except httpx.HTTPError as exc:
+            pytest.skip(
+                f"UC4 AZURE_* overage self-provisioning cannot reach Entra endpoints ({type(exc).__name__}); "
+                'set TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com"'
+            )
+        yield token, inspect_token(token), cleanup["mapped_group_id"]
+        _cleanup_entra_test_identity(cleanup)
+        return
+    pytest.skip(
+        "UC4 needs an overage token: set ENTRA_OVERAGE_TOKEN_FILE to a token for a "
+        "user in more than 200 groups, or export AZURE_CLIENT_ID + AZURE_CLIENT_SECRET "
+        "+ AZURE_TENANT_ID for self-provisioning (201 throwaway groups per run)"
+    )
 
 
 def test_uc4_overage_resolved_via_graph_allows_invoke(entra_overage_token, local_oidc_issuer):  # noqa: F811  # params are the re-exported fixtures
@@ -195,21 +219,25 @@ def test_uc4_overage_resolved_via_graph_allows_invoke(entra_overage_token, local
             "UC4 needs Graph-capable app credentials (admin-consented GroupMember.Read.All): "
             "set ENTRA_GRAPH_CLIENT_ID + ENTRA_GRAPH_CLIENT_SECRET (or AZURE_CLIENT_ID + AZURE_CLIENT_SECRET)"
         )
-    token, info = entra_overage_token
-    # ENTRA_OVERAGE_MAPPED_GROUP: when the overage token carries NO inline groups,
-    # this env var must name a group the overage user belongs to; Graph resolves the
-    # membership and the mapping turns it into the agent team + developer role.
-    overage_group = info["groups"][0] if info["groups"] else os.getenv("ENTRA_OVERAGE_MAPPED_GROUP")
+    token, info, provisioned_group = entra_overage_token
+    # Mapped-group resolution: the harness-provisioned GUID, else the first
+    # inline group, else ENTRA_OVERAGE_MAPPED_GROUP (operator token mode).
+    overage_group = provisioned_group or (info["groups"][0] if info["groups"] else None) or os.getenv("ENTRA_OVERAGE_MAPPED_GROUP")
     if not overage_group:
         pytest.skip("UC4 token has no inline groups; set ENTRA_OVERAGE_MAPPED_GROUP to a group the overage user belongs to")
+    v1_jwks = info["issuer"].rstrip("/") + "/discovery/keys" if "sts.windows.net" in info["issuer"] else None
     with httpx.Client(headers=admin_headers(), timeout=30) as client:
         team_id = seed_team(client, "Entra Live Overage Team", "Live Entra overage graph_lookup e2e")
+        # Re-seed the SINGLE trust-root provider with Graph credentials; a second
+        # same-issuer row would make the gateway's unordered issuer->provider
+        # lookup nondeterministic for the Graph client-credentials call.
         seed_provider(
             client,
             PROVIDER_ID,
             info["issuer"],
             info["audience"],
             token_url=f"https://login.microsoftonline.com/{info['tenant_id']}/oauth2/v2.0/token",
+            jwks_uri=v1_jwks,
             client_id=graph_client_id,
             client_secret=graph_client_secret,
         )
