@@ -222,12 +222,23 @@ def warn_unprovable_patterns(schema: Any, *, source: str) -> None:
     Storing such a schema is safe, because the sandbox bounds every match. This gives an
     operator an inventory without blocking registration.
 
+    This function never raises. It sits ahead of, or beside, data-mutating operations at
+    every call site (a SQLAlchemy ``before_insert``/``before_update`` listener, a federation
+    sync loop, an OpenAPI import response) that must not fail because a diagnostic failed.
+    That guarantee is structural: every exception raised anywhere in this function's body,
+    including from ``schema_uses_regex`` or from logging itself, is caught here and swallowed
+    after being logged. Do not add a call-site ``try/except`` to recreate this guarantee;
+    fix it here instead, so every caller, present and future, inherits it for free.
+
     Args:
         schema: A JSON Schema, or any sub-node of one.
         source: A short identifier for the log line, such as ``tool:weather``.
     """
-    if schema_uses_regex(schema):
-        logger.warning(
-            "Schema carries a regex keyword; its validations run in the sandbox",
-            extra={"source": source},
-        )
+    try:
+        if schema_uses_regex(schema):
+            logger.warning(
+                "Schema carries a regex keyword; its validations run in the sandbox",
+                extra={"source": source},
+            )
+    except Exception:
+        logger.warning("Schema regex inventory check failed for source=%s; continuing without a warning", source, exc_info=True)

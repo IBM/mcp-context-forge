@@ -21,7 +21,7 @@ import pytest
 
 # First-Party
 from mcpgateway.utils import safe_jsonschema
-from mcpgateway.utils.safe_jsonschema import sandbox_unavailable, schema_uses_regex, shutdown_validation_pool, start_validation_pool, validate_safely
+from mcpgateway.utils.safe_jsonschema import sandbox_unavailable, schema_uses_regex, shutdown_validation_pool, start_validation_pool, validate_safely, warn_unprovable_patterns
 
 DRAFT = jsonschema.Draft202012Validator
 
@@ -225,3 +225,24 @@ def test_no_sandbox_still_validates_schema_without_regex():
     schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
     with patch("mcpgateway.utils.safe_jsonschema.sandbox_unavailable", return_value=True):
         validate_safely({"n": 1}, schema, DRAFT)
+
+
+def test_warn_unprovable_patterns_never_raises_by_construction(caplog):
+    """warn_unprovable_patterns swallows any internal failure and returns normally.
+
+    This pins the function's contract: every caller (a SQLAlchemy listener, a federation
+    sync loop, an OpenAPI import response) relies on this call never failing, so the
+    guarantee must live inside the function rather than at each call site. Breaking this
+    test is the signal that someone removed the guard rather than the call-site discipline
+    the guard was written to replace.
+
+    Args:
+        caplog: The pytest log capture fixture.
+    """
+    with patch("mcpgateway.utils.safe_jsonschema.schema_uses_regex", side_effect=RuntimeError("simulated internal failure")):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+            result = warn_unprovable_patterns({"pattern": "^a$"}, source="tool:pinning-test")
+
+    assert result is None
+    assert "Schema regex inventory check failed" in caplog.text
+    assert "simulated internal failure" in caplog.text
