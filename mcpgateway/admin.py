@@ -210,6 +210,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -12497,6 +12498,9 @@ async def generate_schemas_from_openapi(
             content={"message": "An unexpected error occurred while processing the OpenAPI spec", "success": False},
             status_code=500,
         )
+
+    warn_unprovable_patterns(input_schema, source=f"openapi:{spec_url}")
+    warn_unprovable_patterns(output_schema, source=f"openapi:{spec_url}")
 
     return ORJSONResponse(
         content={

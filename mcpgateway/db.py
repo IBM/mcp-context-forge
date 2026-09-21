@@ -47,7 +47,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
-from mcpgateway.utils.safe_jsonschema import validate_safely
+from mcpgateway.utils.safe_jsonschema import validate_safely, warn_unprovable_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -5910,6 +5910,7 @@ def validate_tool_schema(mapper, connection, target):
             if validator_cls.__name__ not in allowed_validator_names:
                 logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
 
+            warn_unprovable_patterns(schema, source=f"tool:{getattr(target, 'original_name', '?')}")
             validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
             logger.warning(f"Invalid tool input schema: {str(e)}")
@@ -5978,6 +5979,7 @@ def validate_prompt_schema(mapper, connection, target):
             if validator_cls.__name__ not in allowed_validator_names:
                 logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
 
+            warn_unprovable_patterns(schema, source=f"prompt:{getattr(target, 'name', '?')}")
             validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
             logger.warning(f"Invalid prompt argument schema: {str(e)}")
