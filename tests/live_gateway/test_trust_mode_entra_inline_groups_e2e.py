@@ -31,6 +31,7 @@ from __future__ import annotations
 
 # Standard
 import os
+import time
 import uuid
 
 # Third-Party
@@ -38,7 +39,7 @@ import httpx
 import pytest
 
 # Local
-from .helpers.entra_live import entra_inline_token  # noqa: F401  # fixture re-export
+from .helpers.entra_live import entra_inline_token, inspect_token  # noqa: F401  # fixture re-export
 from .helpers.local_oidc_issuer import local_oidc_issuer  # noqa: F401  # fixture re-export
 from .helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 from .helpers.trust_mode_seed import admin_headers, seed_agent, seed_mapping, seed_provider, seed_team, update_mapping
@@ -146,3 +147,72 @@ def test_uc3_viewer_sees_but_cannot_invoke(entra_seeded):
     assert response.status_code == 403, f"UC3 expected 403, got {response.status_code}: {response.text[:200]}"
     assert "access denied" in response.text.lower(), f"UC3 body must be the RBAC deny detail: {response.text[:200]}"
     assert len(entra_seeded["stub_invocations"]) == before, "UC3 LEAK: viewer message reached the downstream agent"
+
+
+@pytest.fixture(scope="module")
+def entra_overage_token():
+    """Yield (token, info) from a REAL overage-marked Entra token; skip when absent."""
+    path = os.getenv("ENTRA_OVERAGE_TOKEN_FILE")
+    if not path or not os.path.isfile(path):
+        pytest.skip(
+            "UC4 needs a real overage token: set ENTRA_OVERAGE_TOKEN_FILE to a v2 token "
+            "for a user in more than 200 groups (group-overage marker present)"
+        )
+    with open(path, encoding="utf-8") as handle:
+        token = handle.read().strip()
+    info = inspect_token(token)
+    if not info["has_overage_marker"]:
+        pytest.skip("UC4 token has no overage marker; need a member of >200 groups")
+    if not isinstance(info["exp"], int) or info["exp"] <= int(time.time()):
+        pytest.skip("UC4 token is expired; re-acquire before running")
+    yield token, info
+
+
+def test_uc4_overage_resolved_via_graph_allows_invoke(entra_overage_token, local_oidc_issuer):  # noqa: F811  # params are the re-exported fixtures
+    """UC4: overage marker + graph_lookup policy -> real Graph resolves groups -> 200.
+
+    The gateway (started via make testing-up-entra) performs the app-only
+    Graph resolution itself: the provider record below carries real
+    Graph-capable client credentials, and the group mapped to the agent
+    team is the overage user's group resolved BY GRAPH (not present
+    inline).
+    """
+    if os.getenv("JWT_TRUST_OVERAGE_POLICY", "fail_closed") != "graph_lookup":
+        pytest.skip("UC4 requires the gateway started with JWT_TRUST_OVERAGE_POLICY=graph_lookup (make testing-up-entra)")
+    graph_client_id = os.getenv("ENTRA_GRAPH_CLIENT_ID") or os.getenv("ENTRA_CLIENT_ID")
+    graph_client_secret = os.getenv("ENTRA_GRAPH_CLIENT_SECRET") or os.getenv("ENTRA_CLIENT_SECRET")
+    if not (graph_client_id and graph_client_secret):
+        pytest.skip(
+            "UC4 needs Graph-capable app credentials (admin-consented GroupMember.Read.All): "
+            "set ENTRA_GRAPH_CLIENT_ID + ENTRA_GRAPH_CLIENT_SECRET"
+        )
+    token, info = entra_overage_token
+    # ENTRA_OVERAGE_MAPPED_GROUP: when the overage token carries NO inline groups,
+    # this env var must name a group the overage user belongs to; Graph resolves the
+    # membership and the mapping turns it into the agent team + developer role.
+    overage_group = info["groups"][0] if info["groups"] else os.getenv("ENTRA_OVERAGE_MAPPED_GROUP")
+    if not overage_group:
+        pytest.skip("UC4 token has no inline groups; set ENTRA_OVERAGE_MAPPED_GROUP to a group the overage user belongs to")
+    with httpx.Client(headers=admin_headers(), timeout=30) as client:
+        team_id = seed_team(client, "Entra Live Overage Team", "Live Entra overage graph_lookup e2e")
+        seed_provider(
+            client,
+            PROVIDER_ID,
+            info["issuer"],
+            info["audience"],
+            token_url=f"https://login.microsoftonline.com/{info['tenant_id']}/oauth2/v2.0/token",
+            client_id=graph_client_id,
+            client_secret=graph_client_secret,
+        )
+        seed_agent(client, "Entra-Live-Overage-Agent", team_id, local_oidc_issuer.stub_agent_url_for_gateway, "Live Entra overage agent")
+        mapping_id = seed_mapping(client, info["issuer"], info["tenant_id"], overage_group, team_id, "developer")
+    try:
+        message = "Hello from live Entra overage graph_lookup e2e"
+        response = _invoke("Entra-Live-Overage-Agent", token, message)
+        assert response.status_code == 200, f"UC4 expected 200, got {response.status_code}: {response.text[:200]}"
+        artifacts = response.json()["result"]["artifacts"]
+        echoed = artifacts[0]["parts"][0]["text"] if artifacts and artifacts[0].get("parts") else ""
+        assert message in echoed, f"UC4 echo round-trip failed: {echoed[:200]}"
+    finally:
+        with httpx.Client(headers=admin_headers(), timeout=30) as client:
+            client.delete(f"{BASE_URL}/admin/external-group-mappings/{mapping_id}")
