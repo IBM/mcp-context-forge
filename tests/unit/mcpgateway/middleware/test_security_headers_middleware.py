@@ -273,17 +273,54 @@ async def test_cors_production_not_allowed():
 
 
 @pytest.mark.asyncio
-async def test_cors_development_all_allowed():
-    """Test CORS dev mode."""
+@pytest.mark.parametrize("environment", ["development", "staging", "production"])
+async def test_cors_empty_allowlist_denies_origin(environment):
+    """An empty allowlist reflects no origin and sets no credentials header in any environment."""
     mock, settings = _mock_settings()
-    settings.environment = "development"
+    settings.environment = environment
     settings.allowed_origins = []
-    settings.cors_allow_credentials = False
+    settings.cors_allow_credentials = True
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = _make_request(headers=[(b"origin", b"https://evil.example")])
+        response = await middleware.dispatch(request, _call_next)
+        assert "Access-Control-Allow-Origin" not in response.headers
+        assert "Access-Control-Allow-Credentials" not in response.headers
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment", ["development", "staging"])
+async def test_cors_non_production_allowlisted_origin_allowed(environment):
+    """Non-production environments honor an explicit allowlist."""
+    mock, settings = _mock_settings()
+    settings.environment = environment
+    settings.allowed_origins = ["https://example.com"]
+    settings.cors_allow_credentials = True
     try:
         middleware = SecurityHeadersMiddleware(app=None)
         request = _make_request(headers=[(b"origin", b"https://example.com")])
         response = await middleware.dispatch(request, _call_next)
         assert response.headers.get("Access-Control-Allow-Origin") == "https://example.com"
+        assert response.headers.get("Access-Control-Allow-Credentials") == "true"
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_cors_non_production_unlisted_origin_denied():
+    """A non-production gateway with a populated allowlist rejects an unlisted origin."""
+    mock, settings = _mock_settings()
+    settings.environment = "development"
+    settings.allowed_origins = ["https://example.com"]
+    settings.cors_allow_credentials = True
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = _make_request(headers=[(b"origin", b"https://evil.example")])
+        response = await middleware.dispatch(request, _call_next)
+        assert "Access-Control-Allow-Origin" not in response.headers
+        assert "Access-Control-Allow-Credentials" not in response.headers
     finally:
         mock.stop()
 
