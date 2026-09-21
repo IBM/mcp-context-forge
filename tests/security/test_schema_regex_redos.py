@@ -33,12 +33,16 @@ CATASTROPHIC_SCHEMA = {
     "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
 }
 
-# Backtracking doubles per added character, so this length decides whether a regression can
-# be observed at all. 28 characters run the match for about 8 seconds, which overruns the
-# 1 second sandbox budget by roughly 8x and stays inside the 30 second test timeout. A
-# longer subject looks stronger and is worse: at 40 characters an inline regression runs for
-# hours, and ``pytest.mark.timeout`` cannot break it, because its signal is delivered only
-# between bytecodes and a regex match never yields one. The test would hang instead of fail.
+# Backtracking doubles per added character, so this length decides how fast a regression
+# reports. 28 characters run the match for about 8 seconds, which overruns the 1 second
+# sandbox budget by roughly 8x and reports inside the 30 second test timeout.
+#
+# A longer subject looks stronger and is worse here, because this test runs the validation
+# in a worker thread. ``pytest.mark.timeout`` fires on schedule either way, but a Python
+# thread cannot be killed, and closing the loop joins its executor. The call therefore does
+# not return until the match finishes. Measured: a 3 second timeout on a 30 character match
+# reports at 3 seconds and returns after 42. At 40 characters the match runs for hours, so a
+# regression would report and then block the run behind that join.
 HOSTILE = {"q": "a" * 28 + "b"}
 
 # The wording the timeout path alone produces. A pattern that merely fails to match gives a
