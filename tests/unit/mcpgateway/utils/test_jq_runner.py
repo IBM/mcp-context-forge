@@ -18,7 +18,9 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils import sandbox_pool
 from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter, shutdown_jq_pool, start_jq_pool, subprocess_mode_available
+from mcpgateway.utils.sandbox_pool import SandboxError
 
 linux_only = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="fork-based sandbox is Linux-only")
 
@@ -141,7 +143,7 @@ def test_private_processes_attribute_still_exists(jq_pool):
     from mcpgateway.utils import jq_runner
 
     assert run_jq_filter(".a", {"a": 1}) == [1]
-    assert getattr(jq_runner._POOL, "_processes", None), "ProcessPoolExecutor._processes is gone; the timeout kill path needs rewriting"  # pylint: disable=protected-access
+    assert getattr(jq_runner._SANDBOX._current_executor(), "_processes", None), "ProcessPoolExecutor._processes is gone; the timeout kill path needs rewriting"  # pylint: disable=protected-access
 
 
 def test_subprocess_mode_unavailable_off_linux(monkeypatch):
@@ -157,7 +159,7 @@ def test_pool_failure_fails_closed(monkeypatch):
 
     shutdown_jq_pool()
     monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(jq_runner, "_build_pool", lambda: (_ for _ in ()).throw(OSError("no fork for you")))
+    monkeypatch.setattr(jq_runner._SANDBOX, "_build", lambda: (_ for _ in ()).throw(OSError("no fork for you")))  # pylint: disable=protected-access
     with pytest.raises(JqFilterError):
         run_jq_filter(".a", {"a": 1})
 
@@ -168,9 +170,9 @@ def test_pool_is_reused_within_a_process(jq_pool):
     # First-Party
     from mcpgateway.utils import jq_runner
 
-    first = jq_runner._POOL  # pylint: disable=protected-access
+    first = jq_runner._SANDBOX._current_executor()  # pylint: disable=protected-access
     start_jq_pool()
-    assert jq_runner._POOL is first  # pylint: disable=protected-access
+    assert jq_runner._SANDBOX._current_executor() is first  # pylint: disable=protected-access
 
 
 @linux_only
@@ -179,9 +181,9 @@ def test_pool_is_rebuilt_after_pid_change(jq_pool, monkeypatch):
     # First-Party
     from mcpgateway.utils import jq_runner
 
-    monkeypatch.setattr(jq_runner, "_POOL_PID", -1)
+    monkeypatch.setattr(jq_runner._SANDBOX, "_pool_pid", -1)  # pylint: disable=protected-access
     assert run_jq_filter(".a", {"a": 5}) == [5]
-    assert jq_runner._POOL_PID == os.getpid()  # pylint: disable=protected-access
+    assert jq_runner._SANDBOX._pool_pid == os.getpid()  # pylint: disable=protected-access
 
 
 def test_run_jq_filter_reasserts_the_static_gate(monkeypatch):
@@ -231,17 +233,22 @@ def test_start_jq_pool_cleans_up_on_warmup_failure(monkeypatch):
             self.shutdown_calls.append((wait, cancel_futures))
 
     failing_pool = _FailingPool()
-    monkeypatch.setattr(jq_runner, "_build_pool", lambda: failing_pool)
+    monkeypatch.setattr(jq_runner._SANDBOX, "_build", lambda: failing_pool)  # pylint: disable=protected-access
 
     with pytest.raises(TimeoutError):
         start_jq_pool()
 
     assert failing_pool.shutdown_calls == [(False, True)]
-    assert jq_runner._POOL is None  # pylint: disable=protected-access
+    assert jq_runner._SANDBOX._current_executor() is None  # pylint: disable=protected-access
 
 
 def test_kill_workers_logs_when_process_kill_raises(monkeypatch):
-    """A process that refuses to die is logged, not left to crash the caller."""
+    """A process that refuses to die is logged, not left to crash the caller.
+
+    The stub pool carries the owner-PID stamp because the kill path now decides
+    ownership itself; an unstamped pool is treated as inherited across a fork and
+    is never killed.
+    """
     # First-Party
     from mcpgateway.utils import jq_runner
 
@@ -253,15 +260,16 @@ def test_kill_workers_logs_when_process_kill_raises(monkeypatch):
         def __init__(self):
             self._processes = {1: _StubbornProcess()}
             self.shutdown_calls = []
+            setattr(self, sandbox_pool._OWNER_PID_ATTR, os.getpid())  # pylint: disable=protected-access
 
         def shutdown(self, wait=False, cancel_futures=False):  # pylint: disable=unused-argument
             self.shutdown_calls.append((wait, cancel_futures))
 
     warnings = []
-    monkeypatch.setattr(jq_runner.logger, "warning", lambda *a, **k: warnings.append(a))
+    monkeypatch.setattr(sandbox_pool.logger, "warning", lambda *a, **k: warnings.append(a))
 
     pool = _StubPool()
-    jq_runner._kill_workers(pool)  # pylint: disable=protected-access
+    jq_runner._SANDBOX._discard(pool)  # pylint: disable=protected-access
 
     assert len(warnings) == 1
     assert pool.shutdown_calls == [(False, True)]
@@ -274,39 +282,45 @@ def test_run_jq_filter_wraps_a_generic_submit_failure(monkeypatch):
 
     class _BrokenSubmitPool:
         def __init__(self):
-            setattr(self, jq_runner._GATE_ATTR, threading.Semaphore(1))  # pylint: disable=protected-access
+            setattr(self, sandbox_pool._GATE_ATTR, threading.Semaphore(1))  # pylint: disable=protected-access
 
         def submit(self, *_args, **_kwargs):
             raise RuntimeError("cannot schedule new futures after shutdown")
 
     monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(jq_runner, "_ensure_pool", lambda: _BrokenSubmitPool())
+    monkeypatch.setattr(jq_runner._SANDBOX, "_ensure", lambda: _BrokenSubmitPool())  # pylint: disable=protected-access
 
     with pytest.raises(JqFilterError):
         run_jq_filter(".a", {"a": 1})
 
 
-def test_run_jq_filter_does_not_double_wrap_a_jq_filter_error(monkeypatch):
-    """A JqFilterError raised directly from the pool is re-raised, not re-wrapped."""
+def test_run_jq_filter_translates_a_sandbox_error_without_losing_the_cause(monkeypatch):
+    """A SandboxError raised directly from the pool becomes a JqFilterError that keeps it.
+
+    The pool owns the no-double-wrap branch now, so the identity of an
+    already-shaped error is pinned by ``test_submit_does_not_double_wrap_a_sandbox_error``
+    in ``test_sandbox_pool.py``. Here the jq layer must translate that error into its own
+    exception type and keep the original reachable as the cause.
+    """
     # First-Party
     from mcpgateway.utils import jq_runner
 
-    original = JqFilterError("already the right shape")
+    original = SandboxError("already the right shape")
 
     class _DirectlyFailingPool:
         def __init__(self):
-            setattr(self, jq_runner._GATE_ATTR, threading.Semaphore(1))  # pylint: disable=protected-access
+            setattr(self, sandbox_pool._GATE_ATTR, threading.Semaphore(1))  # pylint: disable=protected-access
 
         def submit(self, *_args, **_kwargs):
             raise original
 
     monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(jq_runner, "_ensure_pool", lambda: _DirectlyFailingPool())
+    monkeypatch.setattr(jq_runner._SANDBOX, "_ensure", lambda: _DirectlyFailingPool())  # pylint: disable=protected-access
 
     with pytest.raises(JqFilterError) as excinfo:
         run_jq_filter(".a", {"a": 1})
 
-    assert excinfo.value is original
+    assert excinfo.value.__cause__ is original
 
 
 def _worker_processes():
@@ -318,7 +332,7 @@ def _worker_processes():
     # First-Party
     from mcpgateway.utils import jq_runner
 
-    return list(getattr(jq_runner._POOL, "_processes", {}).values())  # pylint: disable=protected-access
+    return list(getattr(jq_runner._SANDBOX._current_executor(), "_processes", {}).values())  # pylint: disable=protected-access
 
 
 def _wait_until(predicate, timeout=15.0):
@@ -356,7 +370,7 @@ def test_pool_recovers_after_a_worker_dies_abnormally(monkeypatch):
     monkeypatch.setattr(settings, "jq_filter_workers", 1)
     start_jq_pool()
     try:
-        broken = jq_runner._POOL  # pylint: disable=protected-access
+        broken = jq_runner._SANDBOX._current_executor()  # pylint: disable=protected-access
         processes = _worker_processes()
         assert processes, "warm-up should have forked a worker"
         for process in processes:
@@ -368,7 +382,7 @@ def test_pool_recovers_after_a_worker_dies_abnormally(monkeypatch):
             run_jq_filter(".a", {"a": 1})
 
         # The broken executor must have been discarded, not handed out again.
-        assert jq_runner._POOL is not broken  # pylint: disable=protected-access
+        assert jq_runner._SANDBOX._current_executor() is not broken  # pylint: disable=protected-access
         assert run_jq_filter(".a", {"a": 1}) == [1]
         assert run_jq_filter(".a", {"a": 2}) == [2]
     finally:
@@ -388,20 +402,20 @@ def test_kill_targets_the_given_pool_even_after_pool_is_replaced(monkeypatch):
     shutdown_jq_pool()
     monkeypatch.setattr(settings, "jq_filter_workers", 1)
     start_jq_pool()
-    stale = jq_runner._POOL  # pylint: disable=protected-access
+    stale = jq_runner._SANDBOX._current_executor()  # pylint: disable=protected-access
     stale_processes = _worker_processes()
     assert stale_processes
 
-    # Simulate another thread having replaced the global pool meanwhile.
-    replacement = jq_runner._build_pool()  # pylint: disable=protected-access
-    jq_runner._POOL = replacement  # pylint: disable=protected-access
-    jq_runner._POOL_PID = os.getpid()  # pylint: disable=protected-access
+    # Simulate another thread having replaced the current pool meanwhile.
+    replacement = jq_runner._SANDBOX._build()  # pylint: disable=protected-access
+    jq_runner._SANDBOX._pool = replacement  # pylint: disable=protected-access
+    jq_runner._SANDBOX._pool_pid = os.getpid()  # pylint: disable=protected-access
     try:
-        jq_runner._kill_pool_workers(stale)  # pylint: disable=protected-access
+        jq_runner._SANDBOX._discard(stale)  # pylint: disable=protected-access
 
         assert _wait_until(lambda: all(not p.is_alive() for p in stale_processes)), "the stale pool's workers survived the kill"
         # The newer pool is untouched and still usable.
-        assert jq_runner._POOL is replacement  # pylint: disable=protected-access
+        assert jq_runner._SANDBOX._current_executor() is replacement  # pylint: disable=protected-access
         assert run_jq_filter(".a", {"a": 3}) == [3]
     finally:
         shutdown_jq_pool()
@@ -501,7 +515,7 @@ def test_gate_is_released_after_a_normal_call(jq_pool):
     # First-Party
     from mcpgateway.utils import jq_runner
 
-    gate = getattr(jq_runner._POOL, jq_runner._GATE_ATTR)  # pylint: disable=protected-access
+    gate = getattr(jq_runner._SANDBOX._current_executor(), sandbox_pool._GATE_ATTR)  # pylint: disable=protected-access
     for _ in range(3):
         assert run_jq_filter(".a", {"a": 1}) == [1]
     # Every acquire in the loop above was matched by a release.

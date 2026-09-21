@@ -8,6 +8,7 @@ The answer decides whether non-Linux platforms get a real sandbox.
 """
 
 # Standard
+import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import re
@@ -47,6 +48,9 @@ def test_start_method_runs_a_worker(method):
 def test_start_method_worker_is_killable(method):
     """A worker stuck in catastrophic backtracking must die when killed.
 
+    The wait must end in a TimeoutError. A broader expectation would also accept a
+    BrokenProcessPool or an import failure, which would pass for the wrong reason.
+
     Args:
         method: Multiprocessing start method under test.
     """
@@ -55,7 +59,7 @@ def test_start_method_worker_is_killable(method):
     try:
         pool.submit(_worker, r"^a+$", "a").result(timeout=60)
         future = pool.submit(_worker, r"^(a+)+$", "a" * 40 + "b")
-        with pytest.raises(Exception):
+        with pytest.raises(concurrent.futures.TimeoutError):
             future.result(timeout=1.0)
         processes = list((getattr(pool, "_processes", None) or {}).values())
         assert processes, "pool exposes no _processes mapping; the kill route is gone"
