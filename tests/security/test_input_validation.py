@@ -30,6 +30,7 @@ import logging
 from pathlib import Path
 import subprocess
 import sys
+import time
 from unittest.mock import patch
 
 # Third-Party
@@ -38,6 +39,7 @@ import pytest
 
 # First-Party
 from mcpgateway.schemas import AdminToolCreate, encode_datetime, GatewayCreate, PromptArgument, PromptCreate, ResourceCreate, RPCRequest, ServerCreate, ToolCreate, ToolInvocation
+from mcpgateway.services.tool_service import _validate_tool_input_arguments
 from mcpgateway.utils.base_models import to_camel_case
 from mcpgateway.common.validators import SecurityValidator
 
@@ -1245,6 +1247,12 @@ class TestSecurityValidation:
             "((a*)*)*b",
         ]
 
+        # Storage is intentionally permitted; the runtime sandbox is the control. Asserting
+        # only that the pattern was stored proves the storage works and leaves the control
+        # untested, so each stored schema is validated against a hostile subject here.
+        hostile_subject = "a" * 40 + "b"
+        outcomes = {}
+
         for pattern in redos_patterns:
             logger.debug(f"Testing ReDoS pattern: {pattern}")
             # These patterns in input schema could cause ReDoS
@@ -1253,6 +1261,18 @@ class TestSecurityValidation:
             tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
             # Input schema might have defaults
             assert tool.input_schema is not None
+
+            start = time.perf_counter()
+            outcomes[pattern] = _validate_tool_input_arguments(hostile_subject, tool.input_schema)
+            elapsed = time.perf_counter() - start
+            assert elapsed < 10.0, f"pattern {pattern!r} ran {elapsed:.1f}s; the sandbox did not bound it"
+
+        # Four of these patterns match or reject in microseconds, so a suite-wide time bound
+        # says nothing about them. Only the nested quantifier backtracks, and it must be the
+        # budget that stops it, never a mismatch and never a broken pool.
+        runaway = outcomes["(a+)+$"]
+        assert runaway is not None, "a truncated validation must fail closed"
+        assert "exceeded the execution time limit" in runaway, f"the budget must be what stopped it; got {runaway!r}"
 
         # Test 2: SSTI validation patterns should not be vulnerable to ReDoS
         # The SSTI patterns previously used .* which could cause catastrophic backtracking
