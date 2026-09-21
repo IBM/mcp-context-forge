@@ -13694,6 +13694,7 @@ async def admin_edit_resource(
         resource = ResourceUpdate(
             uri=str(form.get("uri", "")),
             name=str(form.get("name", "")),
+            custom_name=str(form["customName"]) if "customName" in form else None,
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),
             content=str(form.get("content", "")),
