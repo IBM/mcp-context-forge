@@ -7,8 +7,8 @@ OpenAPI Service for ContextForge AI Gateway.
 This module provides services for fetching and extracting schemas from OpenAPI specifications.
 """
 
-# Standard
 import logging
+import time
 from typing import Optional, Tuple
 import urllib.parse
 
@@ -17,7 +17,7 @@ import orjson
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.services.http_client_service import get_isolated_http_client
+from mcpgateway.services.http_client_service import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -54,58 +54,71 @@ def _resolve_schema(schema_obj: Optional[dict], components_schemas: dict) -> Opt
 # 10 MiB — generous for any realistic OpenAPI spec, prevents memory exhaustion from malicious servers.
 _MAX_SPEC_BYTES = 10 * 1024 * 1024
 
+# ponytail: unbounded dict cache, add maxsize eviction if memory matters
+_spec_cache: dict[str, tuple[float, dict]] = {}
+_SPEC_CACHE_TTL = 60.0
+
 
 async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
-    """
-    Fetch OpenAPI specification from a URL with SSRF protection.
+    """Fetch OpenAPI specification from a URL with SSRF protection.
 
-    Redirects are disabled to prevent SSRF bypass (an attacker-controlled
-    server could redirect to an internal address after the initial URL
-    passes validation).  Response bodies larger than ``_MAX_SPEC_BYTES``
-    are rejected to guard against memory exhaustion.
+    Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds to avoid
+    redundant outbound fetches of the same static spec under concurrency.
+
+    Redirects are disabled (shared client default) to prevent SSRF bypass.
+    Response bodies larger than ``_MAX_SPEC_BYTES`` are rejected to guard
+    against memory exhaustion.
 
     Args:
-        spec_url: The URL to fetch the OpenAPI spec from
-        timeout: Request timeout in seconds (default: 10.0)
+        spec_url: The URL to fetch the OpenAPI spec from.
+        timeout: Request timeout in seconds (default: 10.0).
 
     Returns:
-        dict: The parsed OpenAPI specification
+        dict: The parsed OpenAPI specification.
 
     Raises:
         ValueError: If URL fails security validation, response is too large, or
-            response body is not valid JSON
-        httpx.HTTPError: If the request fails
+            response body is not valid JSON.
+        httpx.HTTPError: If the request fails.
     """
+    now = time.monotonic()
+    cached = _spec_cache.get(spec_url)
+    if cached and (now - cached[0]) < _SPEC_CACHE_TTL:
+        return cached[1]
+
     # SSRF Protection: Validate the spec URL before making request
     SecurityValidator.validate_url(spec_url, "OpenAPI spec URL")
 
-    async with get_isolated_http_client(timeout=timeout, follow_redirects=False) as client:
-        async with client.stream("GET", spec_url) as response:
-            response.raise_for_status()
+    client = await get_http_client()
+    async with client.stream("GET", spec_url, timeout=timeout) as response:
+        response.raise_for_status()
 
-            # Early reject via Content-Length when the header is present.
-            try:
-                cl = int(response.headers.get("content-length", "0"))
-            except (ValueError, OverflowError):
-                cl = 0  # Malformed header — fall through to streamed check below
-            if cl > _MAX_SPEC_BYTES:
-                raise ValueError(f"OpenAPI spec response too large ({cl} bytes, max {_MAX_SPEC_BYTES})")
-
-            # Stream the body in chunks so we never buffer more than the cap.
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes(chunk_size=8192):
-                total += len(chunk)
-                if total > _MAX_SPEC_BYTES:
-                    raise ValueError(f"OpenAPI spec response too large (>{_MAX_SPEC_BYTES} bytes)")
-                chunks.append(chunk)
-
-        body = b"".join(chunks)
-
+        # Early reject via Content-Length when the header is present.
         try:
-            return orjson.loads(body)
-        except (orjson.JSONDecodeError, ValueError) as exc:
-            raise ValueError("Response is not valid JSON. Ensure the URL points to a JSON OpenAPI specification.") from exc
+            cl = int(response.headers.get("content-length", "0"))
+        except (ValueError, OverflowError):
+            cl = 0  # Malformed header — fall through to streamed check below
+        if cl > _MAX_SPEC_BYTES:
+            raise ValueError(f"OpenAPI spec response too large ({cl} bytes, max {_MAX_SPEC_BYTES})")
+
+        # Stream the body in chunks so we never buffer more than the cap.
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes(chunk_size=8192):
+            total += len(chunk)
+            if total > _MAX_SPEC_BYTES:
+                raise ValueError(f"OpenAPI spec response too large (>{_MAX_SPEC_BYTES} bytes)")
+            chunks.append(chunk)
+
+    body = b"".join(chunks)
+
+    try:
+        result = orjson.loads(body)
+    except (orjson.JSONDecodeError, ValueError) as exc:
+        raise ValueError("Response is not valid JSON. Ensure the URL points to a JSON OpenAPI specification.") from exc
+
+    _spec_cache[spec_url] = (now, result)
+    return result
 
 
 def extract_schemas_from_openapi(

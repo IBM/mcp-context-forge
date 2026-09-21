@@ -7,7 +7,6 @@ Unit tests for OpenAPI service.
 """
 
 # Standard
-from contextlib import asynccontextmanager
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,6 +18,7 @@ import pytest
 # First-Party
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
+    _spec_cache,
     extract_schemas_from_openapi,
     fetch_and_extract_schemas,
     fetch_openapi_spec,
@@ -242,9 +242,8 @@ class TestExtractSchemasFromOpenAPI:
         assert any("Unsupported $ref format" in msg for msg in caplog.messages)
 
 
-@asynccontextmanager
-async def _mock_isolated_client(body: bytes, headers: Optional[dict] = None, raise_for_status: Optional[Exception] = None):
-    """Async context manager mimicking ``get_isolated_http_client`` with canned responses."""
+def _mock_http_client(body: bytes, headers: Optional[dict] = None, raise_for_status: Optional[Exception] = None):
+    """Return a mock client mimicking the shared ``get_http_client`` singleton."""
 
     async def _aiter_bytes(chunk_size=8192):
         for i in range(0, len(body), chunk_size):
@@ -260,24 +259,31 @@ async def _mock_isolated_client(body: bytes, headers: Optional[dict] = None, rai
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=None)
 
-    mock_client = AsyncMock()
+    mock_client = MagicMock()
     mock_client.stream = MagicMock(return_value=mock_response)
-    yield mock_client
+    return mock_client
 
 
-_PATCH_CLIENT = "mcpgateway.services.openapi_service.get_isolated_http_client"
+_PATCH_CLIENT = "mcpgateway.services.openapi_service.get_http_client"
 _PATCH_VALIDATE = "mcpgateway.services.openapi_service.SecurityValidator.validate_url"
 
 
 class TestFetchOpenAPISpec:
     """Tests for fetch_openapi_spec function."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """Clear the spec cache before and after each test."""
+        _spec_cache.clear()
+        yield
+        _spec_cache.clear()
+
     @pytest.mark.asyncio
     async def test_fetch_success(self):
         """Test successful fetch of OpenAPI spec."""
         mock_spec = {"openapi": "3.0.0", "paths": {}}
 
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps(mock_spec))):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(orjson.dumps(mock_spec))):
             with patch(_PATCH_VALIDATE):
                 result = await fetch_openapi_spec("http://example.com/openapi.json")
 
@@ -286,7 +292,7 @@ class TestFetchOpenAPISpec:
     @pytest.mark.asyncio
     async def test_fetch_with_ssrf_validation(self):
         """Test that SSRF validation is called when enabled."""
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps({"openapi": "3.0.0"}))):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(orjson.dumps({"openapi": "3.0.0"}))):
             with patch(_PATCH_VALIDATE) as mock_validate_url:
                 await fetch_openapi_spec("http://example.com/openapi.json")
 
@@ -306,24 +312,25 @@ class TestFetchOpenAPISpec:
         """Test handling of HTTP errors."""
         error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=MagicMock())
 
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"", raise_for_status=error)):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(b"", raise_for_status=error)):
             with patch(_PATCH_VALIDATE):
                 with pytest.raises(httpx.HTTPStatusError):
                     await fetch_openapi_spec("http://example.com/openapi.json")
 
     @pytest.mark.asyncio
     async def test_fetch_timeout(self):
-        """Test custom timeout is passed to get_isolated_http_client."""
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps({"openapi": "3.0.0"}))) as mock_get_client:
+        """Test custom timeout is passed to client.stream."""
+        mock_client = _mock_http_client(orjson.dumps({"openapi": "3.0.0"}))
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=mock_client):
             with patch(_PATCH_VALIDATE):
                 await fetch_openapi_spec("http://example.com/openapi.json", timeout=5.0)
 
-        mock_get_client.assert_called_once_with(timeout=5.0, follow_redirects=False)
+        mock_client.stream.assert_called_once_with("GET", "http://example.com/openapi.json", timeout=5.0)
 
     @pytest.mark.asyncio
     async def test_rejects_response_with_content_length_exceeding_limit(self):
         """Content-Length header exceeding _MAX_SPEC_BYTES raises ValueError."""
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"", headers={"content-length": str(_MAX_SPEC_BYTES + 1)})):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(b"", headers={"content-length": str(_MAX_SPEC_BYTES + 1)})):
             with patch(_PATCH_VALIDATE):
                 with pytest.raises(ValueError, match="too large"):
                     await fetch_openapi_spec("http://example.com/openapi.json")
@@ -331,7 +338,7 @@ class TestFetchOpenAPISpec:
     @pytest.mark.asyncio
     async def test_rejects_response_body_exceeding_limit(self):
         """Response body exceeding _MAX_SPEC_BYTES raises ValueError during streaming."""
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"x" * (_MAX_SPEC_BYTES + 1))):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(b"x" * (_MAX_SPEC_BYTES + 1))):
             with patch(_PATCH_VALIDATE):
                 with pytest.raises(ValueError, match="too large"):
                     await fetch_openapi_spec("http://example.com/openapi.json")
@@ -341,7 +348,7 @@ class TestFetchOpenAPISpec:
         """Malformed Content-Length header doesn't crash — falls through to streamed check."""
         mock_spec = {"openapi": "3.0.0"}
 
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(orjson.dumps(mock_spec), headers={"content-length": "not-a-number"})):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(orjson.dumps(mock_spec), headers={"content-length": "not-a-number"})):
             with patch(_PATCH_VALIDATE):
                 result = await fetch_openapi_spec("http://example.com/openapi.json")
 
@@ -350,10 +357,24 @@ class TestFetchOpenAPISpec:
     @pytest.mark.asyncio
     async def test_invalid_json_response_raises_valueerror(self):
         """Non-JSON response body (e.g. HTML) raises ValueError with clear message."""
-        with patch(_PATCH_CLIENT, return_value=_mock_isolated_client(b"<html>Not Found</html>")):
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(b"<html>Not Found</html>")):
             with patch(_PATCH_VALIDATE):
                 with pytest.raises(ValueError, match="not valid JSON"):
                     await fetch_openapi_spec("http://example.com/openapi.json")
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_skips_fetch(self):
+        """Cached spec is returned without making an HTTP call."""
+        mock_spec = {"openapi": "3.0.0", "paths": {}}
+
+        with patch(_PATCH_CLIENT, new_callable=AsyncMock, return_value=_mock_http_client(orjson.dumps(mock_spec))) as mock_get:
+            with patch(_PATCH_VALIDATE):
+                first = await fetch_openapi_spec("http://example.com/openapi.json")
+                second = await fetch_openapi_spec("http://example.com/openapi.json")
+
+        assert first == second == mock_spec
+        # Shared client fetched only once; second call served from cache.
+        assert mock_get.await_count == 1
 
 
 class TestFetchAndExtractSchemas:
