@@ -13,7 +13,7 @@ while allowing feature-gated MCP Apps AppBridge methods to pass validation.
 from typing import Dict, FrozenSet
 
 # First-Party
-from mcpgateway.services.mcp_apps import mcp_apps_enabled, MCP_UI_EXTENSION
+from mcpgateway.services.mcp_apps import MCP_APPS_BRIDGE_METHODS, mcp_apps_enabled, MCP_UI_EXTENSION
 
 # Core MCP methods that always take precedence.
 _CORE_MCP_METHODS: FrozenSet[str] = frozenset(
@@ -53,11 +53,17 @@ class MCPMethodRegistry:
 
     def _register_mcp_apps_methods(self) -> None:
         """Register MCP Apps AppBridge methods."""
-        self._mcp_apps_methods[MCP_UI_EXTENSION] = frozenset({"tools/call"})
+        self._mcp_apps_methods[MCP_UI_EXTENSION] = frozenset(MCP_APPS_BRIDGE_METHODS)
 
     def is_core_method(self, method: str) -> bool:
         """Return whether a method is a core MCP method."""
         return method in _CORE_MCP_METHODS
+
+    def is_app_bridge_method(self, method: str) -> bool:
+        """Return whether a method may be sent by an app over the AppBridge."""
+        if not mcp_apps_enabled():
+            return False
+        return method in self._mcp_apps_methods.get(MCP_UI_EXTENSION, frozenset())
 
     def is_known_method(self, method: str) -> bool:
         """Return whether a method is known for core MCP or enabled MCP Apps."""

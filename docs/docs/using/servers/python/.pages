@@ -12,6 +12,5 @@ nav:
   - mermaid-server.md
   - plotly-server.md
   - pptx-server.md
-  - python-sandbox-server.md
   - url-to-markdown-server.md
   - xlsx-server.md

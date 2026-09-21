@@ -2,6 +2,7 @@ matplotlib>=3.11.1
 mcp>=1.28.1,<2
 numpy>=2.5.1
 openpyxl>=3.1.5
+orjson>=3.11.9
 pandas>=3.0.5
 plotly>=6.9.0
 pyarrow>=25.0.0

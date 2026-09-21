@@ -1,9 +1,9 @@
+import { getAuthHeaders } from "./auth.js";
 import {
   displayImportResults,
   refreshCurrentTabData,
   showImportProgress,
 } from "./fileTransfer.js";
-import { getAuthToken } from "./tokens.js";
 
 // ===================================================================
 // SELECTIVE IMPORT FUNCTIONS
@@ -289,10 +289,7 @@ export const handleSelectiveImport = async function (dryRun = false) {
       (window.ROOT_PATH || "") + "/admin/import/configuration",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await getAuthHeaders(true),
         body: JSON.stringify(requestData),
       }
     );

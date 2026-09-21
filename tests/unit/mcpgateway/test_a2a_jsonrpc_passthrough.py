@@ -498,11 +498,11 @@ class TestJSONRPCPassthroughErrorHandling:
 class TestJSONRPCPassthroughGovernance:
     """Test that governance features are applied."""
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_admin_unrestricted_token_teams(self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers):
         """Test admin with no team restrictions (line 5385)."""
         # Admin with token_teams=None should stay None (unrestricted)
-        mock_get_filter_context.return_value = ("admin@example.com", None, True)
+        mock_get_filter_context.return_value = ("admin@example.com", None)
         mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
@@ -523,11 +523,11 @@ class TestJSONRPCPassthroughGovernance:
         assert call_args is not None
         assert call_args.kwargs["token_teams"] is None
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_non_admin_public_only_token_teams(self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers):
         """Test non-admin without teams gets public-only access (line 5387)."""
         # Non-admin with token_teams=None should get [] (public-only)
-        mock_get_filter_context.return_value = ("user@example.com", None, False)
+        mock_get_filter_context.return_value = ("user@example.com", [])
         mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
@@ -548,10 +548,10 @@ class TestJSONRPCPassthroughGovernance:
         assert call_args is not None
         assert call_args.kwargs["token_teams"] == []
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_applies_token_scoping(self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers):
         """Test that token scoping is applied."""
-        mock_get_filter_context.return_value = ("user@example.com", ["team1"], False)
+        mock_get_filter_context.return_value = ("user@example.com", ["team1"])
         mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
@@ -1375,9 +1375,9 @@ class TestRequestContextTokenScoping:
 
     def test_admin_with_no_team_restrictions_unrestricted(self, mock_request_for_context, mock_user_dict_for_context):
         """Test admin with token_teams=None gets unrestricted access (admin bypass)."""
-        with patch("mcpgateway.main.get_rpc_filter_context") as mock_get_filter:
+        with patch("mcpgateway.main.get_scoped_resource_access_context") as mock_get_filter:
             # Admin with token_teams=None should remain None (unrestricted)
-            mock_get_filter.return_value = ("admin@example.com", None, True)
+            mock_get_filter.return_value = ("admin@example.com", None)
 
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
@@ -1388,9 +1388,9 @@ class TestRequestContextTokenScoping:
 
     def test_non_admin_with_no_teams_gets_public_only(self, mock_request_for_context, mock_user_dict_for_context):
         """Test non-admin without teams gets public-only access (empty list)."""
-        with patch("mcpgateway.main.get_rpc_filter_context") as mock_get_filter:
+        with patch("mcpgateway.main.get_scoped_resource_access_context") as mock_get_filter:
             # Non-admin with token_teams=None should get [] (public-only)
-            mock_get_filter.return_value = ("user@example.com", None, False)
+            mock_get_filter.return_value = ("user@example.com", [])
 
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
@@ -1401,9 +1401,9 @@ class TestRequestContextTokenScoping:
 
     def test_non_admin_with_teams_preserves_teams(self, mock_request_for_context, mock_user_dict_for_context):
         """Test non-admin with specific teams preserves team list."""
-        with patch("mcpgateway.main.get_rpc_filter_context") as mock_get_filter:
+        with patch("mcpgateway.main.get_scoped_resource_access_context") as mock_get_filter:
             # Non-admin with specific teams
-            mock_get_filter.return_value = ("user@example.com", ["team1", "team2"], False)
+            mock_get_filter.return_value = ("user@example.com", ["team1", "team2"])
 
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
@@ -1414,9 +1414,9 @@ class TestRequestContextTokenScoping:
 
     def test_admin_with_specific_teams_preserves_teams(self, mock_request_for_context, mock_user_dict_for_context):
         """Test admin with specific team restrictions preserves those restrictions."""
-        with patch("mcpgateway.main.get_rpc_filter_context") as mock_get_filter:
+        with patch("mcpgateway.main.get_scoped_resource_access_context") as mock_get_filter:
             # Admin with specific team restrictions (narrowed token)
-            mock_get_filter.return_value = ("admin@example.com", ["team1"], True)
+            mock_get_filter.return_value = ("admin@example.com", ["team1"])
 
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
@@ -1433,7 +1433,7 @@ class TestRequestContextUserIdentityExtraction:
         """Test user identity extracted from dict with 'sub' field."""
         user = {"sub": "user123", "email": "user@example.com"}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, user)
@@ -1445,7 +1445,7 @@ class TestRequestContextUserIdentityExtraction:
         """Test user identity extracted from dict with 'id' field."""
         user = {"id": "user456", "email": "user@example.com"}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, user)
@@ -1457,7 +1457,7 @@ class TestRequestContextUserIdentityExtraction:
         """Test user identity falls back to email when id/sub missing."""
         user = {"email": "user@example.com"}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, user)
@@ -1469,7 +1469,7 @@ class TestRequestContextUserIdentityExtraction:
         """Test user identity when user is a string (non-dict format)."""
         user = "user@example.com"
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, user)
@@ -1487,7 +1487,7 @@ class TestRequestContextBearerTokenExtraction:
         jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"  # pragma: allowlist secret
         mock_request_for_context.state.bearer_token = jwt_token
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
@@ -1500,7 +1500,7 @@ class TestRequestContextBearerTokenExtraction:
         mock_request_for_context.state.bearer_token = None  # Not set by middleware
         mock_request_for_context.headers = {"authorization": f"Bearer {jwt_token}"}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
@@ -1513,7 +1513,7 @@ class TestRequestContextBearerTokenExtraction:
         mock_request_for_context.state.bearer_token = None
         mock_request_for_context.headers = {"authorization": f"bearer {jwt_token}"}  # lowercase 'bearer'
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
@@ -1525,7 +1525,7 @@ class TestRequestContextBearerTokenExtraction:
         opaque_token = "local-opaque-token-12345"  # pragma: allowlist secret
         mock_request_for_context.state.bearer_token = opaque_token
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 with patch("mcpgateway.main._is_jwt_token", return_value=False):
                     from mcpgateway.main import _extract_a2a_request_context
@@ -1538,7 +1538,7 @@ class TestRequestContextBearerTokenExtraction:
         jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"  # pragma: allowlist secret
         mock_request_for_context.state.bearer_token = jwt_token
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 with patch("mcpgateway.main._is_jwt_token", return_value=True):
                     from mcpgateway.main import _extract_a2a_request_context
@@ -1551,7 +1551,7 @@ class TestRequestContextBearerTokenExtraction:
         mock_request_for_context.state.bearer_token = None
         mock_request_for_context.headers = {}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
@@ -1564,7 +1564,7 @@ class TestRequestContextHopCountReading:
 
     def test_hop_count_zero_for_new_request(self, mock_request_for_context, mock_user_dict_for_context):
         """Test hop count is 0 for non-federated request."""
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
@@ -1575,7 +1575,7 @@ class TestRequestContextHopCountReading:
         """Test hop count is read from X-UAID-Hop-Count header."""
         mock_request_for_context.headers = {"X-UAID-Hop-Count": "2"}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=2):
                 from mcpgateway.main import _extract_a2a_request_context
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
@@ -1584,7 +1584,7 @@ class TestRequestContextHopCountReading:
 
     def test_hop_count_extraction_delegates_to_uaid_utils(self, mock_request_for_context, mock_user_dict_for_context):
         """Test hop count extraction delegates to uaid_utils.read_hop_count."""
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count") as mock_read_hop:
                 mock_read_hop.return_value = 5
                 from mcpgateway.main import _extract_a2a_request_context
@@ -1601,7 +1601,7 @@ class TestRequestContextMetadataExtraction:
         """Test content-type header is extracted."""
         mock_request_for_context.headers = {"content-type": "application/json"}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 with patch("mcpgateway.main._prepare_request_headers", return_value={"content-type": "application/json"}):
                     from mcpgateway.main import _extract_a2a_request_context
@@ -1623,7 +1623,7 @@ class TestRequestContextMetadataExtraction:
             # authorization removed by filter
         }
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 with patch("mcpgateway.main._prepare_request_headers", return_value=filtered_headers) as mock_prepare:
                     from mcpgateway.main import _extract_a2a_request_context
@@ -1636,7 +1636,7 @@ class TestRequestContextMetadataExtraction:
         """Test content-type is None when header missing."""
         mock_request_for_context.headers = {}
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
                 with patch("mcpgateway.main._prepare_request_headers", return_value={}):
                     from mcpgateway.main import _extract_a2a_request_context
@@ -1657,7 +1657,7 @@ class TestRequestContextCompleteContext:
             "X-UAID-Hop-Count": "1",
         }
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", ["team1"], False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team1"])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=1):
                 with patch("mcpgateway.main._prepare_request_headers", return_value={"content-type": "application/json"}):
                     with patch("mcpgateway.main._is_jwt_token", return_value=True):

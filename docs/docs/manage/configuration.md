@@ -6,22 +6,33 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ## 🔐 Required: Change Before Use
 
-These variables have insecure defaults and **must be changed** before production deployment:
+These variables have insecure built-in placeholders. Set each credential before enabling its consuming authentication feature; the gateway rejects empty, placeholder, and known-weak password values at startup.
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
-| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
+| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
-| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
+| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` (rejected when Basic Auth is enabled) | Set a strong password |
 | `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |
-| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` | Set a strong password |
-| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` | Set a strong password |
+| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` (rejected when email auth is enabled) | Set a strong password |
+| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` (rejected when email auth is enabled) | Set a strong password |
 
-Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update these values.
+Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env`, then run `make setup` or `make init-secrets-patch-env`.
 
 !!! warning "Startup Validation"
-    If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
+    If an enabled authentication feature has a missing, placeholder, or known-weak password, the gateway fails fast at startup with a Pydantic validation error.
+
+### Migrating Existing Deployments
+
+Before upgrading, set strong values for every enabled authentication path:
+
+1. Run `make init-secrets-patch-env` against the existing `.env`, or set the values manually.
+2. Set `BASIC_AUTH_PASSWORD` when `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`.
+3. Set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` when `EMAIL_AUTH_ENABLED=true`.
+4. For Helm or Kubernetes, update the corresponding Secret values before restarting the gateway.
+
+Deployments that previously relied on `changeme`, an empty value, or a `__REPLACE_ME__` placeholder will not start until the affected credential is replaced. See the [full migration guide](../operations/default-password-fail-closed-migration.md) for verification steps and rollback notes.
 
 ### 🔒 Security Defaults (Secure by Default)
 
@@ -98,6 +109,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
 | `DATABASE_URL`     | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
 | `APP_ROOT_PATH`    | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
+| `UI_BASE_URL`      | Trusted base URL for browser-facing links in invitation and password emails | (unset) | HTTP/HTTPS URL |
 | `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
 | `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
 | `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-06-18`           | string                 |
@@ -106,12 +118,37 @@ ContextForge supports multiple database backends with full feature parity across
 !!! tip "Subpath Deployment"
     Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
 
+### Browser-facing email links
+
+Set `UI_BASE_URL` when the React client is deployed at a different origin or path from the gateway:
+
+```bash
+UI_BASE_URL=https://ui.example.com/contextforge
+```
+
+ContextForge uses this trusted base to generate these browser-facing email links:
+
+- `https://ui.example.com/contextforge/accept-invitation/{token}`
+- `https://ui.example.com/contextforge/reset-password/{token}`
+- `https://ui.example.com/contextforge/forgot-password`
+
+When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base. Password-reset and account-lockout
+emails preserve compatibility with the bundled Admin UI by using `/admin/reset-password/{token}` and
+`/admin/forgot-password`; these routes require `MCPGATEWAY_ADMIN_API_ENABLED=true`. Invitation emails continue to use
+`/accept-invitation/{token}`, so the fallback host must serve that frontend route. ContextForge does not provide the
+React invitation page. If the React client is deployed separately, configure `UI_BASE_URL`. ContextForge never
+derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
+
+`UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
+different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set
+appropriate secure-cookie, SameSite, credential, and CSRF configuration.
+
 ### Authentication
 
 | Setting                     | Description                                                                  | Default             | Options     |
 |-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
 | `BASIC_AUTH_USER`           | Username for HTTP Basic authentication (when enabled)                        | `admin`             | string      |
-| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme` (rejected when enabled) | string      |
 | `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
 | `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
 | `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges). Also used as the default identity for OAuth health-check token lookups on `authorization_code` gateways — if this user has not completed consent for a gateway, health checks proceed unauthenticated (expected behaviour). | `admin@example.com` | string      |
@@ -130,7 +167,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
 | `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
 | `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
-| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
+| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | *(must be set)*     | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
@@ -382,9 +419,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `EMAIL_AUTH_ENABLED`          | Enable email-based authentication system         | `true`                | bool    |
 | `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
-| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
+| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme` (rejected when email auth is enabled) | string  |
 | `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
-| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme`            | string  |
+| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme` (rejected when email auth is enabled) | string  |
 | `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
 | `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
 | `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |
@@ -440,6 +477,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_AUTO_CREATE_USERS`       | Automatically create users from SSO providers    | `true`                | bool    |
 | `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
 | `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
+| `SSO_ALLOW_PROVIDER_LINKING`  | Let a verified email sign in via a different trusted provider (rebinds). Global switch across all providers, not scoped to a pair; admin status is re-vetted against the new provider on relink. | `false`     | bool    |
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
 | `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
@@ -665,7 +703,25 @@ The five settings marked as "middleware-path-only" in the table above govern onl
 !!! info "CSRF_EXEMPT_PATHS and Versioned Route Interaction"
     The middleware exemption uses prefix matching on the raw request path (e.g., `/admin` matches `/admin/llm/*` but not `/v1/admin/llm/*`). This means versioned admin routes at `/v1/admin/*` are validated by both the middleware and the per-route `enforce_admin_csrf` dependency (double validation), while legacy routes at `/admin/*` use only the per-route dependency (exempt from middleware). Cross-validate your paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on how CSRF middleware interacts with other middleware and per-route dependencies.
 
-    This double-validation is also where a known timing gap surfaces: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass can reject a write that the legacy mount's `enforce_admin_csrf`-only path accepts, because the CSRF cookie has not yet rotated from its opaque pre-login value to its HMAC-bound one. See [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978).
+    This double-validation used to expose a timing gap: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass rejected writes that the legacy mount's `enforce_admin_csrf`-only path accepted, because the CSRF cookie had not yet rotated from its opaque pre-login value to its HMAC-bound one. Fixed in [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978) — see *Admin CSRF token lifecycle* below.
+
+#### Admin CSRF token lifecycle
+
+The `mcpgateway_csrf_token` cookie is an HMAC-SHA256 digest bound to `(user email, session JWT jti)`. Every handler that mints a session JWT now issues the bound cookie in the same response:
+
+| Handler | When |
+| --- | --- |
+| `admin_login_handler` | `POST /admin/login`, both the normal and the forced-password-change branch |
+| `change_password_required_handler` | `POST /admin/change-password-required`, which re-mints the JWT with a new `jti` |
+| `admin_ui()` | every `/admin/` dashboard load, which also re-mints and therefore rotates |
+| `/auth/*` login endpoints | `routers/auth.py`, `routers/email_auth.py` |
+
+Because the token is bound to the session, it cannot be replayed across sessions or users, and the unprefixed `/admin/**` and versioned `/v1/admin/**` mounts accept it identically from the first request after login — no dashboard load required.
+
+Unauthenticated pages (`GET /admin/login`, forgot-password, reset-password) still receive an opaque, unbound token. That is correct: there is no session to bind to yet, and neither CSRF layer engages without a session cookie. The bound token replaces it on successful login.
+
+!!! warning "Long sessions can outlive their CSRF token"
+    The admin CSRF cookie's `max_age` is `max(300, TOKEN_EXPIRY * 60)`, but the HMAC is only accepted for the current and previous `CSRF_TOKEN_EXPIRY` window — 1 to 2 hours at the `3600` default. At the shipped `TOKEN_EXPIRY` of 20 minutes the cookie expires first and there is no gap. If you raise `TOKEN_EXPIRY` above 120 minutes, the cookie can outlive its own HMAC, after which `/v1/admin/**` writes fail with `CSRF_TOKEN_INVALID` while `/admin/**` still accepts them. Browsers are unaffected because every dashboard load rotates the cookie; long-lived non-browser cookie clients are not. Keep `CSRF_TOKEN_EXPIRY >= TOKEN_EXPIRY * 60`, or re-authenticate rather than holding one cookie for the full session.
 
 ### Identity Propagation
 
@@ -750,11 +806,10 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 
 #### Helm/Kubernetes registration examples
 
-When deployed with the Helm chart, the testing registration jobs create gateways pointing to
-in-cluster Service DNS names:
+When deployed with the Helm chart, the Fast Time testing registration job creates
+a gateway pointing to the in-cluster Service DNS name:
 
 - Fast-time: `http://<release>-mcp-fast-time-server:80/http`
-- Fast-test: `http://<release>-fast-test-server:8880/mcp`
 
 Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
 destinations are rejected with `422` during `/gateways` creation.
@@ -980,6 +1035,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `TOOL_RATE_LIMIT`       | Tool calls per minute          | `100`   | int > 0 |
 | `TOOL_CONCURRENT_LIMIT` | Concurrent tool invocations    | `10`    | int > 0 |
 | `GATEWAY_TOOL_NAME_SEPARATOR` | Tool name separator for gateway routing | `-`     | `-`, `--`, `_`, `.` |
+| `MCPGATEWAY_TOOL_PREVIEW_ENABLED` | Enable the tool preview (dry-run) endpoint at `POST /tools/preview/{name}` | `true` | bool |
 
 ### Prompts
 
@@ -1318,9 +1374,11 @@ HOST=0.0.0.0
 PORT=4444
 DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
-JWT_SECRET_KEY=my-secret-key
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASSWORD=changeme
+JWT_SECRET_KEY=$(openssl rand -hex 32)
+AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
+BASIC_AUTH_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+DEFAULT_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 # Embedded UI mode (hides logout + team selector by default)
@@ -1343,7 +1401,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=my-secret-key
+      - JWT_SECRET_KEY=$(openssl rand -hex 32)
     depends_on:
       postgres:
         condition: service_healthy
@@ -1390,11 +1448,13 @@ data:
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
-  BASIC_AUTH_PASSWORD: "changeme"
+  BASIC_AUTH_PASSWORD: "__REPLACE_ME__run_make_init-secrets-patch-env"
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
 ```
+
+`BASIC_AUTH_PASSWORD` is only enforced when `API_ALLOW_BASIC_AUTH` or `DOCS_ALLOW_BASIC_AUTH` is `true`. Replace the `__REPLACE_ME__...` placeholder with a strong value (e.g. `openssl rand -hex 32`) before enabling either — the gateway refuses to start with a placeholder, empty, or known-weak secret.
 
 ---
 

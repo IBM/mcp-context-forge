@@ -32,6 +32,20 @@ async def _call_next(request):
     return Response("ok")
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/v1/virtual-servers/server-1/tools", True),
+        ("/v1/mcp-servers/gateway-1", True),
+        ("/v1/virtual-servers/server-1/.well-known/oauth-protected-resource", False),
+    ],
+)
+def test_protected_path_classification_handles_alias(path: str, expected: bool) -> None:
+    """Product aliases inherit the standard cache-protection rules."""
+    middleware = SecurityHeadersMiddleware(app=None)
+    assert middleware._is_protected_path(path) is expected
+
+
 def _mock_settings():
     """Create base mock settings."""
     mock = patch("mcpgateway.middleware.security_headers.settings")

@@ -105,7 +105,7 @@ cd "$REPO_ROOT"
 # ---------------------------------------------------------------------------
 GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:8000}"
 SKIP_SERVER_START="${SKIP_SERVER_START:-0}"
-JWT_SECRET_KEY="${JWT_SECRET_KEY:-e2e-otel-plugin-verify-secret-do-not-use-in-prod}"
+JWT_SECRET_KEY="${JWT_SECRET_KEY:-$(openssl rand -base64 48 | tr -d '\n')}"  # pragma: allowlist secret
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
 

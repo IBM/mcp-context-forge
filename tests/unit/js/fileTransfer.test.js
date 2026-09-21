@@ -45,11 +45,13 @@ vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
   getAuthToken: vi.fn(() => Promise.resolve("test-token")),
 }));
 
-vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/tools.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   loadTools: vi.fn(),
 }));
 
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   showNotification: vi.fn(),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
@@ -1455,5 +1457,119 @@ describe("refreshCurrentTabData", () => {
     document.body.appendChild(catalogTab);
 
     expect(() => refreshCurrentTabData()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request headers for /admin/import/* writes (issue #5964)
+// ---------------------------------------------------------------------------
+describe("import request headers", () => {
+  const CSRF_COOKIE_VALUE = "test-csrf-value";
+
+  function setCsrfCookie(value = CSRF_COOKIE_VALUE) {
+    document.cookie = `mcpgateway_csrf_token=${value}`;
+  }
+
+  function clearCsrfCookie() {
+    // jsdom has no wildcard clear; expire the single cookie we set.
+    document.cookie = "mcpgateway_csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  }
+
+  let fetchSpy;
+
+  beforeEach(() => {
+    window.ROOT_PATH = "";
+    window.currentImportData = { version: "1.0", entities: {} };
+    // updateImportCounts() (fileTransfer.js:464-467) dereferences these four
+    // elements WITHOUT a null guard, so handleImport's success path throws
+    // into its own catch block without them. Every other DOM lookup on this
+    // path is guarded.
+    document.body.innerHTML = `
+      <span id="import-total"></span>
+      <span id="import-created"></span>
+      <span id="import-updated"></span>
+      <span id="import-failed"></span>
+    `;
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          preview: {},
+          status: "completed",
+          progress: { total: 0, processed: 0, created: 0, updated: 0, failed: 0 },
+          errors: [],
+          warnings: [],
+        }),
+    });
+  });
+
+  afterEach(() => {
+    clearCsrfCookie();
+    fetchSpy.mockRestore();
+    document.body.innerHTML = "";
+    delete window.ROOT_PATH;
+    delete window.currentImportData;
+    vi.clearAllMocks();
+  });
+
+  test("previewImport sends X-CSRF-Token from the cookie", async () => {
+    setCsrfCookie();
+
+    await previewImport();
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers["X-CSRF-Token"]).toBe(CSRF_COOKIE_VALUE);
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("previewImport omits X-CSRF-Token when no cookie is set", async () => {
+    clearCsrfCookie();
+
+    await previewImport();
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers).not.toHaveProperty("X-CSRF-Token");
+  });
+
+  test("previewImport omits Authorization when no bearer token is available", async () => {
+    setCsrfCookie();
+    getAuthToken.mockResolvedValueOnce("");
+
+    await previewImport();
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers).not.toHaveProperty("Authorization");
+    expect(headers["X-CSRF-Token"]).toBe(CSRF_COOKIE_VALUE);
+    getAuthToken.mockResolvedValue("test-token");
+  });
+
+  test("previewImport sends Authorization when a bearer token is available", async () => {
+    setCsrfCookie();
+
+    await previewImport();
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers.Authorization).toBe("Bearer test-token");
+  });
+
+  test("handleImport sends X-CSRF-Token and Content-Type", async () => {
+    setCsrfCookie();
+
+    await handleImport(true);
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers["X-CSRF-Token"]).toBe(CSRF_COOKIE_VALUE);
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("handleImport omits Authorization when no bearer token is available", async () => {
+    setCsrfCookie();
+    getAuthToken.mockResolvedValueOnce("");
+
+    await handleImport(true);
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers).not.toHaveProperty("Authorization");
+    getAuthToken.mockResolvedValue("test-token");
   });
 });

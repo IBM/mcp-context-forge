@@ -57,6 +57,24 @@ def bypass_uaid_security_for_tests(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_default_timeout", 30)
 
 
+@pytest.fixture(autouse=True)
+def route_isolated_clients_to_patched_shared_client(monkeypatch):
+    """Route isolated A2A HTTP clients through tests' patched shared client."""
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
+
+
 class TestUserInputForA2AAgentTest:
     """Test suite for Issue #840 - Part 1: A2A agent test endpoint lacks user input field.
 

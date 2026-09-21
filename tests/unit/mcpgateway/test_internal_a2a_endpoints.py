@@ -172,17 +172,18 @@ class TestInternalA2AAuthzTrusted:
 
 
 class TestInternalA2AScopeContext:
-    # Patch ``mcpgateway.main.get_rpc_filter_context`` (the binding inside
-    # main's namespace), not ``mcpgateway.auth_context.get_rpc_filter_context``,
+    # Patch ``mcpgateway.main.get_scoped_resource_access_context`` (the binding inside
+    # main's namespace), not ``mcpgateway.auth_context.get_scoped_resource_access_context``,
     # because ``_get_internal_a2a_scope_context`` is defined in main.py and
-    # resolves the name against main's own namespace.
+    # resolves the name against main's own namespace. The helper returns the post-rule
+    # 2-tuple, so these mocks supply already-derived (user_email, token_teams) values.
     @patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value={"email": "admin@test.com"})
-    @patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@test.com", None, True))
+    @patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@test.com", None))
     def test_admin_with_null_teams_keeps_bypass(self, _mock_scope, _mock_user):
         assert _get_internal_a2a_scope_context(MagicMock()) == ("admin@test.com", None)
 
     @patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value={"email": "user@test.com"})
-    @patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@test.com", None, False))
+    @patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@test.com", []))
     def test_non_admin_with_null_teams_becomes_public_only(self, _mock_scope, _mock_user):
         assert _get_internal_a2a_scope_context(MagicMock()) == ("user@test.com", [])
 

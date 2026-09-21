@@ -110,6 +110,51 @@ def tool_service(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
+
+    async def passthrough_pinning(prepared, *_args, **_kwargs):
+        return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+    def service_http_client_is_configured():
+        post = getattr(service._http_client, "post", None)
+        if post is None:
+            return False
+        if not isinstance(post, AsyncMock):
+            return True
+        if post.side_effect is not None:
+            return True
+        return not isinstance(post.return_value, AsyncMock)
+
+    class ClientAdapter:
+        def __init__(self, client):
+            self._client = client
+
+        def __getattr__(self, name):
+            return getattr(self._client, name)
+
+        async def post(self, url, **kwargs):
+            try:
+                return await self._client.post(url, **kwargs)
+            except TypeError as exc:
+                if "extensions" not in str(exc):
+                    raise
+                kwargs.pop("extensions", None)
+                return await self._client.post(url, **kwargs)
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            if service_http_client_is_configured():
+                return ClientAdapter(service._http_client)
+
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return ClientAdapter(await get_http_client())
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
     return service
 
 
@@ -3281,9 +3326,41 @@ class TestInvokeA2AToolCoverage:
     """Tests for _invoke_a2a_tool (lines 4449-4510)."""
 
     @pytest.fixture
-    def tool_service(self):
+    def tool_service(self, monkeypatch):
         svc = ToolService()
         svc._event_service = AsyncMock()
+
+        async def passthrough_pinning(prepared, *_args, **_kwargs):
+            return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+        class ClientAdapter:
+            def __init__(self, client):
+                self._client = client
+
+            def __getattr__(self, name):
+                return getattr(self._client, name)
+
+            async def post(self, url, **kwargs):
+                try:
+                    return await self._client.post(url, **kwargs)
+                except TypeError as exc:
+                    if "extensions" not in str(exc):
+                        raise
+                    kwargs.pop("extensions", None)
+                    return await self._client.post(url, **kwargs)
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client
+
+                return ClientAdapter(await get_http_client())
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
         return svc
 
     def _make_a2a_tool(self, agent_id="agent-1"):
@@ -3509,9 +3586,41 @@ class TestCallA2AAgentCoverage:
     """Tests for _call_a2a_agent (lines 4512-4598)."""
 
     @pytest.fixture
-    def tool_service(self):
+    def tool_service(self, monkeypatch):
         svc = ToolService()
         svc._event_service = AsyncMock()
+
+        async def passthrough_pinning(prepared, *_args, **_kwargs):
+            return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+        class ClientAdapter:
+            def __init__(self, client):
+                self._client = client
+
+            def __getattr__(self, name):
+                return getattr(self._client, name)
+
+            async def post(self, url, **kwargs):
+                try:
+                    return await self._client.post(url, **kwargs)
+                except TypeError as exc:
+                    if "extensions" not in str(exc):
+                        raise
+                    kwargs.pop("extensions", None)
+                    return await self._client.post(url, **kwargs)
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client
+
+                return ClientAdapter(await get_http_client())
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
         return svc
 
     def _make_agent(self, **overrides):
@@ -3558,6 +3667,60 @@ class TestCallA2AAgentCoverage:
 
             with pytest.raises(RuntimeError, match="logger boom"):
                 await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+    @pytest.mark.asyncio
+    async def test_validation_failure_blocks_before_http(self, tool_service, monkeypatch):
+        """A2A URL policy failures stop before an outbound HTTP client is requested."""
+        agent = self._make_agent()
+        pinning = AsyncMock(side_effect=ValueError("private address"))
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", pinning)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            with pytest.raises(ToolInvocationError, match="Outbound A2A URL blocked by URL policy"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        pinning.assert_awaited_once()
+        mock_get_client.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_pinned_call_disables_redirects_and_preserves_tls_verification(self, tool_service, monkeypatch):
+        """Pinned A2A calls disable redirects without overriding TLS verification."""
+        agent = self._make_agent(endpoint_url="https://agent.example.com/a2a")
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Host": "agent.example.com"}, extensions={"sni_hostname": "agent.example.com"})
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", AsyncMock(return_value=pinned))
+        factory_kwargs = {}
+        post_kwargs = {}
+
+        class Client:
+            async def post(self, url, **kwargs):
+                post_kwargs["url"] = url
+                post_kwargs.update(kwargs)
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {"result": "ok"}
+                return response
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                return Client()
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        def isolated_client_factory(**kwargs):
+            factory_kwargs.update(kwargs)
+            return IsolatedClientCtx()
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", isolated_client_factory)
+
+        result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"result": "ok"}
+        assert factory_kwargs == {"follow_redirects": False}
+        assert "verify" not in factory_kwargs
+        assert post_kwargs["url"] == "https://203.0.113.10/a2a"
+        assert post_kwargs["headers"] == {"Host": "agent.example.com"}
+        assert post_kwargs["extensions"] == {"sni_hostname": "agent.example.com"}
 
     @pytest.mark.asyncio
     async def test_custom_agent_format(self, tool_service):
@@ -4212,13 +4375,7 @@ class TestExtractUsingJqErrors:
         # First-Party
         import mcpgateway.services.tool_service as ts
 
-        with patch.object(ts, "_compile_jq_filter") as mock_compile:
-            mock_prog = MagicMock()
-            mock_input = MagicMock()
-            mock_input.all = MagicMock(return_value=[None])
-            mock_prog.input = MagicMock(return_value=mock_input)
-            mock_compile.return_value = mock_prog
-
+        with patch.object(ts, "run_jq_filter", return_value=[None]):
             result = extract_using_jq({"key": "value"}, ".x")
         assert isinstance(result, list)
         assert len(result) == 1
@@ -4226,16 +4383,18 @@ class TestExtractUsingJqErrors:
         assert result[0].text == "Error applying jsonpath filter"
 
     def test_jq_filter_exception(self):
-        """When jq raises exception, returns error message as TextContent in list."""
+        """When the filter engine raises, a fixed error message is returned."""
         # First-Party
         import mcpgateway.services.tool_service as ts
+        from mcpgateway.utils.jq_runner import JqFilterError
 
-        with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
+        with patch.object(ts, "run_jq_filter", side_effect=JqFilterError("bad filter")):
             result = extract_using_jq({"data": 1}, "bad_filter")
         assert isinstance(result, list)
         assert len(result) == 1
         assert isinstance(result[0], TextContent)
-        assert "Error" in result[0].text
+        assert result[0].text == "Error applying jsonpath filter"
+        assert "bad filter" not in result[0].text
 
 
 # ---------------------------------------------------------------------------
@@ -4414,7 +4573,7 @@ class TestExtractAndValidateErrorResponses:
     - Egress-side counterpart guard:
       ``tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress``
     - End-to-end regression:
-      ``tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload``
+      ``tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_error_preserves_payload``
     """
 
     def test_skip_validation_for_error_response_is_error(self, tool_service):
@@ -6327,8 +6486,8 @@ class TestInvokeToolRestTimeout:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, metadata=None), context_table),  # pre-invoke
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table),  # post-invoke (timeout handler)
+                (SimpleNamespace(modified_payload=None, metadata=None, executions=[]), context_table),  # pre-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), context_table),  # post-invoke (timeout handler)
             ]
         )
 
@@ -6487,7 +6646,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={"k": "v"}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None, executions=[]), {}))
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -7565,8 +7724,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0, metadata=None, executions=[]), {}),  # post-invoke
             ]
         )
 
@@ -7618,8 +7777,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0, metadata=None, executions=[]), {}),  # post-invoke
             ]
         )
 
@@ -7946,6 +8105,75 @@ class TestInvokeToolA2A:
         assert result.is_error is False
         assert "Hello from A2A" in result.content[0].text
 
+    @pytest.mark.asyncio
+    async def test_a2a_jsonrpc_uses_pinned_target_and_isolated_client(self, tool_service, monkeypatch):
+        """Tool-mediated A2A invocation posts only to the pinned outbound target."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        a2a_agent.endpoint_url = "https://agent.example.com/a2a"
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Host": "agent.example.com"}, extensions={"sni_hostname": "agent.example.com"})
+        pinning = AsyncMock(return_value=pinned)
+        factory_kwargs = {}
+        post_kwargs = {}
+
+        class Client:
+            async def post(self, url, **kwargs):
+                post_kwargs["url"] = url
+                post_kwargs.update(kwargs)
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {"response": "Pinned response"}
+                response.text = '{"response":"Pinned response"}'
+                return response
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                return Client()
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        def isolated_client_factory(**kwargs):
+            factory_kwargs.update(kwargs)
+            return IsolatedClientCtx()
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", pinning)
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", isolated_client_factory)
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "What is A2A?"})
+
+        assert result is not None
+        assert result.is_error is False
+        assert "Pinned response" in result.content[0].text
+        pinning.assert_awaited_once()
+        assert factory_kwargs == {"follow_redirects": False}
+        assert "verify" not in factory_kwargs
+        assert post_kwargs["url"] == "https://203.0.113.10/a2a"
+        assert post_kwargs["headers"] == {"Host": "agent.example.com"}
+        assert post_kwargs["extensions"] == {"sni_hostname": "agent.example.com"}
+
     async def _invoke_a2a_tool_via_invoke_tool(self, tool_service, response_json):
         """Helper: invoke an A2A tool through invoke_tool with a given HTTP 200 JSON response."""
         tp = _make_tool_payload(
@@ -8121,7 +8349,7 @@ class TestInvokeToolA2A:
             args={"interaction_type": "query", "foo": "bar"},
             headers=SimpleNamespace(model_dump=lambda: {"Content-Type": "application/json", "X-Test": "1"}),
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None, executions=[]), {}))
 
         captured = {}
         mock_http_response = MagicMock()
@@ -8235,6 +8463,159 @@ class TestInvokeToolA2A:
         assert "X-Blocked" not in payload.headers.root
         assert captured_headers["Authorization"] == "Bearer client-token"
         assert captured_headers["X-Tenant-Id"] == "tenant-123"
+
+    @pytest.mark.asyncio
+    async def test_a2a_plugin_authorization_mismatch_sentinel_strips_stale_credential(self, tool_service):
+        """A plugin's empty-string Authorization sentinel strips the real, stale credential.
+
+        Reproduces the scenario a security review found: the agent has "Authorization" in its
+        passthrough_headers allowlist (so the client's own Authorization would normally reach
+        it) and ENABLE_SENSITIVE_HEADER_PASSTHROUGH is on -- the exact config under which the
+        old code silently dropped the plugin's deletion signal. A mocked plugin (standing in for
+        the Vault plugin's mismatch branch) returns "authorization": "" in its modified_payload.
+        The real, stale client Authorization must never reach the outbound call, regardless of
+        the allowlist/passthrough settings that would otherwise let it through.
+        """
+        # Third-Party
+        from cpex.framework import PluginResult, ToolHookType
+
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(agent_type="custom")
+        a2a_agent.passthrough_headers = ["Authorization", "X-Tenant-Id"]
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        modified_payload = SimpleNamespace(
+            name="test_tool",
+            args={"interaction_type": "query"},
+            headers=SimpleNamespace(model_dump=lambda: {"content-type": "application/json", "x-tenant-id": "tenant-123", "authorization": ""}),
+        )
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=modified_payload, continue_processing=True), {}))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+        captured_headers = {}
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch.object(settings, "enable_header_passthrough", True),
+            patch.object(settings, "enable_overwrite_base_headers", False),
+            patch.object(settings, "enable_sensitive_header_passthrough", True),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(
+                db,
+                "test_tool",
+                {"interaction_type": "query"},
+                request_headers={
+                    "Authorization": "Bearer stale-client-cred",
+                    "X-Tenant-Id": "tenant-123",
+                },
+            )
+
+        assert result is not None
+        assert "Authorization" not in captured_headers
+        assert "authorization" not in {k.lower() for k in captured_headers}
+        assert captured_headers.get("X-Tenant-Id") == "tenant-123"
+
+    @pytest.mark.asyncio
+    async def test_a2a_final_strip_removes_vault_tokens_from_prepared_headers(self, tool_service):
+        """Final safety strip removes X-Vault-Tokens from PreparedA2AInvocation.headers before the outbound call.
+
+        prepare_a2a_invocation() is mocked to return a header set that (hypothetically) still
+        carries X-Vault-Tokens, exercising the defense-in-depth strip applied immediately after
+        it -- a case earlier strips can't cover since prepare_a2a_invocation builds its own
+        header dict independent of the caller's already-stripped `headers` argument.
+        """
+        # Third-Party
+        from cpex.framework import PluginResult
+
+        # First-Party
+        from mcpgateway.services.a2a_protocol import PreparedA2AInvocation
+
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(agent_type="custom")
+        a2a_agent.endpoint_url = "http://a2a-agent:9000"
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=False)
+        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=None, continue_processing=True), {}))
+
+        leaked_prepared = PreparedA2AInvocation(
+            endpoint_url="http://a2a-agent:9000",
+            sanitized_endpoint_url="http://a2a-agent:9000",
+            headers={"Content-Type": "application/json", "X-Vault-Tokens": '{"leak": "should-not-reach-agent"}'},
+            request_data={"query": "test"},
+            protocol_version_header="0.3",
+            uses_jsonrpc=False,
+        )
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.prepare_a2a_invocation", return_value=leaked_prepared),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"interaction_type": "query"})
+
+        assert result is not None
+        assert "X-Vault-Tokens" not in captured_headers
+        assert captured_headers["Content-Type"] == "application/json"
 
     @pytest.mark.asyncio
     async def test_a2a_pre_invoke_blocks_sensitive_headers_by_default(self, tool_service):
@@ -8887,7 +9268,7 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), context_table))
 
         with (
             _setup_cache_for_invoke(tp),
@@ -8936,7 +9317,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8990,7 +9371,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
@@ -9094,7 +9475,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -9173,7 +9554,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
@@ -9790,7 +10171,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), context_table))
 
         def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9916,7 +10297,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_PRE_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None, executions=[]), {}))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9988,7 +10369,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None, executions=[]), {}))
 
         upstream_session = AsyncMock()
         upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
@@ -10048,7 +10429,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), None))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:

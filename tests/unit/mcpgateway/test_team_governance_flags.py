@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 import pytest
 from sqlalchemy.orm import Session
 
@@ -52,7 +52,7 @@ class TestAllowTeamCreationFlag:
         db = MagicMock(spec=Session)
 
         with pytest.raises(HTTPException) as exc_info:
-            await create_team(request=request, current_user_ctx=current_user_ctx, db=db)
+            await create_team(request=request, background_tasks=BackgroundTasks(), current_user_ctx=current_user_ctx, db=db)
         assert exc_info.value.status_code == 403
         assert "disabled" in exc_info.value.detail.lower()
 
@@ -92,7 +92,7 @@ class TestAllowTeamCreationFlag:
         current_user_ctx = {"email": "admin@example.com", "is_admin": True}
         db = MagicMock(spec=Session)
 
-        result = await create_team(request=request, current_user_ctx=current_user_ctx, db=db)
+        result = await create_team(request=request, background_tasks=BackgroundTasks(), current_user_ctx=current_user_ctx, db=db)
         assert result.name == "Admin Team"
 
 
@@ -748,7 +748,7 @@ class TestCreateTeamWithMembersDenyPaths:
         db = MagicMock(spec=Session)
 
         with pytest.raises(HTTPException) as exc_info:
-            await create_team(request=request, current_user_ctx={"email": "", "token_teams": None}, db=db)
+            await create_team(request=request, background_tasks=BackgroundTasks(), current_user_ctx={"email": "", "token_teams": None}, db=db)
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -772,7 +772,7 @@ class TestCreateTeamWithMembersDenyPaths:
         db = MagicMock(spec=Session)
 
         with pytest.raises(HTTPException) as exc_info:
-            await create_team(request=request, current_user_ctx={"email": "user@example.com", "token_teams": None}, db=db)
+            await create_team(request=request, background_tasks=BackgroundTasks(), current_user_ctx={"email": "user@example.com", "token_teams": None}, db=db)
         assert exc_info.value.status_code == 403
         assert "disabled" in exc_info.value.detail.lower()
 
@@ -810,6 +810,6 @@ class TestCreateTeamWithMembersDenyPaths:
         db = MagicMock(spec=Session)
 
         with pytest.raises(HTTPException) as exc_info:
-            await create_team(request=request, current_user_ctx={"email": "user@example.com", "token_teams": None}, db=db)
+            await create_team(request=request, background_tasks=BackgroundTasks(), current_user_ctx={"email": "user@example.com", "token_teams": None}, db=db)
         assert exc_info.value.status_code == 400
         assert "invitations are currently disabled" in exc_info.value.detail

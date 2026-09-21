@@ -21,6 +21,7 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.schemas import MAX_TEAM_MEMBER_SEEDS, TeamMemberSeed
+from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError, TeamMemberSeedError
 
 CREATOR = "creator@example.com"
@@ -605,6 +606,24 @@ class TestSeededInvitationTokens:
         # URL-safe base64 alphabet (secrets.token_urlsafe): letters, digits, '-' and '_'.
         assert all(re.fullmatch(r"[A-Za-z0-9_-]+", token) for token in tokens)
         assert len(set(tokens)) == len(tokens), "tokens must be unique across invitations"
+
+
+class TestSeededInvitationDelivery:
+    """Seeded invitations are returned for post-session email delivery."""
+
+    @pytest.mark.asyncio
+    async def test_persisted_invitation_is_returned_for_delivery(self, service):
+        """The router can close its DB session before starting SMTP delivery."""
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            members=[TeamMemberSeed(email="external@partner.com", role="member")],
+        )
+
+        assert len(result.invitations_to_deliver) == 1
+        assert result.invitations_to_deliver[0].id == result.invitations_sent[0].invitation_id
 
 
 class TestCreateTeamUnchanged:

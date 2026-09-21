@@ -82,9 +82,13 @@ _force_safe_test_db_defaults()
 # ---------------------------------------------------------------------------
 _TEST_JWT_SECRET = "test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-pytest-runs"  # nosec B105  # pragma: allowlist secret
 _TEST_ENC_SECRET = "test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-pytest-runs"  # nosec B105  # pragma: allowlist secret
+_TEST_ADMIN_PW = "T3stAdm!nP@ss#Xz9kPqR"  # nosec B105  # pragma: allowlist secret
+_TEST_USER_PW = "T3stUs3rP@ss#Xz9kPqR2"  # nosec B105  # pragma: allowlist secret
 
 os.environ.setdefault("JWT_SECRET_KEY", _TEST_JWT_SECRET)
 os.environ.setdefault("AUTH_ENCRYPTION_SECRET", _TEST_ENC_SECRET)
+os.environ.setdefault("PLATFORM_ADMIN_PASSWORD", _TEST_ADMIN_PW)
+os.environ.setdefault("DEFAULT_USER_PASSWORD", _TEST_USER_PW)
 
 
 def _force_minimal_main_app_features() -> None:

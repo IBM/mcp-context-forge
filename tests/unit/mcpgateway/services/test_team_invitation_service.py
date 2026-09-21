@@ -7,7 +7,9 @@ Comprehensive tests for Team Invitation Service functionality.
 """
 
 # Standard
-from unittest.mock import MagicMock, patch
+import asyncio
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -15,7 +17,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
-from mcpgateway.services.team_invitation_service import TeamInvitationService
+from mcpgateway.schemas import EmailDeliveryStatus
+from mcpgateway.services.team_invitation_service import InvitationDeliveryResult, TeamInvitationService
 from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
 
 
@@ -1188,3 +1191,90 @@ class TestTeamInvitationService:
             call_kwargs = MockInvitation.call_args[1]
             # Check that expires_at was set (we can't easily check the exact value due to datetime)
             assert "expires_at" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_deliver_invitation_email_builds_shared_result(self, service):
+        """Single delivery centralizes URL, status, and warning construction."""
+        invitation = MagicMock(spec=EmailTeamInvitation)
+        invitation.id = "invite-id"
+        invitation.email = "invitee@example.com"
+        invitation.role = "member"
+        invitation.token = "tok/en"
+        invitation.expires_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        service.email_notification_service.deliver_team_invitation_email = AsyncMock(return_value=EmailDeliveryStatus.SENT)
+
+        with patch("mcpgateway.services.team_invitation_service.build_frontend_url", return_value="https://ui.example/accept-invitation/tok%2Fen"):
+            result = await service.deliver_invitation_email(invitation, "Engineering", "Alice")
+
+        assert result == InvitationDeliveryResult(
+            invitation_url="https://ui.example/accept-invitation/tok%2Fen",
+            status=EmailDeliveryStatus.SENT,
+        )
+
+    @pytest.mark.asyncio
+    async def test_deliver_invitation_email_contains_url_build_failure(self, service):
+        """Malformed URL configuration cannot escape best-effort delivery boundary."""
+        invitation = MagicMock(spec=EmailTeamInvitation)
+        invitation.id = "invite-id"
+        invitation.token = "token"
+        service.email_notification_service.deliver_team_invitation_email = AsyncMock()
+
+        with patch("mcpgateway.services.team_invitation_service.build_frontend_url", side_effect=ValueError("bad URL")):
+            result = await service.deliver_invitation_email(invitation, "Engineering", "Alice")
+
+        assert result == InvitationDeliveryResult(
+            invitation_url="",
+            status=EmailDeliveryStatus.FAILED,
+            warning="Invitation created, but the email could not be delivered.",
+        )
+        service.email_notification_service.deliver_team_invitation_email.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_deliver_invitation_email_warns_when_smtp_disabled(self, service):
+        """Disabled SMTP remains a visible non-delivery outcome."""
+        invitation = MagicMock(spec=EmailTeamInvitation)
+        invitation.id = "invite-id"
+        invitation.email = "invitee@example.com"
+        invitation.role = "member"
+        invitation.token = "token"
+        invitation.expires_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        service.email_notification_service.deliver_team_invitation_email = AsyncMock(return_value=EmailDeliveryStatus.DISABLED)
+
+        result = await service.deliver_invitation_email(invitation, "Engineering", "Alice")
+
+        assert result.status == EmailDeliveryStatus.DISABLED
+        assert result.warning == "Invitation created, but email delivery is disabled."
+
+    @pytest.mark.asyncio
+    async def test_batch_delivery_is_bounded_and_failure_isolated(self, service):
+        """Batch delivery limits SMTP fan-out and preserves remaining results."""
+        active = 0
+        peak = 0
+
+        async def deliver(invitation, team_name, inviter_name):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            if invitation.id == "bad":
+                raise RuntimeError("smtp failure")
+            return InvitationDeliveryResult(invitation_url=f"https://ui.example/{invitation.id}", status=EmailDeliveryStatus.SENT)
+
+        invitations = []
+        for invitation_id in ["one", "two", "bad", "four", "five", "six", "seven"]:
+            invitation = MagicMock(spec=EmailTeamInvitation)
+            invitation.id = invitation_id
+            invitation.token = invitation_id
+            invitations.append(invitation)
+
+        with (
+            patch.object(service, "deliver_invitation_email", new=AsyncMock(side_effect=deliver)),
+            patch("mcpgateway.services.team_invitation_service.build_frontend_url", side_effect=lambda path, token: f"https://ui.example{path}/{token}"),
+        ):
+            results = await service.deliver_invitation_emails(invitations, "Engineering", "Alice")
+
+        assert peak <= 5
+        assert len(results) == len(invitations)
+        assert results[2].status == EmailDeliveryStatus.FAILED
+        assert results[2].warning == "Invitation created, but the email could not be delivered."

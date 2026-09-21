@@ -71,7 +71,7 @@ class TestLogoutEndpoint:
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
-            with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
+            with patch("mcpgateway.routers.auth.get_token_blocklist_service") as mock_service:
                 mock_blocklist = MagicMock()
                 mock_blocklist.revoke_token.return_value = True
                 mock_service.return_value = mock_blocklist
@@ -181,7 +181,7 @@ class TestLogoutEndpoint:
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
-            with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
+            with patch("mcpgateway.routers.auth.get_token_blocklist_service") as mock_service:
                 mock_blocklist = MagicMock()
                 mock_blocklist.revoke_token.return_value = False
                 mock_service.return_value = mock_blocklist
@@ -200,7 +200,7 @@ class TestLogoutEndpoint:
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
-            with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
+            with patch("mcpgateway.routers.auth.get_token_blocklist_service") as mock_service:
                 mock_service.side_effect = Exception("Database error")
 
                 client = TestClient(app)
@@ -229,7 +229,7 @@ class TestLogoutEndpoint:
                 mock_settings.jwt_secret_key = SecretStr(real_settings.jwt_secret_key.get_secret_value() if hasattr(real_settings.jwt_secret_key, "get_secret_value") else real_settings.jwt_secret_key)
                 mock_settings.jwt_algorithm = real_settings.jwt_algorithm
 
-                with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
+                with patch("mcpgateway.routers.auth.get_token_blocklist_service") as mock_service:
                     mock_blocklist = MagicMock()
                     mock_blocklist.revoke_token.return_value = True
                     mock_service.return_value = mock_blocklist

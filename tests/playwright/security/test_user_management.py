@@ -83,7 +83,7 @@ class TestUserLifecycle:
 
     def test_update_user(self, admin_api: APIRequestContext, lifecycle_email: str):
         """Update user's full name."""
-        resp = admin_api.put(
+        resp = admin_api.patch(
             f"/auth/email/admin/users/{lifecycle_email}",
             data={"full_name": "Updated Lifecycle User"},
         )
@@ -115,7 +115,7 @@ class TestUserActivation:
 
     def test_deactivate_user(self, admin_api: APIRequestContext, temp_user: str):
         """Admin can deactivate a user."""
-        resp = admin_api.put(
+        resp = admin_api.patch(
             f"/auth/email/admin/users/{temp_user}",
             data={"is_active": False},
         )
@@ -131,7 +131,7 @@ class TestUserActivation:
             "/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Deactivated"},
         )
-        admin_api.put(f"/auth/email/admin/users/{email}", data={"is_active": False})
+        admin_api.patch(f"/auth/email/admin/users/{email}", data={"is_active": False})
 
         # Try to login as deactivated user
         login_resp = anon_api.post(
@@ -146,16 +146,16 @@ class TestUserActivation:
     def test_reactivate_user(self, admin_api: APIRequestContext, temp_user: str):
         """Admin can reactivate a deactivated user."""
         # Deactivate
-        admin_api.put(f"/auth/email/admin/users/{temp_user}", data={"is_active": False})
+        admin_api.patch(f"/auth/email/admin/users/{temp_user}", data={"is_active": False})
         # Reactivate
-        resp = admin_api.put(f"/auth/email/admin/users/{temp_user}", data={"is_active": True})
+        resp = admin_api.patch(f"/auth/email/admin/users/{temp_user}", data={"is_active": True})
         assert resp.status == 200
         user = resp.json()
         assert user.get("is_active") is True
 
     def test_force_password_change(self, admin_api: APIRequestContext, temp_user: str):
         """Admin can force a user to change their password on next login."""
-        resp = admin_api.put(
+        resp = admin_api.patch(
             f"/auth/email/admin/users/{temp_user}",
             data={"password_change_required": True},
         )

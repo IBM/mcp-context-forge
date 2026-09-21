@@ -575,6 +575,14 @@ class TestGatewayEditModal:
 
         _open_edit_or_skip(gateways_page, 0)
 
+        # Wait for editGateway() to finish populating the form before asserting field
+        # states — the modal becomes visible before the async fetch resolves, so without
+        # this wait the select_option below can race against the JS population.
+        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=10000)
+
+        # Reset auth type to a known-empty state so the test is independent of whichever
+        # auth type the first gateway happens to use.
+        gateways_page.edit_modal_auth_type_select.select_option("")
         expect(gateways_page.edit_oauth_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("oauth")
@@ -717,19 +725,29 @@ class TestOAuthGrantTypeSwitching:
         expect(gateways_page.oauth_scopes_input).to_be_visible()
 
     def test_password_grant_shows_username_password(self, gateways_page: GatewaysPage):
-        """Test that password grant type shows username and password fields."""
+        """Test that password grant type shows username and password fields.
+
+        Password grant is deprecated for new gateways (add form no longer
+        offers it) but remains available when editing an existing gateway.
+        """
         gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+        _skip_if_no_gateways(gateways_page)
 
-        gateways_page.auth_type_select.select_option("oauth")
+        _open_edit_or_skip(gateways_page, 0)
+        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=15000)
 
-        gateways_page.oauth_grant_type_select.select_option("password")
+        gateways_page.edit_modal_auth_type_select.select_option("oauth")
+        gateways_page.edit_modal_oauth_grant_type_select.select_option("password")
 
         # Username and password fields should be visible
-        expect(gateways_page.oauth_username_input).to_be_visible()
-        expect(gateways_page.oauth_password_input).to_be_visible()
+        expect(gateways_page.edit_modal_oauth_username_input).to_be_visible()
+        expect(gateways_page.edit_modal_oauth_password_input).to_be_visible()
+
+        gateways_page.close_edit_modal()
 
     def test_switch_between_grant_types(self, gateways_page: GatewaysPage):
-        """Test switching between all grant types updates field visibility correctly."""
+        """Test switching between add-form grant types, and into password grant in the edit modal."""
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
@@ -742,14 +760,21 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.oauth_grant_type_select.select_option("client_credentials")
         expect(gateways_page.oauth_authorization_url_input).to_be_hidden()
 
-        # Switch to password
-        gateways_page.oauth_grant_type_select.select_option("password")
-        expect(gateways_page.oauth_username_input).to_be_visible()
-
         # Switch back to authorization_code
         gateways_page.oauth_grant_type_select.select_option("authorization_code")
         expect(gateways_page.oauth_authorization_url_input).to_be_visible()
-        expect(gateways_page.oauth_username_input).to_be_hidden()
+
+        # Password grant is only offered for existing gateways, via the edit modal.
+        gateways_page.wait_for_gateways_table_loaded()
+        _skip_if_no_gateways(gateways_page)
+        _open_edit_or_skip(gateways_page, 0)
+        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=15000)
+
+        gateways_page.edit_modal_auth_type_select.select_option("oauth")
+        gateways_page.edit_modal_oauth_grant_type_select.select_option("password")
+        expect(gateways_page.edit_modal_oauth_username_input).to_be_visible()
+
+        gateways_page.close_edit_modal()
 
     def test_oauth_issuer_input(self, gateways_page: GatewaysPage):
         """Test filling the OAuth issuer URL input."""

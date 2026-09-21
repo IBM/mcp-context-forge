@@ -569,9 +569,9 @@ plugins:
 
   # Output Length Guard - sequential bounds or truncate tool outputs
   - name: "OutputLengthGuardPlugin"
-    kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
+    kind: "cpex_output_length_guard.output_length_guard.OutputLengthGuardPlugin"
     description: "Guards tool outputs by enforcing min/max character/token length; block or truncate strategies"
-    version: "1.0.0"
+    version: "0.1.0"
     author: "ContextForge"
     hooks: ["tool_post_invoke"]
     tags:
@@ -1059,7 +1059,7 @@ plugins:
     description: "Generates bearer tokens based on vault-saved tokens"
     version: "0.0.1"
     author: "Adrian Popa"
-    hooks: ["tool_pre_invoke"]
+    hooks: ["tool_pre_invoke", "agent_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
     mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 10

@@ -1,0 +1,188 @@
+suite: mcpgateway deployment - gateway TLS
+templates:
+  - templates/deployment-mcpgateway.yaml
+
+tests:
+
+  # ── Default (tls.enabled=false) ──────────────────────────────────────────────
+
+  - it: no TLS env vars are present when tls.enabled=false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CERT_FILE
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: KEY_FILE
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: KEY_FILE_PASSWORD
+
+  - it: no gateway-tls-certs volumeMount when tls.enabled=false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: gateway-tls-certs
+
+  - it: no gateway-tls-certs volume when tls.enabled=false
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-tls-certs
+
+  - it: readiness probe has no scheme when tls.enabled=false
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+
+  - it: liveness probe has no scheme when tls.enabled=false
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+
+  # ── tls.enabled=true ─────────────────────────────────────────────────────────
+
+  - it: SSL env var is true when tls.enabled=true
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL
+            value: "true"
+
+  - it: CERT_FILE env var uses certFile value
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+      mcpContextForge.tls.certFile: /app/certs/tls/tls.crt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CERT_FILE
+            value: /app/certs/tls/tls.crt
+
+  - it: KEY_FILE env var uses keyFile value
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+      mcpContextForge.tls.keyFile: /app/certs/tls/tls.key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: KEY_FILE
+            value: /app/certs/tls/tls.key
+
+  - it: KEY_FILE_PASSWORD uses secretKeyRef when keyFilePasswordSecret is set
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+      mcpContextForge.tls.keyFilePasswordSecret.name: my-pass-secret
+      mcpContextForge.tls.keyFilePasswordSecret.key: passphrase
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: KEY_FILE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: my-pass-secret
+                key: passphrase
+
+  - it: KEY_FILE_PASSWORD is absent when keyFilePasswordSecret is not set
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: KEY_FILE_PASSWORD
+
+  - it: gateway-tls-certs volumeMount is read-only at mountPath
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+      mcpContextForge.tls.mountPath: /app/certs/tls
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: gateway-tls-certs
+            mountPath: /app/certs/tls
+            readOnly: true
+
+  - it: gateway-tls-certs volume references the secretName
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-tls-certs
+            secret:
+              secretName: my-gateway-tls
+
+  - it: readiness probe scheme is HTTPS when tls.enabled=true
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: liveness probe scheme is HTTPS when tls.enabled=true
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: startup probe scheme is HTTPS when tls.enabled=true and probe type is http
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+      migration.enabled: false
+      mcpContextForge.probes.startup.type: http
+      mcpContextForge.probes.startup.path: /ready
+      mcpContextForge.probes.startup.port: 4444
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: exec startup probe is unaffected by tls.enabled=true
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: my-gateway-tls
+      migration.enabled: false
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.containers[0].startupProbe.exec
+      - isNull:
+          path: spec.template.spec.containers[0].startupProbe.httpGet
+
+  - it: required guard fails render when secretName is empty and tls.enabled=true
+    set:
+      mcpContextForge.tls.enabled: true
+      mcpContextForge.tls.secretName: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "mcpContextForge.tls.secretName is required when mcpContextForge.tls.enabled=true"

@@ -49,6 +49,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # ---------------------------------------------------------------------------
@@ -411,6 +412,12 @@ class ServerService(BaseService):
             "description": server.description,
             "icon": server.icon,
             "enabled": server.enabled,
+            # Same APP_DOMAIN-derived base URL OAuth's redirect_uri default and
+            # the RFC 8707/9728 resource URL already use, plus APP_ROOT_PATH so
+            # the URL is actually reachable when the gateway is mounted under a
+            # subpath — see build_server_display_url's docstring for why this
+            # must come from settings rather than the request's Host header.
+            "url": build_server_display_url(server.id) or None,
             "created_at": server.created_at,
             "updated_at": server.updated_at,
             "team_id": server.team_id,
@@ -767,7 +774,9 @@ class ServerService(BaseService):
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email: Email of user for team-based access control. None for no access control.
-            team_id: Optional team ID to filter by specific team (requires user_email).
+            team_id: Optional team ID to filter by specific team. Applies to every caller
+                shape, including the admin and anonymous bypasses; globally-public rows
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public) (requires user_email).
             token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only).
 
@@ -798,7 +807,7 @@ class ServerService(BaseService):
         is_public_only = token_teams is not None and len(token_teams) == 0
         use_cache = cursor is None and user_email is None and page is None and is_public_only
         if use_cache:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility, team_id=team_id)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
@@ -997,6 +1006,8 @@ class ServerService(BaseService):
         server: DbServer,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
+        *,
+        resolved_team_ids: Optional[List[str]] = None,
     ) -> bool:
         """Check whether the caller is allowed to view *server* under Layer 1 visibility.
 
@@ -1005,6 +1016,7 @@ class ServerService(BaseService):
             server: The ORM ``DbServer`` instance (must expose ``visibility``, ``team_id``, ``owner_email``).
             user_email: Requesting user email; ``None`` combined with ``token_teams=None`` is admin bypass.
             token_teams: JWT-scoped team list; ``None``=admin bypass, ``[]``=public-only, ``[...]``=team-scoped.
+            resolved_team_ids: Optional preloaded DB team memberships for an unscoped non-admin caller.
 
         Returns:
             ``True`` when the caller can see the server, ``False`` otherwise.
@@ -1038,6 +1050,8 @@ class ServerService(BaseService):
         if server_team_id and visibility in ("team", "public"):
             if token_teams is not None:
                 team_ids = token_teams
+            elif resolved_team_ids is not None:
+                team_ids = resolved_team_ids
             else:
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)

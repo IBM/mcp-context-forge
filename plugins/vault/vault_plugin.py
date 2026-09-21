@@ -13,7 +13,7 @@ Hook: tool_pre_invoke
 
 # Standard
 from enum import Enum
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 import orjson
@@ -21,6 +21,8 @@ from pydantic import BaseModel
 
 # First-Party
 from cpex.framework import (
+    AgentPreInvokePayload,
+    AgentPreInvokeResult,
     HttpHeaderPayload,
     Plugin,
     PluginConfig,
@@ -96,6 +98,96 @@ class Vault(Plugin):
         # Normalize vault header name to lowercase for case-insensitive lookup (ASGI headers are lowercase)
         self._vault_header_key = self._sconfig.vault_header_name.lower()
 
+    @staticmethod
+    def _normalize_server_url(url: str) -> str:
+        """Normalize a URL for destination-binding comparison.
+
+        Lowercases scheme/host, drops a trailing slash, and ignores userinfo/fragment
+        so equivalent URLs compare equal regardless of incidental formatting differences.
+
+        Args:
+            url: URL to normalize.
+
+        Returns:
+            Normalized ``scheme://host[:port]/path`` string (no trailing slash).
+        """
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        netloc = (parsed.netloc or "").lower()
+        path = (parsed.path or "").rstrip("/")
+        return f"{scheme}://{netloc}{path}"
+
+    @staticmethod
+    def _sanitize_url_for_logging(url: str) -> str:
+        """Sanitize a URL for safe logging by removing credentials.
+
+        Strips userinfo (username:password), query params, and fragments to prevent
+        logging sensitive credentials that may be embedded in URLs.
+
+        Args:
+            url: URL to sanitize.
+
+        Returns:
+            Sanitized ``scheme://host[:port]/path`` string (no credentials, query, or fragment).
+        """
+        parsed = urlparse(url)
+        # Reconstruct with only scheme, netloc (without userinfo), and path
+        # Drop username:password@ from netloc if present
+        netloc = parsed.netloc
+        if "@" in netloc:
+            # Strip userinfo (everything before @)
+            netloc = netloc.split("@", 1)[1]
+
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+    def _resolve_token_value(self, raw_value: object, destination_url: str | None) -> str | None:
+        """Resolve the actual secret from a vault token entry, enforcing destination binding.
+
+        Supports both the legacy shape (plain string secret, unbound) and the newer shape
+        (a JSON object carrying ``secretValue`` and an optional ``mcpServer`` binding). When
+        ``mcpServer`` is present, the token is only usable if it matches the target's actual
+        registered URL (``Gateway.url`` for tools, ``A2AAgent.endpoint_url`` for agents) —
+        this prevents a token scoped to one destination from being replayed against another
+        just because both share the same ``system:<host>`` tag.
+
+        Args:
+            raw_value: The raw value stored under the matched vault token key.
+            destination_url: The real, server-verified destination URL for this invocation.
+
+        Returns:
+            The secret string to use, or ``None`` if the entry is malformed or its
+            ``mcpServer`` binding does not match ``destination_url``.
+        """
+        if isinstance(raw_value, str):
+            return raw_value
+
+        if isinstance(raw_value, dict):
+            secret_value = raw_value.get("secretValue")
+            if not isinstance(secret_value, str):
+                logger.error("Vault token entry missing string 'secretValue'")
+                return None
+
+            mcp_server = raw_value.get("mcpServer")
+            if mcp_server is None:
+                return secret_value
+
+            if not destination_url:
+                logger.warning("Vault token entry is bound to mcpServer=%s but the actual destination could not be determined", self._sanitize_url_for_logging(str(mcp_server)))
+                return None
+
+            if self._normalize_server_url(str(mcp_server)) != self._normalize_server_url(destination_url):
+                logger.warning(
+                    "Vault token mcpServer binding '%s' does not match actual destination '%s'",
+                    self._sanitize_url_for_logging(str(mcp_server)),
+                    self._sanitize_url_for_logging(destination_url),
+                )
+                return None
+
+            return secret_value
+
+        logger.error("Vault token entry has unsupported type: %s", type(raw_value).__name__)
+        return None
+
     def _parse_vault_token_key(self, key: str) -> tuple[str, str | None, str | None, str | None]:
         """Parse vault token key in format: system[:scope][:token_type][:token_name].
 
@@ -112,75 +204,152 @@ class Vault(Plugin):
         token_name = parts[3] if len(parts) > 3 else None
         return system, scope, token_type, token_name
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
-        """Generate bearer tokens from vault-saved tokens before tool invocation.
+    def _resolve_system_and_auth_from_tags(self, metadata: object) -> tuple[str | None, str | None]:
+        """Resolve the vault system key and optional auth header from a target's tags.
+
+        Handles both tag shapes:
+        - MCP gateway tags: ``List[Dict{"id", "label"}]`` (or objects exposing ``.label``)
+        - A2A agent tags: ``List[str]`` (plain string labels)
 
         Args:
-            payload: The tool payload containing arguments.
-            context: Plugin execution context.
+            metadata: Gateway or A2A agent metadata carrying a ``tags`` attribute.
 
         Returns:
-            Result with potentially modified headers containing bearer token.
+            Tuple of ``(system_key, auth_header)``; either element may be ``None``.
         """
-        logger.debug("Processing tool pre-invoke for tool %s", payload.name)
-        logger.debug("Gateway metadata for server %s", context.global_context.server_id)
-
-        gateway_metadata = context.global_context.metadata.get("gateway")
+        # Normalize the varied tag shapes into a uniform list of string labels.
+        normalized_tags: list[str] = []
+        tags = get_attr(metadata, "tags", [])
+        for tag in tags if tags else []:
+            if isinstance(tag, dict):
+                # Gateway dict tag — use the 'label' field (the actual tag value)
+                tag_value = str(tag.get("label", ""))
+                if tag_value:
+                    normalized_tags.append(tag_value)
+            elif isinstance(tag, str):
+                # A2A agent tag — plain string label
+                if tag:
+                    normalized_tags.append(tag)
+            elif hasattr(tag, "label"):
+                # ORM/object tag exposing a `.label` attribute
+                normalized_tags.append(str(getattr(tag, "label")))
 
         system_key: str | None = None
         auth_header: str | None = None
-        if self._sconfig.system_handling == SystemHandling.TAG:
-            # Extract tags from dict format {"id": "...", "label": "..."}
-            normalized_tags: list[str] = []
-            gateway_tags = get_attr(gateway_metadata, "tags", [])
-            for tag in gateway_tags if gateway_tags else []:
-                if isinstance(tag, dict):
-                    # Use 'label' field (the actual tag value)
-                    tag_value = str(tag.get("label", ""))
-                    if tag_value:
-                        normalized_tags.append(tag_value)
-                elif hasattr(tag, "label"):
-                    normalized_tags.append(str(getattr(tag, "label")))
-            # Find system tag with the configured prefix
-            system_prefix = self._sconfig.system_tag_prefix + ":"
-            system_tag = next((tag for tag in normalized_tags if tag.startswith(system_prefix)), None)
-            if system_tag:
-                system_key = system_tag.split(system_prefix)[1]
-                logger.debug("Using vault system from GW tags: %s", system_key)
-            # Find auth header tag with the configured prefix (e.g., "AUTH_HEADER:X-GitHub-Token")
-            auth_header_prefix = self._sconfig.auth_header_tag_prefix + ":"
-            auth_header_tag = next((tag for tag in normalized_tags if tag.startswith(auth_header_prefix)), None)
-            if auth_header_tag:
-                auth_header = auth_header_tag.split(auth_header_prefix)[1]
-                logger.debug("Found AUTH_HEADER tag: %s", auth_header)
 
-        elif self._sconfig.system_handling == SystemHandling.OAUTH2_CONFIG:
+        # Find system tag with the configured prefix
+        system_prefix = self._sconfig.system_tag_prefix + ":"
+        system_tag = next((tag for tag in normalized_tags if tag.startswith(system_prefix)), None)
+        if system_tag:
+            system_key = system_tag.split(system_prefix)[1]
+            logger.debug("Using vault system from tags: %s", system_key)
+
+        # Find auth header tag with the configured prefix (e.g., "AUTH_HEADER:X-GitHub-Token")
+        auth_header_prefix = self._sconfig.auth_header_tag_prefix + ":"
+        auth_header_tag = next((tag for tag in normalized_tags if tag.startswith(auth_header_prefix)), None)
+        if auth_header_tag:
+            auth_header = auth_header_tag.split(auth_header_prefix)[1]
+            logger.debug("Found AUTH_HEADER tag: %s", auth_header)
+
+        return system_key, auth_header
+
+    async def _load_a2a_agent_metadata(self, agent_id: str) -> dict | None:
+        """Load A2A agent metadata from database.
+
+        Args:
+            agent_id: A2A agent identifier.
+
+        Returns:
+            Agent metadata dict with tags, endpoint_url, etc., or None if not found.
+        """
+        try:
+            # First-Party
+            from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
+            from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
             gen = get_db()
             db = next(gen)
             try:
-                gateway_service = GatewayService()
-                gw_id = context.global_context.server_id
-                if gw_id:
-                    gateway = await gateway_service.get_gateway(db, gw_id)
-                    logger.debug("Gateway oauth_config resolved")
-                    if gateway.oauth_config and "token_url" in gateway.oauth_config:
-                        token_url = gateway.oauth_config["token_url"]
-                        parsed_url = urlparse(token_url)
-                        system_key = parsed_url.hostname
-                        logger.debug("Using vault system from oauth_config: %s", system_key)
-            finally:
-                gen.close()
+                agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+                if not agent:
+                    logger.warning("A2A agent %s not found in database", agent_id)
+                    return None
 
+                # Build a dict structure matching what PydanticA2AAgent would provide
+                return {
+                    "id": agent.id,
+                    "name": agent.name,
+                    "endpoint_url": agent.endpoint_url,
+                    "tags": agent.tags or [],
+                    "agent_type": agent.agent_type,
+                    "auth_type": agent.auth_type,
+                }
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error("Failed to load A2A agent metadata for %s: %s", agent_id, e)
+            return None
+
+    async def _resolve_system_from_oauth2_config(self, server_id: str | None) -> str | None:
+        """Resolve the vault system key from a gateway's OAuth2 config (gateway-only).
+
+        Args:
+            server_id: Gateway identifier to load OAuth2 config for.
+
+        Returns:
+            The system key (token_url hostname) or ``None`` when unavailable.
+        """
+        if not server_id:
+            return None
+        gen = get_db()
+        db = next(gen)
+        try:
+            gateway_service = GatewayService()
+            gateway = await gateway_service.get_gateway(db, server_id)
+            logger.debug("Gateway oauth_config resolved")
+            if gateway.oauth_config and "token_url" in gateway.oauth_config:
+                token_url = gateway.oauth_config["token_url"]
+                parsed_url = urlparse(token_url)
+                logger.debug("Using vault system from oauth_config: %s", parsed_url.hostname)
+                return parsed_url.hostname
+        finally:
+            gen.close()
+        return None
+
+    def _apply_vault_token(
+        self,
+        payload: ToolPreInvokePayload | AgentPreInvokePayload,
+        system_key: str | None,
+        auth_header: str | None,
+        destination_url: str | None = None,
+    ) -> HttpHeaderPayload | None:
+        """Match a vault token for *system_key* and inject the appropriate auth header.
+
+        This helper is shared by ``tool_pre_invoke`` and ``agent_pre_invoke``. It owns all
+        header handling, including the SECURITY-critical stripping of the vault header on every
+        path (match, no match, parse error, undeterminable system).
+
+        Args:
+            payload: The pre-invoke payload carrying request headers.
+            system_key: Resolved system identifier, or ``None`` if undeterminable.
+            auth_header: Optional custom header name for PAT tokens.
+            destination_url: Real, server-verified destination URL (``Gateway.url`` or
+                ``A2AAgent.endpoint_url``) used to validate a token entry's ``mcpServer``
+                binding, when present.
+
+        Returns:
+            A new ``HttpHeaderPayload`` when the payload's headers must be replaced, or ``None``
+            when there is nothing to change (no headers present, or vault header absent).
+        """
         if not system_key:
-            logger.warning("System cannot be determined from gateway metadata.")
+            logger.warning("System cannot be determined from target metadata.")
             # SECURITY: Strip vault header even when system cannot be determined
             if payload.headers:
                 safe_headers = {k.lower(): v for k, v in payload.headers.root.items()}
                 if self._vault_header_key in safe_headers:
                     del safe_headers[self._vault_header_key]
-                    payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=safe_headers)})
-                    return ToolPreInvokeResult(modified_payload=payload)
-            return ToolPreInvokeResult()
+                    return HttpHeaderPayload(root=safe_headers)
+            return None
 
         modified = False
         headers: dict[str, str] = {k.lower(): v for k, v in payload.headers.root.items()} if payload.headers else {}
@@ -188,7 +357,7 @@ class Vault(Plugin):
         # Check if vault header exists
         if self._vault_header_key not in headers:
             logger.debug("Vault header '%s' not found in headers", self._vault_header_key)
-            return ToolPreInvokeResult()
+            return None
 
         try:
             vault_tokens = orjson.loads(headers[self._vault_header_key])
@@ -196,17 +365,15 @@ class Vault(Plugin):
             logger.error("Failed to parse vault tokens from header: %s", e)
             # SECURITY: Always remove vault header even on parse error
             del headers[self._vault_header_key]
-            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
-            return ToolPreInvokeResult(modified_payload=payload)
+            return HttpHeaderPayload(root=headers)
 
         # SECURITY: Always remove vault header immediately after successful parsing
-        # This header should NEVER be sent to the MCP server
+        # This header should NEVER be sent to the upstream server
         del headers[self._vault_header_key]
 
         if not isinstance(vault_tokens, dict):
             logger.error("Vault tokens header is not a JSON object: %s", type(vault_tokens).__name__)
-            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
-            return ToolPreInvokeResult(modified_payload=payload)
+            return HttpHeaderPayload(root=headers)
         logger.debug("Removed vault header '%s' from headers", self._vault_header_key)
 
         vault_handling = self._sconfig.vault_handling
@@ -216,22 +383,27 @@ class Vault(Plugin):
         token_value: str | None = None
         token_key_used: str | None = None
         if system_key in vault_tokens:
-            token_value = str(vault_tokens[system_key])
-            token_key_used = str(system_key)
-            logger.debug("Found exact match for system key: %s", system_key)
+            resolved = self._resolve_token_value(vault_tokens[system_key], destination_url)
+            if resolved is not None:
+                token_value = resolved
+                token_key_used = str(system_key)
+                logger.debug("Found exact match for system key: %s", system_key)
         else:
             # Try to find a key that starts with system_key (complex key format)
             for key in vault_tokens.keys():
-                parsed_system, scope, token_type, token_name = self._parse_vault_token_key(key)
+                parsed_system, _, _, _ = self._parse_vault_token_key(key)
                 if parsed_system == system_key:
-                    token_value = vault_tokens[key]
+                    resolved = self._resolve_token_value(vault_tokens[key], destination_url)
+                    if resolved is None:
+                        continue
+                    token_value = resolved
                     token_key_used = key
                     logger.debug("Found matching token with complex key for system: %s", parsed_system)
                     break
 
         if token_value and token_key_used:
             # Parse the token key to determine handling
-            parsed_system, scope, token_type, token_name = self._parse_vault_token_key(token_key_used)
+            parsed_system, _, token_type, _ = self._parse_vault_token_key(token_key_used)
             # Determine how to handle the token based on token_type and AUTH_HEADER tag
             if token_type == "PAT":
                 # Handle Personal Access Token
@@ -260,14 +432,120 @@ class Vault(Plugin):
                     modified = True
 
         if modified:
-            logger.debug("Modified tool '%s' to add auth header", payload.name)
+            logger.debug("Injected auth header for system: %s", system_key)
         elif not token_value:
-            # Even if we didn't modify headers (no token match), we still removed the vault header
-            logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
+            # No vault token found for the expected system. Since the target has a system tag
+            # indicating it expects vault token injection, any existing Authorization header is
+            # presumptively wrong for this destination and must not reach it.
+            #
+            # This plugin never receives the real Authorization value on this path -- the caller
+            # (tool_service.py / a2a_service.py) filters it out of what plugins see before this
+            # hook runs, by design (#4925) -- so `headers` here structurally cannot contain
+            # "authorization" and a plain `del` would be a no-op. Instead, set it to the empty
+            # string as a sentinel: a real bearer token is never empty, so this is unambiguous.
+            # The caller checks its own raw (pre-filter) copy of the headers this plugin returns
+            # for exactly this sentinel, immediately after invoking this hook, and deletes the
+            # real Authorization header unconditionally when it sees it -- before the
+            # passthrough_headers allowlist / ENABLE_SENSITIVE_HEADER_PASSTHROUGH filtering that
+            # would otherwise silently drop the sentinel in most configurations.
+            #
+            # Possible future direction (not in scope here): the framework's capability-gated
+            # header extension (Capability.READ_HEADERS / WRITE_HEADERS on
+            # extensions.http.headers) could let this plugin declare ownership of Authorization
+            # and delete it directly, once migrated off the deprecated
+            # ToolPreInvokePayload.headers field.
+            headers["authorization"] = ""
+            logger.warning(
+                "Vault tokens provided but no match found for system '%s' - signaling Authorization strip to prevent credential leakage (possible misconfiguration)",
+                system_key,
+            )
 
-        # Always return modified payload since the vault header was stripped
-        payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
+        # Always return replacement headers since the vault header was stripped
+        return HttpHeaderPayload(root=headers)
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Generate bearer tokens from vault-saved tokens before tool invocation.
+
+        Args:
+            payload: The tool payload containing arguments.
+            context: Plugin execution context.
+
+        Returns:
+            Result with potentially modified headers containing bearer token.
+        """
+        logger.debug("Processing tool pre-invoke for tool %s", payload.name)
+        logger.debug("Gateway metadata for server %s", context.global_context.server_id)
+
+        # Try gateway metadata first (standard MCP tools)
+        gateway_metadata = context.global_context.metadata.get("gateway")
+        destination_url = get_attr(gateway_metadata, "url", None)
+        metadata_source = gateway_metadata
+
+        # Fallback: check if this is an A2A-backed tool
+        if not gateway_metadata:
+            tool_metadata = context.global_context.metadata.get("tool")
+            if tool_metadata:
+                # Check if tool has a2a_agent_id annotation (indicates A2A-backed tool)
+                annotations = get_attr(tool_metadata, "annotations", {})
+                a2a_agent_id = annotations.get("a2a_agent_id") if isinstance(annotations, dict) else None
+
+                if a2a_agent_id:
+                    logger.debug("Tool %s is backed by A2A agent %s, loading agent metadata", payload.name, a2a_agent_id)
+                    # Load A2A agent metadata from database
+                    agent_metadata = await self._load_a2a_agent_metadata(a2a_agent_id)
+                    if agent_metadata:
+                        metadata_source = agent_metadata
+                        destination_url = get_attr(agent_metadata, "endpoint_url", None)
+                        logger.debug("Loaded A2A agent metadata for tool %s", payload.name)
+
+        destination_url = str(destination_url) if destination_url else None
+
+        system_key: str | None = None
+        auth_header: str | None = None
+        if self._sconfig.system_handling == SystemHandling.TAG:
+            system_key, auth_header = self._resolve_system_and_auth_from_tags(metadata_source)
+        elif self._sconfig.system_handling == SystemHandling.OAUTH2_CONFIG:
+            system_key = await self._resolve_system_from_oauth2_config(context.global_context.server_id)
+
+        new_headers = self._apply_vault_token(payload, system_key, auth_header, destination_url)
+        if new_headers is None:
+            return ToolPreInvokeResult()
+        payload = payload.model_copy(update={"headers": new_headers})
         return ToolPreInvokeResult(modified_payload=payload)
+
+    async def agent_pre_invoke(self, payload: AgentPreInvokePayload, context: PluginContext) -> AgentPreInvokeResult:
+        """Generate bearer tokens from vault-saved tokens before A2A agent invocation.
+
+        Uses the ``a2a_agent`` metadata published by the A2A service. Only ``system_handling:
+        "tag"`` is supported for agents; ``oauth2_config`` resolution is gateway-only (it loads
+        a Gateway row, which does not exist for A2A agents).
+
+        Args:
+            payload: The agent payload containing request headers.
+            context: Plugin execution context.
+
+        Returns:
+            Result with potentially modified headers containing bearer token.
+        """
+        logger.debug("Processing agent pre-invoke for agent %s", payload.agent_id)
+        logger.debug("A2A agent metadata for server %s", context.global_context.server_id)
+
+        agent_metadata = context.global_context.metadata.get("a2a_agent")
+        destination_url = get_attr(agent_metadata, "endpoint_url", None)
+        destination_url = str(destination_url) if destination_url else None
+
+        system_key: str | None = None
+        auth_header: str | None = None
+        if self._sconfig.system_handling == SystemHandling.TAG:
+            system_key, auth_header = self._resolve_system_and_auth_from_tags(agent_metadata)
+        else:
+            logger.warning("system_handling='%s' is not supported for A2A agents; only 'tag' mode is available. Vault header will be stripped.", self._sconfig.system_handling.value)
+
+        new_headers = self._apply_vault_token(payload, system_key, auth_header, destination_url)
+        if new_headers is None:
+            return AgentPreInvokeResult()
+        payload = payload.model_copy(update={"headers": new_headers})
+        return AgentPreInvokeResult(modified_payload=payload)
 
     async def shutdown(self) -> None:
         """Shutdown the plugin gracefully.

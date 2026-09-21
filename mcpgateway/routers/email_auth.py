@@ -18,16 +18,17 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import List, Optional, Union
+from typing import cast, List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.auth_context import get_user_email
+from mcpgateway.auth_user_helpers import is_passwordless_user
 from mcpgateway.common.query_params import QueryPaginationCursorResults
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -128,13 +129,15 @@ def get_user_agent(request: Request) -> str:
     return request.headers.get("User-Agent", "unknown")
 
 
-async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None) -> tuple[str, int]:
+async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None, extra_claims: Optional[dict] = None) -> tuple[str, int]:
     """Create JWT access token for user with enhanced scoping.
 
     Args:
         user: EmailUser instance
         token_scopes: Optional token scoping information
         jti: Optional JWT ID for revocation tracking
+        extra_claims: Optional additional claims merged into the payload; cannot
+            override the reserved claims set by this function (sub, exp, jti, ...)
 
     Returns:
         Tuple of (token_string, expires_in_seconds)
@@ -146,6 +149,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     issued_at = int(now.timestamp())
     # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
+        **(extra_claims or {}),
         # Standard JWT claims
         "sub": str(user.id),
         "iss": settings.jwt_issuer,
@@ -237,11 +241,13 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         # Password change enforcement respects master switch and individual toggles
         needs_password_change = False
+        _change_cause: Optional[str] = None  # tracks why the change is required for hint text
 
         if settings.password_change_enforcement_enabled:
             # If flag is set on the user, always honor it (flag is cleared when password is changed)
             if getattr(user, "password_change_required", False):
                 needs_password_change = True
+                _change_cause = "flag"
                 logger.debug("User %s has password_change_required flag set", login_request.email)
 
             # Enforce expiry-based password change if configured and not already required
@@ -253,22 +259,26 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         max_age = getattr(settings, "password_max_age_days", 90)
                         if age_days >= max_age:
                             needs_password_change = True
+                            _change_cause = "expiry"
                             logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
                 except Exception as exc:
                     logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
 
             # Detect default password on login if enabled
-            if getattr(settings, "detect_default_password_on_login", True):
+            if getattr(settings, "detect_default_password_on_login", True) and not is_passwordless_user(user):
                 # First-Party
                 from mcpgateway.services.argon2_service import Argon2PasswordService
 
+                current_password_hash = cast(str, user.password_hash)
+
                 password_service = Argon2PasswordService()
-                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), current_password_hash)  # nosec B105
                 if is_using_default_password:
                     # Mark user for password change depending on configuration
                     if getattr(settings, "require_password_change_for_default_password", True):
                         user.password_change_required = True
                         needs_password_change = True
+                        _change_cause = "default_password"
                         try:
                             db.commit()
                         except Exception as exc:  # log commit failures
@@ -278,9 +288,15 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         if needs_password_change:
             logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")
+            _hint = "Use the Admin UI at /admin/change-password-required to set a new password."
+            if _change_cause == "flag":
+                _hint += " If this is a headless deployment locked out at bootstrap, set ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false and restart."
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Password change required. Please change your password before continuing."},
+                content={
+                    "detail": "Password change required. Please change your password before continuing.",
+                    "hint": _hint,
+                },
                 headers={"X-Password-Change-Required": "true"},
             )
 
@@ -301,7 +317,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             session_id = payload.get("jti", "")
 
             # Generate CSRF token
-            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
 
             auth_response = AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
             response = ORJSONResponse(content=auth_response.model_dump(mode="json"))
@@ -789,54 +805,6 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     Raises:
         HTTPException: If user not found or update fails
     """
-    return await update_user_delegate(user_email, user_request, current_user_ctx, db)
-
-
-# ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as directed in the docstring of update_user_delegate
-@email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse, deprecated=True)
-@require_permission("admin.user_management")
-async def update_user_deprecated(
-    user_email: str, user_request: AdminUserUpdateRequest, response: Response, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
-):
-    """Update user information (admin only). Deprecated: use PATCH instead.
-
-    Args:
-        user_email: Email of user to update
-        user_request: Updated user information
-        current_user_ctx: Currently authenticated user context with permissions
-        db: Database session
-        response: FastAPI Response object to manipulate the headers
-
-    Returns:
-        EmailUserResponse: Updated user information
-
-    Raises:
-        HTTPException: If user not found or update fails
-    """
-    result = await update_user_delegate(user_email, user_request, current_user_ctx, db)
-    deprecation_date = "@" + str(int(datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC).timestamp()))
-    response.headers["Deprecation"] = deprecation_date
-    response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 GMT"
-    return result
-
-
-async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict, db: Session):
-    """Update user information. Common function for both update_user and update_user_deprecated.
-    Helps in reducing duplicate code and consistent behaviour. Move this entire code back to update_user after
-    Sun, 16 Aug 2026 23:59:59 UTC.
-
-    Args:
-        user_email: Email of user to update
-        user_request: Updated user information
-        current_user_ctx: Currently authenticated user context with permissions
-        db: Database session
-
-    Returns:
-        EmailUserResponse: Updated user information
-
-    Raises:
-        HTTPException: If user not found or update fails
-    """
     auth_service = EmailAuthService(db)
 
     try:
@@ -867,9 +835,6 @@ async def update_user_delegate(user_email: str, user_request: AdminUserUpdateReq
     except Exception as e:
         logger.error(f"Error updating user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
-
-
-# -------------------------->
 
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)
@@ -910,6 +875,11 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
+    except ValueError as e:
+        error_msg = str(e)
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in error_msg.lower() else status.HTTP_409_CONFLICT
+        logger.warning(f"Cannot delete user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
+        raise HTTPException(status_code=status_code, detail=error_msg)
     except Exception as e:
         logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")

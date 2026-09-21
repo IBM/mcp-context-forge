@@ -446,20 +446,23 @@ async def test_csrf_fallback_preserves_existing_user_id():
 CSRF_COOKIE = "mcpgateway_csrf_token"  # ADMIN_CSRF_COOKIE_NAME (admin.py)
 CSRF_HEADER = "x-csrf-token"  # ADMIN_CSRF_HEADER_NAME (admin.py)
 ADMIN_URL = "http://localhost:4444/admin/llm/providers/e2e-nonexistent-provider/state"
+LOGIN_URL = "http://localhost:4444/admin/login"
 DOUBLE_SUBMIT_TOKEN = "double-submit-token-value-0123456789"  # pragma: allowlist secret
 
 
-def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None):
+def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None, url=ADMIN_URL):
     """Build a mocked Request for direct ``enforce_admin_csrf`` calls.
 
     Args:
         method: HTTP method (safe methods short-circuit the check).
-        cookies: Cookie dict; ``jwt_token`` presence is what makes CSRF
-            relevant at all.
+        cookies: Cookie dict; ``jwt_token``/``access_token`` presence is what
+            makes CSRF relevant at all (or the request path being the login
+            POST route, which is pre-auth and has no session cookie yet).
         headers: Header dict; origin/referer/host feed
             ``_request_origin_matches``.
         form: When provided, ``request.form()`` returns this dict (for the
             form-encoded token fallback).
+        url: Request URL; defaults to a generic protected admin route.
 
     Returns:
         A ``MagicMock(spec=Request)`` with a real ``URL`` so scheme/netloc
@@ -469,7 +472,7 @@ def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None)
     request.method = method
     request.cookies = dict(cookies or {})
     request.headers = dict(headers or {})
-    request.url = URL(ADMIN_URL)
+    request.url = URL(url)
     if form is not None:
         request.form = AsyncMock(return_value=form)
     return request
@@ -636,6 +639,107 @@ async def test_enforce_admin_csrf_bypassed_without_session_cookie():
 
 
 @pytest.mark.asyncio
+async def test_enforce_admin_csrf_triggers_on_access_token_cookie_alone():
+    """An ``access_token`` cookie with no ``jwt_token`` still makes CSRF relevant.
+
+    PR #6111 review finding: the auth stack accepts ``access_token`` as an
+    ambient session cookie (see ``admin.py``'s own ``jwt_token`` / ``access_token``
+    fallback reads), but ``enforce_admin_csrf`` only checked ``jwt_token``. A
+    browser authenticated solely via ``access_token`` could submit
+    state-changing admin requests with no Origin or double-submit validation.
+    """
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(cookies={"access_token": "admin-session-jwt"}, headers={})
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF origin validation failed"
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_access_token_cookie_passes_with_valid_pair():
+    """Happy path for the ``access_token``-only session: matching CSRF pair + Origin passes."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    cookies = {"access_token": "admin-session-jwt", CSRF_COOKIE: DOUBLE_SUBMIT_TOKEN}
+    request = _make_admin_request(cookies=cookies, headers=_good_headers())
+
+    await enforce_admin_csrf(request)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_login_post_rejected_without_preauth_nonce():
+    """POST /admin/login with no session cookie is *not* exempt from CSRF.
+
+    PR #6111 review finding: ``/admin/login`` is middleware-exempt and, before
+    this fix, ``enforce_admin_csrf`` returned early whenever no session cookie
+    was present — which is always true for a fresh, unauthenticated login POST.
+    A cross-site form could force a victim browser to submit attacker
+    credentials into the login endpoint with no CSRF control at all (login
+    CSRF / session confusion). The login route is the one exception where
+    CSRF must be validated pre-auth, against the nonce ``admin_login_page``
+    mints on GET.
+    """
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(method="POST", cookies={}, headers={}, url=LOGIN_URL)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF origin validation failed"
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_login_post_rejected_missing_preauth_cookie():
+    """Good Origin but no pre-auth CSRF cookie on login POST -> still rejected."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(
+        method="POST",
+        cookies={},
+        headers={"origin": "http://localhost:4444", "host": "localhost:4444"},
+        url=LOGIN_URL,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF token cookie missing"
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_login_post_passes_with_valid_preauth_nonce():
+    """Login POST with the pre-auth nonce (cookie + matching form field) passes with no session cookie."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    headers = {
+        "origin": "http://localhost:4444",
+        "host": "localhost:4444",
+        "content-type": "application/x-www-form-urlencoded",
+    }
+    request = _make_admin_request(
+        method="POST",
+        cookies={CSRF_COOKIE: DOUBLE_SUBMIT_TOKEN},
+        headers=headers,
+        form={"csrf_token": DOUBLE_SUBMIT_TOKEN},
+        url=LOGIN_URL,
+    )
+
+    await enforce_admin_csrf(request)  # must not raise
+
+
+@pytest.mark.asyncio
 async def test_enforce_admin_csrf_skips_safe_methods():
     """Safe methods (GET/HEAD/OPTIONS/TRACE) short-circuit before any check,
     even with a session cookie present and no CSRF token anywhere."""
@@ -645,3 +749,316 @@ async def test_enforce_admin_csrf_skips_safe_methods():
     request = _make_admin_request(method="GET", cookies=_primed_cookies(), headers={})
 
     await enforce_admin_csrf(request)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Issue #5978 — admin_login_handler issued an unbound (opaque) CSRF cookie
+#
+# _set_admin_csrf_cookie falls back to secrets.token_urlsafe(32) when it is given
+# no user_id/session_id. That value satisfies enforce_admin_csrf's plain
+# double-submit compare but fails CSRFMiddleware's HMAC check, so the same write
+# succeeded on /admin/llm/* and 403'd on /v1/admin/llm/* for the whole window
+# between login and the first dashboard load.
+# ---------------------------------------------------------------------------
+
+
+def _make_cookie_request(cookies=None, root_path=""):
+    """Build a mocked Request usable by ``_set_admin_csrf_cookie``.
+
+    ``_make_admin_request`` exists for ``enforce_admin_csrf`` and only configures
+    method/cookies/headers/url. ``_set_admin_csrf_cookie`` additionally calls
+    ``_admin_cookie_path`` -> ``mcpgateway.utils.paths.resolve_root_path``, which reads
+    ``request.scope["root_path"]``. On a bare ``MagicMock(spec=Request)`` that subscript
+    returns another MagicMock, which then flows into ``response.set_cookie(path=...)``.
+
+    Args:
+        cookies: Cookie dict for the request.
+        root_path: ASGI root_path exposed via ``request.scope``.
+
+    Returns:
+        ``MagicMock(spec=Request)`` with a real scope dict.
+    """
+    request = _make_admin_request(cookies=cookies or {})
+    request.scope = {"root_path": root_path}
+    return request
+
+
+def _csrf_cookie_from(response):
+    """Extract the admin CSRF cookie value from a response's set-cookie headers.
+
+    Args:
+        response: Response written to by ``_set_admin_csrf_cookie``.
+
+    Returns:
+        The cookie value, or ``None`` when no CSRF cookie was set.
+    """
+    # Standard
+    from http.cookies import SimpleCookie
+
+    for header_name, header_value in response.raw_headers:
+        if header_name.decode().lower() != "set-cookie":
+            continue
+        jar = SimpleCookie()
+        jar.load(header_value.decode())
+        if CSRF_COOKIE in jar:
+            return jar[CSRF_COOKIE].value
+    return None
+
+
+def test_set_admin_csrf_cookie_bound_emits_hmac_not_opaque_token():
+    """Given user_id + session_id, the helper must emit a 64-char hex HMAC.
+
+    Pins the contract admin_login_handler now relies on: the bound branch produces a
+    token CSRFMiddleware can verify, not the opaque token_urlsafe fallback.
+    """
+    # First-Party
+    from mcpgateway.admin import _set_admin_csrf_cookie
+    from mcpgateway.services.csrf_service import validate_csrf_token
+
+    response = Response()
+    token = _set_admin_csrf_cookie(_make_cookie_request(), response, user_id=USER_EMAIL, session_id="jti-abc")
+
+    assert len(token) == 64
+    assert all(c in "0123456789abcdef" for c in token)
+    assert _csrf_cookie_from(response) == token
+    assert (
+        validate_csrf_token(
+            token,
+            USER_EMAIL,
+            "jti-abc",
+            settings_wrapper.csrf_secret_key.get_secret_value(),
+            settings_wrapper.csrf_token_expiry,
+        )
+        is True
+    )
+
+
+def test_set_admin_csrf_cookie_unbound_emits_opaque_token_that_fails_hmac():
+    """Without bindings the helper still emits the opaque token — the #5978 trigger.
+
+    Documents why the login handler must pass user_id/session_id: the unbound branch
+    is not merely weaker, it is unverifiable by CSRFMiddleware.
+    """
+    # First-Party
+    from mcpgateway.admin import _set_admin_csrf_cookie
+    from mcpgateway.services.csrf_service import validate_csrf_token
+
+    token = _set_admin_csrf_cookie(_make_cookie_request(), Response())
+
+    assert len(token) != 64 or not all(c in "0123456789abcdef" for c in token)
+    assert (
+        validate_csrf_token(
+            token,
+            USER_EMAIL,
+            "jti-abc",
+            settings_wrapper.csrf_secret_key.get_secret_value(),
+            settings_wrapper.csrf_token_expiry,
+        )
+        is False
+    )
+
+
+def test_set_admin_csrf_cookie_bound_token_rejects_foreign_identity():
+    """Deny-path: a bound token must not validate for another user or another session."""
+    # First-Party
+    from mcpgateway.admin import _set_admin_csrf_cookie
+    from mcpgateway.services.csrf_service import validate_csrf_token
+
+    token = _set_admin_csrf_cookie(_make_cookie_request(), Response(), user_id=USER_EMAIL, session_id="jti-abc")
+    secret = settings_wrapper.csrf_secret_key.get_secret_value()
+    expiry = settings_wrapper.csrf_token_expiry
+
+    assert validate_csrf_token(token, USER_EMAIL, "jti-other", secret, expiry) is False
+    assert validate_csrf_token(token, "attacker@example.com", "jti-abc", secret, expiry) is False
+    assert validate_csrf_token(token, "attacker@example.com", "jti-other", secret, expiry) is False
+
+
+@pytest.mark.parametrize("handler_name", ["admin_login_handler", "change_password_required_handler"])
+def test_admin_session_handlers_bind_csrf_cookie_to_email_and_jti(handler_name):
+    """Source-level guard: every handler that mints a session JWT must bind the CSRF cookie.
+
+    Same idiom as test_admin_login_binds_csrf_to_email_not_sub_claim above, which guards
+    the dashboard route. These two guard the handlers that issue a *new* jti:
+    admin_login_handler (both branches) and change_password_required_handler, which
+    re-mints after a forced password change. An unbound
+    _set_admin_csrf_cookie(request, response) call in either reintroduces #5978.
+    """
+    # Standard
+    import re
+
+    # First-Party
+    from mcpgateway import admin
+
+    source = inspect.getsource(getattr(admin, handler_name))
+
+    calls = re.findall(r"_set_admin_csrf_cookie\(([^)]*)\)", source)
+    assert calls, f"{handler_name} must still set the admin CSRF cookie"
+    for call_args in calls:
+        assert "user_id=" in call_args and "session_id=" in call_args, f"unbound _set_admin_csrf_cookie call in {handler_name}: _set_admin_csrf_cookie({call_args.strip()})"
+
+    # The bound jti must be the one embedded in the JWT that was just issued, not a
+    # fresh value the token never carries.
+    assert re.search(r"create_access_token\(\s*\w+\s*,\s*jti=session_jti\s*\)", source), f"{handler_name} must pass its session_jti to create_access_token"
+
+
+# ---------------------------------------------------------------------------
+# Structural guard: no state-changing /admin route without enforce_admin_csrf
+#
+# /admin is in settings.csrf_exempt_paths, so CSRFMiddleware never runs on the
+# unprefixed mount and enforce_admin_csrf is the only CSRF control there.
+# ---------------------------------------------------------------------------
+
+
+def _deps_of(obj):
+    """Return the dependency callables declared on a router, route, or include context.
+
+    Args:
+        obj: Object carrying an optional ``dependencies`` list of ``Depends`` markers.
+
+    Returns:
+        Tuple of dependency callables.
+    """
+    return tuple(d.dependency for d in getattr(obj, "dependencies", []) or [])
+
+
+def _walk_routes(router, prefix="", inherited=()):
+    """Yield ``(path, methods, dependency_callables)`` for every real route under *router*.
+
+    FastAPI 0.140+ does not flatten ``include_router()`` into ``router.routes``. Each
+    call appends a private ``_IncludedRouter`` wrapper holding ``original_router`` and an
+    ``include_context`` carrying that call's ``prefix`` and ``dependencies``. Iterating
+    ``router.routes`` naively yields wrappers with no ``.path``/``.methods``, so any
+    filter on those silently matches nothing.
+
+    Args:
+        router: APIRouter to walk.
+        prefix: Path prefix accumulated from enclosing include_router calls.
+        inherited: Dependency callables accumulated from enclosing routers/includes.
+
+    Yields:
+        Tuples of (full path, HTTP method set, set of dependency callables in scope).
+    """
+    inherited = inherited + _deps_of(router)
+    for route in router.routes:
+        if type(route).__name__ == "_IncludedRouter":
+            ctx = route.include_context
+            yield from _walk_routes(route.original_router, prefix + (ctx.prefix or ""), inherited + _deps_of(ctx))
+        else:
+            yield prefix + getattr(route, "path", ""), (getattr(route, "methods", set()) or set()), set(inherited + _deps_of(route))
+
+
+def _assembled_admin_routes():
+    """Assemble the real admin router surface without importing ``mcpgateway.main``.
+
+    ``_assemble_routers`` imports admin_router, llm_admin_router and runtime_admin_router
+    itself; the eleven routers it takes as kwargs are main.py's inline ones, none of
+    which are mounted under /admin. Empty stubs for those therefore produce the full
+    admin route table. Importing the assembled app singleton instead would reintroduce
+    the import-order fragility that PR #6008 removed from this file.
+
+    Returns:
+        The APIRouter all admin sub-routers were assembled into.
+    """
+    # Standard
+    from types import SimpleNamespace
+
+    # Third-Party
+    from fastapi import APIRouter
+
+    # First-Party
+    from mcpgateway.api.v1 import _assemble_routers
+
+    inline = {
+        name: APIRouter()
+        for name in (
+            "protocol_router",
+            "tool_router",
+            "resource_router",
+            "prompt_router",
+            "gateway_router",
+            "root_router",
+            "server_router",
+            "metrics_router",
+            "tag_router",
+            "export_import_router",
+            "a2a_router",
+        )
+    }
+
+    # Every settings attribute _assemble_routers reads must be present or it raises
+    # AttributeError. SimpleNamespace (not MagicMock) so a newly-read flag fails loudly
+    # instead of silently returning a truthy sentinel that changes which routers mount.
+    stub_settings = SimpleNamespace(
+        mcpgateway_admin_api_enabled=True,
+        llmchat_enabled=True,
+        email_auth_enabled=True,
+        sso_enabled=False,
+        mcpgateway_a2a_enabled=True,
+        mcpgateway_reverse_proxy_enabled=True,
+        mcpgateway_tool_cancellation_enabled=True,
+        metrics_cleanup_enabled=True,
+        metrics_rollup_enabled=True,
+        observability_enabled=True,
+        toolops_enabled=True,
+        llm_api_prefix="/llm",
+    )
+
+    target = APIRouter()
+    _assemble_routers(target, stub_settings, **inline)
+    return target
+
+
+def test_all_admin_write_routes_enforce_admin_csrf():
+    """Every state-changing /admin route must carry the enforce_admin_csrf dependency.
+
+    /admin/** is inside settings.csrf_exempt_paths, so CSRFMiddleware never runs there
+    and enforce_admin_csrf is the *only* CSRF control on that mount. A router mounted
+    under /admin without it has no CSRF protection at all. _assemble_routers is
+    prefix-agnostic, so these are the same route objects the /v1 mount serves — a
+    missing dependency is missing on both mounts.
+    """
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    safe_methods = {"GET", "HEAD", "OPTIONS", "TRACE"}
+    unprotected = []
+    checked = 0
+
+    for path, methods, calls in _walk_routes(_assembled_admin_routes()):
+        write_methods = methods - safe_methods
+        if not path.startswith("/admin/") or not write_methods:
+            continue
+        checked += 1
+        if enforce_admin_csrf not in calls:
+            unprotected.append(f"{sorted(write_methods)} {path}")
+
+    # Guard the guard: if the walk stops resolving includes (FastAPI internals change,
+    # or a settings flag turns the admin surface off) the assertion below would pass
+    # vacuously and this test would silently stop protecting anything.
+    assert checked > 50, f"expected the full admin write surface, only walked {checked} routes — _walk_routes is no longer resolving includes"
+
+    assert not unprotected, "Admin write routes missing enforce_admin_csrf:\n  " + "\n  ".join(sorted(unprotected))
+
+
+@pytest.mark.asyncio
+async def test_runtime_admin_patch_rejects_cookie_request_without_csrf_token():
+    """PATCH /admin/runtime/mcp-mode must reject a session-cookie request with no CSRF token.
+
+    runtime_admin_router was mounted without enforce_admin_csrf while /admin/** is
+    CSRF-exempt, leaving these mode-switch writes with no CSRF control on the legacy
+    mount. Found while scoping #5978.
+    """
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(
+        method="PATCH",
+        cookies={"jwt_token": "admin-session-jwt"},
+        headers={"origin": "http://localhost:4444", "host": "localhost:4444"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert "CSRF" in exc_info.value.detail

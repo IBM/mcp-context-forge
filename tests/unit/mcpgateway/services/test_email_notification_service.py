@@ -14,7 +14,8 @@ from jinja2 import TemplateNotFound
 import pytest
 
 # First-Party
-from mcpgateway.services.email_notification_service import AuthEmailNotificationService
+from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
+from mcpgateway.schemas import EmailDeliveryStatus
 
 
 class TestAuthEmailNotificationService:
@@ -61,6 +62,49 @@ class TestAuthEmailNotificationService:
             mock_settings.smtp_host = "smtp.example.com"
             mock_settings.smtp_from_email = "noreply@example.com"
             assert service._smtp_ready() is True
+
+    def test_build_frontend_url_prefers_ui_base_and_encodes_token(self):
+        """Frontend links use configured React base and encode token as one segment."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = "https://ui.example.com/contextforge/"
+            result = build_frontend_url("/accept-invitation", "tok/en ?")
+
+        assert result == "https://ui.example.com/contextforge/accept-invitation/tok%2Fen%20%3F"
+
+    @pytest.mark.parametrize(
+        ("admin_api_enabled", "expected_url"),
+        [
+            (True, "https://gateway.example.com/root/admin/forgot-password"),
+            (False, "https://gateway.example.com/root/forgot-password"),
+        ],
+    )
+    def test_build_frontend_url_falls_back_to_domain_and_root_path(self, admin_api_enabled, expected_url):
+        """Password fallback uses Admin UI only when its routes are mounted."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = None
+            mock_settings.app_domain = "https://gateway.example.com/"
+            mock_settings.app_root_path = "/root/"
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
+            result = build_frontend_url("/forgot-password")
+
+        assert result == expected_url
+
+    def test_build_frontend_url_invitation_fallback_remains_frontend_route(self):
+        """Invitation fallback does not inherit legacy Admin UI prefix."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = None
+            mock_settings.app_domain = "https://gateway.example.com/"
+            mock_settings.app_root_path = "/root/"
+            result = build_frontend_url("/accept-invitation", "tok/en")
+
+        assert result == "https://gateway.example.com/root/accept-invitation/tok%2Fen"
+
+    def test_build_frontend_url_rejects_untrusted_path_shape(self):
+        """Frontend helper rejects relative and scheme-relative paths."""
+        with pytest.raises(ValueError):
+            build_frontend_url("reset-password")
+        with pytest.raises(ValueError):
+            build_frontend_url("//attacker.example/path")
 
     def test_render_template_success(self, service):
         """_render_template returns rendered template when available."""
@@ -227,3 +271,115 @@ class TestAuthEmailNotificationService:
         assert call_args[0] == "eve@example.com"
         assert "temporarily locked" in call_args[1].lower()
         assert "eve" in call_args[2]
+
+    @pytest.mark.asyncio
+    async def test_send_team_invitation_email_has_html_and_plaintext(self, service):
+        """Invitation email includes trusted link and raw-token fallback in both parts."""
+        with patch.object(service, "_send_email", new=AsyncMock(return_value=True)) as send_mock:
+            result = await service.send_team_invitation_email(
+                to_email="invitee@example.com",
+                team_name="Engineering",
+                inviter_name="Alice",
+                role="member",
+                invitation_url="https://ui.example/accept-invitation/token",
+                expires_at="2026-08-20T12:00:00+00:00",
+                token="token",
+            )
+
+        assert result is True
+        args = send_mock.await_args.args
+        assert "Engineering" in args[1]
+        assert "https://ui.example/accept-invitation/token" in args[2]
+        assert "Fallback invitation token: token" in args[3]
+
+    @pytest.mark.asyncio
+    async def test_send_team_invitation_email_autoescapes_user_values(self, service):
+        """Invitation HTML escapes team and inviter values."""
+        with patch.object(service, "_send_email", new=AsyncMock(return_value=True)) as send_mock:
+            await service.send_team_invitation_email(
+                to_email="invitee@example.com",
+                team_name="<script>alert(1)</script>",
+                inviter_name="<b>Alice</b>",
+                role="member",
+                invitation_url="https://ui.example/accept-invitation/token",
+                expires_at="2026-08-20T12:00:00+00:00",
+                token="token",
+            )
+
+        html_body = send_mock.await_args.args[2]
+        assert "<script>" not in html_body
+        assert "&lt;script&gt;" in html_body
+        assert "<b>Alice</b>" not in html_body
+
+    @pytest.mark.asyncio
+    async def test_deliver_team_invitation_email_statuses(self, service):
+        """Delivery distinguishes disabled, successful, and failed SMTP."""
+        kwargs = {
+            "invitation_id": "invite-id",
+            "to_email": "invitee@example.com",
+            "team_name": "Engineering",
+            "inviter_name": "Alice",
+            "role": "member",
+            "invitation_url": "https://ui.example/accept-invitation/token",
+            "expires_at": "2026-08-20T12:00:00+00:00",
+            "token": "token",
+        }
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.smtp_enabled = False
+            with patch.object(service, "send_team_invitation_email", new=AsyncMock()) as send_mock:
+                assert await service.deliver_team_invitation_email(**kwargs) == EmailDeliveryStatus.DISABLED
+                send_mock.assert_not_awaited()
+
+            mock_settings.smtp_enabled = True
+            with patch.object(service, "send_team_invitation_email", new=AsyncMock(return_value=True)):
+                assert await service.deliver_team_invitation_email(**kwargs) == EmailDeliveryStatus.SENT
+            with patch.object(service, "send_team_invitation_email", new=AsyncMock(return_value=False)):
+                assert await service.deliver_team_invitation_email(**kwargs) == EmailDeliveryStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_delivery_logs_do_not_expose_tokens_or_smtp_error(self, service, caplog):
+        """Failed delivery logs invitation ID without token or transport details."""
+        secret_token = "invitation-token-canary"  # pragma: allowlist secret
+        smtp_detail = "smtp-password-canary"  # pragma: allowlist secret
+        with (
+            patch("mcpgateway.services.email_notification_service.settings") as mock_settings,
+            patch.object(service, "send_team_invitation_email", new=AsyncMock(side_effect=RuntimeError(smtp_detail))),
+        ):
+            mock_settings.smtp_enabled = True
+            status = await service.deliver_team_invitation_email(
+                invitation_id="invite-id",
+                to_email="invitee@example.com",
+                team_name="Engineering",
+                inviter_name="Alice",
+                role="member",
+                invitation_url=f"https://ui.example/accept-invitation/{secret_token}",
+                expires_at="2026-08-20T12:00:00+00:00",
+                token=secret_token,
+            )
+
+        assert status == EmailDeliveryStatus.FAILED
+        assert "invite-id" in caplog.text
+        assert secret_token not in caplog.text
+        assert smtp_detail not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_incomplete_smtp_is_failed_without_connection(self, service):
+        """Enabled SMTP missing required settings reports failed, not disabled."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.smtp_enabled = True
+            mock_settings.smtp_host = None
+            mock_settings.smtp_from_email = None
+            with patch.object(service, "_send_email_sync") as sync_send:
+                status = await service.deliver_team_invitation_email(
+                    invitation_id="invite-id",
+                    to_email="invitee@example.com",
+                    team_name="Engineering",
+                    inviter_name="Alice",
+                    role="member",
+                    invitation_url="https://ui.example/accept-invitation/token",
+                    expires_at="2026-08-20T12:00:00+00:00",
+                    token="token",
+                )
+
+        assert status == EmailDeliveryStatus.FAILED
+        sync_send.assert_not_called()

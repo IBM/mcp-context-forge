@@ -27,22 +27,20 @@ Feature gate
 ------------
 The feature is a no-op when:
 
-  - ``CPEX_CONTROL_TELEMETRY_ENABLED=false`` (config setting), or
-  - the installed CPEX version does not expose ``ControlExecutionRecord``
-    (``execution_records_supported()`` returns False).
+  - ``CPEX_CONTROL_TELEMETRY_ENABLED=false`` (config setting).
 
 Existing ``tool.invoke`` spans, ``plugin.metrics.*`` spans, and CPEX
 violation/on_error handling are untouched.
 """
 
 # Standard
-import itertools
-import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+import logging
+import math
 from typing import Any, Optional
 
 # First-Party
-from mcpgateway.plugins.cpex_compat import execution_records_supported, get_executions
 from mcpgateway.plugins.utils import _IDENTIFIER_RE  # re-use the same identifier validator
 
 logger = logging.getLogger(__name__)
@@ -67,6 +65,7 @@ _ACTIVE_STATUSES = frozenset({"completed", "error", "timeout"})
 # are opaque tokens whose cardinality and format are determined by CPEX control
 # authors, not the gateway; the charset is the safest defensible subset.
 _CONFIG_KEY_RE = _IDENTIFIER_RE  # re-use: ^[A-Za-z0-9_.-]{1,64}$
+_MAX_DENIAL_METRICS = 16
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +100,14 @@ class ControlTelemetryAccumulator:
         True
     """
 
-    _records: list = field(default_factory=list)
+    _records: list[tuple[str, Any]] = field(default_factory=list)
     _pre_denied: bool = False
     _post_denied: bool = False
     _plugin_errored: bool = False  # True when a PluginError (outage) was caught on any hook
     _plugin_error_hook: str = ""  # "pre" | "post" | "" — which hook the error occurred on
     _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
     _export_cap_dropped: int = 0  # records dropped at emit time by the per-invocation export cap
+    _denial_details: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def add(self, result: Any, *, hook: str) -> None:
         """Consume executions from one ``invoke_hook`` result.
@@ -116,28 +116,80 @@ class ControlTelemetryAccumulator:
             result: ``PluginResult`` from ``invoke_hook`` (may be None on early exit).
             hook: ``"pre"`` or ``"post"`` — enforcement point tag for each record.
         """
-        if not execution_records_supported():
+        try:
+            records = list(getattr(result, "executions", None) or [])
+        except Exception:  # noqa: BLE001
+            records = []
+        self._add_records(records, hook=hook)
+
+        # Track denial at each phase independently.
+        # Use a guarded read — continue_processing may be a descriptor that raises.
+        try:
+            denied = result is not None and not getattr(result, "continue_processing", True)
+        except Exception:  # noqa: BLE001
+            denied = False
+        if denied:
+            self.mark_denied(hook=hook)
+
+    def _add_records(self, records: list[Any], *, hook: str) -> list[Any]:
+        """Append bounded execution records and return records accepted for telemetry."""
+        incoming = _select_control_records([(hook, rec) for rec in records], _MAX_RECORDS_PER_HOOK)
+        self._truncated += len(records) - len(incoming)
+        combined = self._records + incoming
+        self._records = _select_control_records(combined, _MAX_RECORDS_PER_CALL)
+        self._truncated += len(combined) - len(self._records)
+        retained = {id(entry) for entry in self._records}
+        retained_records = {id(rec) for _, rec in self._records}
+        self._denial_details = {key: value for key, value in self._denial_details.items() if key in retained_records}
+        return [entry[1] for entry in incoming if id(entry) in retained]
+
+    def add_violation(self, exception: Any, *, hook: str) -> None:
+        """Consume safe CPEX denial data from a raised ``PluginViolationError``.
+
+        Works with released CPEX versions that do not yet expose
+        ``denial_outcome``.  Framework execution records retain the complete
+        control chain; the safe denial outcome supplements its denying record
+        with protocol status and explicitly opted-in numeric/boolean metrics.
+        """
+        self.mark_denied(hook=hook)
+        try:
+            records = list(getattr(exception, "executions", None) or [])
+        except Exception:  # noqa: BLE001
+            records = []
+        accepted = self._add_records(records, hook=hook)
+
+        try:
+            outcome = getattr(exception, "denial_outcome", None)
+            outcome_record = getattr(outcome, "execution", None)
+        except Exception:  # noqa: BLE001
+            return
+        if outcome_record is None:
             return
 
-        records = get_executions(result)
-        hook_count = 0
-        for rec in records:
-            if hook_count >= _MAX_RECORDS_PER_HOOK:
-                # Per-hook cap exceeded — count these as truncated and stop.
-                self._truncated += 1
-                continue
-            hook_count += 1
-            if len(self._records) >= _MAX_RECORDS_PER_CALL:
-                self._truncated += 1
-                continue
-            self._records.append((hook, rec))
+        target = next((record for record in reversed(accepted) if _same_control_record(record, outcome_record)), None)
+        if target is None:
+            appended = self._add_records([outcome_record], hook=hook)
+            target = appended[0] if appended else None
+        if target is not None:
+            self._denial_details[id(target)] = _safe_denial_details(outcome)
 
-        # Track denial at each phase independently
-        if result is not None and not getattr(result, "continue_processing", True):
-            if hook == "pre":
-                self._pre_denied = True
-            else:
-                self._post_denied = True
+    def denial_details_for(self, record: Any) -> dict[str, Any]:
+        """Return safe protocol details associated with one denial record."""
+        return dict(self._denial_details.get(id(record), {}))
+
+    def export_records(self, max_results: int) -> list[tuple[str, Any]]:
+        """Select bounded records, retaining denials ahead of allowing controls.
+
+        Preserve execution order among selected records. A zero cap explicitly
+        disables result spans; the denied summary is still emitted.
+
+        Args:
+            max_results: Maximum number of result records to export.
+
+        Returns:
+            Selected hook/record pairs shared by both telemetry sinks.
+        """
+        return _select_control_records(self._records, max_results)
 
     def mark_denied(self, *, hook: str) -> None:
         """Explicitly mark a denial when ``violations_as_exceptions=True`` causes
@@ -218,7 +270,7 @@ class ControlTelemetryAccumulator:
         return self._plugin_error_hook
 
     @property
-    def records(self) -> list:
+    def records(self) -> list[tuple[str, Any]]:
         """All accumulated ``(hook, ControlExecutionRecord)`` pairs.
 
         Returns:
@@ -297,7 +349,7 @@ class ControlTelemetryAccumulator:
         """
         return not self._pre_denied and not self._post_denied
 
-    def aggregate(self) -> dict:
+    def aggregate(self) -> dict[str, Any]:
         """Compute aggregate scalar attributes from all accumulated records.
 
         Returns a ``dict`` of ``cpex.control.*`` attributes safe for span
@@ -347,7 +399,7 @@ class ControlTelemetryAccumulator:
         # results_count = records exported after the per-invocation cap (not raw accumulated count).
         results_count = min(records_received, _get_max_results())
 
-        result: dict = {
+        result: dict[str, Any] = {
             "cpex.control.invocation_count": invocation_count,
             "cpex.control.matched_count": matched_count,
             "cpex.control.applied_count": applied_count,
@@ -395,16 +447,13 @@ def record_control_telemetry(
     Mirrors ``record_plugin_metrics()`` — same sink ordering, same session pattern.
 
     Args:
-        trace_id: Active trace ID from ``current_trace_id.get()``.
+        trace_id: Optional internal DB trace ID from ``current_trace_id.get()``.
+            OTel export uses its own active context even when this is absent.
         accumulator: Populated ``ControlTelemetryAccumulator`` for this invocation.
         tool_name: Tool name from the CF side (trusted, not from plugin output).
         agent_id: Agent/user identifier from the CF side (trusted).
         binding_name: Gateway/server binding name (trusted).
     """
-    if not trace_id:
-        return
-    if not execution_records_supported():
-        return
     if not accumulator.records and not accumulator.pre_denied and not accumulator.post_denied and not accumulator.plugin_errored:
         # Nothing ran and no error/denial flag set — no-op, don't emit empty spans.
         # plugin_errored is included so a PluginError on the first plugin in the chain
@@ -412,12 +461,11 @@ def record_control_telemetry(
         return
 
     try:
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         if not getattr(settings, "cpex_control_telemetry_enabled", False):
             return
-
-        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel,cyclic-import
 
         # Build aggregate attributes — all from trusted CF + CPEX sources
         aggregate = accumulator.aggregate()
@@ -436,7 +484,7 @@ def record_control_telemetry(
             aggregate["cpex.control.agent.id"] = _safe_str(agent_id, 128)
         # Compute and record export-cap (tier-3) drops before building the summary span.
         # records_received is the count before any export cap; results_count is the cap-bounded
-        # export count.  The difference is exactly the number of records the islice will skip.
+        # export count. The difference is the number of records omitted by selection.
         records_received = aggregate.get("cpex.control.records_received", 0)
         max_results = _get_max_results()
         export_cap_dropped = max(0, records_received - max_results)
@@ -455,10 +503,13 @@ def record_control_telemetry(
             flattened = _build_flattened_attributes(accumulator, _get_max_results())
             aggregate.update(flattened)
 
-        service = ObservabilityService()
-
         # ── Sink 1: internal DB — summary span + per-control child spans ──────
-        if getattr(settings, "cpex_control_telemetry_db_enabled", True):
+        # The DB trace ID is independent of the active OTel context.
+        if trace_id and getattr(settings, "cpex_control_telemetry_db_enabled", True):
+            # First-Party
+            from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel,cyclic-import
+
+            service = ObservabilityService()
             _emit_db_spans(service, trace_id, aggregate, accumulator)
 
         # ── Sink 2: OTel SDK — child spans under the active trace context ─────
@@ -476,7 +527,7 @@ def record_control_telemetry(
 def _emit_db_spans(
     service: Any,
     trace_id: str,
-    aggregate: dict,
+    aggregate: dict[str, Any],
     accumulator: "ControlTelemetryAccumulator",
 ) -> None:
     """Write summary + per-control DB spans in a single session.
@@ -487,6 +538,7 @@ def _emit_db_spans(
         aggregate: Pre-built aggregate attribute dict.
         accumulator: Source of per-control records.
     """
+    # First-Party
     from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
 
     db = None
@@ -509,8 +561,8 @@ def _emit_db_spans(
         # Per-control child spans — linked to summary via parent_span_id so trace
         # UIs render them nested under the summary rather than as siblings.
         max_results = _get_max_results()
-        for hook, rec in itertools.islice(accumulator.records, max_results):
-            attrs = _per_control_attributes(hook, rec)
+        for hook, rec in accumulator.export_records(max_results):
+            attrs = _per_control_attributes(hook, rec, accumulator.denial_details_for(rec))
             if not attrs:
                 continue
             span_id = service.start_span(
@@ -547,7 +599,7 @@ def _emit_db_spans(
 # ---------------------------------------------------------------------------
 
 
-def _emit_otel_spans(aggregate: dict, accumulator: "ControlTelemetryAccumulator") -> None:
+def _emit_otel_spans(aggregate: dict[str, Any], accumulator: "ControlTelemetryAccumulator") -> None:
     """Emit control telemetry through the OTel SDK when a trace context is active.
 
     Args:
@@ -555,6 +607,7 @@ def _emit_otel_spans(aggregate: dict, accumulator: "ControlTelemetryAccumulator"
         accumulator: Source of per-control records.
     """
     try:
+        # First-Party
         from mcpgateway.observability import (  # pylint: disable=import-outside-toplevel
             create_span,
             otel_context_active,
@@ -566,8 +619,8 @@ def _emit_otel_spans(aggregate: dict, accumulator: "ControlTelemetryAccumulator"
 
         with create_span("cpex.control.summary", dict(aggregate)):
             max_results = _get_max_results()
-            for hook, rec in itertools.islice(accumulator.records, max_results):
-                attrs = _per_control_attributes(hook, rec)
+            for hook, rec in accumulator.export_records(max_results):
+                attrs = _per_control_attributes(hook, rec, accumulator.denial_details_for(rec))
                 if attrs:
                     with create_span("cpex.control.result", attrs):
                         pass
@@ -580,7 +633,7 @@ def _emit_otel_spans(aggregate: dict, accumulator: "ControlTelemetryAccumulator"
 # ---------------------------------------------------------------------------
 
 
-def _per_control_attributes(hook: str, rec: Any) -> dict:
+def _per_control_attributes(hook: str, rec: Any, denial_details: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Build the fixed-schema attribute dict for one ControlExecutionRecord.
 
     Only uses trusted CPEX record fields.  Never accesses plugin metadata.
@@ -589,12 +642,13 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
     Args:
         hook: Enforcement-point tag (``"pre"`` or ``"post"``).
         rec: A ``ControlExecutionRecord`` instance.
+        denial_details: Safe protocol details attached to a framework denial outcome.
 
     Returns:
         Attribute dict or empty dict on error.
     """
     try:
-        attrs: dict = {
+        attrs: dict[str, Any] = {
             # Identity fields — from trusted CPEX framework PluginRef config
             "cpex.control.name": _safe_str(str(rec.plugin_name), 64),
             "cpex.control.plugin_id": _safe_str(str(rec.plugin_id), 64),
@@ -626,20 +680,26 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
         # boundary.  Set CPEX_CONTROL_TELEMETRY_EMIT_REASON=true only in environments where
         # these fields are known safe and the observability sink is appropriately secured.
         if _emit_reason_enabled():
-            if rec.reason:
-                attrs["cpex.control.result.reason"] = _safe_str(rec.reason, _MAX_REASON_LEN)
-            if rec.error_code:
-                attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
-        if rec.config_keys:
+            reason = getattr(rec, "reason", None)
+            if reason:
+                attrs["cpex.control.result.reason"] = _safe_str(reason, _MAX_REASON_LEN)
+            error_code = getattr(rec, "error_code", None)
+            if error_code:
+                attrs["cpex.control.result.error_code"] = _safe_str(error_code, _MAX_ERROR_CODE_LEN)
+        config_keys = getattr(rec, "config_keys", None)
+        if config_keys:
             # Key names only (CPEX never includes values).
             # _sanitize_config_key() validates each key against _CONFIG_KEY_RE:
             # commas, CR/LF, control chars, non-ASCII, and secret-shaped text are
             # rejected (key dropped entirely, not truncated) to prevent CSV ambiguity
             # and log/telemetry injection.  The joined string is also byte-bounded.
-            safe_keys = [s for k in rec.config_keys[:_MAX_CONFIG_KEYS] if (s := _sanitize_config_key(k)) is not None]
+            safe_keys = [s for k in config_keys[:_MAX_CONFIG_KEYS] if (s := _sanitize_config_key(k)) is not None]
             if safe_keys:
                 joined = ",".join(safe_keys)
                 attrs["cpex.control.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
+        if denial_details:
+            for key, value in denial_details.items():
+                attrs[f"cpex.control.result.{key}"] = value
         return attrs
     except Exception:  # noqa: BLE001
         logger.debug("Failed to build per-control attributes", exc_info=True)
@@ -649,6 +709,86 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
+
+def _same_control_record(left: Any, right: Any) -> bool:
+    """Return whether two trusted CPEX records identify the same control execution."""
+    try:
+        return (
+            getattr(left, "plugin_id", None) == getattr(right, "plugin_id", None)
+            and getattr(left, "plugin_name", None) == getattr(right, "plugin_name", None)
+            and getattr(left, "hook_name", None) == getattr(right, "hook_name", None)
+            and getattr(left, "effective_allow", None) is False
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _select_control_records(records: list[tuple[str, Any]], limit: int) -> list[tuple[str, Any]]:
+    """Keep denying records within a cap, preserving the selected execution order.
+
+    Args:
+        records: Hook/record pairs in execution order.
+        limit: Maximum number of records to retain; zero retains none.
+
+    Returns:
+        Denying records and the earliest remaining controls, in execution order.
+    """
+    if limit <= 0:
+        return []
+    if len(records) <= limit:
+        return list(records)
+    selected: set[int] = set()
+    for index, (_, record) in enumerate(records):
+        try:
+            if getattr(record, "effective_allow", None) is False:
+                selected.add(index)
+                if len(selected) == limit:
+                    break
+        except Exception:  # noqa: BLE001
+            logger.debug("Unable to read control decision during bounded selection")
+    for index in range(len(records)):
+        if len(selected) == limit:
+            break
+        selected.add(index)
+    return [entry for index, entry in enumerate(records) if index in selected]
+
+
+def _safe_denial_details(outcome: Any) -> dict[str, Any]:
+    """Project a CPEX denial outcome into bounded, non-sensitive telemetry fields.
+
+    Exact primitive types reject subclasses and coercion, matching the CPEX
+    opt-in contract. Metric names must be static and values non-sensitive;
+    numeric type validation alone cannot establish privacy.
+    """
+    # pylint: disable=unidiomatic-typecheck
+    try:
+        details: dict[str, Any] = {}
+        violation_code = getattr(outcome, "violation_code", None)
+        execution_code = getattr(getattr(outcome, "execution", None), "error_code", None)
+        for code in (violation_code, execution_code):
+            if type(code) is str and _IDENTIFIER_RE.fullmatch(code):
+                details["error_code"] = code
+                break
+
+        mcp_error_code = getattr(outcome, "mcp_error_code", None)
+        if type(mcp_error_code) is int and -(2**31) <= mcp_error_code <= (2**31 - 1):
+            details["mcp_error_code"] = mcp_error_code
+
+        http_status_code = getattr(outcome, "http_status_code", None)
+        if type(http_status_code) is int and 100 <= http_status_code <= 599:
+            details["http_status_code"] = http_status_code
+
+        metadata = getattr(outcome, "metadata", None)
+        if isinstance(metadata, Mapping) and len(metadata) <= _MAX_DENIAL_METRICS:
+            for key, value in metadata.items():
+                if type(key) is not str or not _IDENTIFIER_RE.fullmatch(key):
+                    continue
+                if type(value) is bool or (type(value) is int and -(2**63) <= value <= 2**63 - 1) or (type(value) is float and math.isfinite(value)):
+                    details[f"metadata.{key}"] = value
+        return details
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _safe_str(value: Any, max_len: int) -> str:
@@ -749,6 +889,7 @@ def _get_max_results() -> int:
         Maximum number of per-control result records to export (default 32).
     """
     try:
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         return int(getattr(settings, "cpex_control_telemetry_max_results", 32))
@@ -757,12 +898,13 @@ def _get_max_results() -> int:
 
 
 def _emit_reason_enabled() -> bool:
-    """Return True when ``result.reason`` and ``result.error_code`` emission is enabled.
+    """Return True when free-form execution reasons and error codes may be emitted.
 
     These fields are opt-in (default: False) because they may contain PII, tool argument
     values, or exception content that should not leave the process without passing through
     a redaction boundary.  Enable via ``CPEX_CONTROL_TELEMETRY_EMIT_REASON=true`` only in
-    environments where the observability sink is appropriately secured.
+    environments where the observability sink is appropriately secured. Validated
+    identifier codes from denial outcomes are emitted independently of this flag.
 
     Returns:
         True when ``cpex_control_telemetry_emit_reason`` is set to True in settings.
@@ -772,6 +914,7 @@ def _emit_reason_enabled() -> bool:
         True
     """
     try:
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         return bool(getattr(settings, "cpex_control_telemetry_emit_reason", False))
@@ -796,6 +939,7 @@ def _emit_agent_id_enabled() -> bool:
         True
     """
     try:
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         return bool(getattr(settings, "cpex_control_telemetry_emit_agent_id", False))
@@ -811,7 +955,7 @@ def _emit_agent_id_enabled() -> bool:
 def _build_flattened_attributes(
     accumulator: "ControlTelemetryAccumulator",
     max_results: int,
-) -> dict:
+) -> dict[str, Any]:
     """Build flattened ``cpex.control.results.<name>.*`` attributes (optional projection).
 
     This is a **projection layer only** — the fixed-schema child spans emitted by
@@ -833,11 +977,11 @@ def _build_flattened_attributes(
         Dict of flattened attributes, empty on error or when nothing to flatten.
     """
     try:
-        result: dict = {}
+        result: dict[str, Any] = {}
         collision_count = 0
-        seen_names: set = set()
+        seen_names: set[str] = set()
 
-        for hook, rec in itertools.islice(accumulator.records, max_results):
+        for hook, rec in accumulator.export_records(max_results):
             try:
                 raw_name = str(getattr(rec, "plugin_name", ""))
                 # Validate and sanitize the name segment used in the attribute key

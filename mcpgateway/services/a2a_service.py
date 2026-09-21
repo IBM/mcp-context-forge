@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
@@ -37,9 +38,10 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
+from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -937,7 +939,9 @@ class A2AAgentService(BaseService):
             token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
                          None with user_email set = DB admin check (public+team+own-private);
                          [] = public-only; [...] = team-scoped access.
-            team_id: Optional team ID to filter by specific team.
+            team_id: Optional team ID to filter by specific team. Applies to every caller
+                shape, including the admin and anonymous bypasses; globally-public rows
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public).
 
         Returns:
@@ -986,7 +990,7 @@ class A2AAgentService(BaseService):
         # ══════════════════════════════════════════════════════════════════════
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility, team_id=team_id)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
@@ -2285,6 +2289,7 @@ class A2AAgentService(BaseService):
                     oauth_config=agent_oauth_config,
                     passthrough_headers=agent_passthrough_headers,
                     auth_type=agent_auth_type,
+                    endpoint_url=agent_endpoint_url,
                 )
                 if content_type:
                     agent_metadata.content_type = content_type
@@ -2317,12 +2322,51 @@ class A2AAgentService(BaseService):
                         # plugins from injecting sensitive headers into downstream requests
                         # (PR #5183 review fix)
                         plugin_returned = pre_result.modified_payload.headers.model_dump()
+
+                        # Defense in depth: a plugin (e.g. Vault) that determined the
+                        # destination requires managed credentials it couldn't supply signals
+                        # this by returning "authorization": "" -- read here, off the plugin's
+                        # raw returned headers, since checking only the post-_refilter_plugin_headers
+                        # `safe_headers` below would silently drop the sentinel (and thus never
+                        # strip the real header) whenever Authorization isn't in this agent's
+                        # passthrough_headers or sensitive passthrough is disabled. A real bearer
+                        # token is never empty, so this is unambiguous. The plugin never receives
+                        # the real Authorization value on this path (filtered out of
+                        # plugin_headers before this hook runs, by design, per #4925), so it can
+                        # only ever emit this sentinel, never a real value, through this channel.
+                        auth_mismatch = plugin_returned.get("authorization") == ""
+
                         safe_headers = self._refilter_plugin_headers(
                             plugin_headers=plugin_returned,
                             agent=agent,
                             feature_flag_enabled=settings.enable_sensitive_header_passthrough,
                         )
+
+                        # Honor header REMOVALS as well as additions. ``prepared.headers`` was
+                        # built from the passthrough set, so a plugin that drops a header (e.g.
+                        # the Vault plugin stripping ``X-Vault-Tokens``) would otherwise leak it
+                        # upstream, since ``.update()`` cannot delete keys. Reconcile removals
+                        # against the sanitized set the plugin was actually given
+                        # (``plugin_headers``) so a plugin can only remove headers it saw.
+                        plugin_returned_lower = {k.lower() for k in plugin_returned}
+                        for received_key in plugin_headers:
+                            rk = received_key.lower()
+                            if rk not in plugin_returned_lower:
+                                # Plugin removed this header — drop it from the outbound set.
+                                for existing_key in [k for k in prepared.headers if k.lower() == rk]:
+                                    del prepared.headers[existing_key]
+
                         prepared.headers.update(safe_headers)
+
+                        # Apply the Authorization-mismatch strip last, after the update() above,
+                        # so it can't be undone by that merge re-adding the sentinel itself -- and
+                        # so the header is actually removed rather than left present with an
+                        # empty value, which some downstream servers treat differently from an
+                        # absent header. Unconditional: applies regardless of allowlist/flag
+                        # state.
+                        if auth_mismatch:
+                            for existing_key in [hk for hk in prepared.headers if hk.lower() == "authorization"]:
+                                del prepared.headers[existing_key]
 
                         # Log security-blocked headers for forensic awareness
                         if plugin_returned.keys() - safe_headers.keys():
@@ -2339,6 +2383,13 @@ class A2AAgentService(BaseService):
             except Exception as e:
                 logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+
+        # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+        # headers. The Vault plugin removes this header when it processes the token,
+        # but stripping unconditionally prevents leakage when the plugin is disabled,
+        # errors in permissive mode, or the header is mistakenly in passthrough_headers.
+        for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
+            del prepared.headers[existing_key]
 
         span_attributes = {
             "a2a.agent.name": agent_name,
@@ -2398,12 +2449,24 @@ class A2AAgentService(BaseService):
                     },
                 )
 
-                # Make HTTP request to the agent endpoint using shared HTTP client
-                # First-Party
-                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+                try:
+                    pinned = await prepare_pinned_a2a_invocation(prepared)
+                except ValueError as validation_error:
+                    error_message = "Outbound A2A URL blocked by URL policy"
+                    validation_reason = SecurityValidator.sanitize_log_message(str(validation_error.__cause__ or validation_error))
+                    logger.warning(
+                        "A2A outbound URL validation failed for agent %s (%s), url=%s, correlation_id=%s: %s",
+                        SecurityValidator.sanitize_log_message(agent_name),
+                        SecurityValidator.sanitize_log_message(agent_id),
+                        prepared.sanitized_endpoint_url,
+                        correlation_id,
+                        validation_reason,
+                    )
+                    raise A2AAgentError(error_message) from validation_error
 
-                client = await get_http_client()
-                http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
+                # Make HTTP request to the agent endpoint using an isolated SSRF-sensitive client.
+                async with get_isolated_http_client(follow_redirects=False) as client:
+                    http_response = await client.post(pinned.endpoint_url, json=prepared.request_data, headers=pinned.headers, extensions=pinned.extensions)
                 status_code = http_response.status_code
                 response_json = http_response.json() if status_code == 200 else None
                 response_text = http_response.text

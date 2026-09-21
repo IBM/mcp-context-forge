@@ -4562,7 +4562,7 @@ var CONFIG_CATEGORIES = [
     { name:"BASIC_AUTH_USER", def:"admin", desc:"Admin UI HTTP Basic Auth username", req:true },
     { name:"BASIC_AUTH_PASSWORD", def:"changeme", desc:"Admin UI HTTP Basic Auth password", req:true },
     { name:"JWT_SECRET_KEY", def:"my-test-key-...", desc:"JWT signing secret (min 32 bytes)", req:true },
-    { name:"AUTH_ENCRYPTION_SECRET", def:"my-test-salt", desc:"AES passphrase for encrypting stored secrets", req:true },
+    { name:"AUTH_ENCRYPTION_SECRET", def:"", desc:"AES passphrase for encrypting stored secrets — must be set; generate with: make init-secrets-patch-env", req:true },
     { name:"PLATFORM_ADMIN_EMAIL", def:"admin@example.com", desc:"Bootstrap admin email (email auth)", req:true },
     { name:"PLATFORM_ADMIN_PASSWORD", def:"changeme", desc:"Bootstrap admin password", req:true },
     { name:"DEFAULT_USER_PASSWORD", def:"changeme", desc:"Default password for seeded users", req:true }
@@ -4826,8 +4826,7 @@ renderConfig();
     { name:"Alembic Upgrade Validation", file:"alembic-upgrade-validation.yml", desc:"Validate DB migration paths (upgrade testing).", triggers:["PR","push","manual"] },
     { name:"License Check", file:"license-check.yml", desc:"Scan for license compliance on dependency changes.", triggers:["push","PR"] },
     { name:"Full Linting", file:"linting-full.yml", desc:"Comprehensive linting pass on main branch.", triggers:["push","manual"] },
-    { name:"s390x Wheel Builder", file:"s390x-wheels.yml", desc:"Build native Python wheels for s390x (packages lacking PyPI binaries).", triggers:["manual"] },
-    { name:"Wrapper E2E", file:"wrapper.yml", desc:"End-to-end testing for Rust wrapper + Go fast-time-server.", triggers:["push"] }
+    { name:"s390x Wheel Builder", file:"s390x-wheels.yml", desc:"Build native Python wheels for s390x (packages lacking PyPI binaries).", triggers:["manual"] }
   ];
   workflows.forEach(function(w) {
     wfContainer.appendChild(el('div', { className:'workflow-card' }, [

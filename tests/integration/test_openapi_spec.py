@@ -72,6 +72,9 @@ def test_v1_routes_in_openapi_spec(app_with_temp_db):
         "/v1/resources",
         "/v1/prompts",
         "/v1/gateways",
+        "/v1/mcp-servers",
+        "/v1/virtual-servers",
+        "/v1/virtual-servers/{server_id}/.well-known/oauth-protected-resource",
     ]
 
     missing = [route for route in expected_core_routes if route not in v1_paths]

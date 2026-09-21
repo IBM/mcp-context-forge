@@ -161,8 +161,6 @@ PROMPT_NAMES: list[str] = []
 TOOLS_WITH_REQUIRED_ARGS: set[str] = {
     "fast-time-convert-time",
     "fast-time-get-system-time",
-    "fast-test-echo",
-    "fast-test-get-system-time",
 }
 
 
@@ -811,7 +809,7 @@ class MCPJsonRpcUser(BaseUser):
 class FastTimeUser(BaseUser):
     """User that calls the fast_time MCP server tools."""
 
-    weight = 5
+    weight = 8
     wait_time = between(0.01, 0.1)  # Aggressive
 
     def _rpc_request(self, payload: dict, name: str):
@@ -827,6 +825,19 @@ class FastTimeUser(BaseUser):
                 self._validate_jsonrpc_response(response)
         except Exception:
             pass  # Connection errors are expected during stress testing
+
+    @task(3)
+    @tag("mcp", "fasttime", "echo")
+    def call_echo(self):
+        """Call fast-time-echo with a load-test message."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-echo",
+                "arguments": {"message": "load-test-echo"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-time-echo")
 
     @task(10)
     @tag("mcp", "fasttime", "tools")
@@ -872,119 +883,6 @@ class FastTimeUser(BaseUser):
         self._rpc_request(payload, "/rpc fast-time-convert-time")
 
 
-class FastTestEchoUser(BaseUser):
-    """User that calls the fast_test MCP server echo tool."""
-
-    weight = 3
-    wait_time = between(0.01, 0.1)  # Aggressive
-
-    ECHO_MESSAGES = [
-        "Hello, World!",
-        "Testing MCP protocol",
-        "Load test in progress",
-        "Performance benchmark",
-        "Echo echo echo",
-        "The quick brown fox jumps over the lazy dog",
-    ]
-
-    def _rpc_request(self, payload: dict, name: str):
-        """Make an RPC request with proper error handling."""
-        try:
-            with self.client.post(
-                "/rpc",
-                json=payload,
-                headers={**self.auth_headers, "Content-Type": "application/json"},
-                name=name,
-                catch_response=True,
-            ) as response:
-                self._validate_jsonrpc_response(response)
-        except Exception:
-            pass  # Connection errors are expected during stress testing
-
-    @task(10)
-    @tag("mcp", "fasttest", "echo")
-    def call_echo(self):
-        """Call fast-test-echo with a random message."""
-        message = random.choice(self.ECHO_MESSAGES)
-        payload = _json_rpc_request(
-            "tools/call",
-            {
-                "name": "fast-test-echo",
-                "arguments": {"message": message},
-            },
-        )
-        self._rpc_request(payload, "/rpc fast-test-echo")
-
-    @task(5)
-    @tag("mcp", "fasttest", "echo")
-    def call_echo_short(self):
-        """Call fast-test-echo with a short message."""
-        payload = _json_rpc_request(
-            "tools/call",
-            {
-                "name": "fast-test-echo",
-                "arguments": {"message": "ping"},
-            },
-        )
-        self._rpc_request(payload, "/rpc fast-test-echo [short]")
-
-
-class FastTestTimeUser(BaseUser):
-    """User that calls the fast_test MCP server get_system_time tool."""
-
-    weight = 3
-    wait_time = between(0.01, 0.1)  # Aggressive
-
-    TIMEZONES = [
-        "UTC",
-        "America/New_York",
-        "America/Los_Angeles",
-        "Europe/London",
-        "Europe/Paris",
-        "Europe/Dublin",
-        "Asia/Tokyo",
-    ]
-
-    def _rpc_request(self, payload: dict, name: str):
-        """Make an RPC request with proper error handling."""
-        try:
-            with self.client.post(
-                "/rpc",
-                json=payload,
-                headers={**self.auth_headers, "Content-Type": "application/json"},
-                name=name,
-                catch_response=True,
-            ) as response:
-                self._validate_jsonrpc_response(response)
-        except Exception:
-            pass  # Connection errors are expected during stress testing
-
-    @task(10)
-    @tag("mcp", "fasttest", "time")
-    def call_get_system_time(self):
-        """Call fast-time-get-system-time with a random timezone."""
-        timezone = random.choice(self.TIMEZONES)
-        payload = _json_rpc_request(
-            "tools/call",
-            {
-                "name": "fast-test-get-system-time",
-                "arguments": {"timezone": timezone},
-            },
-        )
-        self._rpc_request(payload, "/rpc fast-test-get-system-time")
-
-    @task(2)
-    @tag("mcp", "fasttest", "stats")
-    def call_get_stats(self):
-        """Call fast-test-get-stats to get server statistics."""
-        payload = _json_rpc_request(
-            "tools/call",
-            {
-                "name": "fast-test-get-stats",
-                "arguments": {},
-            },
-        )
-        self._rpc_request(payload, "/rpc fast-test-get-stats")
 
 
 class WriteAPIUser(BaseUser):

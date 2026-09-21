@@ -30,6 +30,7 @@ import pytest
 # First-Party
 import mcpgateway.admin as admin_module
 import mcpgateway.plugins as fw
+import mcpgateway.services.plugin_service as plugin_service_module
 from mcpgateway.schemas import PluginModeUpdateRequest, PluginToggleRequest
 
 
@@ -307,7 +308,7 @@ class TestToggleGlobalPluginsAdminCacheSync:
 
 
 class TestAdminCacheSelfHeal:
-    """Regression pin for ``_sync_plugin_service_from_runtime`` — admin reads must self-heal.
+    """Regression pin for ``sync_plugin_service_from_runtime`` — admin reads must self-heal.
 
     If ``toggle_plugins_global`` ever swallowed a sync failure (degraded factory,
     transient error) and left ``app.state.plugin_manager`` unset, the admin GETs
@@ -332,7 +333,7 @@ class TestAdminCacheSelfHeal:
 
         monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", fake_get_plugin_manager)
 
-        await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
+        await admin_module.sync_plugin_service_from_runtime(req, plugin_service)
 
         assert req.app.state.plugin_manager is fake_manager
         plugin_service.set_plugin_manager.assert_called_once_with(fake_manager)
@@ -358,7 +359,7 @@ class TestAdminCacheSelfHeal:
 
         monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", fake_get_plugin_manager)
 
-        await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
+        await admin_module.sync_plugin_service_from_runtime(req, plugin_service)
 
         assert req.app.state.plugin_manager is None
         plugin_service.set_plugin_manager.assert_called_once_with(None)
@@ -383,13 +384,15 @@ class TestAdminCacheSelfHeal:
         # is what stops a framework failure from turning into a 500. We also
         # pin the warning log (via a logger-local handler, see note above)
         # so the operator signal isn't quietly dropped.
-        with _capture_admin_logger_records() as records:
-            await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
+        logger = MagicMock()
+        with patch.object(plugin_service_module, "logger", logger):
+            await admin_module.sync_plugin_service_from_runtime(req, plugin_service)
 
         assert called["exploding"] is True
         assert not hasattr(req.app.state, "plugin_manager") or req.app.state.plugin_manager is None
         plugin_service.set_plugin_manager.assert_not_called()
-        assert any("self-heal failed" in record.getMessage() for record in records)
+        logger.warning.assert_called_once()
+        assert "Plugin cache refresh failed" in logger.warning.call_args.args[0]
 
 
 # ---------------------------------------------------------------------------

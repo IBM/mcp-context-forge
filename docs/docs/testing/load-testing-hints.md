@@ -7,7 +7,7 @@ Quick reference for running containerized load tests with `docker compose` and L
 ## Starting the Testing Stack
 
 ```bash
-# Default: starts gateway, nginx, fast_test_server, Locust (web UI at :8089)
+# Default: starts gateway, nginx, Locust (web UI), and A2A echo agent
 make testing-up
 ```
 
@@ -33,13 +33,8 @@ Override these when calling `make testing-up` or `docker compose --profile testi
 **Examples:**
 
 ```bash
-# Run the echo delay locustfile with web UI
-LOCUST_LOCUSTFILE=locustfile_echo_delay.py make testing-up
-
-# Headless run with 500 users for 2 minutes
-LOCUST_LOCUSTFILE=locustfile_echo_delay.py LOCUST_MODE=headless \
-  LOCUST_USERS=500 LOCUST_SPAWN_RATE=50 LOCUST_RUN_TIME=120s \
-  make testing-up
+# Run the main load-test locustfile with web UI
+LOCUST_LOCUSTFILE=locustfile.py make testing-up
 
 # Use the high-throughput locustfile
 LOCUST_LOCUSTFILE=locustfile_highthroughput.py make testing-up
@@ -88,23 +83,12 @@ DATABASE_URL='postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp' 
 # Disable session pooling (uses fresh connection per tool call — slower but more reliable)
 MCP_SESSION_POOL_ENABLED=false make testing-up
 
-# Combine: small replicas + direct Postgres + echo delay test + no pool
+# Combine: small replicas + direct Postgres + no pool
 GATEWAY_REPLICAS=6 GUNICORN_WORKERS=5 MCP_SESSION_POOL_ENABLED=false \
   DATABASE_URL='postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp' \
-  LOCUST_LOCUSTFILE=locustfile_echo_delay.py \
   make testing-up
 ```
 
-### Echo Delay Test Configuration
-
-These are read by `locustfile_echo_delay.py` inside the Locust container:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ECHO_DELAY_MS` | `500` | Milliseconds the echo tool waits before responding |
-| `ECHO_DELAY_SERVER_ID` | *(fixed UUID)* | Virtual server ID to target (matches `register_fast_test`) |
-
-The echo delay test sends MCP `tools/call` requests through the gateway's Streamable HTTP endpoint (`/servers/{id}/mcp`), measuring how efficiently the gateway handles I/O-bound backends.
 
 ---
 
@@ -113,7 +97,6 @@ The echo delay test sends MCP `tools/call` requests through the gateway's Stream
 | File | Description |
 |------|-------------|
 | `locustfile.py` | Main comprehensive test with 20+ user classes |
-| `locustfile_echo_delay.py` | Streamable HTTP echo with configurable delay |
 | `locustfile_baseline.py` | Component baselines (REST, MCP, PostgreSQL, Redis) |
 | `locustfile_highthroughput.py` | Optimized for maximum RPS |
 | `locustfile_slow_time_server.py` | Resilience testing against slow backends |
@@ -124,31 +107,10 @@ The echo delay test sends MCP `tools/call` requests through the gateway's Stream
 
 ## Typical Workflows
 
-### Measure gateway overhead
-
-Compare direct server performance vs. going through the gateway:
-
-```bash
-# 1. Baseline: hit the fast_test_server REST API directly
-hey -n 10000 -c 200 -m POST -T 'application/json' \
-    -d '{"message":"hello"}' http://localhost:8880/api/echo
-
-# 2. Through gateway: Streamable HTTP MCP path
-LOCUST_LOCUSTFILE=locustfile_echo_delay.py ECHO_DELAY_MS=0 make testing-up
-```
-
-### Measure throughput with slow backends
-
-```bash
-# 500ms backend delay — theoretical max with 200 users is ~400 RPS
-LOCUST_LOCUSTFILE=locustfile_echo_delay.py make testing-up
-# Open http://localhost:8089, set 200 users, observe actual RPS
-```
-
 ### Stress test with many replicas
 
 ```bash
-LOCUST_LOCUSTFILE=locustfile_echo_delay.py \
+LOCUST_LOCUSTFILE=locustfile.py \
   LOCUST_USERS=2000 LOCUST_SPAWN_RATE=100 \
   TESTING_LOCUST_WORKERS=4 \
   GATEWAY_REPLICAS=6 GUNICORN_WORKERS=5 \
@@ -158,7 +120,7 @@ LOCUST_LOCUSTFILE=locustfile_echo_delay.py \
 ### Headless CI run
 
 ```bash
-LOCUST_LOCUSTFILE=locustfile_echo_delay.py \
+LOCUST_LOCUSTFILE=locustfile.py \
   LOCUST_MODE=headless LOCUST_USERS=100 LOCUST_RUN_TIME=60s \
   make testing-up
 # Reports saved to reports/locust_report.html and reports/locust_*.csv

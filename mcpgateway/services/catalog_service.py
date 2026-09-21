@@ -11,6 +11,7 @@ easily registered with one-click from the admin UI.
 
 # Standard
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -18,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 # Third-Party
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 import yaml
@@ -41,6 +43,34 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+# Business-failure messages the v1 router maps to HTTP 404/409.
+CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
+CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
+
+# Catalog auth_type values that carry an OAuth flow (pure OAuth, or OAuth mixed with an API key).
+OAUTH_AUTH_TYPES = frozenset({"OAuth2.1", "OAuth", "OAuth2.1 & API Key"})
+
+# Register-time OAuth endpoint discovery (RFC 8414 / OIDC probes) is a best-effort optimization,
+# not a correctness requirement - /oauth/authorize's own DCR branch discovers again later. Bound
+# it well below the two sequential settings.oauth_request_timeout (30s each) probes could otherwise
+# take, so a slow/unreachable issuer can't pin a request worker and DB connection for up to 60s.
+CATALOG_OAUTH_DISCOVERY_TIMEOUT = 5
+
+
+class CatalogRegistrationPermissionError(PermissionError):
+    """Raised when a catalog registration is rejected due to scope/team policy."""
+
+
+@dataclass(frozen=True)
+class _CatalogGatewayMatch:
+    """Caller-visible gateway data needed to derive catalog registration state."""
+
+    gateway_id: str
+    enabled: bool
+    auth_type: Optional[str]
+    owner_email: Optional[str]
+    created_via: Optional[str]
+
 
 class CatalogService:
     """Service for managing MCP server catalog."""
@@ -50,6 +80,77 @@ class CatalogService:
         self._catalog_cache: Optional[Dict[str, Any]] = None
         self._cache_timestamp: float = 0
         self._gateway_service = GatewayService()
+
+    def _resolve_registration_scope(
+        self,
+        db: Session,
+        request: Optional[CatalogServerRegisterRequest],
+        owner_email: str,
+        token_teams: Optional[List[str]],
+    ) -> tuple:
+        """Resolve visibility and team_id for a catalog registration.
+
+        Args:
+            db: Database session
+            request: Registration request with optional visibility/team overrides
+            owner_email: Authenticated caller's email
+            token_teams: Token-scoped team list (None=admin bypass, []=public-only)
+
+        Returns:
+            Tuple of (visibility, team_id)
+
+        Raises:
+            CatalogRegistrationPermissionError: If the caller lacks permission for the requested scope.
+        """
+        visibility = request.visibility if request and request.visibility else "private"
+        # Normalize whitespace-only team IDs the same way as admin handlers.
+        raw_team_id = request.team_id if request and request.team_id else None
+        requested_team_id = raw_team_id.strip() if raw_team_id and raw_team_id.strip() else None
+
+        # Reject unknown or empty owner
+        if not owner_email or owner_email == "unknown":
+            raise CatalogRegistrationPermissionError("Authenticated identity required for catalog registration")
+
+        # Public-only tokens can only create explicitly public gateways
+        if token_teams is not None and len(token_teams) == 0 and visibility != "public":
+            raise CatalogRegistrationPermissionError("Public-only tokens can only create public catalog registrations")
+
+        # Block public visibility for team-scoped registrations when the platform flag is disabled
+        if not settings.allow_public_visibility and visibility == "public" and requested_team_id:
+            raise CatalogRegistrationPermissionError("Public visibility is disabled by platform configuration (ALLOW_PUBLIC_VISIBILITY=false).")
+
+        # Team visibility requires a team_id
+        if visibility == "team" and not requested_team_id:
+            raise CatalogRegistrationPermissionError("team_id is required when visibility is 'team'")
+
+        # Validate team_id against token scope
+        if requested_team_id and token_teams is not None and requested_team_id not in token_teams:
+            raise CatalogRegistrationPermissionError("Requested team is not in the caller's token scope")
+
+        # Validate team membership when a team is specified.
+        # One JOIN mirrors TeamManagementService's verify_team_for_user approach and
+        # avoids two serial round-trips + an intermediate commit.
+        if requested_team_id:
+            # First-Party
+            from mcpgateway.db import EmailTeam as DbEmailTeam  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailTeamMember as DbEmailTeamMember  # pylint: disable=import-outside-toplevel
+
+            membership = db.execute(
+                select(DbEmailTeamMember)
+                .join(DbEmailTeam, DbEmailTeam.id == DbEmailTeamMember.team_id)
+                .where(
+                    DbEmailTeamMember.team_id == requested_team_id,
+                    DbEmailTeamMember.user_email == owner_email,
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                    DbEmailTeam.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                )
+            ).scalar_one_or_none()
+            if not membership:
+                raise CatalogRegistrationPermissionError(f"Caller is not an active member of team '{requested_team_id}' or team is inactive")
+
+            db.commit()
+
+        return (visibility, requested_team_id)
 
     async def load_catalog(self, force_reload: bool = False) -> Dict[str, Any]:
         """Load catalog from YAML file.
@@ -121,9 +222,15 @@ class CatalogService:
         """
         is_scoped_request = user_email is not None or token_teams is not None
 
+        # Scope is part of the cache key: cached registration state must never
+        # cross caller identities or Layer-1 team scopes. Keep ``None``
+        # distinct from an empty tuple because it represents admin bypass,
+        # while the latter is public-only access.
+        cache_token_teams = tuple(sorted(set(token_teams))) if token_teams is not None else None
+
         # Check cache first
         cache = self._get_registry_cache()
-        if cache and not is_scoped_request:
+        if cache:
             filters_hash = cache.hash_filters(
                 category=request.category,
                 auth_type=request.auth_type,
@@ -134,6 +241,8 @@ class CatalogService:
                 show_available_only=request.show_available_only,
                 offset=request.offset,
                 limit=request.limit,
+                user_email=user_email,
+                token_teams=cache_token_teams,
             )
             cached = await cache.get("catalog", filters_hash)
             if cached is not None:
@@ -142,56 +251,61 @@ class CatalogService:
         catalog_data = await self.load_catalog()
         servers = catalog_data.get("catalog_servers", [])
 
-        # Check which servers are already registered
-        registered_urls = set()
+        # Select one deterministic caller-visible gateway match per catalog URL.
+        selected_gateways_by_url: Dict[str, _CatalogGatewayMatch] = {}
         if servers:
             try:
                 # Ensure we're using the correct Gateway model
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                # Query all gateways (enabled and disabled) to properly track registration status
-                # Include auth_type and oauth_config to distinguish OAuth servers needing setup
-                # from OAuth servers that were manually disabled after configuration
+                # Query all gateways (enabled and disabled) to properly track registration status.
+                # Include auth_type to distinguish OAuth servers (needing setup or manually
+                # disabled after configuration) from other auth types.
                 stmt = select(
+                    DbGateway.id,
                     DbGateway.url,
                     DbGateway.enabled,
                     DbGateway.auth_type,
-                    DbGateway.oauth_config,
                     DbGateway.visibility,
                     DbGateway.team_id,
                     DbGateway.owner_email,
+                    DbGateway.created_via,
                 )
                 result = db.execute(stmt)
-                registered_urls = set()
-                oauth_disabled_urls = set()
                 for row in result:
-                    if len(row) == 4:
-                        url, enabled, auth_type, oauth_config = row
-                        visibility, team_id, owner_email = "public", None, None
-                    else:
-                        url, enabled, auth_type, oauth_config, visibility, team_id, owner_email = row
+                    gateway_id, url, enabled, auth_type, visibility, team_id, owner_email, created_via = row
                     if is_scoped_request and not self._can_view_registered_gateway(db, visibility, team_id, owner_email, user_email, token_teams):
                         continue
-                    registered_urls.add(url)
-                    # Only mark as requiring OAuth config if:
-                    # - disabled AND OAuth auth_type AND oauth_config is empty/None
-                    # This distinguishes unconfigured OAuth servers from manually disabled ones
-                    if not enabled and auth_type == "oauth" and not oauth_config:
-                        oauth_disabled_urls.add(url)
+
+                    candidate = _CatalogGatewayMatch(
+                        gateway_id=str(gateway_id),
+                        enabled=enabled,
+                        auth_type=auth_type,
+                        owner_email=owner_email,
+                        created_via=created_via,
+                    )
+                    selected = selected_gateways_by_url.get(url)
+                    if selected is None or self._catalog_gateway_match_priority(candidate, user_email) < self._catalog_gateway_match_priority(selected, user_email):
+                        selected_gateways_by_url[url] = candidate
             except Exception as e:
                 logger.warning("Failed to check registered servers: %s", e)
                 # Continue without marking registered servers
-                registered_urls = set()
-                oauth_disabled_urls = set()
+                selected_gateways_by_url = {}
 
         # Convert to CatalogServer objects and mark registered ones
         catalog_servers = []
         for server_data in servers:
             server = CatalogServer(**server_data)
-            server.is_registered = server.url in registered_urls
-            # Mark servers that are registered but disabled due to OAuth config needed
-            server.requires_oauth_config = server.url in oauth_disabled_urls
+            selected_gateway = selected_gateways_by_url.get(server.url)
+            if selected_gateway is not None:
+                server.is_registered = True
+                server.gateway_id = selected_gateway.gateway_id
+                # Any disabled OAuth gateway still needs the caller to authorize it, whether or
+                # not oauth_config is already populated: catalog registration now persists
+                # oauth_config up front (#5967), so an unauthorized-but-configured gateway must
+                # still surface here rather than looking indistinguishable from a working one.
+                server.requires_oauth_config = not selected_gateway.enabled and selected_gateway.auth_type == "oauth"
             # Set availability based on registration status (registered servers are assumed available)
             # Individual health checks can be done via the /status endpoint
             server.is_available = server.is_registered or server_data.get("is_available", True)
@@ -237,7 +351,7 @@ class CatalogService:
         response = CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
 
         # Store in cache
-        if cache and not is_scoped_request:
+        if cache:
             try:
                 cache_data = response.model_dump(mode="json")
                 await cache.set("catalog", cache_data, filters_hash)
@@ -245,6 +359,31 @@ class CatalogService:
                 logger.debug("Failed to cache catalog response: %s", e)
 
         return response
+
+    @staticmethod
+    def _catalog_gateway_match_priority(match: _CatalogGatewayMatch, user_email: Optional[str]) -> tuple[int, str]:
+        """Return deterministic selection priority for one visible URL match.
+
+        Args:
+            match: Visible gateway candidate.
+            user_email: Authenticated caller email, when available.
+
+        Returns:
+            Priority bucket followed by stable gateway-ID ordering.
+        """
+        caller_owned = bool(user_email and match.owner_email == user_email)
+        catalog_created = match.created_via == "catalog"
+
+        if caller_owned and catalog_created:
+            priority = 0
+        elif caller_owned:
+            priority = 1
+        elif catalog_created:
+            priority = 2
+        else:
+            priority = 3
+
+        return priority, match.gateway_id
 
     @staticmethod
     def _can_view_registered_gateway(
@@ -278,18 +417,107 @@ class CatalogService:
 
         return False
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    @staticmethod
+    def _build_oauth_config_from_credentials(oauth_credentials: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build a raw (pre-discovery, pre-encryption) oauth_config from caller-supplied credentials.
+
+        Shared by both catalog registration paths that persist ``oauth_config`` up front (#5967):
+        the skip-initialization path (OAuth entry with no API key) and the mixed "OAuth2.1 & API
+        Key" path when the caller supplies both an API key and OAuth credentials.
+
+        Args:
+            oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
+                optionally client_id/client_secret/token_url/authorization_url/redirect_uri/
+                audience/resource), or None.
+
+        Returns:
+            A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
+            plus whichever caller-supplied fields were provided.
+
+        Raises:
+            ValueError: If a known credential key is supplied with a non-string value, or if
+                ``resource`` isn't a non-empty string or a list of non-empty strings. Left
+                unchecked, a dict/list/int value skips `_encrypt_oauth_secret_value`'s
+                `isinstance(value, str)` guard (it returns non-strings unencrypted) and
+                `_validate_oauth_config_urls` (which only inspects the URL-bearing keys),
+                so e.g. a dict `client_secret` would persist to `gateways.oauth_config` in
+                plaintext. ``resource`` feeds `token_validation_service`'s audience check
+                (`oauth_config["resource"]`, RFC 8707), which only ever expects a string or a
+                list of strings - an unvalidated value such as `[42]` would persist unchanged
+                and silently never match any token `aud`.
+        """
+        oauth_credentials = oauth_credentials or {}
+        raw_oauth_config: Dict[str, Any] = {
+            "grant_type": "authorization_code",
+            "store_tokens": True,
+            "auto_refresh": True,
+        }
+        # Mirrors the field set admin._assemble_oauth_config_from_fields() accepts, so a
+        # catalog-registered gateway can carry the same RFC 8707 resource/audience fields a
+        # manually-created gateway can (#5967 follow-up). username/password are omitted:
+        # grant_type is hardcoded to authorization_code above, so those password-grant-only
+        # fields would never be read.
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"):
+            value = oauth_credentials.get(key)
+            if value is None or value == "":
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"oauth_credentials.{key} must be a string")
+            raw_oauth_config[key] = value
+        scopes = oauth_credentials.get("scopes")
+        if scopes:
+            # Comma-separated input (the shape admin.py's own OAuth form accepts, see
+            # admin._assemble_oauth_config_from_fields()) must be split the same way here,
+            # otherwise "repo,read:user" is stored as one malformed scope instead of two.
+            scope_source = " ".join(str(s) for s in scopes) if isinstance(scopes, list) else str(scopes)
+            normalized_scopes = [s for s in scope_source.replace(",", " ").split() if s]
+            if normalized_scopes:
+                raw_oauth_config["scopes"] = normalized_scopes
+        resource = oauth_credentials.get("resource")
+        if resource:
+            if isinstance(resource, str):
+                raw_oauth_config["resource"] = resource
+            elif isinstance(resource, list) and resource and all(isinstance(r, str) and r for r in resource):
+                raw_oauth_config["resource"] = resource
+            else:
+                raise ValueError("oauth_credentials.resource must be a non-empty string or a list of non-empty strings")
+        return raw_oauth_config
+
+    async def register_catalog_server(
+        self,
+        catalog_id: str,
+        request: Optional[CatalogServerRegisterRequest],
+        db: Session,
+        *,
+        created_by: str,
+        owner_email: str,
+        token_teams: Optional[List[str]],
+        _resolved_scope: Optional[tuple] = None,
+    ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
             catalog_id: Catalog server ID
             request: Registration request with optional overrides
             db: Database session
+            created_by: Identity of the caller creating the gateway
+            owner_email: Email of the gateway owner (derived from auth, never client-supplied)
+            token_teams: Token-scoped team list (None=admin bypass, []=public-only)
+            _resolved_scope: Pre-validated (visibility, team_id) tuple; skips re-validation when set.
+                Only pass from bulk_register_servers after upfront validation.
 
         Returns:
             Registration response
+
+        Raises:
+            CatalogRegistrationPermissionError: If scope validation fails.
         """
         try:
+            # Resolve visibility and team scope before any persistence
+            if _resolved_scope is not None:
+                visibility, resolved_team_id = _resolved_scope
+            else:
+                visibility, resolved_team_id = self._resolve_registration_scope(db, request, owner_email, token_teams)
             # Load catalog to find the server
             catalog_data = await self.load_catalog()
             servers = catalog_data.get("catalog_servers", [])
@@ -302,7 +530,7 @@ class CatalogService:
                     break
 
             if not server_data:
-                return CatalogServerRegisterResponse(success=False, server_id="", message="Server not found in catalog", error="Invalid catalog server ID")
+                return CatalogServerRegisterResponse(success=False, server_id="", message=CATALOG_REGISTER_NOT_FOUND_MSG, error="Invalid catalog server ID")
 
             # Check if already registered
             try:
@@ -317,7 +545,9 @@ class CatalogService:
                 existing = None
 
             if existing:
-                return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
+                return CatalogServerRegisterResponse(
+                    success=False, server_id=str(existing.id), message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG, error="This server is already registered in the system"
+                )
 
             # Prepare gateway creation request using proper schema
             # First-Party
@@ -360,25 +590,48 @@ class CatalogService:
             auth_type = server_data.get("auth_type", "Open")
             skip_initialization = False  # Flag to skip connection test for OAuth servers without creds
 
+            if request and request.oauth_credentials and auth_type not in OAUTH_AUTH_TYPES:
+                # Catalog entry doesn't carry an OAuth flow (e.g. "API Key"/"API" or "Open") -
+                # oauth_credentials has nothing to attach to and is discarded below. Log it so
+                # the drop is observable instead of a silent 200.
+                logger.warning("Ignoring oauth_credentials submitted for catalog server %s (auth_type=%s does not use OAuth)", server_data["name"], auth_type)
+
             if request and request.api_key and auth_type != "Open":
                 # Handle all possible auth types from the catalog
                 if auth_type in ["API Key", "API"]:
                     # Use bearer token for API key authentication
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
-                elif auth_type in ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]:
-                    # OAuth servers and mixed auth may need API key as a bearer token
+                elif auth_type in OAUTH_AUTH_TYPES:
+                    # OAuth servers and mixed auth may need API key as a bearer token. A mixed
+                    # "OAuth2.1 & API Key" entry that also submits oauth_credentials is not
+                    # persisted here (#5967 follow-up, deliberately dropped rather than patched):
+                    # auth_type stays "bearer" while oauth_config would be set, and every
+                    # downstream OAuth gate (tool_service token injection, vault_router's
+                    # visibility query, requires_oauth_config) keys off auth_type == "oauth", not
+                    # oauth_config presence - so the token would silently never be used, unless
+                    # the caller later completes a DCR authorize flow, which flips auth_type to
+                    # "oauth" out from under the still-configured API key. Caller can still switch
+                    # this gateway to OAuth explicitly via PUT /gateways/{id}.
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
+                    if request.oauth_credentials:
+                        logger.warning(
+                            "Ignoring oauth_credentials submitted alongside api_key for catalog server %s (registering as bearer auth; switch to OAuth explicitly via PUT /gateways/{id} if needed)",
+                            server_data["name"],
+                        )
                 else:
                     # For any other auth types, use custom headers (as list of dicts)
                     gateway_data["auth_type"] = "authheaders"
                     gateway_data["auth_headers"] = [{"key": "X-API-Key", "value": request.api_key}]
-            elif auth_type in ["OAuth2.1", "OAuth"]:
-                # OAuth server without credentials - register but skip initialization
-                # User will need to complete OAuth flow later
+            elif auth_type in OAUTH_AUTH_TYPES:
+                # OAuth server without credentials (or a mixed-auth entry given no API key) -
+                # register but skip initialization. User will need to complete OAuth flow later.
                 skip_initialization = True
-                logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
+                if request and request.oauth_credentials:
+                    logger.info("Registering OAuth server %s with submitted OAuth credentials - authorization still required", server_data["name"])
+                else:
+                    logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
 
             # For OAuth servers without credentials, register directly without connection test
             if skip_initialization:
@@ -386,8 +639,59 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
+                # Carry any OAuth credentials the caller supplied (issuer, scopes, and
+                # optionally client_id/client_secret/token_url/authorization_url) onto the
+                # gateway up front, so a second PUT /gateways/{id} is never required (#5967).
+                # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
+                # in later - automatically for providers that support discovery/DCR - by the
+                # existing GET /oauth/authorize/{gateway_id} flow.
+                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials if request else None)
+
+                # Runs the same URL/SSRF and grant-type validation normal gateway registration
+                # applies (GatewayCreate.validate_oauth_config); oauth_config round-trips through
+                # unchanged when valid, raises ValidationError otherwise.
                 gateway_create = GatewayCreate(**gateway_data)
                 slug_name = slugify(gateway_data["name"])
+
+                # Same enforce/discover/validate/encrypt pipeline register_gateway() uses
+                # (gateway_service.py) so issuer-only submissions still get usable
+                # token_url/authorization_url when the provider publishes them. Unlike interactive
+                # gateway registration, this branch previously did zero network I/O, so the
+                # discovery probes inside prepare_oauth_config_for_storage (two sequential
+                # settings.oauth_request_timeout requests, 30s default each) are bounded here to
+                # keep a slow/unreachable issuer from pinning a request worker and DB connection
+                # for up to 60s. Discovery is an optimization, not a correctness requirement -
+                # /oauth/authorize's own DCR branch discovers again before authorization.
+                try:
+                    stored_oauth_config = await asyncio.wait_for(
+                        self._gateway_service.prepare_oauth_config_for_storage(db, gateway_create.oauth_config, owner_email),
+                        timeout=CATALOG_OAUTH_DISCOVERY_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "OAuth endpoint discovery timed out after %ss for catalog server %s; persisting submitted credentials without discovered endpoints",
+                        CATALOG_OAUTH_DISCOVERY_TIMEOUT,
+                        server_data["name"],
+                    )
+                    # First-Party
+                    from mcpgateway.services.encryption_service import protect_oauth_config_for_storage  # pylint: disable=import-outside-toplevel
+
+                    # grant_type is always "authorization_code" on this path (hardcoded in
+                    # _build_oauth_config_from_credentials), so the enforce/validate steps
+                    # prepare_oauth_config_for_storage runs around discovery are no-ops here -
+                    # encrypting the un-discovered config directly is equivalent, minus discovery.
+                    stored_oauth_config = await protect_oauth_config_for_storage(gateway_create.oauth_config)
+
+                if stored_oauth_config:
+                    # issuer/scopes only - never client_id/client_secret/token values, even
+                    # encrypted, so a successful persist is observable without risking a secret
+                    # landing in logs.
+                    logger.info(
+                        "Persisted oauth_config for catalog server %s (issuer=%s, scopes=%s)",
+                        server_data["name"],
+                        stored_oauth_config.get("issuer"),
+                        stored_oauth_config.get("scopes"),
+                    )
 
                 db_gateway = DbGateway(
                     name=gateway_data["name"],
@@ -398,9 +702,13 @@ class CatalogService:
                     transport=gateway_data["transport"],
                     capabilities={},
                     auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
+                    oauth_config=stored_oauth_config,
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
-                    visibility="public",
+                    visibility=visibility,
+                    created_by=created_by,
+                    owner_email=owner_email,
+                    team_id=resolved_team_id,
                     version=1,
                 )
 
@@ -467,7 +775,10 @@ class CatalogService:
                 db=db,
                 gateway=gateway_create,
                 created_via="catalog",
-                visibility="public",  # Catalog servers should be public
+                visibility=visibility,
+                created_by=created_by,
+                owner_email=owner_email,
+                team_id=resolved_team_id,
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
@@ -495,10 +806,27 @@ class CatalogService:
 
             return CatalogServerRegisterResponse(success=True, server_id=str(gateway_read.id), message=message, error=None)
 
+        except CatalogRegistrationPermissionError:
+            raise
+        except ValidationError as e:
+            # Pydantic's default str(e)/repr(e) embeds the raw input value for every
+            # failed field ("input_value={...}"). For GatewayCreate(**gateway_data) that
+            # dict includes the caller-supplied oauth_credentials, so surfacing str(e)
+            # (as logged text, JSON error, or the HTMX button's title attribute below)
+            # would leak client_secret/token values. Build the message from loc/msg only
+            # - never the offending input - since our own field validators never echo the
+            # raw value back in msg.
+            redacted_detail = "; ".join(f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
+            logger.error("Failed to register catalog server %s: validation error - %s", catalog_id, redacted_detail)
+            return CatalogServerRegisterResponse(success=False, server_id="", message="Registration failed: invalid configuration", error=f"Invalid registration parameters - {redacted_detail}")
         except Exception as e:
             logger.error("Failed to register catalog server %s: %s", catalog_id, e)
 
-            # Map common exceptions to user-friendly messages
+            # Map common exceptions to user-friendly messages. error_str is only ever matched
+            # against below (never rendered as-is): the underlying exception can originate from
+            # _build_oauth_config_from_credentials or the connection-test path and may embed
+            # caller-supplied values (e.g. a ValueError naming an offending oauth_credentials
+            # field), and this response's `error` field is rendered by the admin HTMX route.
             error_str = str(e)
             user_message = "Registration failed"
 
@@ -521,7 +849,11 @@ class CatalogService:
 
             # Don't rollback here - let FastAPI handle it
             # db.rollback()
-            return CatalogServerRegisterResponse(success=False, server_id="", message=user_message, error=error_str)
+            # error mirrors user_message rather than the raw error_str: the admin HTMX route
+            # renders this field, and error_str can originate from _build_oauth_config_from_credentials
+            # or other paths that embed caller-supplied values. Full detail is still available
+            # server-side via the logger.error call above.
+            return CatalogServerRegisterResponse(success=False, server_id="", message=user_message, error=user_message)
 
     async def check_server_availability(self, catalog_id: str) -> CatalogServerStatusResponse:
         """Check if a catalog server is available.
@@ -577,22 +909,57 @@ class CatalogService:
             logger.error("Failed to check server status for %s: %s", catalog_id, e)
             return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
 
-    async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: Session) -> CatalogBulkRegisterResponse:
+    async def bulk_register_servers(
+        self,
+        request: CatalogBulkRegisterRequest,
+        db: Session,
+        *,
+        created_by: str,
+        owner_email: str,
+        token_teams: Optional[List[str]],
+    ) -> CatalogBulkRegisterResponse:
         """Register multiple catalog servers.
 
         Args:
             request: Bulk registration request
             db: Database session
+            created_by: Identity of the caller creating the gateways
+            owner_email: Email of the gateway owner (derived from auth)
+            token_teams: Token-scoped team list (None=admin bypass, []=public-only)
 
         Returns:
             Bulk registration response
+
+        Raises:
+            CatalogRegistrationPermissionError: If scope validation fails on the common scope.
         """
+        # Validate scope once; pass the result to each per-server call to skip re-validation.
+        scope_request = CatalogServerRegisterRequest(
+            server_id="__bulk_validation__",
+            visibility=request.visibility,
+            team_id=request.team_id,
+        )
+        resolved_scope = self._resolve_registration_scope(db, scope_request, owner_email, token_teams)
+
         successful = []
         failed = []
 
         for server_id in request.server_ids:
             try:
-                response = await self.register_catalog_server(catalog_id=server_id, request=None, db=db)
+                per_server_request = CatalogServerRegisterRequest(
+                    server_id=server_id,
+                    visibility=request.visibility,
+                    team_id=request.team_id,
+                )
+                response = await self.register_catalog_server(
+                    catalog_id=server_id,
+                    request=per_server_request,
+                    db=db,
+                    created_by=created_by,
+                    owner_email=owner_email,
+                    token_teams=token_teams,
+                    _resolved_scope=resolved_scope,
+                )
 
                 if response.success:
                     successful.append(server_id)

@@ -48,6 +48,7 @@ Examples:
 """
 
 # Standard
+from collections import defaultdict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -58,7 +59,7 @@ from typing import Any, Dict, Generator, List, Optional, Pattern, Tuple
 import uuid
 
 # Third-Party
-from sqlalchemy import desc
+from sqlalchemy import desc, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, Session
 
@@ -1781,3 +1782,210 @@ class ObservabilityService:
                     obs_db.close()
                 except Exception as close_error:
                     logger.debug("Failed to close observability session: %s", close_error)
+
+    def get_execution_timeseries(self, db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+        """Count trace executions per fixed-width time bucket.
+
+        Args:
+            db: Database session
+            cutoff_time: Only traces started at or after this time are counted
+            interval_minutes: Bucket width in minutes
+
+        Returns:
+            Dict with ``buckets`` (ISO-8601 UTC strings) and ``values`` (counts).
+            Buckets are sparse: only buckets containing traces are present.
+        """
+        if db.get_bind().dialect.name == "postgresql":
+            return _execution_timeseries_postgresql(db, cutoff_time, interval_minutes)
+        return _execution_timeseries_python(db, cutoff_time, interval_minutes)
+
+    def get_latency_percentiles(self, db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+        """Compute p50/p95/p99 trace latency per fixed-width time bucket.
+
+        Args:
+            db: Database session
+            cutoff_time: Only traces started at or after this time are considered
+            interval_minutes: Bucket width in minutes
+
+        Returns:
+            Dict with ``buckets`` (ISO-8601 UTC strings) and ``p50``/``p95``/``p99``
+            latencies in milliseconds. Traces without a duration are excluded.
+        """
+        if db.get_bind().dialect.name == "postgresql":
+            return _latency_percentiles_postgresql(db, cutoff_time, interval_minutes)
+        return _latency_percentiles_python(db, cutoff_time, interval_minutes)
+
+
+def _execution_timeseries_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+    """Count executions per time bucket using PostgreSQL aggregation.
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        Dict with ``buckets`` and ``values``.
+    """
+    stats_sql = text(
+        """
+        SELECT
+            TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
+            COUNT(*) as total
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time
+        GROUP BY bucket
+        ORDER BY bucket
+        """
+    )
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+
+    if not results:
+        return {"buckets": [], "values": []}
+
+    buckets = []
+    values = []
+    for row in results:
+        buckets.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
+        values.append(row.total if row.total is not None else 0)
+
+    return {"buckets": buckets, "values": values}
+
+
+def _execution_timeseries_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+    """Count executions per time bucket in Python (fallback for SQLite).
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        Dict with ``buckets`` and ``values``.
+    """
+    traces = db.query(ObservabilityTrace.start_time).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
+
+    if not traces:
+        return {"buckets": [], "values": []}
+
+    interval_seconds = interval_minutes * 60
+    counts: Dict[datetime, int] = defaultdict(int)
+    for trace in traces:
+        trace_time = trace.start_time
+        if trace_time.tzinfo is None:
+            trace_time = trace_time.replace(tzinfo=timezone.utc)
+        bucket_epoch = (trace_time.timestamp() // interval_seconds) * interval_seconds
+        counts[datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)] += 1
+
+    ordered = sorted(counts.keys())
+    return {"buckets": [b.isoformat() for b in ordered], "values": [counts[b] for b in ordered]}
+
+
+def _latency_percentiles_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+    """Compute time-bucketed latency percentiles using PostgreSQL.
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        Dict with ``buckets``, ``p50``, ``p95`` and ``p99``.
+    """
+    stats_sql = text(
+        """
+        SELECT
+            TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
+            percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
+            percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) as p95,
+            percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) as p99
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
+        GROUP BY bucket
+        ORDER BY bucket
+        """
+    )
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+
+    if not results:
+        return {"buckets": [], "p50": [], "p95": [], "p99": []}
+
+    buckets = []
+    p50_values = []
+    p95_values = []
+    p99_values = []
+
+    for row in results:
+        buckets.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
+        p50_values.append(round(float(row.p50), 2) if row.p50 is not None else 0)
+        p95_values.append(round(float(row.p95), 2) if row.p95 is not None else 0)
+        p99_values.append(round(float(row.p99), 2) if row.p99 is not None else 0)
+
+    return {"buckets": buckets, "p50": p50_values, "p95": p95_values, "p99": p99_values}
+
+
+def _latency_percentiles_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
+    """Compute time-bucketed latency percentiles in Python (fallback for SQLite).
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        Dict with ``buckets``, ``p50``, ``p95`` and ``p99``.
+    """
+    traces = (
+        db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+        .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+        .order_by(ObservabilityTrace.start_time)
+        .all()
+    )
+
+    if not traces:
+        return {"buckets": [], "p50": [], "p95": [], "p99": []}
+
+    interval_seconds = interval_minutes * 60
+    grouped: Dict[datetime, List[float]] = defaultdict(list)
+    for trace in traces:
+        trace_time = trace.start_time
+        if trace_time.tzinfo is None:
+            trace_time = trace_time.replace(tzinfo=timezone.utc)
+        bucket_epoch = (trace_time.timestamp() // interval_seconds) * interval_seconds
+        grouped[datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)].append(trace.duration_ms)
+
+    def percentile_cont(data: List[float], p: float) -> float:
+        """Linear interpolation percentile matching PostgreSQL percentile_cont.
+
+        Args:
+            data: Sorted list of float values.
+            p: Percentile value between 0 and 1.
+
+        Returns:
+            float: Interpolated percentile value.
+        """
+        n = len(data)
+        k = p * (n - 1)
+        f = int(k)
+        c = k - f
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
+
+    buckets = []
+    p50_values = []
+    p95_values = []
+    p99_values = []
+
+    for bucket_time in sorted(grouped.keys()):
+        durations = sorted(grouped[bucket_time])
+        if durations:
+            buckets.append(bucket_time.isoformat())
+            p50_values.append(round(percentile_cont(durations, 0.50), 2))
+            p95_values.append(round(percentile_cont(durations, 0.95), 2))
+            p99_values.append(round(percentile_cont(durations, 0.99), 2))
+
+    return {"buckets": buckets, "p50": p50_values, "p95": p95_values, "p99": p99_values}

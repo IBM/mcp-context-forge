@@ -3907,6 +3907,35 @@ class TestInvokeResourceCoverage:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_gateway_transport_failure_raises_sanitized_resource_error(self, resource_service):
+        """Gateway transport failures raise without exposing the upstream detail."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError
+
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse")
+        db = MagicMock()
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.sse_client", side_effect=RuntimeError("secret upstream detail")),
+        ):
+            with pytest.raises(ResourceError, match="Gateway resource content could not be resolved") as exc_info:
+                await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+
+        assert "secret upstream detail" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_template_uri_overrides_resource_uri(self, resource_service, monkeypatch):
         """When resource_template_uri is provided, it should be used instead of resource_uri."""
         resource = self._make_resource()
@@ -6012,8 +6041,43 @@ class TestReadResourceCoverageEdges:
             patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=None),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
         ):
-            with pytest.raises(ResourceError, match="did not resolve URI"):
+            with pytest.raises(ResourceError, match="Gateway resource content could not be resolved"):
                 await svc.read_resource(db, resource_uri="reference://users/7")
+
+    @pytest.mark.asyncio
+    async def test_read_local_resource_template_placeholder_raises(self):
+        """Local template placeholders must not be returned as resolved content."""
+        # First-Party
+        from mcpgateway.common.models import ResourceContent
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "local-template"
+        template_db.uri = "greeting://{name}"
+        template_db.uri_template = "greeting://{name}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = None
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = ResourceContent(type="resource", id="local-template", uri="greeting://{name}", text="greeting://Alice")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock) as invoke_resource,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            with pytest.raises(ResourceError, match="Gateway resource content could not be resolved"):
+                await svc.read_resource(db, resource_uri="greeting://Alice")
+
+        invoke_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_read_resource_template_proxy_allows_empty_text_response(self):
@@ -6082,7 +6146,7 @@ class TestReadResourceCoverageEdges:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
             caplog.at_level("WARNING", logger="mcpgateway.services.resource_service"),
         ):
-            with pytest.raises(ResourceError, match="did not resolve URI"):
+            with pytest.raises(ResourceError, match="Gateway resource content could not be resolved"):
                 await svc.read_resource(db, resource_uri="reference://users/7")
 
         assert "Resource template proxy read returned no content" in caplog.text
@@ -6122,6 +6186,239 @@ class TestReadResourceCoverageEdges:
             out = await svc.read_resource(db, resource_uri="reference://users/7")
 
         assert out.blob == b""
+
+    @pytest.mark.asyncio
+    async def test_gateway_empty_binary_placeholder_fetches_upstream(self):
+        """Gateway-backed empty binary placeholders are cold cache, not real content."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="reference://users/7", name="users")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = "gateway-1"
+        resource_db.gateway = None
+        resource_db.text_content = None
+        resource_db.binary_content = b""
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="real upstream content") as invoke_resource,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        invoke_resource.assert_awaited_once()
+        assert out.text == "real upstream content"
+
+    @pytest.mark.asyncio
+    async def test_gateway_empty_text_placeholder_failure_raises(self):
+        """Gateway-backed empty text placeholders are not served when refresh fails."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="reference://users/7", name="users")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = "gateway-1"
+        resource_db.gateway = None
+        resource_db.text_content = ""
+        resource_db.binary_content = b""
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, side_effect=ResourceError("refresh failed")),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            with pytest.raises(ResourceError, match="refresh failed"):
+                await svc.read_resource(db, resource_uri="reference://users/7")
+
+    @pytest.mark.asyncio
+    async def test_cold_gateway_resource_fetches_upstream(self):
+        """Gateway-backed rows with no content columns fetch content on demand."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="reference://users/7", name="users")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = "gateway-1"
+        resource_db.gateway = None
+        resource_db.text_content = None
+        resource_db.binary_content = None
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="fetched"),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.text == "fetched"
+
+    @pytest.mark.asyncio
+    async def test_gateway_read_allows_empty_upstream_response(self):
+        """Gateway reads preserve intentionally empty upstream text."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="reference://users/7", name="users")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = "gateway-1"
+        resource_db.gateway = None
+        resource_db.text_content = None
+        resource_db.binary_content = None
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=""),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.text == ""
+
+    @pytest.mark.asyncio
+    async def test_gateway_authoritative_cache_survives_refresh_failure(self):
+        """Gateway-backed rows with real cached content retain stale-on-failure behavior."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="reference://users/7", name="users")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = "gateway-1"
+        resource_db.gateway = None
+        resource_db.text_content = "cached"
+        resource_db.binary_content = None
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, side_effect=ResourceError("refresh failed")),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.text == "cached"
+
+    @pytest.mark.asyncio
+    async def test_local_empty_text_resource_is_authoritative(self):
+        """Local resources may intentionally contain empty text."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="local://empty", name="empty")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = None
+        resource_db.gateway = None
+        resource_db.text_content = ""
+        resource_db.binary_content = None
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="should-not-fetch") as invoke_resource,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="local://empty")
+
+        invoke_resource.assert_not_awaited()
+        assert out.text == ""
+
+    @pytest.mark.asyncio
+    async def test_local_resource_without_content_is_not_found(self):
+        """Local resources without persisted content are not silently returned."""
+        # First-Party
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        resource_db = DbResource(uri="local://missing", name="missing")
+        resource_db.id = "res-1"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.owner_email = None
+        resource_db.team_id = None
+        resource_db.gateway_id = None
+        resource_db.gateway = None
+        resource_db.text_content = None
+        resource_db.binary_content = None
+        resource_db.mime_type = "text/plain"
+
+        db.execute.return_value.scalar_one_or_none.return_value = resource_db
+
+        with pytest.raises(ResourceNotFoundError, match="has no content"):
+            await svc.read_resource(db, resource_uri="local://missing")
 
     @pytest.mark.asyncio
     async def test_read_resource_resource_id_fallback_include_inactive_true_bytes_content_records_metric_failure(self):
@@ -7879,9 +8176,9 @@ class TestReadResourceDirectProxy:
                 patch("mcpgateway.common.models.TextResourceContents", _TextResourceContentsWithId),
                 patch("mcpgateway.common.models.BlobResourceContents", _BlobResourceContentsWithId),
                 patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
-                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value=None),
+                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value=None) as invoke_resource,
             ):
-                yield
+                yield invoke_resource
 
         return _ctx()
 
@@ -7912,7 +8209,7 @@ class TestReadResourceDirectProxy:
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
-            self._common_patches(resource_service),
+            self._common_patches(resource_service) as invoke_resource,
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -7928,6 +8225,7 @@ class TestReadResourceDirectProxy:
         assert isinstance(content, _TextBase)
         assert content.text == "hello from remote"
         assert content.uri == "http://example.com/dp-resource"
+        invoke_resource.assert_not_awaited()
         session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource")
 
     @pytest.mark.asyncio
@@ -8102,13 +8400,59 @@ class TestReadResourceDirectProxy:
             mock_settings.mcpgateway_direct_proxy_timeout = 30
             mock_settings.experimental_validate_io = False
 
-            with pytest.raises(ResourceError, match="Direct proxy resource read failed"):
+            with pytest.raises(ResourceError, match="^Direct proxy resource read failed$") as exc_info:
                 await resource_service.read_resource(
                     db,
                     resource_uri="http://example.com/dp-resource",
                     user="user@example.com",
                     token_teams=["team-1"],
                 )
+
+        assert "Connection refused" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_real_content_model(self, resource_service, mock_direct_proxy_resource):
+        """Successful direct-proxy reads work with the SDK content model without an id field."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        # First-Party
+        from mcpgateway.common.models import TextResourceContents
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+        first_content = MagicMock()
+        first_content.text = "hello from remote"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock(contents=[first_content])
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(resource_service, "invoke_resource", new_callable=AsyncMock) as invoke_resource,
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert isinstance(content, TextResourceContents)
+        assert content.text == "hello from remote"
+        invoke_resource.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):

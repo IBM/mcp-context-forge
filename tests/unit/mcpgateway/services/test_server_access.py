@@ -7,7 +7,7 @@ Tests for server access control (_check_server_access) with admin bypass and own
 """
 
 # Standard
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -173,6 +173,47 @@ class TestCanAccessServerNonAdmin:
         token_teams = ["team-123"]  # User is in the team
 
         result = await server_service._check_server_access(mock_db, team_server, user_email, token_teams)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_regular_user_can_use_preloaded_team_membership(self, server_service, mock_db, team_server):
+        """Preloaded memberships avoid another team lookup for an unscoped caller."""
+        with patch("mcpgateway.services.server_service.TeamManagementService") as mock_team_service:
+            result = await server_service._check_server_access(
+                mock_db,
+                team_server,
+                "user@example.com",
+                None,
+                resolved_team_ids=["team-123"],
+            )
+
+        assert result is True
+        mock_team_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preloaded_teams_do_not_override_public_only_scope(self, server_service, mock_db, team_server):
+        """Public-only token remains denied even when fallback memberships are provided."""
+        result = await server_service._check_server_access(
+            mock_db,
+            team_server,
+            "user@example.com",
+            [],
+            resolved_team_ids=["team-123"],
+        )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_preloaded_teams_preserve_private_owner_access(self, server_service, mock_db, private_server):
+        """Fallback memberships do not turn unscoped private-owner access into public-only scope."""
+        result = await server_service._check_server_access(
+            mock_db,
+            private_server,
+            "owner@example.com",
+            None,
+            resolved_team_ids=[],
+        )
 
         assert result is True
 

@@ -383,6 +383,38 @@ class TestTokenCatalogService:
             assert call_kwargs["teams"] is None
 
     @pytest.mark.asyncio
+    async def test_get_default_team_id_returns_personal_team(self, token_service, mock_db):
+        """Returns the user's active personal team ID when one exists."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "team-personal-123"
+
+        result = await token_service.get_default_team_id("user@example.com")
+
+        assert result == "team-personal-123"
+
+    @pytest.mark.asyncio
+    async def test_get_default_team_id_no_personal_team(self, token_service, mock_db):
+        """Returns None when the user has no active personal team (e.g. AUTO_CREATE_PERSONAL_TEAMS=false)."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        result = await token_service.get_default_team_id("user@example.com")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_default_team_id_swallows_db_errors(self, token_service, mock_db):
+        """A DB error resolving the default team fails closed (None), not an exception.
+
+        The caller (routers/tokens.py) treats None the same as "no personal
+        team" and falls back to single-team inheritance or an explicit warning
+        — it must never let this best-effort lookup break token creation.
+        """
+        mock_db.execute.side_effect = Exception("connection lost")
+
+        result = await token_service.get_default_team_id("user@example.com")
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_create_token_success(self, token_service, mock_db, mock_user):
         """Test create_token method - successful creation."""
         # Setup mocks

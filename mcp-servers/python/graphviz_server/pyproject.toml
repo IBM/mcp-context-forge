@@ -7,7 +7,7 @@ authors = [
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=3.4.4",
     "pydantic>=2.13.4",
@@ -35,17 +35,17 @@ graphviz-server = "graphviz_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 select = ["E", "W", "F", "B", "I", "N", "UP"]
 
 [tool.pytest.ini_options]

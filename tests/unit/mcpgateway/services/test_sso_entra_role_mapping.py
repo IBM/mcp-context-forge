@@ -31,6 +31,7 @@ def sso_service(mock_db_session):
     """Create SSO service instance with mock dependencies."""
     with patch("mcpgateway.services.sso_service.EmailAuthService"):
         service = SSOService(mock_db_session)
+        service.auth_service._invalidate_user_auth_cache = AsyncMock()
         return service
 
 
@@ -815,7 +816,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.get_teams.return_value = []
 
         # Mock auth service to return existing user
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=entra_provider)
 
         # User info with admin group
@@ -863,7 +864,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.get_teams.return_value = []
 
         # Mock auth service to return existing user
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=entra_provider)
 
         # User info WITHOUT admin group
@@ -916,7 +917,7 @@ class TestIsAdminSyncOnLogin:
         type(mock_user).is_admin = property(lambda self: original_is_admin, track_is_admin_set)
 
         # Mock auth service to return existing user
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=entra_provider)
 
         # User info with admin group (status should match)
@@ -963,7 +964,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.get_teams.return_value = []
 
         # Mock auth service to return existing user
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=entra_provider)
 
         # User info WITHOUT admin group (removed from admin)
@@ -1046,7 +1047,7 @@ class TestGenericOIDCBeltAndSuspendersPromotion:
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
 
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=generic_provider)
 
         # Empty role_mappings so _should_user_be_admin returns False for this user,
@@ -1096,7 +1097,7 @@ class TestGenericOIDCBeltAndSuspendersPromotion:
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
 
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=generic_provider)
 
         developer_assignment = [{"role_name": "developer", "scope": "team", "scope_id": None}]
@@ -1137,7 +1138,7 @@ class TestGenericOIDCBeltAndSuspendersPromotion:
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
 
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=mock_user)
         sso_service.get_provider = MagicMock(return_value=generic_provider)
 
         # role_mappings maps the user's group to platform_admin → _should_user_be_admin returns True

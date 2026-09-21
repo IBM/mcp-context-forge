@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
@@ -42,7 +43,6 @@ from mcpgateway.services.tool_service import (
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
-    _pin_url_to_resolved_ip,
     _protect_tool_headers_for_storage,
     _sync_meta_traceparent,
     _validate_header_mapping_targets,
@@ -295,25 +295,20 @@ class TestToolServiceHelpersExtended:
 
     def test_extract_using_jq_handles_none_result(self, monkeypatch):
         """[None] result should map to error message."""
-
-        class DummyProgram:
-            def input(self, _data):
-                return self
-
-            def all(self):
-                return [None]
-
-        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: DummyProgram())
+        monkeypatch.setattr("mcpgateway.services.tool_service.run_jq_filter", lambda *_args: [None])
 
         result = extract_using_jq({"a": 1}, ".a")
         assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
 
-    def test_extract_using_jq_returns_exception_message(self, monkeypatch):
-        """Exceptions during jq execution should return list with TextContent error."""
-        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: (_ for _ in ()).throw(RuntimeError("boom")))
+    def test_extract_using_jq_hides_engine_error_detail(self, monkeypatch):
+        """Filter engine errors are logged, not returned to the caller."""
+        # First-Party
+        from mcpgateway.utils.jq_runner import JqFilterError
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterError("boom")))
 
         result = extract_using_jq({"a": 1}, ".a")
-        assert result == [TextContent(type="text", text="Error applying jsonpath filter: boom")]
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag controls whether the plugin factory is available."""
@@ -436,6 +431,17 @@ def tool_service(monkeypatch):
     service.get_plugin_manager = AsyncMock()
     # service._plugin_manager = False  # Disable plugin manager to avoid real plugin execution in tests
 
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
     return service
 
 
@@ -977,6 +983,22 @@ class TestToolService:
         # Non-dict header maps should safely normalize to empty dict
         assert _protect_tool_headers_for_storage("not-a-dict") is None
         assert _decrypt_tool_headers_for_runtime(None) == {}
+
+    def test_decrypt_tool_headers_for_runtime_strips_invisible_unicode(self, monkeypatch: pytest.MonkeyPatch):
+        """A custom tool header stored before credential-sanitization existed should
+        self-heal (invisible Unicode format characters stripped) when decrypted for a
+        runtime outbound request."""
+        monkeypatch.setattr(
+            "mcpgateway.services.tool_service.decode_auth",
+            lambda _payload: {"data": "custom⁠value"},
+        )
+        result = _decrypt_tool_headers_for_runtime(
+            {
+                "X-Custom": {"_mcpgateway_encrypted_header_value_v1": "ciphertext"},
+                "X-Plain": "already⁠contaminated",
+            }
+        )
+        assert result == {"X-Custom": "customvalue", "X-Plain": "alreadycontaminated"}
 
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
@@ -2176,6 +2198,35 @@ class TestToolService:
         assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_arguments_failing_input_schema(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Arguments missing a required input_schema property must raise ToolInvocationError
+        before dispatch (#5629) -- shared with preview_tool_invocation via
+        _resolve_tool_for_invocation / _validate_tool_input_arguments so the two paths can
+        never disagree about whether given arguments are acceptable."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with pytest.raises(ToolInvocationError, match="'param' is a required property"):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_and_preview_agree_on_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Same-input parity (#5629 acceptance criteria): given the same tool and the same
+        invalid arguments, invoke_tool and preview_tool_invocation must agree that the
+        arguments are rejected -- one raising, the other reporting -- rather than one
+        silently accepting what the other rejects."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {})
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" for w in preview_result.warnings)
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        with pytest.raises(ToolInvocationError):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         # ----------------  DB  -----------------
         mock_tool.integration_type = "REST"
@@ -2449,7 +2500,7 @@ class TestToolService:
 
     def test_pin_url_to_resolved_ip_brackets_ipv6_and_preserves_query(self):
         """Pinned IPv6 netlocs must be bracketed without losing URL parts."""
-        assert _pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
+        assert pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
 
     @pytest.mark.asyncio
     async def test_build_pinned_rest_http_client_disables_connection_reuse(self):
@@ -2799,6 +2850,36 @@ class TestToolService:
         assert request_headers["X-Trace-Id"] == "trace-1"
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_self_heals_stored_auth_value_with_invisible_char(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A tool's stored auth_value contaminated with an invisible Unicode format
+        character (a copy/paste artifact) should self-heal before it reaches the
+        outbound REST request, so a tool configured before this validation existed
+        recovers without requiring a manual re-save."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = "bearer"
+        mock_tool.auth_value = "encoded-contaminated-auth"
+        mock_tool.headers = {}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer contaminated⁠token"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        request_headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert request_headers["Authorization"] == "Bearer contaminatedtoken"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking a REST tool."""
         # Configure tool as REST
@@ -2980,6 +3061,41 @@ class TestToolService:
         mock_metrics_buffer.record_tool_metric.assert_called_once()
         call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
         assert call_kwargs["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_refuses_stored_env_filter(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """A pre-seeded hostile jsonpath_filter is refused at call time on the REST sink.
+
+        Deliberately does not patch ``extract_using_jq``: the point is that a row
+        written before the schema validator existed still cannot read the gateway's
+        process environment when it is actually invoked.
+        """
+        monkeypatch.setenv("JWT_SECRET_KEY", "rest-sink-canary-must-not-appear")
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = "$ENV"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "some data"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.content[0].text == "jsonpath filter uses a restricted jq builtin"
+        assert "rest-sink-canary-must-not-appear" not in str(result.content)
+        assert mock_metrics_buffer.record_tool_metric.call_args[1]["success"] is False
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution_missed_input(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -3716,6 +3832,100 @@ class TestToolService:
         # is_error should be True from the isError fallback
         assert result.is_error is True
         assert result.content[0].text == "error from remote"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_refuses_stored_env_filter(self, tool_service, mock_tool, test_db, monkeypatch):
+        """A pre-seeded hostile jsonpath_filter is refused at call time on the MCP passthrough sink.
+
+        Also pins that a refused filter is reported as a failed invocation. The
+        passthrough sink used to take ``is_error`` from the upstream result only,
+        so a refusal came back as a *successful* call carrying the refusal string
+        where real tool output belonged.
+        """
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        monkeypatch.setenv("JWT_SECRET_KEY", "mcp-sink-canary-must-not-appear")
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = "$ENV"
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [value] if value else []
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        call_result = MagicMock()
+        call_result.is_error = False
+        call_result.isError = False
+        call_result.content = [TextContent(type="text", text="upstream output")]
+        call_result.model_dump.return_value = {
+            "content": [{"type": "text", "text": "upstream output"}],
+            "isError": False,
+            "structuredContent": None,
+            "structured_content": None,
+        }
+        call_result.meta = None
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=call_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.content[0].text == "jsonpath filter uses a restricted jq builtin"
+        assert "mcp-sink-canary-must-not-appear" not in str(result.content)
+        assert mock_metrics_buffer.record_tool_metric.call_args[1]["success"] is False
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_non_standard(self, tool_service, mock_tool, test_db):
@@ -4782,19 +4992,13 @@ class TestToolService:
         tool_service._http_client.request.return_value = mock_response
 
         # Mock plugin manager with invoke_hook
-        mock_post_result = Mock()
-        mock_post_result.continue_processing = True
-        mock_post_result.violation = None
-        mock_post_result.modified_payload = None
-        mock_post_result.retry_delay_ms = 0
-
         mock_pm = Mock()
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
-            return (mock_post_result, None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=0), None)
 
         mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
@@ -4880,12 +5084,6 @@ class TestToolService:
         mock_modified_payload = Mock()
         mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}], "isError": True}
 
-        mock_post_result = Mock()
-        mock_post_result.continue_processing = True
-        mock_post_result.violation = None
-        mock_post_result.modified_payload = mock_modified_payload
-        mock_post_result.retry_delay_ms = 0
-
         # Third-Party
         from cpex.framework import PluginResult, ToolHookType
 
@@ -4895,7 +5093,7 @@ class TestToolService:
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
-            return (mock_post_result, None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=mock_modified_payload, retry_delay_ms=0), None)
 
         mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
@@ -4934,12 +5132,6 @@ class TestToolService:
         mock_modified_payload = Mock()
         mock_modified_payload.result = "Invalid format - not a dict"
 
-        mock_post_result = Mock()
-        mock_post_result.continue_processing = True
-        mock_post_result.violation = None
-        mock_post_result.modified_payload = mock_modified_payload
-        mock_post_result.retry_delay_ms = 0
-
         # Third-Party
         from cpex.framework import ToolHookType
         from cpex.framework.models import PluginResult
@@ -4950,7 +5142,7 @@ class TestToolService:
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
-            return (mock_post_result, None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=mock_modified_payload, retry_delay_ms=0), None)
 
         mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
@@ -5018,6 +5210,160 @@ class TestToolService:
                 await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         assert "Plugin error" in str(exc_info.value)
+
+    async def test_invoke_tool_mcp_pre_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, test_db):
+        """MCP pre-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        gateway = SimpleNamespace(
+            id="gateway-1",
+            name="gateway-one",
+            slug="gateway-one",
+            url="http://gateway.example/mcp",
+            description="test gateway",
+            enabled=True,
+            reachable=True,
+            deprecated=False,
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+            capabilities={},
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            client_cert=None,
+            client_key=None,
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+            tags=[],
+            gateway_mode="cache",
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "STREAMABLEHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.gateway = gateway
+        mock_tool.gateway_id = gateway.id
+        mock_tool.name = "gateway-one-tool-one"
+        mock_tool.original_name = "tool-one"
+        setup_db_execute_mock(test_db, mock_tool, MagicMock(passthrough_headers=[]))
+
+        denial = PluginViolationError("rate limited")
+        denial.executions = []
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="rate limited"):
+                await tool_service.invoke_tool(test_db, "tool-one", {"param": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].pre_denied is True
+
+    async def test_invoke_tool_a2a_pre_invoke_violation_emits_control_telemetry(self, tool_service, test_db):
+        """A2A pre-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        # First-Party
+        from mcpgateway.services.tool_service import ResolvedTool
+
+        tool_payload = {
+            "id": "a2a-tool",
+            "name": "a2a-tool",
+            "original_name": "a2a-tool",
+            "url": "",
+            "integration_type": "A2A",
+            "request_type": "POST",
+            "headers": {},
+            "input_schema": {"type": "object"},
+            "annotations": {"a2a_agent_id": "agent-1"},
+            "enabled": True,
+            "reachable": True,
+            "gateway_id": None,
+        }
+        resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
+        agent = SimpleNamespace(
+            enabled=True,
+            name="agent-one",
+            endpoint_url="http://agent.example/a2a",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            passthrough_headers=[],
+        )
+        agent_query = MagicMock()
+        agent_query.scalar_one_or_none.return_value = agent
+        test_db.execute = MagicMock(return_value=agent_query)
+
+        denial = PluginViolationError("policy denied")
+        denial.executions = []
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch.object(tool_service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="policy denied"):
+                await tool_service.invoke_tool(test_db, "a2a-tool", {"query": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].pre_denied is True
+
+    async def test_invoke_tool_post_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Post-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        denial = PluginViolationError("response blocked")
+        denial.executions = []
+        mock_pm = MagicMock()
+
+        async def invoke_hook(hook, *_args, **_kwargs):
+            if hook == ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(continue_processing=True), None
+            raise denial
+
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm.invoke_hook = invoke_hook
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="response blocked"):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].post_denied is True
 
     async def test_invoke_tool_with_plugin_metadata_rest(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook error when fail_on_plugin_error is True."""
@@ -5522,25 +5868,14 @@ class TestToolService:
 #                               extract_using_jq                              #
 # --------------------------------------------------------------------------- #
 def test_extract_using_jq_happy_path():
-    """Test jq filter extraction works correctly with caching."""
-    # First-Party
-    from mcpgateway.services.tool_service import _compile_jq_filter
-
-    # Clear cache for clean test state
-    _compile_jq_filter.cache_clear()
-
+    """Test jq filter extraction returns correct results through the sandbox."""
     data = {"a": 123, "b": 456}
 
-    # Test actual behavior (no mocking)
     result = extract_using_jq(data, ".a")
     assert result == [123]
 
-    # Verify caching works
     result2 = extract_using_jq({"a": 999}, ".a")
     assert result2 == [999]
-
-    info = _compile_jq_filter.cache_info()
-    assert info.hits == 1  # Second call hit cache
 
 
 def test_extract_using_jq_short_circuits_and_errors():
@@ -5877,21 +6212,21 @@ class TestMappingIntegrationSecurity:
 class TestJqFilterCaching:
     """Tests for jq filter caching (#1813)."""
 
-    def test_jq_caching_works(self):
-        """Verify jq filter compilation is cached."""
+    def test_jq_caching_works(self, monkeypatch):
+        """Verify jq filter compilation is cached within an executing process (#1813)."""
         # First-Party
-        from mcpgateway.services.tool_service import _compile_jq_filter
+        from mcpgateway.config import settings
+        from mcpgateway.utils.jq_runner import _compile_jq_filter
 
+        # Caching lives with the compiler. In sandbox mode that is the worker
+        # process, so assert it in the mode where the cache is observable.
+        monkeypatch.setattr(settings, "jq_filter_execution", "inprocess")
         _compile_jq_filter.cache_clear()
 
-        result1 = extract_using_jq({"a": 1}, ".a")
-        assert result1 == [1]
+        assert extract_using_jq({"a": 1}, ".a") == [1]
+        assert extract_using_jq({"a": 99}, ".a") == [99]
 
-        result2 = extract_using_jq({"a": 99}, ".a")
-        assert result2 == [99]
-
-        info = _compile_jq_filter.cache_info()
-        assert info.hits == 1
+        assert _compile_jq_filter.cache_info().hits == 1
 
     def test_empty_filter_bypasses_cache(self):
         """Empty filter should return data directly without caching."""
@@ -6452,6 +6787,105 @@ class TestSchemaValidatorCaching:
         # Invalid instance
         with pytest.raises(jsonschema.ValidationError):
             _validate_with_cached_schema({"foo": 123}, schema)
+
+
+class TestValidateToolInputArguments:
+    """Tests for _validate_tool_input_arguments, shared by invoke_tool and
+    preview_tool_invocation via _resolve_tool_for_invocation (#5629)."""
+
+    def test_no_schema_returns_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        assert _validate_tool_input_arguments({"anything": "goes"}, None) is None
+        assert _validate_tool_input_arguments({"anything": "goes"}, {}) is None
+
+    def test_valid_arguments_return_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+
+    def test_invalid_arguments_return_error_message(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        error = _validate_tool_input_arguments({}, schema)
+
+        assert error is not None
+        assert "required property" in error
+
+
+class TestSchemaReferenceIsolation:
+    """Tool input/output schemas are tool-controlled (a federated tool ships its own), and
+    jsonschema's default registry fetches remote ``$ref`` URIs over the network. Validation
+    must never make that request -- it would be an SSRF primitive reachable from the preview
+    route and every live invocation."""
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"type": "object", "properties": {"foo": {"$ref": "http://169.254.169.254/latest/meta-data/"}}},
+            {"type": "object", "properties": {"foo": {"$ref": "https://attacker.example.com/schema.json"}}},
+            {"type": "object", "properties": {"foo": {"$ref": "file:///etc/passwd"}}},
+            # Nested well below the root, where a shallow check would miss it.
+            {"type": "object", "properties": {"foo": {"allOf": [{"items": {"$ref": "http://internal.example/s.json"}}]}}},
+            # Relative ref resolved against an absolute $id base is still a network fetch.
+            {"$id": "https://attacker.example.com/base.json", "type": "object", "properties": {"foo": {"$ref": "sibling.json"}}},
+            {"type": "object", "properties": {"foo": {"$dynamicRef": "https://attacker.example.com/d.json"}}},
+            {"type": "object", "properties": {"foo": {"$recursiveRef": "https://attacker.example.com/r.json"}}},
+        ],
+    )
+    def test_non_local_refs_are_refused(self, schema):
+        """Every non-local reference keyword is rejected, wherever it sits in the schema."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        error = _validate_tool_input_arguments({"foo": "bar"}, schema)
+
+        assert error is not None
+        assert "non-local" in error
+
+    def test_no_network_call_is_attempted_for_remote_ref(self, monkeypatch):
+        """Belt and braces: nothing reaches urlopen, which is how jsonschema's default
+        registry retrieves a remote reference."""
+        # Standard
+        import urllib.request
+
+        def _fail(*_args, **_kwargs):
+            raise AssertionError("schema validation attempted a network fetch")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fail)
+
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "http://169.254.169.254/latest/meta-data/"}}}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is not None
+
+    def test_unresolvable_local_ref_fails_closed(self):
+        """A dangling same-document pointer is reported as a validation failure, not raised
+        past the caller and not resolved by reaching outside the document."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "#/$defs/missing"}}}
+        error = _validate_tool_input_arguments({"foo": "bar"}, schema)
+
+        assert error is not None
+        assert "does not exist" in error
+
+    def test_local_refs_still_validate_normally(self):
+        """The guard must not break the legitimate case: same-document $refs still resolve."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "#/$defs/name"}}, "required": ["foo"], "$defs": {"name": {"type": "string"}}}
+
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+        assert "is not of type 'string'" in (_validate_tool_input_arguments({"foo": 123}, schema) or "")
 
 
 class TestCorrelationIdPoolExclusion:
@@ -10465,7 +10899,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -10505,7 +10939,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
@@ -10557,7 +10991,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
@@ -10749,6 +11183,44 @@ class TestRustMcpExecutionPlan:
         assert plan["modifiedArgs"] == {"cleaned_arg": "value"}
         # Plugin-injected header should appear (lowercase normalized)
         assert plan["headers"]["x-injected-cred"] == "secret123"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_denial_emits_control_telemetry(self, tool_service):
+        """Rust-direct pre-invoke denials persist control telemetry before re-raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        cache = self._cache_mock(self._cache_payload())
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        denial = PluginViolationError("rate limited")
+        denial.executions = []
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-rust-deny"))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="rate limited"):
+                await tool_service.prepare_rust_mcp_tool_execution(
+                    MagicMock(),
+                    "tool-one",
+                    arguments={},
+                    app_user_email="user@example.com",
+                )
+
+        record_telemetry.assert_called_once()
+        kwargs = record_telemetry.call_args.kwargs
+        assert kwargs["trace_id"] == "trace-rust-deny"
+        assert kwargs["tool_name"] == "tool-one"
+        assert kwargs["agent_id"] == "user@example.com"
+        assert kwargs["binding_name"] == "gateway-one"
+        assert kwargs["accumulator"].pre_denied is True
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_hook_modifies_tool_name(self, tool_service):

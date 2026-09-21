@@ -30,6 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.deprecations import VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
+from mcpgateway.utils.paths import is_path_within
 
 logger = logging.getLogger(__name__)
 _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED = False
@@ -241,7 +242,9 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
             # Check against allowed roots
             if self.allowed_roots:
-                allowed = any(str(resolved_path).startswith(str(root)) for root in self.allowed_roots)
+                # Component-aware confinement: a plain string prefix would let a sibling
+                # directory such as /srv/data_secret pass a /srv/data root.
+                allowed = any(is_path_within(resolved_path, root) for root in self.allowed_roots)
                 if not allowed:
                     raise HTTPException(status_code=400, detail="invalid_path: Path outside allowed roots")
 

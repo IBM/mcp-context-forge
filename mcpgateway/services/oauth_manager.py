@@ -884,7 +884,36 @@ class OAuthManager:
 
         raise OAuthError("Token exchange failed after all retry attempts")
 
-    async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False) -> Dict[str, str]:
+    @staticmethod
+    def _apply_default_redirect_uri(credentials: Dict[str, Any], default_redirect_uri: Optional[str] = None) -> Dict[str, Any]:
+        """Fill in ``redirect_uri`` when *credentials* carries none.
+
+        Single point of application -- rather than each caller (currently the two /oauth
+        router endpoints) guarding inline -- so any future caller of the authorization-code
+        flow methods is protected too, since ``_create_authorization_url_with_pkce`` and
+        ``_exchange_code_for_tokens`` both index ``credentials["redirect_uri"]`` directly.
+
+        Args:
+            credentials: OAuth configuration for the flow.
+            default_redirect_uri: Caller-computed default (e.g. request-scoped, root-path-aware)
+                to prefer when present. Falls back to a settings-only default when omitted, so
+                this is still self-protecting even for a caller that supplies none.
+
+        Returns:
+            *credentials* unchanged if it already carries a ``redirect_uri``; otherwise a
+            shallow copy with one filled in.
+        """
+        if credentials.get("redirect_uri"):
+            return credentials
+        settings = get_settings()
+        root_path = str(getattr(settings, "app_root_path", "") or "").rstrip("/")
+        resolved = default_redirect_uri or f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
+        logger.info("OAuth credentials carried no redirect_uri; defaulting to %s", resolved)
+        return {**credentials, "redirect_uri": resolved}
+
+    async def initiate_authorization_code_flow(
+        self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False, default_redirect_uri: Optional[str] = None
+    ) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 
         Args:
@@ -893,10 +922,14 @@ class OAuthManager:
             app_user_email: ContextForge user email to associate with tokens
             popup: When True, the state token is prefixed with ``popup.`` so the
                 callback endpoint knows to respond with postMessage instead of HTML.
+            default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
+                *credentials* carries no ``redirect_uri`` (defence-in-depth; today's router
+                caller already resolves one before DCR runs, so this is normally a no-op).
 
         Returns:
             Dict containing authorization_url and state
         """
+        credentials = self._apply_default_redirect_uri(credentials, default_redirect_uri)
 
         # Generate PKCE parameters (RFC 7636)
         pkce_params = self._generate_pkce_params()
@@ -904,13 +937,35 @@ class OAuthManager:
         # Generate state parameter with user context for CSRF protection
         state = self._generate_state(gateway_id, app_user_email, popup=popup)
 
-        # Store state with code_verifier in session/cache for validation
+        # Extract team_id from TokenStorageService user_context
+        # AUTHORITY DECISION: For multi-team tokens, use teams[0] as the effective team
+        # for OAuth token storage. This is deterministic because:
+        # 1. Token scoping middleware always orders teams consistently (from DB query order)
+        # 2. Vault backend requires a single team_id for path selection (no multi-team storage)
+        # 3. The same teams[0] logic is used in TokenStorageService._get_team_id()
+        # Note: If user needs OAuth access under different team contexts, they should use
+        # separate narrowed tokens (e.g., JWT with teams: ["engineering"] vs teams: ["sales"])
+        team_id = None
+        if self.token_storage and hasattr(self.token_storage, "user_context"):
+            user_context = self.token_storage.user_context or {}
+            teams = user_context.get("teams", [])
+            if isinstance(teams, list) and teams:
+                team_id = teams[0]  # Use first team (see authority decision above)
+                logger.debug(
+                    "OAuth initiate: extracted team_id=%s for user %s",
+                    team_id,
+                    app_user_email,
+                )
+
+        # Store state with code_verifier and team_id in session/cache for validation
         if self.token_storage:
             await self._store_authorization_state(
                 gateway_id,
                 state,
                 code_verifier=pkce_params["code_verifier"],
                 app_user_email=app_user_email,
+                redirect_uri=credentials.get("redirect_uri"),
+                team_id=team_id,
             )
 
         # Generate authorization URL with PKCE
@@ -921,7 +976,15 @@ class OAuthManager:
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
     async def complete_authorization_code_flow(
-        self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
+        self,
+        gateway_id: str,
+        code: str,
+        state: str,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+        default_redirect_uri: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
@@ -933,20 +996,43 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
+            default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
+                neither the state pinned at authorize time nor *credentials* itself carries a
+                ``redirect_uri`` (e.g. a state stored before pinning existed).
 
         Returns:
-            Dict containing success status, user_id, and expiration info
+            Dict containing success status, user_id, expiration info, AND state_data
+            (includes app_user_email, team_id from original OAuth initiation)
 
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
-        # Validate state and retrieve code_verifier
+        # Validate state and retrieve code_verifier (atomically consumes state)
         state_data = await self._validate_and_retrieve_state(gateway_id, state)
         if not state_data:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
 
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")
+        # team_id is surfaced to the caller via state_data in the return dict.
+        # When token_storage is set, team_id is already embedded in its user_context
+        # (set during initiate_authorization_code_flow) so it does not need to be
+        # passed separately here.  When token_storage is None the caller uses
+        # state_data["team_id"] directly to build its own TokenStorageService.
+        # The variable is therefore intentionally not used at this call-site.
+        _ = state_data.get("team_id")  # surfaced via state_data return value
+
+        # Reuse the exact redirect_uri pinned at authorize time (RFC 6749 §4.1.3 requires
+        # the token-exchange redirect_uri to match the one sent in the authorization
+        # request) in preference to the caller-supplied credentials/default, which could
+        # have drifted if the gateway's oauth_config or app_domain changed mid-flow.
+        pinned_redirect_uri = state_data.get("redirect_uri")
+        if pinned_redirect_uri:
+            credentials = {**credentials, "redirect_uri": pinned_redirect_uri}
+        else:
+            # No pinned value (state stored before pinning existed, or token_storage
+            # unavailable) -- fall back to the centralized default.
+            credentials = self._apply_default_redirect_uri(credentials, default_redirect_uri)
 
         # Defence-in-depth: if app_user_email is absent from server-side
         # state (e.g. state stored by an older code path), attempt a
@@ -1023,8 +1109,19 @@ class OAuthManager:
                 "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
                 "token_aud": token_aud,
                 "token_iss": token_iss,
+                "state_data": state_data,  # Include state for caller (app_user_email, team_id)
             }
-        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud, "token_iss": token_iss}
+
+        # No token storage: return raw token_response for caller to store manually
+        return {
+            "success": True,
+            "user_id": user_id,
+            "expires_at": None,
+            "token_aud": token_aud,
+            "token_iss": token_iss,
+            "state_data": state_data,  # Include state for caller
+            "token_response": token_response,  # Raw tokens for manual storage
+        }
 
     async def get_access_token_for_user(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """Get valid access token for a specific user.
@@ -1162,8 +1259,10 @@ class OAuthManager:
         self,
         gateway_id: str,
         state: str,
-        code_verifier: str = None,
-        app_user_email: str = None,
+        code_verifier: Optional[str] = None,
+        app_user_email: Optional[str] = None,
+        redirect_uri: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> None:
         """Store authorization state for validation with TTL.
 
@@ -1172,6 +1271,11 @@ class OAuthManager:
             state: State parameter to store
             code_verifier: Optional PKCE code verifier (RFC 7636)
             app_user_email: Requesting user email for token association
+            redirect_uri: The redirect_uri sent in the authorization request, pinned here so
+                ``complete_authorization_code_flow`` can reuse the exact same value at token
+                exchange time (RFC 6749 §4.1.3) instead of recomputing it from live gateway
+                state, which could have changed between authorize and callback.
+            team_id: Team ID from JWT for Vault token storage path
         """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
         settings = get_settings()
@@ -1188,6 +1292,8 @@ class OAuthManager:
                         "gateway_id": gateway_id,
                         "code_verifier": code_verifier,
                         "app_user_email": app_user_email,
+                        "redirect_uri": redirect_uri,
+                        "team_id": team_id,
                         "expires_at": expires_at.isoformat(),
                         "used": False,
                     }
@@ -1211,7 +1317,7 @@ class OAuthManager:
                     # Clean up expired states first
                     db.query(OAuthState).filter(OAuthState.expires_at < datetime.now(timezone.utc)).delete()
 
-                    # Store new state with code_verifier
+                    # Store new state with code_verifier and team_id
                     oauth_state_kwargs = {
                         "gateway_id": gateway_id,
                         "state": state,
@@ -1221,6 +1327,10 @@ class OAuthManager:
                     }
                     if hasattr(OAuthState, "app_user_email"):
                         oauth_state_kwargs["app_user_email"] = app_user_email
+                    if hasattr(OAuthState, "redirect_uri"):
+                        oauth_state_kwargs["redirect_uri"] = redirect_uri
+                    if hasattr(OAuthState, "team_id") and team_id:
+                        oauth_state_kwargs["team_id"] = team_id
 
                     oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
@@ -1242,6 +1352,8 @@ class OAuthManager:
                 "gateway_id": gateway_id,
                 "code_verifier": code_verifier,
                 "app_user_email": app_user_email,
+                "redirect_uri": redirect_uri,
+                "team_id": team_id,
                 "expires_at": expires_at.isoformat(),
                 "used": False,
             }
@@ -1467,6 +1579,10 @@ class OAuthManager:
                     }
                     if hasattr(oauth_state, "app_user_email"):
                         state_data["app_user_email"] = getattr(oauth_state, "app_user_email", None)
+                    if hasattr(oauth_state, "redirect_uri"):
+                        state_data["redirect_uri"] = getattr(oauth_state, "redirect_uri", None)
+                    if hasattr(oauth_state, "team_id"):
+                        state_data["team_id"] = getattr(oauth_state, "team_id", None)
 
                     # Mark as used and delete
                     db.delete(oauth_state)

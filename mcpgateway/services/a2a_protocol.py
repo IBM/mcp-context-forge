@@ -21,6 +21,8 @@ from cryptography.exceptions import InvalidTag
 import orjson
 
 # First-Party
+from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
+from mcpgateway.config import settings
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
 
@@ -77,7 +79,12 @@ _V1_TASK_STATE_TO_LEGACY = {
 
 @dataclass(frozen=True)
 class PreparedA2AInvocation:
-    """Prepared outbound A2A invocation payload."""
+    """Prepared outbound A2A invocation payload.
+
+    ``endpoint_url`` is the logical target after auth/query preparation. Do not
+    post it directly; local A2A egress must pass through
+    ``prepare_pinned_a2a_invocation`` immediately before outbound I/O.
+    """
 
     endpoint_url: str
     sanitized_endpoint_url: str
@@ -90,6 +97,53 @@ class PreparedA2AInvocation:
     base_endpoint_url: Optional[str] = None
     auth_value_encrypted: Optional[str] = None
     auth_query_params_encrypted: Optional[Dict[str, str]] = None
+
+
+@dataclass(frozen=True)
+class PinnedA2AInvocation:
+    """A prepared A2A invocation target after connection-time URL pinning."""
+
+    endpoint_url: str
+    headers: Dict[str, str]
+    extensions: Dict[str, str]
+
+
+async def prepare_pinned_a2a_invocation(prepared: PreparedA2AInvocation, field_name: str = "A2A agent URL") -> PinnedA2AInvocation:
+    """Validate and IP-pin a prepared A2A invocation immediately before I/O.
+
+    Args:
+        prepared: Prepared A2A invocation containing the final logical URL.
+        field_name: Human-readable URL field name for validator errors.
+
+    Returns:
+        Pinned outbound URL, headers, and HTTPX request extensions.
+
+    Raises:
+        ValueError: If the outbound A2A target is blocked by URL policy.
+    """
+    try:
+        validated_target = await SecurityValidator.validate_url_for_connection_pinning(prepared.endpoint_url, field_name)
+    except ValueError as exc:
+        raise ValueError("Outbound A2A URL blocked by URL policy") from exc
+
+    resolved_ip = validated_target.get("resolved_ip")
+    original_hostname = validated_target.get("hostname")
+    original_authority = validated_target.get("original_authority")
+    if settings.ssrf_protection_enabled and not (resolved_ip and original_hostname and original_authority):
+        raise ValueError("Outbound A2A URL blocked by URL policy")
+
+    if not (resolved_ip and original_hostname and original_authority):
+        return PinnedA2AInvocation(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+    headers = {key: value for key, value in prepared.headers.items() if key.lower() != "host"}
+    # HTTPX/httpcore maps Host to HTTP/2 :authority, so keep the original
+    # authority here even when the pinned URL uses the resolved IP.
+    headers["Host"] = original_authority
+    return PinnedA2AInvocation(
+        endpoint_url=pin_url_to_resolved_ip(prepared.endpoint_url, resolved_ip),
+        headers=headers,
+        extensions={"sni_hostname": original_hostname},
+    )
 
 
 def _strip_version_prefix(version: str) -> str:

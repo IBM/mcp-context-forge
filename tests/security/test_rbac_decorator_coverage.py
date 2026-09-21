@@ -80,6 +80,7 @@ ROUTER_PERMISSIONS = [
     ("mcpgateway/routers/llm_proxy_router.py", "llm.read"),
     ("mcpgateway/routers/llm_proxy_router.py", "llm.invoke"),
     ("mcpgateway/routers/observability.py", "admin.system_config"),
+    ("mcpgateway/routers/observability.py", "metrics:read"),
     ("mcpgateway/routers/log_search.py", "logs:read"),
     ("mcpgateway/routers/log_search.py", "security:read"),
     ("mcpgateway/routers/log_search.py", "audit:read"),

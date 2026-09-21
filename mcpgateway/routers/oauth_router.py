@@ -12,12 +12,13 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 """
 
 # Standard
+import asyncio
 from html import escape
 import json
 import logging
 import re
 import secrets
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any, Dict, Optional
 from urllib.parse import urlparse
 
 # Third-Party
@@ -32,19 +33,21 @@ from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import Gateway, get_db
+from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_resource import derive_resource_origin
+from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
@@ -52,6 +55,108 @@ logger = logging.getLogger(__name__)
 
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
+GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"  # nosec B105 - OAuth grant-type constant, not a credential
+
+
+def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None, db: Session | None = None) -> dict:
+    """Build user_context dict for TokenStorageService from authenticated user.
+
+    OAuth token storage path selection:
+    ┌───────────┬────────────────────────────┬───────────────────────┐
+    │ Flow      │ token_teams (DB-resolved)  │ Storage path          │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ Normal    │ ["eng", ...]               │ vault/oauth/eng/      │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ Revoked   │ [] (revoked in DB)         │ vault/oauth/shared/   │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ Admin     │ None (bypass)              │ jwt_teams_claim hint  │
+    │           │   + jwt_teams_claim=["e"]  │ → vault/oauth/eng/    │
+    │           │   + jwt_teams_claim=None   │ → vault/oauth/shared/ │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ API       │ teams: []                  │ vault/oauth/shared/   │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ API       │ teams: ["eng"]             │ vault/oauth/eng/      │
+    └───────────┴────────────────────────────┴───────────────────────┘
+
+    SECURITY (CWE-863 fix): For session tokens (token_use="session"), we use
+    ``token_teams`` — the DB-authoritative result of ``resolve_session_teams()``
+    — as the primary path selector.  This ensures that team revocations in the
+    DB take effect immediately: a user removed from a team can no longer store
+    new OAuth tokens under that team's Vault path.
+
+    Admin bypass exception: ``resolve_session_teams()`` returns ``None`` for
+    admin users (admin bypass).  When ``token_teams`` is ``None`` we fall back
+    to ``jwt_teams_claim`` as a *path hint only* (never for permission checks),
+    so that an admin who authorised with ``teams=["engineering"]`` in their JWT
+    still reads from/writes to the ``engineering/`` Vault path rather than the
+    shared path.
+
+    The ``jwt_teams_claim`` field is forwarded by RBAC middleware from
+    ``request.state.jwt_teams_claim`` and is used ONLY for this path-hint
+    fallback, never for access-control decisions.
+
+    Args:
+        current_user: Authenticated user from RBAC middleware (dict) or legacy EmailUserResponse
+        db: Database session (unused - kept for backward compatibility)
+
+    Returns:
+        User context dict with email, teams, is_admin
+    """
+    if not current_user:
+        return {}
+
+    # Handle dict-based current_user (from RBAC middleware)
+    if isinstance(current_user, dict):
+        email = current_user.get("email", "")
+        is_admin = current_user.get("is_admin", False)
+
+        logger.debug("_build_user_context: email=%s, token_use=%s", email, current_user.get("token_use"))
+
+        token_use = current_user.get("token_use")
+        if token_use == "session":  # nosec B105 - token_use type discriminator, not a password
+            # CWE-863 fix: use DB-authoritative token_teams as the primary path
+            # selector so that revoked team memberships take effect immediately.
+            # token_teams is the result of resolve_session_teams() which intersects
+            # the JWT teams claim against current DB membership.
+            token_teams = current_user.get("token_teams")
+            if isinstance(token_teams, list) and token_teams:
+                filtered = [t for t in token_teams if t and isinstance(t, str)]
+                if filtered:
+                    return {"email": email, "teams": filtered, "is_admin": is_admin}
+
+            # token_teams is None (admin bypass) or [] (revoked/public-only).
+            # For admins (None): fall back to jwt_teams_claim as a path hint so
+            # the admin reads from the correct team-scoped Vault path.
+            # For revoked/public ([]): fall through to shared path — correct.
+            if token_teams is None:
+                jwt_teams_claim = current_user.get("jwt_teams_claim")
+                if jwt_teams_claim and isinstance(jwt_teams_claim, list):
+                    filtered = [t for t in jwt_teams_claim if t and isinstance(t, str)]
+                    if filtered:
+                        return {"email": email, "teams": filtered, "is_admin": is_admin}
+
+            # No usable team → shared path (Admin UI sessions, public-only tokens)
+            return {"email": email, "teams": None, "is_admin": is_admin}
+
+        # API / legacy token: use RBAC-resolved token_teams directly.
+        # - token_teams missing or []  → shared path (None)
+        # - token_teams = ["eng", ...] → team-scoped path
+        teams = current_user.get("token_teams")
+        if isinstance(teams, list):
+            teams = [t for t in teams if t and isinstance(t, str)] or None
+
+        return {
+            "email": email,
+            "teams": teams,
+            "is_admin": is_admin,
+        }
+
+    # Handle object-based current_user (legacy EmailUserResponse)
+    return {
+        "email": getattr(current_user, "email", ""),
+        "teams": getattr(current_user, "teams", []),
+        "is_admin": getattr(current_user, "is_admin", False),
+    }
 
 
 async def enforce_fetch_tools_csrf(request: Request) -> None:
@@ -103,6 +208,31 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
     if not secrets.compare_digest(csrf_header, csrf_cookie):
         raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+
+def _default_redirect_uri(request: Optional[Request] = None) -> str:
+    """Build the gateway's own global OAuth callback URL from the configured app domain.
+
+    Pure computation with no side effects, so it is cheap to call unconditionally. Used when
+    a gateway's stored ``oauth_config`` carries no ``redirect_uri`` (API-created or legacy
+    rows), so the authorization-code paths never hand an incomplete credentials dict to
+    :class:`~mcpgateway.services.oauth_manager.OAuthManager`. Callers that substitute this
+    value into OAuth credentials are responsible for logging that substitution -- the
+    authorize path logs at its call site (it must resolve the default before DCR registration
+    runs); the callback path instead passes this as ``default_redirect_uri`` into
+    ``OAuthManager.complete_authorization_code_flow``, whose single centralized guard
+    (``_apply_default_redirect_uri``) logs only when it actually applies it.
+
+    Args:
+        request: The current request, used to resolve a reverse-proxy ``root_path`` (falls
+            back to ``settings.app_root_path`` when omitted or when the scope carries none).
+
+    Returns:
+        Absolute callback URL, e.g. ``https://gateway.example.com/oauth/callback``.
+    """
+    root_path = resolve_root_path(request) if request is not None else str(settings.app_root_path).rstrip("/")
+    # str() of a pydantic HttpUrl appends a trailing slash; rstrip keeps the path single-slashed.
+    return f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
 
 
 def _is_well_formed_audience(value: Any) -> bool:
@@ -268,17 +398,20 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 def _require_admin_user(current_user: EmailUserResponse) -> None:
-    """Require admin context for DCR management endpoints.
+    """Require un-narrowed admin context for DCR management endpoints.
 
     Args:
         current_user: Authenticated user context from RBAC dependency.
 
     Raises:
-        HTTPException: If requester is not an admin user.
+        HTTPException: If requester is not an admin user or has a narrowed token scope.
     """
     is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin permissions required")
+    token_teams = current_user.token_teams if hasattr(current_user, "token_teams") else current_user.get("token_teams")
+    if token_teams is not None:
+        raise HTTPException(status_code=403, detail="DCR management requires un-narrowed admin access")
 
 
 def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse) -> None:
@@ -302,39 +435,121 @@ def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse)
         raise HTTPException(status_code=403, detail="OAuth client management requires un-narrowed admin access")
 
 
+def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
+    """Extract admin flag from typed or dict user contexts.
+
+    Supports both flat dict structures (``{"is_admin": True}``) and nested
+    structures (``{"user": {"is_admin": True}}``), matching JWT payload formats.
+
+    Args:
+        current_user: Authenticated user context (typed object or dict).
+
+    Returns:
+        ``True`` when the user context indicates admin privileges.
+    """
+    if hasattr(current_user, "is_admin"):
+        return bool(getattr(current_user, "is_admin", False))
+    if isinstance(current_user, dict):
+        user_claim = current_user.get("user", {})
+        user_is_admin = user_claim.get("is_admin", False) if isinstance(user_claim, dict) else False
+        return bool(current_user.get("is_admin", False) or user_is_admin)
+    return False
+
+
+def _recover_token_teams_from_jwt(request: Request) -> tuple[list[str] | None, bool] | None:
+    """Attempt to recover token_teams from cached JWT payload.
+
+    When ``request.state.token_teams`` is missing or malformed, this helper
+    inspects the cached verified JWT payload (set by ``verify_credentials.py``
+    during JWT verification) to re-derive a well-typed ``token_teams`` value
+    and the associated admin flag.
+
+    Returns:
+        Tuple of ``(token_teams, is_admin)`` if recovery succeeds (cached payload
+        exists, is a well-formed tuple, and contains a non-empty dict), ``None``
+        otherwise.  Empty dict payloads are treated as untrusted and fail recovery.
+    """
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if not (cached and isinstance(cached, tuple) and len(cached) == 2):
+        return None
+
+    _, payload = cached
+    if not (isinstance(payload, dict) and payload):
+        return None
+
+    # Validate teams claim type before delegating to normalize_token_teams.
+    # normalize_token_teams iterates payload["teams"] without checking it is
+    # iterable; a malformed cached claim (int, bool, str, dict) would raise
+    # TypeError or produce misleading team IDs.  Fail closed: return None so
+    # the caller assigns public-only scope ([]).
+    teams_claim = payload.get("teams")
+    if "teams" in payload and teams_claim is not None and not isinstance(teams_claim, list):
+        logger.warning(
+            "Malformed teams claim in cached JWT payload: expected list or None, got %s",
+            type(teams_claim).__name__,
+        )
+        return None
+
+    token_teams = normalize_token_teams(payload)
+    is_admin = _extract_is_admin(payload)
+
+    return (token_teams, is_admin)
+
+
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
     """Resolve token teams for scoped ownership checks using normalized token semantics.
+
+    SECURITY: This function must never promote indeterminate scope (missing or
+    malformed ``token_teams``) to unrestricted admin scope.  Only explicitly
+    resolved ``token_teams=None`` from a trusted source (``request.state``,
+    cached JWT payload) may produce unrestricted scope for eligible admins.
+    When no trusted source is available, the function fails closed to
+    public-only (``[]``), matching ``get_token_teams_from_request`` semantics
+    in ``auth_context.py``.
 
     Args:
         request: Incoming request with token scoping state.
         current_user: Authenticated user context.
 
     Returns:
-        ``None`` for unrestricted admin scope, or a normalized team list for scoped access.
+        ``None`` for unrestricted admin scope (which callers must downgrade for non-admins),
+        a non-empty list for team-scoped access, or ``[]`` for public-only scope (including
+        fail-closed cases when no trusted source is available).
     """
-    is_admin = False
-    if hasattr(current_user, "is_admin"):
-        is_admin = bool(getattr(current_user, "is_admin", False))
-    elif isinstance(current_user, dict):
-        is_admin = bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+    is_admin = _extract_is_admin(current_user)
 
     _not_set = object()
     token_teams = getattr(request.state, "token_teams", _not_set)
-    if token_teams is _not_set or not (token_teams is None or isinstance(token_teams, list)):
-        cached = getattr(request.state, "_jwt_verified_payload", None)
-        if cached and isinstance(cached, tuple) and len(cached) == 2:
-            _, payload = cached
-            if payload:
-                token_teams = normalize_token_teams(payload)
-                is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
-        # An unexpected token_teams value falls through to the _not_set branch below,
-        # which fails closed (empty scope) for non-admins but is treated as un-narrowed
-        # for admins.
-        if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
-            token_teams = _not_set
 
-    if token_teams is _not_set:
-        token_teams = None if is_admin else []
+    # Fast path: token_teams is already a well-typed value set by auth.py.
+    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
+        # Resolved from the primary trusted source — proceed to final checks.
+        pass
+    else:
+        # token_teams is missing (_not_set) or malformed (wrong type).
+        is_malformed = token_teams is not _not_set
+        if is_malformed:
+            logger.warning(
+                "_resolve_token_teams_for_scope_check: malformed token_teams type=%s; attempting recovery from cached JWT payload",
+                type(token_teams).__name__,
+            )
+
+        # Attempt recovery from the cached verified JWT payload.
+        recovered = _recover_token_teams_from_jwt(request)
+        if recovered is not None:
+            token_teams, is_admin = recovered
+            logger.debug(
+                "_resolve_token_teams_for_scope_check: recovered token_teams from cached JWT payload",
+            )
+        else:
+            # No usable cached payload — fail closed to public-only regardless
+            # of admin status.  Unrestricted scope requires an explicit signal from
+            # a trusted source, not an absence of any signal.
+            if is_malformed:
+                logger.warning(
+                    "_resolve_token_teams_for_scope_check: malformed token_teams with no cached JWT payload; failing closed to public-only scope",
+                )
+            token_teams = []
 
     # Empty-team scoped tokens are public-only and must never receive admin bypass.
     if isinstance(token_teams, list) and len(token_teams) == 0:
@@ -345,22 +560,6 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
     return token_teams
 
 
-def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
-    """Extract admin flag from typed or dict user contexts.
-
-    Args:
-        current_user: Authenticated user context.
-
-    Returns:
-        ``True`` when the user context indicates admin privileges.
-    """
-    if hasattr(current_user, "is_admin"):
-        return bool(getattr(current_user, "is_admin", False))
-    if isinstance(current_user, dict):
-        return bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
-    return False
-
-
 async def _enforce_gateway_access(
     gateway_id: str,
     gateway: Gateway,
@@ -369,6 +568,12 @@ async def _enforce_gateway_access(
     request: Request | None = None,
 ) -> None:
     """Enforce gateway visibility and ownership checks for OAuth endpoints.
+
+    .. note::
+        ``TeamManagementService.get_user_role_in_team()`` may commit the
+        database session (``db.commit()``) on a cache miss to release the idle
+        transaction.  Callers must not rely on uncommitted ORM state being
+        preserved across this call.
 
     Args:
         gateway_id: Gateway identifier used for scoped ownership checks.
@@ -401,6 +606,7 @@ async def _enforce_gateway_access(
                 token_teams,
                 db=db,
                 _user_email=requester_email,
+                preloaded_gateway=gateway,
             )
             is not ResourceOwnershipResult.ALLOWED
         ):
@@ -416,15 +622,15 @@ async def _enforce_gateway_access(
     if visibility == "public":
         return
 
+    # Use TeamManagementService.get_user_role_in_team() which checks the role cache
+    # (auth_cache.get_user_role) before hitting the DB. This avoids the broken
+    # user.is_team_member() path where EmailAuthService.get_user_by_email() returns a
+    # cache-reconstructed detached EmailUser with empty team_memberships.
     if visibility == "team":
         if not gateway_team_id:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
-
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if not user or not user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if not role:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
         return
 
@@ -436,12 +642,8 @@ async def _enforce_gateway_access(
     if gateway_owner and gateway_owner.strip().lower() == requester_email:
         return
     if gateway_team_id:
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
-
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if user and user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if role:
             return
 
     raise HTTPException(status_code=403, detail="You don't have access to this gateway")
@@ -516,6 +718,15 @@ async def initiate_oauth_flow(
             origin = derive_resource_origin(gateway.url)
             if origin:
                 oauth_config["resource"] = origin
+
+        # API-created and legacy configs may carry no redirect_uri; OAuthManager's PKCE
+        # paths index it directly, so default it here (before DCR, so registration and
+        # the authorization request agree on the callback). Resolved eagerly here --
+        # rather than deferred to OAuthManager's centralized guard like the callback path
+        # below -- because DCR registration (a few lines down) needs the concrete value too.
+        if not oauth_config.get("redirect_uri"):
+            oauth_config["redirect_uri"] = _default_redirect_uri(request)
+            logger.info("No redirect_uri configured on gateway OAuth config; defaulting to derived callback %s", oauth_config["redirect_uri"])
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -613,7 +824,9 @@ async def initiate_oauth_flow(
         # Filter out "unknown" sentinel - OAuth requires a real user identity
         if requester_email == "unknown":
             requester_email = None
-        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+        user_context = _build_user_context(current_user, db=db)
+
+        oauth_manager = OAuthManager(token_storage=TokenStorageService(db, user_context))
         auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
@@ -630,6 +843,7 @@ async def initiate_oauth_flow(
 
 @oauth_router.get("/callback")
 async def oauth_callback(
+    request: Request,
     # NOTE on validation strategy for OAuth callback parameters:
     # - RFC 6749 defines `code` and `state` as opaque VSCHAR (%x20-7E) strings.
     #   Tight allow-lists (e.g. only [a-zA-Z0-9_-]) break Google (uses `/`), Microsoft
@@ -642,8 +856,6 @@ async def oauth_callback(
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
-    # Remove the gateway_id parameter requirement
-    request: Request = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
@@ -761,13 +973,18 @@ async def oauth_callback(
             logger.warning("OAuth callback missing state parameter")
             return _invalid_state_response()
 
-        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        # SECURITY: Extract gateway_id without consuming state (no TOCTOU risk - just for lookup)
+        # complete_authorization_code_flow will atomically validate/consume state and return state_data
+        temp_user_context = _build_user_context(getattr(request.state, "user", None)) if request and hasattr(request, "state") else {}
+        temp_oauth_manager = OAuthManager(token_storage=TokenStorageService(db, temp_user_context))
+
+        # Extract gateway_id without consuming state
+        gateway_id = await temp_oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
         if not gateway_id:
             logger.warning("OAuth callback received invalid or unknown state token")
             return _invalid_state_response()
 
-        # Get gateway configuration
+        # Get gateway configuration (before consuming state, to validate OAuth config exists)
         gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
@@ -775,31 +992,118 @@ async def oauth_callback(
             return _invalid_state_response()
 
         if not gateway.oauth_config:
-            logger.warning("OAuth callback state resolved to gateway without OAuth configuration")
+            logger.warning("OAuth callback: no OAuth config in database for gateway %s", gateway_id)
             return _invalid_state_response()
 
-        # Complete OAuth flow
+        # SECURITY FIX (TOCTOU): Complete OAuth code exchange WITHOUT token storage first
+        # This atomically consumes state and returns state_data, eliminating the TOCTOU race
+        # from the previous _peek_state_data() approach
+        no_storage_oauth_manager = OAuthManager(token_storage=None)
 
-        # RFC 8707: Set the outbound `resource` parameter for the token exchange.
-        # Admin-configured `oauth_config.resource` takes precedence; otherwise
-        # derive the gateway URL's *origin* (not full path).  Request-local
-        # only — not persisted (see derive_resource_origin docstring).
         oauth_config_with_resource = gateway.oauth_config.copy()
+        post_oauth_redirect_response = None
+        if not is_popup and "redirect_uri_after_oauth" in oauth_config_with_resource:
+            post_oauth_redirect_response = custom_redirect_after_callback(oauth_config_with_resource["redirect_uri_after_oauth"], 302)
+
+        # RFC 8707: Set resource parameter for the token exchange request.
+        # If resource was previously learned from the IdP's token aud claim, use it as-is.
+        # Otherwise derive from gateway.url for the first authorization request.
         if not oauth_config_with_resource.get("resource"):
             origin = derive_resource_origin(gateway.url)
             if origin:
                 oauth_config_with_resource["resource"] = origin
 
-        result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+        # Complete flow WITHOUT storing tokens (atomically returns state_data + token_response).
+        # Pass default_redirect_uri so complete_authorization_code_flow can fall back to it
+        # when no redirect_uri was pinned in state (e.g. state stored before pinning existed).
+        result = await no_storage_oauth_manager.complete_authorization_code_flow(
+            gateway_id,
+            code,
+            state,
+            oauth_config_with_resource,
+            ca_certificate=gateway.ca_certificate,
+            client_cert=gateway.client_cert,
+            client_key=gateway.client_key,
+            default_redirect_uri=_default_redirect_uri(request),
         )
 
+        # Extract state_data from result (was atomically consumed and returned)
+        state_data = result.get("state_data", {})
+        app_user_email = state_data.get("app_user_email")
+        team_id = state_data.get("team_id")
+        logger.info(f"OAuth callback: extracted team_id={team_id} from state_data for user {app_user_email}")
+
+        # SECURITY (CWE-287): Hard-fail if user identity cannot be bound.
+        # State is already consumed at this point; a missing email means no token
+        # can be stored and the user would see "success" with nothing stored —
+        # a silent no-op that burns the one-time state and leaves the user stuck.
+        if not app_user_email:
+            logger.error("OAuth callback: cannot bind token — no user identity in state (state already consumed). User must re-authorize.")
+            return _invalid_state_response()
+
+        # Now build properly-scoped TokenStorageService with team_id from state
+        # SECURITY: Use team_id from OAuth state (which came from original token scope)
+        #
+        # Token storage path mapping:
+        # - team_id present → teams=[team_id] → vault/oauth/{team_id}/...
+        # - team_id is None → teams=None → vault/oauth/shared/...
+        user_context = {
+            "email": app_user_email or "",
+            "teams": [team_id] if team_id else None,  # None = shared path
+            "is_admin": False,  # Callback doesn't have admin context from state
+        }
+
+        token_storage = TokenStorageService(db, user_context)
+
+        # Store the tokens we just obtained
         # Token's aud/iss claims (best-effort, unverified) are persisted per-user by
         # TokenStorageService.store_tokens as OAuthToken.learned_aud / learned_iss so
         # subsequent validation can be authoritative for THIS USER without letting
         # anyone with gateway access mutate globally-shared gateway config. See
         # OAuthManager.complete_authorization_code_flow and
         # token_validation_service._validate_audience for the full trust model.
+        if app_user_email and result.get("success"):
+            from mcpgateway.services.oauth_manager import parse_expires_in  # pylint: disable=import-outside-toplevel
+
+            token_response = result.get("token_response", {})
+            if not token_response or not token_response.get("access_token"):
+                logger.error("OAuth callback: complete_authorization_code_flow succeeded but no access_token in token_response")
+                return _invalid_state_response()
+
+            # Handle scope as either string or list (OAuth providers vary)
+            scope_value = token_response.get("scope", "")
+            if isinstance(scope_value, list):
+                scopes_list = [s for s in scope_value if isinstance(s, str)]
+            elif isinstance(scope_value, str):
+                scopes_list = scope_value.split() if scope_value else []
+            else:
+                scopes_list = []
+
+            # Extract per-user learned audience/issuer from the IdP token response.
+            # These are best-effort (may be None for opaque tokens) and stored per-user
+            # so get_user_learned_audience() returns an authoritative per-user value
+            # rather than falling back to the shared gateway config for all users.
+            token_aud = result.get("token_aud")  # str | list | None
+            token_iss = result.get("token_iss")  # str | None
+
+            await token_storage.store_tokens(
+                gateway_id=gateway_id,
+                user_id=result.get("user_id", ""),
+                app_user_email=app_user_email,
+                access_token=token_response["access_token"],
+                refresh_token=token_response.get("refresh_token"),
+                expires_in=parse_expires_in(token_response),
+                scopes=scopes_list,
+                learned_aud=token_aud,
+                learned_iss=token_iss,
+            )
+
+        # Learn the IdP's audience mapping from the token and persist as resource.
+        # RFC 8707 Section 2: "The authorization server may use the exact resource value
+        # as the audience or it may map from that value to a more general URI or abstract
+        # identifier for the given resource."  We persist whatever the IdP chose so that
+        # subsequent token validation matches.
+        await _persist_learned_audience(gateway, result, db)
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
@@ -810,6 +1114,31 @@ async def oauth_callback(
                 {"type": "oauth_callback", "status": "success", "gatewayId": str(gateway_id), "gatewayName": str(gateway.name)},
                 extra_body="<p>Authorization successful. This window will close automatically.</p>",
             )
+
+        # Create a temporary session JWT (5 minutes) for the fetch-tools page.
+        # For non-admins: scoped to team_id from the OAuth state (or shared if team_id is None).
+        # For admins: RBAC resolves this to None (admin bypass via resolve_session_teams) as
+        # expected — the raw jwt_teams_claim is used separately by _build_user_context() for
+        # Vault path selection so the correct team-scoped path is preserved for admins too.
+        # First-Party
+        from mcpgateway.utils.create_jwt_token import create_jwt_token
+
+        jwt_payload = {
+            "email": app_user_email,
+            "token_use": "session",  # nosec B105 - token_use type discriminator, not a password
+            "jti": secrets.token_urlsafe(16),
+        }
+        # S8: When team_id is None (Admin-UI session, no team scope), omit the
+        # `teams` key entirely so the JWT has no teams claim.  Passing `teams=[]`
+        # serialises as `"teams": []`, which _narrow_by_jwt_teams treats as
+        # "no narrowing requested" and returns full DB membership — broader than
+        # the intended shared/public scope.  Omitting the key leaves
+        # _build_user_context seeing jwt_teams_claim=None → shared path (correct).
+        session_jwt = await create_jwt_token(
+            data=jwt_payload,
+            expires_in_minutes=5,
+            **({"teams": [team_id]} if team_id else {}),
+        )
 
         # Legacy admin UI: return full page with fetch-tools button.
         # Generate CSRF token early so it can be embedded in the JS literal
@@ -881,7 +1210,7 @@ async def oauth_callback(
                         try {{
                             const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                                 method: 'POST',
-                                credentials: 'include',
+                                credentials: 'include',  // pragma: allowlist secret
                                 headers: {{
                                     'Accept': 'application/json',
                                     'X-CSRF-Token': {json.dumps(csrf_token)}
@@ -926,6 +1255,8 @@ async def oauth_callback(
         response = HTMLResponse(content=html_content)
         use_secure = (settings.environment == "production") or settings.secure_cookies
         max_age = max(300, settings.csrf_token_expiry)
+
+        # Set CSRF cookie for form protection
         response.set_cookie(
             key=ADMIN_CSRF_COOKIE_NAME,
             value=csrf_token,
@@ -935,49 +1266,35 @@ async def oauth_callback(
             secure=use_secure,
             samesite="strict",
         )
+
+        # Set temporary session JWT cookie for fetch-tools API call
+        # Short-lived (5 minutes) and team-scoped
+        response.set_cookie(
+            key="jwt_token",
+            value=session_jwt,
+            max_age=300,  # 5 minutes
+            path=root_path or "/",
+            httponly=True,
+            secure=use_secure,
+            samesite="strict",
+        )
+
+        if post_oauth_redirect_response is not None:
+            response = post_oauth_redirect_response
+
         return response
 
     except OAuthError as e:
-        logger.error(f"OAuth callback failed: {str(e)}")
-        if is_popup:
-            return _popup_callback_response(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)}, status_code=400)
-        return HTMLResponse(
-            content=f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>OAuth Authorization Failed</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 40px; }}
-                .error {{ color: #dc2626; }}
-                .button {{
-                    display: inline-block;
-                    padding: 10px 20px;
-                    background-color: #3b82f6;
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 5px;
-                    margin-top: 20px;
-                }}
-                .button:hover {{ background-color: #2563eb; }}
-            </style>
-        </head>
-        <body>
-            <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Error:</strong> {escape(str(e))}</p>
-            <p>Please check your OAuth configuration and try again.</p>
-            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
-        </body>
-        </html>
-        """,
-            status_code=400,
-        )
-
-    except Exception as e:
-        logger.error(f"Unexpected error in OAuth callback: {str(e)}")
+        # CWE-209: log full detail server-side only; never render internal error
+        # strings (which may contain upstream hostnames, token-endpoint URLs, or
+        # raw HTTP response bodies) into the browser-facing HTML page.
+        logger.error("OAuth callback failed: %s", sanitize_for_log(str(e)))
+        _oauth_user_msg = "OAuth authorization failed. Please check your configuration and try again."
         if is_popup:
             return _popup_callback_response(
-                csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}, status_code=500
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": _oauth_user_msg},
+                status_code=400,
             )
         return HTMLResponse(
             content=f"""
@@ -1002,7 +1319,49 @@ async def oauth_callback(
         </head>
         <body>
             <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Unexpected Error:</strong> {escape(str(e))}</p>
+            <p><strong>Error:</strong> {escape(_oauth_user_msg)}</p>
+            <p>Please check your OAuth configuration and try again.</p>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+        </body>
+        </html>
+        """,
+            status_code=400,
+        )
+
+    except Exception as e:
+        # CWE-209: log full detail server-side only.
+        logger.error("Unexpected error in OAuth callback: %s", sanitize_for_log(str(e)))
+        _unexpected_user_msg = "An unexpected error occurred during authorization. Please contact your administrator."
+        if is_popup:
+            return _popup_callback_response(
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": _unexpected_user_msg},
+                status_code=500,
+            )
+        return HTMLResponse(
+            content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>OAuth Authorization Failed</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                .error {{ color: #dc2626; }}
+                .button {{
+                    display: inline-block;
+                    padding: 10px 20px;
+                    background-color: #3b82f6;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 5px;
+                    margin-top: 20px;
+                }}
+                .button:hover {{ background-color: #2563eb; }}
+            </style>
+        </head>
+        <body>
+            <h1 class="error">❌ OAuth Authorization Failed</h1>
+            <p><strong>Unexpected Error:</strong> {escape(_unexpected_user_msg)}</p>
             <p>Please contact your administrator for assistance.</p>
             <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
@@ -1012,7 +1371,149 @@ async def oauth_callback(
         )
 
 
+def _validate_post_oauth_redirect(url: str) -> None:
+    """Reject an untrusted post-OAuth redirect target.
+
+    Args:
+        url: Target URL.
+
+    Raises:
+        OAuthError: When the URL matches neither the app origin nor configured external origin.
+    """
+    if not is_allowed_redirect(url, str(settings.app_domain), settings.oauth_redirect_allowed_origin):
+        raise OAuthError(f"redirect_uri_after_oauth must use this gateway origin ({origin_from_url(str(settings.app_domain))}) or the origin in OAUTH_REDIRECT_ALLOWED_ORIGIN")
+
+
+def custom_redirect_after_callback(url: str, status_code: int) -> RedirectResponse:
+    """Validate *url* against trusted redirect origins then return a redirect.
+
+    Args:
+        url: Target URL
+        status_code: HTTP status code for the redirect response.
+
+    Returns:
+        RedirectResponse to url.
+
+    Raises:
+        OAuthError: When an absolute URL matches neither the app origin nor the external allowlist.
+    """
+    _validate_post_oauth_redirect(url)
+    return RedirectResponse(url=url, status_code=status_code, headers={"Referrer-Policy": "no-referrer"})
+
+
+def _token_info_to_status_payload(info: Any) -> Dict[str, Any]:
+    """Convert a ``get_token_info()``/``get_token_info_bulk()`` result into the public ``user_token_status`` shape.
+
+    Three input shapes are distinguished so a backend outage never reads the same as a
+    caller who genuinely never authorized:
+
+    * ``dict`` - a stored token record; its ``status`` field is surfaced as-is.
+    * ``None`` - no token stored for this caller/gateway -> ``"missing"``.
+    * ``Exception`` - the lookup itself failed (DB error, Vault outage, batch timeout)
+      -> ``"unknown"``, so a UI doesn't mistake a transient outage for "never authorized"
+      and prompt a fresh OAuth flow with the IdP.
+
+    Args:
+        info: A token-info dict, ``None``, or a caught ``Exception`` instance.
+
+    Returns:
+        Dict with ``status`` and ``authorized``, plus ``scopes``/``expires_at``/``updated_at``
+        when ``info`` is a dict.
+    """
+    if isinstance(info, BaseException):
+        return {"status": "unknown", "authorized": False}
+    if info is None:
+        return {"status": "missing", "authorized": False}
+    status = info.get("status", "missing")
+    return {
+        "status": status,
+        "authorized": status in ("valid", "near_expiry"),
+        "scopes": info.get("scopes"),
+        "expires_at": info.get("expires_at"),
+        "updated_at": info.get("updated_at"),
+    }
+
+
+async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: str, *, token_storage: Optional[TokenStorageService] = None) -> Dict[str, Any]:
+    """Look up the caller's own OAuth token state for a gateway.
+
+    Wires the already-implemented ``TokenStorageService.get_token_info`` into
+    the status endpoints. Never returns token values - only metadata about
+    whether a token exists and its freshness.
+
+    Args:
+        db: Active database session.
+        current_user: Authenticated requester context (dict or EmailUserResponse).
+        gateway_id: Gateway identifier to look up.
+        token_storage: Optional pre-built ``TokenStorageService`` to reuse across
+            multiple lookups (batch endpoint) instead of constructing a new one
+            per gateway.
+
+    Returns:
+        Dict with ``authorized`` (bool) and ``status`` (one of "missing",
+        "valid", "near_expiry", "expired", "unknown"), plus ``scopes``,
+        ``expires_at`` and ``updated_at`` when a token is stored.
+    """
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
+        return {"status": "missing", "authorized": False}
+
+    if token_storage is None:
+        token_storage = TokenStorageService(db, _build_user_context(current_user))
+
+    try:
+        info = await token_storage.get_token_info(gateway_id, requester_email)
+    except Exception as e:
+        # The backend already logs its own failure; this ties it to the caller/gateway with a
+        # traceback so a transient lookup failure is distinguishable in logs from a genuinely
+        # missing token - and, via "unknown" below, distinguishable to the client too.
+        logger.exception("OAuth token status lookup failed for gateway=%s user=%s: %s", gateway_id, requester_email, str(e))
+        return _token_info_to_status_payload(e)
+
+    return _token_info_to_status_payload(info)
+
+
+def _build_oauth_status_payload(gateway: Gateway) -> Dict[str, Any]:
+    """Build the OAuth config portion of a gateway's status payload (no I/O).
+
+    Shared by the single-gateway and batch status endpoints so the two never
+    drift. Caller is responsible for gateway lookup, access enforcement, and
+    attaching ``user_token_status`` for ``authorization_code`` grants.
+
+    Args:
+        gateway: Gateway record with ``oauth_config`` already loaded.
+
+    Returns:
+        Dict describing OAuth enablement and, when configured, grant details.
+    """
+    if not gateway.oauth_config:
+        return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
+
+    oauth_config = gateway.oauth_config
+    grant_type = oauth_config.get("grant_type")
+
+    if grant_type == "authorization_code":
+        return {
+            "oauth_enabled": True,
+            "grant_type": grant_type,
+            "client_id": oauth_config.get("client_id"),
+            "scopes": oauth_config.get("scopes", []),
+            "authorization_url": oauth_config.get("authorization_url"),
+            "redirect_uri": oauth_config.get("redirect_uri"),
+            "message": "Gateway configured for Authorization Code flow",
+        }
+
+    return {
+        "oauth_enabled": True,
+        "grant_type": grant_type,
+        "client_id": oauth_config.get("client_id"),
+        "scopes": oauth_config.get("scopes", []),
+        "message": f"Gateway configured for {grant_type} flow",
+    }
+
+
 @oauth_router.get("/status/{gateway_id}")
+@require_permission(Permissions.GATEWAYS_READ)
 async def get_oauth_status(
     gateway_id: str,
     request: Request,
@@ -1023,6 +1524,10 @@ async def get_oauth_status(
 
     Requires authentication and authorization to prevent information disclosure
     about gateway OAuth configuration (client IDs, scopes, etc.).
+
+    For the authorization_code grant, also reports the *caller's own* token
+    state (``user_token_status``), derived from authenticated identity - never
+    a client-supplied user. This is per-caller and never shared across users.
 
     Args:
         gateway_id: ID of the gateway
@@ -1045,39 +1550,207 @@ async def get_oauth_status(
 
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
-        if not gateway.oauth_config:
-            return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
-
-        # Get OAuth configuration info
-        oauth_config = gateway.oauth_config
-        grant_type = oauth_config.get("grant_type")
-
-        if grant_type == "authorization_code":
-            # For now, return basic info - in a real implementation you might want to
-            # show authorized users, token status, etc.
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "authorization_url": oauth_config.get("authorization_url"),
-                "redirect_uri": oauth_config.get("redirect_uri"),
-                "message": "Gateway configured for Authorization Code flow",
-            }
-        else:
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "message": f"Gateway configured for {grant_type} flow",
-            }
+        payload = _build_oauth_status_payload(gateway)
+        if payload.get("grant_type") == "authorization_code":
+            payload["user_token_status"] = await _get_caller_token_status(db, current_user, gateway_id)
+        return payload
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get OAuth status: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
+
+
+OAUTH_STATUS_BATCH_MAX_IDS = 100
+
+# Upper bound on how long the batch endpoint will wait for the whole
+# get_token_info_bulk() call, so a slow/unresponsive backend (worst case:
+# OAUTH_STATUS_BATCH_MAX_IDS sequential per-id Vault lookups, each retried
+# with exponential backoff) can't hold the request open indefinitely. On
+# timeout every pending id reports "unknown" rather than failing the batch.
+OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS = 15.0
+
+
+@oauth_router.get("/status")
+@require_permission(Permissions.GATEWAYS_READ)
+async def get_oauth_status_batch(
+    request: Request,
+    gateway_ids: Annotated[Optional[list[str]], Query(description="Gateway ids to look up; repeat the parameter for multiple ids")] = None,
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> Dict[str, Dict[str, Any]]:
+    """Get OAuth status for multiple gateways in a single call.
+
+    Batched equivalent of ``GET /oauth/status/{gateway_id}`` so a grid of
+    cards (catalog, gateways list) can render caller-scoped OAuth state
+    without issuing one request per card.
+
+    Args:
+        request: Incoming request with token-scoping context.
+        gateway_ids: Gateway identifiers to look up (repeated query param).
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+
+    Returns:
+        Mapping of gateway_id to the same payload ``GET /oauth/status/{gateway_id}``
+        returns. Gateway ids that don't exist or aren't visible to the caller
+        are omitted rather than failing the whole batch.
+
+    Raises:
+        HTTPException: If no gateway ids are supplied, or more than
+            ``OAUTH_STATUS_BATCH_MAX_IDS`` are requested at once.
+    """
+    if not gateway_ids:
+        raise HTTPException(status_code=400, detail="gateway_ids is required")
+
+    deduped_ids = list(dict.fromkeys(gateway_ids))  # gateway_ids is non-empty here (checked above)
+    if len(deduped_ids) > OAUTH_STATUS_BATCH_MAX_IDS:
+        raise HTTPException(status_code=400, detail=f"Too many gateway_ids requested (max {OAUTH_STATUS_BATCH_MAX_IDS})")
+
+    # Single query for all requested gateways - the batch route exists specifically
+    # to avoid N+1 round trips.
+    gateways_by_id = {gw.id: gw for gw in db.execute(select(Gateway).where(Gateway.id.in_(deduped_ids))).scalars().all()}
+
+    accessible: Dict[str, Gateway] = {}
+    for gateway_id in deduped_ids:
+        gateway = gateways_by_id.get(gateway_id)
+        if not gateway:
+            # Not found - omit rather than failing the batch.
+            continue
+
+        try:
+            await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                logger.error("OAuth status batch: access check failed for gateway=%s: %s", gateway_id, exc.detail)
+            # Not accessible to this caller (or a lookup failure, logged above) - omit rather than failing the batch.
+            continue
+        except Exception:
+            logger.exception("OAuth status batch: access check raised for gateway=%s", gateway_id)
+            continue
+
+        accessible[gateway_id] = gateway
+
+    results: Dict[str, Dict[str, Any]] = {}
+    auth_code_ids: list[str] = []
+    for gateway_id, gateway in accessible.items():
+        try:
+            payload = _build_oauth_status_payload(gateway)
+        except Exception:
+            logger.exception("OAuth status batch: failed to build status for gateway=%s", gateway_id)
+            continue
+        results[gateway_id] = payload
+        if payload.get("grant_type") == "authorization_code":
+            auth_code_ids.append(gateway_id)
+
+    if not auth_code_ids:
+        return results
+
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
+        for gateway_id in auth_code_ids:
+            results[gateway_id]["user_token_status"] = {"status": "missing", "authorized": False}
+        return results
+
+    # One bulk token-info lookup for the whole batch instead of one per gateway id -
+    # the DB backend answers this with a single query; other backends fall back to
+    # AbstractTokenBackend's default per-id loop. Bounded by a timeout so a slow or
+    # unresponsive backend can't hold the request open indefinitely (see constant docstring).
+    token_storage = TokenStorageService(db, _build_user_context(current_user))
+    try:
+        bulk_token_info = await asyncio.wait_for(
+            token_storage.get_token_info_bulk(auth_code_ids, requester_email),
+            timeout=OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "OAuth status batch: token lookup timed out after %.0fs for %d gateway(s)",
+            OAUTH_STATUS_BATCH_TOKEN_LOOKUP_TIMEOUT_SECONDS,
+            len(auth_code_ids),
+        )
+        bulk_token_info = {gateway_id: TimeoutError("OAuth status batch token lookup timed out") for gateway_id in auth_code_ids}
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("OAuth status batch: bulk token lookup failed")
+        bulk_token_info = {gateway_id: exc for gateway_id in auth_code_ids}
+
+    for gateway_id in auth_code_ids:
+        results[gateway_id]["user_token_status"] = _token_info_to_status_payload(bulk_token_info.get(gateway_id))
+
+    return results
+
+
+async def _fetch_tools_via_token_exchange(
+    gateway_id: str,
+    gateway_service: Any,
+    requester_email: Optional[str],
+    request: Request,
+    *,
+    gateway_not_found_error: type,
+    gateway_connection_error: type,
+    gateway_error: type,
+) -> Dict[str, Any]:
+    """Fetch tools for a token-exchange gateway via the manual-refresh pipeline.
+
+    Token-exchange has no consent step: delegate to the manual-refresh pipeline,
+    which exchanges the caller's inbound JWT (bearer header or jwt_token cookie)
+    via ``_resolve_token_exchange_header`` (issue #5382). Exception order matters:
+    ``GatewayNotFoundError`` and ``GatewayConnectionError`` both subclass
+    ``GatewayError`` — a bare ``GatewayError`` clause first would misclassify
+    not-found and connection failures as 409 instead of 404/400.
+
+    Blast radius note: ``extract_subject_jwt()`` only checks the inbound JWT's
+    compact-serialization *shape*, not its ``exp`` claim. An expired jwt_token
+    cookie still passes that check, gets forwarded as the RFC 8693 subject_token,
+    and is rejected by the Authorization Server -- which trips
+    ``_resolve_token_exchange_header()``'s ``set_failure()`` negative cache for
+    the ``(gateway_id, user, audience)`` key. Until that cache entry's TTL
+    drains, every subsequent call here for the same user+gateway+audience
+    short-circuits via ``is_failed()``, even after the user re-authenticates
+    with a fresh cookie. A future increase to the negative-cache TTL widens
+    this window and should account for it.
+
+    Args:
+        gateway_id: ID of the gateway to fetch tools for.
+        gateway_service: GatewayService instance used to perform the refresh.
+        requester_email: Email of the requesting user, or None.
+        request: Incoming request, forwarded so the subject token can be resolved.
+        gateway_not_found_error: The caller's ``GatewayNotFoundError`` class, passed
+            in rather than re-imported here so both scopes reference the same
+            exception object the outer handler's ``except`` clauses were built with.
+        gateway_connection_error: The caller's ``GatewayConnectionError`` class, same rationale.
+        gateway_error: The caller's ``GatewayError`` class, same rationale.
+
+    Returns:
+        Dict containing success status and message with number of tools fetched.
+
+    Raises:
+        HTTPException: If the gateway is not found (404), the connection fails
+            (re-raised for the caller to map to 400), a refresh is already in
+            progress (409), or the refresh otherwise fails (400).
+    """
+    try:
+        refresh_result = await gateway_service.refresh_gateway_manually(
+            gateway_id=gateway_id,
+            include_resources=True,
+            include_prompts=True,
+            user_email=requester_email,
+            request_headers=dict(request.headers),
+        )
+    except gateway_not_found_error:
+        raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
+    except gateway_connection_error:
+        raise  # outer handler maps to 400
+    except gateway_error as ge:
+        logger.warning(f"Token-exchange tool refresh conflict for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {SecurityValidator.sanitize_log_message(str(ge))}")
+        raise HTTPException(status_code=409, detail="Refresh already in progress for this gateway")
+
+    if refresh_result.get("success") is False:
+        logger.error(f"Token-exchange tool fetch failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {SecurityValidator.sanitize_log_message(str(refresh_result.get('error')))}")
+        raise HTTPException(status_code=400, detail="Failed to fetch tools")
+
+    fetched = int(refresh_result.get("tools_added", 0)) + int(refresh_result.get("tools_updated", 0))
+    return {"success": True, "message": f"Successfully fetched and created {fetched} tools"}
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
@@ -1089,7 +1762,7 @@ async def fetch_tools_after_oauth(
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
+    """Fetch tools from the MCP server after OAuth completion (authorization_code) or via on-demand token exchange (token-exchange).
 
     Args:
         gateway_id: ID of the gateway to fetch tools for
@@ -1114,11 +1787,38 @@ async def fetch_tools_after_oauth(
             requester_email = None
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
+        # Use _build_user_context so that jwt_teams_claim drives path selection
+        # for session tokens. Reading request.state.token_teams directly is wrong
+        # here because admin bypass in resolve_session_teams collapses it to None
+        # even when the 5-min callback JWT carries teams=["engineering"].
+        user_context = _build_user_context(current_user)
+        token_teams = user_context.get("teams")
+
+        logger.debug(
+            "fetch_tools_after_oauth: gateway=%s, token_use=%s, resolved_teams=%s",
+            gateway_id,
+            current_user.get("token_use") if isinstance(current_user, dict) else "n/a",
+            token_teams,
+        )
+
         # First-Party
-        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
+        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNotFoundError, GatewayService
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
+
+        grant_type = gateway.oauth_config.get("grant_type") if isinstance(gateway.oauth_config, dict) else None
+        if grant_type == GRANT_TYPE_TOKEN_EXCHANGE:
+            return await _fetch_tools_via_token_exchange(
+                gateway_id,
+                gateway_service,
+                requester_email,
+                request,
+                gateway_not_found_error=GatewayNotFoundError,
+                gateway_connection_error=GatewayConnectionError,
+                gateway_error=GatewayError,
+            )
+
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email, teams=token_teams)
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
@@ -1126,11 +1826,10 @@ async def fetch_tools_after_oauth(
     except HTTPException:
         raise
     except GatewayConnectionError as e:
-        # Configuration or token claim mismatch — 400 so operators know to fix oauth_config
-        logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
+        logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
         raise HTTPException(status_code=400, detail="Failed to fetch tools")
     except Exception as e:
-        logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
+        logger.error("FETCH-TOOLS FAILED [Exception] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch tools")
 
 
@@ -1140,6 +1839,7 @@ async def fetch_tools_after_oauth(
 
 
 @oauth_router.get("/registered-clients")
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False, global_only=True)
 async def list_registered_oauth_clients(request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
@@ -1148,7 +1848,7 @@ async def list_registered_oauth_clients(request: Request, current_user: EmailUse
 
     Args:
         request: The FastAPI request object.
-        current_user: The authenticated user (admin access required)
+        current_user: The authenticated user (requires ``admin.oauth_clients:read`` and un-narrowed admin scope)
         db: Database session
 
     Returns:
@@ -1193,6 +1893,7 @@ async def list_registered_oauth_clients(request: Request, current_user: EmailUse
 
 
 @oauth_router.get("/registered-clients/{gateway_id}")
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False, global_only=True)
 async def get_registered_client_for_gateway(
     gateway_id: str,
     request: Request,
@@ -1204,7 +1905,7 @@ async def get_registered_client_for_gateway(
     Args:
         gateway_id: The gateway ID to lookup
         request: The FastAPI request object.
-        current_user: The authenticated user
+        current_user: The authenticated user (requires ``admin.oauth_clients:read`` and un-narrowed admin scope)
         db: Database session
 
     Returns:
@@ -1248,6 +1949,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_DELETE, allow_admin_bypass=False, global_only=True)
 async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
@@ -1258,7 +1960,7 @@ async def delete_registered_client(client_id: str, request: Request, current_use
     Args:
         client_id: The registered client ID to delete
         request: The FastAPI request object.
-        current_user: The authenticated user (admin access required)
+        current_user: The authenticated user (requires ``admin.oauth_clients:delete`` and un-narrowed admin scope)
         db: Database session
 
     Returns:

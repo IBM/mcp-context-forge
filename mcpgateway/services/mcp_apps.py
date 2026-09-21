@@ -44,6 +44,9 @@ NESTED_RESOURCE_URI_KEYS = ("resourceUri", "resource_uri")
 MAX_LOGGED_URI_LENGTH = 120
 # Stands in for an authority that cannot be shown to be credential-free.
 REDACTED_AUTHORITY = "***"
+# Standard MCP messages an app may send over the AppBridge. Ordered so the
+# advertised capability payload stays stable; the router matches on membership.
+MCP_APPS_BRIDGE_METHODS = ("tools/call", "resources/read", "notifications/message", "ping")
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -81,7 +84,7 @@ def mcp_apps_capability() -> Dict[str, Any]:
     return {
         "version": MCP_UI_DEFAULT_VERSION,
         "resources": {"schemes": ["ui://"]},
-        "bridge": {"methods": ["tools/call"]},
+        "bridge": {"methods": list(MCP_APPS_BRIDGE_METHODS)},
     }
 
 

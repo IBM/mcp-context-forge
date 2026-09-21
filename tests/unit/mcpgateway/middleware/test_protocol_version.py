@@ -33,6 +33,21 @@ def _make_request(path: str, headers: Iterable[Tuple[bytes, bytes]] | None = Non
     return Request(scope, receive)
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/servers/server-1/sse", True),
+        ("/v1/virtual-servers/server-1/sse", True),
+        ("/v1/virtual-servers/server-1/ws", True),
+        ("/v1/virtual-servers/server-1/tools", False),
+    ],
+)
+def test_mcp_endpoint_classification_handles_alias(path: str, expected: bool) -> None:
+    """Versioned virtual servers share the standard transport classification."""
+    middleware = MCPProtocolVersionMiddleware(app=None)
+    assert middleware._is_mcp_endpoint(path) is expected
+
+
 @pytest.mark.asyncio
 async def test_non_mcp_endpoint_skips_validation():
     middleware = MCPProtocolVersionMiddleware(app=None)

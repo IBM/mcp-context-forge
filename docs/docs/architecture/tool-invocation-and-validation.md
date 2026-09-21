@@ -6,10 +6,23 @@ ContextForge invokes tools across several very different backends — federated 
 
 [#4202]: https://github.com/IBM/mcp-context-forge/issues/4202
 
+> **Scope note:** this document covers *output*-schema validation (Validators A/B/C below),
+> which runs after a tool actually dispatches. *Input*-schema validation — checking the
+> caller's `arguments` against the tool's `input_schema` before dispatch — is a separate,
+> earlier gate shared by `ToolService.invoke_tool` and the `POST /tools/preview/{name}`
+> dry-run endpoint via `_resolve_tool_for_invocation` / `_validate_tool_input_arguments`; see
+> [API Usage — Preview a Tool Call](../manage/api-usage.md#preview-a-tool-call-dry-run).
+>
+> **Schemas are untrusted input.** Both gates treat a tool's `input_schema` / `output_schema` as
+> tool-controlled data — a federated tool ships its own — so validation never reaches outside the
+> schema document. A `$ref`, `$dynamicRef`, or `$recursiveRef` that is not a same-document
+> reference is refused, and validators are built against a registry with no `retrieve` callable,
+> so an unresolvable reference fails validation closed rather than making the gateway fetch a URL.
+
 ## High-level flow
 
 ```
- Downstream MCP client (e.g. mcp-cli via mcpgateway.wrapper)
+ Downstream MCP client
                    │  tools/call (JSON-RPC)
                    ▼
  ┌──────────────────────────────────────────────────────────┐
@@ -152,7 +165,7 @@ A2A tools do not currently route through Validator B. In practice this means gat
 
 ## Known gaps and follow-ups
 
-- **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-mcp-protocol-e2e` e2e tests.
+- **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-e2e` tests.
 
 - **[#4208] — success path with declared schema but empty output.** Validator B currently returns `True` when it cannot obtain any structured payload, even if an `outputSchema` is declared. The MCP spec says servers MUST provide conforming structured output in that case. Tightening requires deciding how to handle upstream servers that legitimately return empty success bodies (HTTP 204, REST tools without data shapes) — scoped out of #4202 because the blast radius is wider.
 
@@ -168,10 +181,10 @@ Unit tests:
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress` — Validator C short-circuit, local (non-pooled) branch.
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_session_affinity_forwarded_preserves_is_error` — Validator C short-circuit, worker-forwarded branch.
 
-End-to-end (via `make test-mcp-protocol-e2e`):
+End-to-end (via `make test-e2e`):
 
-- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-test-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
-- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-test-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
+- `tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-time-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
+- `tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-time-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
 
 ## Adding a new backend
 

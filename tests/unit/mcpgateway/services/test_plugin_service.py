@@ -13,7 +13,7 @@ import pytest
 from cpex.framework.models import PluginMode
 
 import mcpgateway.services.plugin_service as plugin_service_module
-from mcpgateway.services.plugin_service import PluginService, get_plugin_service
+from mcpgateway.services.plugin_service import PluginService, get_plugin_service, sync_plugin_service_from_runtime
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +65,37 @@ def test_get_plugin_manager_and_setter(mock_manager):
     assert service.get_plugin_manager() is None
     service.set_plugin_manager(mock_manager)
     assert service.get_plugin_manager() == mock_manager
+
+
+@pytest.mark.asyncio
+async def test_sync_plugin_service_from_runtime_updates_caches(monkeypatch, mock_manager):
+    """Runtime manager refreshes both application and service caches."""
+    get_manager = AsyncMock(return_value=mock_manager)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", get_manager)
+    request = MagicMock()
+    service = PluginService()
+
+    await sync_plugin_service_from_runtime(request, service)
+
+    get_manager.assert_awaited_once_with()
+    assert request.app.state.plugin_manager is mock_manager
+    assert service.get_plugin_manager() is mock_manager
+
+
+@pytest.mark.asyncio
+async def test_sync_plugin_service_from_runtime_logs_failure(monkeypatch, caplog):
+    """Runtime refresh failure is logged and leaves caches unchanged."""
+    get_manager = AsyncMock(side_effect=RuntimeError("runtime unavailable"))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", get_manager)
+    request = MagicMock()
+    existing_manager = MagicMock()
+    service = PluginService(existing_manager)
+
+    with caplog.at_level("WARNING", logger=plugin_service_module.__name__):
+        await sync_plugin_service_from_runtime(request, service)
+
+    assert service.get_plugin_manager() is existing_manager
+    assert "Plugin cache refresh failed (runtime unavailable)" in caplog.text
 
 
 def test_get_all_plugins_empty_manager():

@@ -267,7 +267,7 @@ export function validateInputName(name, type = "input") {
  */
 export function validateUrl(url, label = "") {
   if (!url || typeof url !== "string") {
-    return { valid: false, error: `${label || "URL"} is required` };
+    return { valid: false, error: `Enter a ${label || "URL"}.` };
   }
 
   try {
@@ -277,13 +277,13 @@ export function validateUrl(url, label = "") {
     if (!allowedProtocols.includes(urlObj.protocol)) {
       return {
         valid: false,
-        error: "Only HTTP and HTTPS URLs are allowed",
+        error: "Use http or https for the URL.",
       };
     }
 
     return { valid: true, value: url };
   } catch (error) {
-    return { valid: false, error: "Invalid URL format" };
+    return { valid: false, error: "Enter a complete URL, for example https://example.com." };
   }
 }
 
@@ -301,7 +301,7 @@ export function validateJson(jsonString, fieldName = "JSON") {
   } catch (error) {
     return {
       valid: false,
-      error: `Invalid ${fieldName} format: ${error.message}`,
+      error: `Cannot parse ${fieldName} as JSON: ${error.message}`,
     };
   }
 }

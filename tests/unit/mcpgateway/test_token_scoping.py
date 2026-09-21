@@ -17,6 +17,7 @@ from __future__ import annotations
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth_context import extract_token_team_ids
 
 # ---------------------------------------------------------------------------
 # D2.1: normalize_token_teams truth table
@@ -105,6 +106,26 @@ class TestNormalizeTokenTeams:
         """Dict with id=None is skipped."""
         result = normalize_token_teams({"teams": [{"id": None}]})
         assert result == []
+
+
+class TestExtractTokenTeamIds:
+    """Test endpoint-level extraction from already-normalized user contexts."""
+
+    def test_missing_token_teams_preserves_fallback(self):
+        """Missing context key is not re-normalized as public-only."""
+        assert extract_token_team_ids({"email": "admin@example.com"}) is None
+
+    def test_none_token_teams_preserves_admin_bypass(self):
+        """token_teams=None means no endpoint-level narrowing."""
+        assert extract_token_team_ids({"token_teams": None}) is None
+
+    def test_empty_token_teams_stays_empty(self):
+        """Explicit empty scope remains deny-all for team listings."""
+        assert extract_token_team_ids({"token_teams": []}) == []
+
+    def test_mixed_entries_extract_ids(self):
+        """String IDs and dict-shaped IDs are normalized to a list of strings."""
+        assert extract_token_team_ids({"token_teams": ["team-a", {"id": "team-b"}, {"id": ""}, 42]}) == ["team-a", "team-b"]
 
 
 # ---------------------------------------------------------------------------

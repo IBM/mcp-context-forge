@@ -1251,6 +1251,8 @@ def test_permissions_helpers():
     assert "llm.invoke" in permissions
     assert "admin.metrics" in permissions
     assert "admin.sso_providers:read" in permissions
+    assert "admin.oauth_clients:read" in permissions
+    assert "admin.oauth_clients:delete" in permissions
     assert "logs:read" in permissions
     assert db.Permissions.ALL_PERMISSIONS not in permissions
 
@@ -1261,6 +1263,9 @@ def test_permissions_helpers():
     assert "llm.read" in by_resource["llm"]
     assert "logs" in by_resource
     assert "logs:read" in by_resource["logs"]
+    assert "admin" in by_resource
+    assert "admin.oauth_clients:read" in by_resource["admin"]
+    assert "admin.oauth_clients:delete" in by_resource["admin"]
 
 
 def test_permissions_helpers_without_separator(monkeypatch):
@@ -3046,3 +3051,106 @@ def test_db_prompt_title_property(test_db):
     test_db.flush()
 
     assert prompt.title == "Prompt Title"
+
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy OTel instrumentation block (db.py lines 252-260)
+# ---------------------------------------------------------------------------
+
+
+def test_db_otel_sqlalchemy_instrumentation_success(monkeypatch, caplog):
+    """When both OTel observability and SQLAlchemy instrumentation flags are set,
+    the SQLAlchemyInstrumentor is imported and instrument() called with the engine."""
+    # Standard
+    import importlib
+    import sys
+    import types
+
+    # Third-Party
+    import sqlalchemy
+
+    original_url = db.settings.database_url
+    original_otel = db.settings.otel_enable_observability
+    original_sqla = db.settings.otel_sqlalchemy_instrumentation_enabled
+    original_obs = db.settings.observability_enabled
+
+    called = {}
+
+    class _FakeInstrumentor:
+        def instrument(self, engine=None):
+            called["engine"] = engine
+
+    fake_otel_mod = types.ModuleType("opentelemetry.instrumentation.sqlalchemy")
+    fake_otel_mod.SQLAlchemyInstrumentor = _FakeInstrumentor
+
+    try:
+        monkeypatch.setattr(db.settings, "database_url", "sqlite+pysqlite:///:memory:")
+        monkeypatch.setattr(db.settings, "otel_enable_observability", True)
+        monkeypatch.setattr(db.settings, "otel_sqlalchemy_instrumentation_enabled", True)
+        monkeypatch.setattr(db.settings, "observability_enabled", False)
+        monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.sqlalchemy", fake_otel_mod)
+
+        real_create_engine = sqlalchemy.create_engine
+
+        def safe_create_engine(*_a, **_k):
+            return real_create_engine("sqlite+pysqlite:///:memory:")
+
+        with monkeypatch.context() as m, caplog.at_level(logging.INFO):
+            m.setattr(sqlalchemy, "create_engine", safe_create_engine)
+            importlib.reload(db)
+
+        assert "engine" in called
+        assert any("SQLAlchemy OTel instrumentation enabled" in record.message for record in caplog.records)
+    finally:
+        monkeypatch.setattr(db.settings, "database_url", original_url)
+        monkeypatch.setattr(db.settings, "otel_enable_observability", original_otel)
+        monkeypatch.setattr(db.settings, "otel_sqlalchemy_instrumentation_enabled", original_sqla)
+        monkeypatch.setattr(db.settings, "observability_enabled", original_obs)
+        importlib.reload(db)
+
+
+def test_db_otel_sqlalchemy_instrumentation_import_error(monkeypatch, caplog):
+    """When otel_sqlalchemy_instrumentation_enabled is True but the package is absent,
+    the ImportError is caught and a warning is logged."""
+    # Standard
+    import builtins
+    import importlib
+
+    # Third-Party
+    import sqlalchemy
+
+    original_url = db.settings.database_url
+    original_otel = db.settings.otel_enable_observability
+    original_sqla = db.settings.otel_sqlalchemy_instrumentation_enabled
+    original_obs = db.settings.observability_enabled
+
+    real_import = builtins.__import__
+
+    def _block_otel_sqla(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        if name == "opentelemetry.instrumentation.sqlalchemy":
+            raise ImportError("package not installed")
+        return real_import(name, globals, locals, fromlist, level)
+
+    try:
+        monkeypatch.setattr(db.settings, "database_url", "sqlite+pysqlite:///:memory:")
+        monkeypatch.setattr(db.settings, "otel_enable_observability", True)
+        monkeypatch.setattr(db.settings, "otel_sqlalchemy_instrumentation_enabled", True)
+        monkeypatch.setattr(db.settings, "observability_enabled", False)
+        monkeypatch.setattr(builtins, "__import__", _block_otel_sqla)
+
+        real_create_engine = sqlalchemy.create_engine
+
+        def safe_create_engine(*_a, **_k):
+            return real_create_engine("sqlite+pysqlite:///:memory:")
+
+        with monkeypatch.context() as m, caplog.at_level(logging.WARNING):
+            m.setattr(sqlalchemy, "create_engine", safe_create_engine)
+            importlib.reload(db)
+
+        assert any("package unavailable" in record.message or "SQL OTel spans disabled" in record.message for record in caplog.records)
+    finally:
+        monkeypatch.setattr(db.settings, "database_url", original_url)
+        monkeypatch.setattr(db.settings, "otel_enable_observability", original_otel)
+        monkeypatch.setattr(db.settings, "otel_sqlalchemy_instrumentation_enabled", original_sqla)
+        monkeypatch.setattr(db.settings, "observability_enabled", original_obs)
+        importlib.reload(db)

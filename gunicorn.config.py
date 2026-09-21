@@ -65,7 +65,15 @@ reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 # the key will be decrypted by the SSL key manager before Gunicorn starts.
 # certfile = 'certs/cert.pem'
 # keyfile  = 'certs/key.pem'
-# ca-certs = '/etc/ca_bundle.crt'
+#
+# Inbound mTLS (client certificate verification) is wired the same way, via
+# run-gunicorn.sh command-line arguments driven by two environment variables:
+#   CA_CERTS  -> --ca-certs  <path>   CA bundle used to verify client certificates
+#   CERT_REQS -> --cert-reqs <0|1|2>  0=none (default), 1=optional, 2=required
+# Both are forwarded verbatim through UvicornWorker's ssl_options into uvicorn's
+# SSL context. Only the CA_CERTS bundle is trusted; the system CA store is never
+# loaded. No on_starting() handling is required - unlike passphrase-protected
+# keys, these values need no pre-processing.
 
 # Global variable to store the prepared key file path
 _prepared_key_file = None
@@ -85,6 +93,21 @@ def on_starting(server):
     # and a passphrase is provided
     ssl_enabled = os.environ.get("SSL", "false").lower() == "true"
     ssl_key_password = os.environ.get("SSL_KEY_PASSWORD")
+
+    # If ssl_version is passed as a string from CLI, normalize to integer for Uvicorn
+    if ssl_enabled and hasattr(server, "cfg"):
+        try:
+            ssl_ver = server.cfg.ssl_version
+            if isinstance(ssl_ver, str):
+                import ssl as _ssl
+                if ssl_ver.isdigit():
+                    server.cfg.set("ssl_version", int(ssl_ver))
+                elif ssl_ver.startswith("PROTOCOL_") and hasattr(_ssl, ssl_ver):
+                    server.cfg.set("ssl_version", getattr(_ssl, ssl_ver))
+                else:
+                    server.log.warning("Unrecognized SSL_VERSION value %r; leaving unchanged (boot may fail downstream)", ssl_ver)
+        except Exception as e:
+            server.log.warning("Failed to normalize Gunicorn ssl_version setting: %s", e)
 
     if ssl_enabled and ssl_key_password:
         try:

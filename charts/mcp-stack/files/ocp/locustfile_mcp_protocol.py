@@ -8,7 +8,7 @@ It exists to isolate MCP protocol overhead from REST API / admin UI / other
 endpoints so we can get a clean RPS number for just the MCP path.
 
 Test scenarios (selectable via --class-picker):
-  MCPAgentUser        (weight 10) - Realistic agent: init once, then call 6 tools
+  MCPAgentUser        (weight 10) - Realistic agent: init once, then call from the discovered tool pool
   MCPToolCallerUser   (weight  5) - Heavy tool caller: tools/call in a tight loop
   MCPDiscoveryUser    (weight  3) - Discovery heavy: tools/list, resources/list, prompts/list
   MCPSessionChurnUser (weight  2) - Session churn: new session per request cycle
@@ -32,6 +32,11 @@ Environment Variables:
     LOADTEST_HOST:             Gateway URL           (default: http://localhost:4444)
     MCP_SERVER_ID:             Virtual server UUID   (auto-detected from /servers if empty)
     MCP_TOOL_NAMES:            Comma-sep tool names  (auto-detected from tools/list if empty)
+    MCP_BENCHMARK_TOOL_DENYLIST: Comma-sep tool names to exclude
+                               (default: schema_error,flaky — deliberate
+                                failure fixtures; set to "" to include them)
+    MCP_BENCHMARK_TOOL_POOL_SIZE: Max tools each user may call
+                               (default: 0 = all discovered tools)
     JWT_SECRET_KEY:            JWT signing secret     (default: my-test-key-but-now-longer-than-32-bytes)
     JWT_ALGORITHM:             JWT algorithm          (default: HS256)
     JWT_AUDIENCE:              JWT audience           (default: mcpgateway-api)
@@ -110,6 +115,17 @@ BEARER_TOKEN = _cfg("MCPGATEWAY_BEARER_TOKEN", "")
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
 MCP_SERVER_IDS_STR = _cfg("MCP_SERVER_IDS", "")
 MCP_TOOL_NAMES_STR = _cfg("MCP_TOOL_NAMES", "")
+# Tools excluded from the benchmark pool. Defaults cover the fast-time-server's
+# deliberate failure fixtures: schema_error always returns isError, and flaky
+# injects failures by design. Set MCP_BENCHMARK_TOOL_DENYLIST="" to include them.
+_denylist_raw = os.environ.get("MCP_BENCHMARK_TOOL_DENYLIST", _ENV.get("MCP_BENCHMARK_TOOL_DENYLIST", "schema_error,flaky"))
+MCP_TOOL_DENYLIST: set[str] = {entry.strip().lower().replace("-", "_") for entry in _denylist_raw.split(",") if entry.strip()}
+# Maximum number of discovered tools each user may call. 0 = no cap (default).
+# Set MCP_BENCHMARK_TOOL_POOL_SIZE=6 to reproduce the original 6-tool agent scenario.
+try:
+    MCP_TOOL_POOL_SIZE: int = max(0, int(_cfg("MCP_BENCHMARK_TOOL_POOL_SIZE", "0") or 0))
+except ValueError:
+    MCP_TOOL_POOL_SIZE = 0
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
 logging.basicConfig(level=getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
@@ -145,6 +161,7 @@ class ServerTarget:
     tool_names: list[str]
     resource_uris: list[str]
     prompt_targets: list["PromptTarget"]
+    tool_schemas: dict[str, dict]
 
 
 @dataclass(frozen=True)
@@ -158,6 +175,7 @@ _tool_names: list[str] = []
 _resource_uris: list[str] = []
 _prompt_targets: list[PromptTarget] = []
 _server_targets: list[ServerTarget] = []
+_tool_schemas: dict[str, dict] = {}
 _jwt_token: str | None = None
 _server_target_index = 0
 
@@ -269,7 +287,7 @@ def _get_token() -> str:
 
 def _auto_detect(host: str) -> None:
     """Discover MCP server targets and per-target inventories from the gateway REST API."""
-    global _server_id, _tool_names, _resource_uris, _prompt_targets, _server_targets  # pylint: disable=global-statement
+    global _server_id, _tool_names, _resource_uris, _prompt_targets, _server_targets, _tool_schemas  # pylint: disable=global-statement
 
     # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
@@ -346,11 +364,18 @@ def _auto_detect(host: str) -> None:
         if init_result:
             server_name = init_result.get("serverInfo", {}).get("name") or server_name
 
+        tool_schemas: dict[str, dict] = {}
         if MCP_TOOL_NAMES_STR:
             tool_names = [t.strip() for t in MCP_TOOL_NAMES_STR.split(",") if t.strip()]
         else:
             result = _mcp_call("tools/list")
-            tool_names = [t["name"] for t in result.get("tools", []) if "name" in t] if result else []
+            tools = result.get("tools", []) if result else []
+            tool_names = [t["name"] for t in tools if "name" in t]
+            for tool in tools:
+                name = tool.get("name")
+                schema = tool.get("inputSchema")
+                if isinstance(name, str) and isinstance(schema, dict):
+                    tool_schemas[name] = schema
 
         result = _mcp_call("resources/list")
         resource_uris = [r["uri"] for r in result.get("resources", []) if "uri" in r] if result else []
@@ -369,6 +394,11 @@ def _auto_detect(host: str) -> None:
                         required_arguments[arg_name] = _default_prompt_argument_value(prompt_name, arg_name)
                 prompt_targets.append(PromptTarget(name=prompt_name, required_arguments=required_arguments))
 
+        denied = [name for name in tool_names if _is_denied(name)]
+        if denied:
+            tool_names = [name for name in tool_names if not _is_denied(name)]
+            logger.info("server=%s: excluded %d denylisted tool(s): %s", server_id, len(denied), ", ".join(denied))
+
         discovered_targets.append(
             ServerTarget(
                 server_id=server_id,
@@ -376,6 +406,7 @@ def _auto_detect(host: str) -> None:
                 tool_names=tool_names,
                 resource_uris=resource_uris,
                 prompt_targets=prompt_targets,
+                tool_schemas=tool_schemas,
             )
         )
 
@@ -389,6 +420,7 @@ def _auto_detect(host: str) -> None:
     _tool_names = primary.tool_names
     _resource_uris = primary.resource_uris
     _prompt_targets = primary.prompt_targets
+    _tool_schemas = dict(primary.tool_schemas)
 
     logger.info("Using %d MCP server target(s)", len(_server_targets))
     for target in _server_targets:
@@ -400,6 +432,16 @@ def _auto_detect(host: str) -> None:
             len(target.resource_uris),
             len(target.prompt_targets),
         )
+
+    for target in _server_targets:
+        unschematized = [name for name in target.tool_names if not target.tool_schemas.get(name)]
+        if unschematized:
+            logger.warning(
+                "server=%s: %d tool(s) have no inputSchema; falling back to name heuristics: %s",
+                target.server_id,
+                len(unschematized),
+                ", ".join(unschematized),
+            )
 
 
 # =============================================================================
@@ -510,6 +552,144 @@ def _jsonrpc(method: str, params: dict | None = None) -> dict:
     return payload
 
 
+def _synth_value(prop_name: str, spec: dict) -> Any:
+    """Synthesize one benchmark-safe value for a JSON Schema property.
+
+    Args:
+        prop_name: Property name, used to pick realistic string values.
+        spec: JSON Schema fragment describing the property.
+
+    Returns:
+        A value matching the declared type, enum, or default.
+    """
+    if isinstance(spec.get("enum"), list) and spec["enum"]:
+        return spec["enum"][0]
+    if "default" in spec:
+        return spec["default"]
+
+    prop_type = spec.get("type")
+    if isinstance(prop_type, list):
+        prop_type = next((t for t in prop_type if t != "null"), "string")
+
+    if prop_type == "integer":
+        return 1
+    if prop_type == "number":
+        return 1.0
+    if prop_type == "boolean":
+        return True
+    if prop_type == "array":
+        items = spec.get("items")
+        return [_synth_value(prop_name, items)] if isinstance(items, dict) and items else []
+    if prop_type == "object":
+        return _args_from_schema(spec)
+
+    # Default to string, with name-aware values so time tools get real timezones.
+    name = prop_name.lower()
+    if "timezone" in name or name in {"tz", "zone"}:
+        return random.choice(TIMEZONES)
+    if "time" in name or "date" in name:
+        return "2025-06-15T14:30:00Z"
+    if "message" in name or "text" in name or "query" in name or "input" in name:
+        return f"load-test-{random.randint(1, 10000)}"
+    return f"load-test-{prop_name}"
+
+
+def _args_from_schema(schema: dict) -> dict:
+    """Build a minimal valid argument dict from a tool's JSON Schema.
+
+    Only required properties are populated; optional properties are skipped so
+    benchmark payloads stay small and deterministic in shape.
+
+    Args:
+        schema: The tool's ``inputSchema`` from ``tools/list``.
+
+    Returns:
+        Mapping of argument name to synthesized value.
+    """
+    properties = schema.get("properties") or {}
+    required = schema.get("required") or []
+    args: dict[str, Any] = {}
+    for name in required:
+        if not isinstance(name, str):
+            continue
+        spec = properties.get(name)
+        args[name] = _synth_value(name, spec if isinstance(spec, dict) else {})
+    return args
+
+
+def _legacy_name_args(tool_name: str) -> dict:
+    """Guess arguments from a tool name when no schema is available.
+
+    Only used for the ``MCP_TOOL_NAMES`` override path, where tools are supplied
+    by name and ``tools/list`` schemas were never fetched. Checks are ordered
+    most-specific first, because gateway-prefixed names (``fast-time-echo``)
+    contain the substring ``time``.
+
+    Args:
+        tool_name: Tool name, possibly gateway-prefixed.
+
+    Returns:
+        Best-effort argument mapping, or an empty dict when nothing matches.
+    """
+    name = tool_name.lower().replace("-", "_")
+    if "echo" in name:
+        return {"message": f"load-test-{random.randint(1, 10000)}"}
+    if "convert" in name:
+        src = random.choice(TIMEZONES)
+        dst = random.choice([t for t in TIMEZONES if t != src])
+        return {"time": "2025-06-15T14:30:00Z", "source_timezone": src, "target_timezone": dst}
+    if "system_time" in name or "current_time" in name or name.endswith("_time") or "timezone" in name:
+        return {"timezone": random.choice(TIMEZONES)}
+    return {}
+
+
+def _build_tool_args(tool_name: str, schema: dict | None = None) -> dict:
+    """Build arguments for a tool, preferring its declared input schema.
+
+    Args:
+        tool_name: Tool name as returned by ``tools/list``.
+        schema: Optional explicit schema; falls back to the discovery registry.
+
+    Returns:
+        Argument mapping to send as ``params.arguments`` for ``tools/call``.
+    """
+    if schema is None:
+        schema = _tool_schemas.get(tool_name)
+    if isinstance(schema, dict) and ("required" in schema or "properties" in schema):
+        return _args_from_schema(schema)
+    return _legacy_name_args(tool_name)
+
+
+def _is_denied(tool_name: str) -> bool:
+    """Report whether a tool is excluded from the benchmark pool.
+
+    Matching is on the normalized full name or its trailing segment, so a
+    denylist entry of ``schema_error`` also excludes ``fast-time-schema-error``.
+
+    Args:
+        tool_name: Tool name as returned by ``tools/list``.
+
+    Returns:
+        True when the tool should be skipped.
+    """
+    normalized = tool_name.lower().replace("-", "_")
+    return any(normalized == denied or normalized.endswith(f"_{denied}") for denied in MCP_TOOL_DENYLIST)
+
+
+def _limit_pool(tool_names: list[str]) -> list[str]:
+    """Apply the configured tool-pool ceiling.
+
+    Args:
+        tool_names: Discovered tool names.
+
+    Returns:
+        The same list, truncated when ``MCP_TOOL_POOL_SIZE`` is greater than zero.
+    """
+    if MCP_TOOL_POOL_SIZE > 0:
+        return tool_names[:MCP_TOOL_POOL_SIZE]
+    return tool_names
+
+
 # =============================================================================
 # Base MCP User — handles session init, auth, and request mechanics
 # =============================================================================
@@ -536,6 +716,7 @@ class BaseMCPUser(FastHttpUser):
         self._tool_names: list[str] = []
         self._resource_uris: list[str] = []
         self._prompt_targets: list[PromptTarget] = []
+        self._tool_schemas: dict[str, dict] = {}
 
     def _mcp_path(self) -> str:
         return f"/servers/{self._server_id}/mcp"
@@ -612,6 +793,7 @@ class BaseMCPUser(FastHttpUser):
         self._tool_names = list(target.tool_names)
         self._resource_uris = list(target.resource_uris)
         self._prompt_targets = list(target.prompt_targets)
+        self._tool_schemas = dict(target.tool_schemas)
 
     def _ensure_initialized(self):
         """Initialize the MCP session (once per user lifecycle)."""
@@ -635,19 +817,42 @@ class BaseMCPUser(FastHttpUser):
         self._assign_target()
         self._ensure_initialized()
 
+    def _build_tool_args(self, tool_name: str) -> dict:
+        """Build arguments for a tool using the schema discovered for this user's target.
+
+        Args:
+            tool_name: Tool name as returned by ``tools/list``.
+
+        Returns:
+            Argument mapping for ``tools/call``.
+        """
+        return _build_tool_args(tool_name, self._tool_schemas.get(tool_name))
+
+    def _tool_pool(self) -> list[str]:
+        """Return the tools this user may call, honoring the configured ceiling.
+
+        Returns:
+            Callable tool names for the assigned server target.
+        """
+        return _limit_pool(self._tool_names)
+
 
 # =============================================================================
-# User 1: MCPAgentUser — Realistic agent with 6 tools (customer scenario)
+# User 1: MCPAgentUser — Realistic agent over the discovered tool pool (customer scenario)
 # =============================================================================
 
 
 class MCPAgentUser(BaseMCPUser):
-    """Simulates a realistic AI agent that uses 6 MCP tools.
+    """Simulates a realistic AI agent that uses the server's MCP tools.
 
-    Matches the customer scenario: an agent with 6 tools at 150 RPS target.
+    Matches the customer scenario at a 150 RPS target. Set
+    MCP_BENCHMARK_TOOL_POOL_SIZE=6 to restrict the agent to 6 tools exactly as
+    the original customer configuration did; the default is every discovered
+    tool.
+
     Each "turn" the agent:
       1. Calls tools/list (periodic discovery)
-      2. Calls 1-3 tools per turn (random selection from available tools)
+      2. Calls 1-3 tools per turn (random selection from the tool pool)
       3. Occasionally lists resources/prompts
 
     Weight: 10 (dominant — this is the primary scenario to measure)
@@ -657,25 +862,22 @@ class MCPAgentUser(BaseMCPUser):
     wait_time = between(0.05, 0.3)
 
     def _pick_tools(self, n: int = 1) -> list[str]:
-        """Pick n random tools from the discovered set (cap at 6 like the customer)."""
-        pool = self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names
+        """Pick n random tools from the discovered set.
+
+        The pool is the full discovered tool list unless
+        ``MCP_BENCHMARK_TOOL_POOL_SIZE`` caps it (set it to 6 to reproduce the
+        original 6-tool customer agent scenario).
+
+        Args:
+            n: Number of distinct tools to pick.
+
+        Returns:
+            Up to n tool names, or an empty list when no tools are available.
+        """
+        pool = self._tool_pool()
         if not pool:
             return []
         return random.sample(pool, min(n, len(pool)))
-
-    def _build_tool_args(self, tool_name: str) -> dict:
-        """Build plausible arguments for a tool based on its name."""
-        name_lower = tool_name.lower()
-        if "time" in name_lower or "timezone" in name_lower:
-            return {"timezone": random.choice(TIMEZONES)}
-        if "echo" in name_lower:
-            return {"message": f"load-test-{random.randint(1, 10000)}"}
-        if "convert" in name_lower:
-            src = random.choice(TIMEZONES)
-            dst = random.choice([t for t in TIMEZONES if t != src])
-            return {"time": "2025-06-15T14:30:00Z", "source_timezone": src, "target_timezone": dst}
-        # Generic: many tools accept empty args or have defaults
-        return {}
 
     @task(15)
     @tag("agent", "tools", "call")
@@ -756,18 +958,11 @@ class MCPToolCallerUser(BaseMCPUser):
     @tag("toolcall", "call")
     def call_tool(self):
         """Call a random tool rapidly."""
-        if not self._tool_names:
+        pool = self._tool_pool()
+        if not pool:
             return
-        tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
-        name_lower = tool.lower()
-        if "time" in name_lower:
-            args = {"timezone": random.choice(TIMEZONES)}
-        elif "echo" in name_lower:
-            args = {"message": "perf-test"}
-        elif "convert" in name_lower:
-            args = {"time": "2025-01-01T00:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"}
-        else:
-            args = {}
+        tool = random.choice(pool)
+        args = self._build_tool_args(tool)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [rapid]")
 
     @task(1)
@@ -871,15 +1066,10 @@ class MCPSessionChurnUser(BaseMCPUser):
         self._mcp_request("tools/list", {}, "MCP tools/list [churn]")
 
         # Call a tool
-        if self._tool_names:
-            tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
-            name_lower = tool.lower()
-            if "time" in name_lower:
-                args = {"timezone": random.choice(TIMEZONES)}
-            elif "echo" in name_lower:
-                args = {"message": "churn-test"}
-            else:
-                args = {}
+        pool = self._tool_pool()
+        if pool:
+            tool = random.choice(pool)
+            args = self._build_tool_args(tool)
             self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [churn]")
 
 
@@ -902,16 +1092,12 @@ class MCPStressUser(BaseMCPUser):
     @task(10)
     @tag("stress", "call")
     def stress_call_tool(self):
-        if not self._tool_names:
+        """Call a random tool at constant throughput."""
+        pool = self._tool_pool()
+        if not pool:
             return
-        tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
-        name_lower = tool.lower()
-        if "time" in name_lower:
-            args = {"timezone": "UTC"}
-        elif "echo" in name_lower:
-            args = {"message": "stress"}
-        else:
-            args = {}
+        tool = random.choice(pool)
+        args = self._build_tool_args(tool)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [stress]")
 
     @task(3)
@@ -975,16 +1161,11 @@ class RESTBaselineUser(FastHttpUser):
     @tag("baseline", "rpc", "call")
     def rpc_call_tool(self):
         """tools/call via /rpc (REST JSON-RPC)."""
-        if not _tool_names:
+        pool = _limit_pool(_tool_names)
+        if not pool:
             return
-        tool = random.choice(_tool_names[:6] if len(_tool_names) > 6 else _tool_names)
-        name_lower = tool.lower()
-        if "echo" in name_lower:
-            args = {"message": "baseline"}
-        elif "time" in name_lower:
-            args = {"timezone": "UTC"}
-        else:
-            args = {}
+        tool = random.choice(pool)
+        args = _build_tool_args(tool)
         payload = _jsonrpc("tools/call", {"name": tool, "arguments": args})
         with self.client.post(
             "/rpc",

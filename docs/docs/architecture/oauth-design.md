@@ -142,6 +142,7 @@ The gateway performs local validation of the token's audience before forwarding 
 -   Per-user learned-audience storage: `OAuthToken.learned_aud` / `learned_iss` in `mcpgateway/db.py`; write via `TokenStorageService.store_tokens` (called from `OAuthManager.complete_authorization_code_flow`); read via `TokenStorageService.get_user_learned_audience`.
 -   Precedence + advisory / authoritative split: `_validate_audience` in `mcpgateway/services/token_validation_service.py`.
 -   Trust model for the unverified JWT decode used at learning time: `_decode_token_claims_unverified` in `mcpgateway/services/oauth_manager.py`.
+-   Team membership check for `_enforce_gateway_access`: `TeamManagementService.get_user_role_in_team()` in `mcpgateway/services/team_management_service.py` — uses `auth_cache.get_user_role` with DB fallback, avoiding the detached-object problem of `EmailAuthService.get_user_by_email()`.
 
 !!! warning "Security: unverified JWT decode trust boundary"
     Audience extraction during auto-learning uses `_decode_token_claims_unverified`, which decodes the JWT **without cryptographic verification**. The extracted audience is used only for routing and learning — it is **not a security gate**. The immediate trust boundary is the TLS connection to the admin-configured token endpoint in response to a callback the gateway itself initiated. Authorization-relevant validation remains the upstream MCP server's responsibility (or, when configured, the gateway's own authoritative audience check).
@@ -191,6 +192,36 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 
 - **`inbound_user_jwt`** (default): The ContextForge JWT presented by the calling user on the current request is used as the `subject_token` in the exchange. This requires the inbound request to carry a verifiable JWT (not an opaque API key).
 - **`user_oauth_token`**: The user's previously stored per-gateway OAuth access token (obtained via the Authorization Code flow described above) is used as the `subject_token` instead. This is supported on the tool-invocation path; gateway connection/health-check paths fail closed for `token-exchange` because they have no per-request user context.
+
+### Tool discovery for token-exchange gateways
+
+Registration (`POST /gateways`) intentionally skips the discovery probe for
+`grant_type: "token-exchange"` — there is no end-user JWT at registration
+time, so the gateway is persisted with an empty tool list. Two explicit,
+authenticated triggers populate it afterwards:
+
+- **`POST /gateways/{gateway_id}/tools/refresh`** — the manual-refresh API.
+  For token-exchange gateways the caller's own inbound ContextForge JWT is
+  used as the RFC 8693 `subject_token` for a single discovery-time exchange;
+  the exchanged token (never the raw JWT) authenticates the MCP connection.
+- **`POST /oauth/fetch-tools/{gateway_id}`** — the Admin UI `🔧 Fetch Tools`
+  button. For token-exchange gateways this delegates to the same
+  manual-refresh pipeline.
+
+The subject token is resolved from the `Authorization: Bearer` header if one
+is present; the HttpOnly `jwt_token` session cookie is only consulted when no
+bearer credential was presented at all (Admin UI sessions cannot attach a
+bearer header). A bearer credential that isn't a structurally valid JWT never
+falls back to the cookie — that cookie could belong to a different principal
+than the one the bearer already authenticated the request as, so the request
+fails closed instead of silently swapping identities. Both routes are
+CSRF-protected for cookie-credentialed callers, and both fail closed: a caller
+without a structurally valid JWT gets an error — the raw credential is never
+forwarded upstream. Every exchange attempt (success or failure) is audited via
+the structured `token-exchange` event with the request's correlation id.
+
+There is no `🔐 Authorize` step for token-exchange gateways — no user
+consent flow exists, and the Admin UI hides that action for them.
 
 ### `subject_token_type`
 

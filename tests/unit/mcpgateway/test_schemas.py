@@ -1740,6 +1740,47 @@ class TestAuthValidationErrors:
             GatewayUpdate(auth_type="invalid_type")
         assert "Invalid 'auth_type'" in str(exc_info.value)
 
+    @pytest.mark.parametrize(
+        ("model_name", "base_fields"),
+        [
+            ("create", {"name": "test", "url": "https://mcp.example.com"}),
+            ("update", {}),
+        ],
+    )
+    def test_gateway_oauth_config_accepts_allowed_post_oauth_redirect(self, model_name, base_fields):
+        """Gateway POST and PUT schemas accept trusted post-OAuth redirects."""
+        from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+
+        model = GatewayCreate if model_name == "create" else GatewayUpdate
+        with patch("mcpgateway.schemas.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = "https://app.example.org"
+            gateway = model(
+                **base_fields,
+                oauth_config={"redirect_uri_after_oauth": "https://app.example.org/oauth-complete"},
+            )
+
+        assert gateway.oauth_config["redirect_uri_after_oauth"] == "https://app.example.org/oauth-complete"
+
+    @pytest.mark.parametrize(
+        ("model_name", "base_fields"),
+        [
+            ("create", {"name": "test", "url": "https://mcp.example.com"}),
+            ("update", {}),
+        ],
+    )
+    @pytest.mark.parametrize("redirect", ["", " ", None, "https://evil.example/oauth-complete", "/oauth-complete", "/\\evil.example/oauth-complete", 123])
+    def test_gateway_oauth_config_rejects_invalid_post_oauth_redirect(self, model_name, base_fields, redirect):
+        """Gateway POST and PUT schemas reject untrusted or malformed redirects."""
+        from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+
+        model = GatewayCreate if model_name == "create" else GatewayUpdate
+        with patch("mcpgateway.schemas.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = "https://app.example.org"
+            with pytest.raises(ValidationError, match="redirect_uri_after_oauth"):
+                model(**base_fields, oauth_config={"redirect_uri_after_oauth": redirect})
+
     def test_a2a_agent_create_invalid_auth_type(self):
         """Test A2AAgentCreate rejects invalid auth_type."""
         # First-Party

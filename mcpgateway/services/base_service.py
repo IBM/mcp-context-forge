@@ -93,7 +93,9 @@ class BaseService(ABC):
                 ``None`` = admin bypass (API token) or no auth context.
                 ``[]`` = public-only token.
                 ``[...]`` = team-scoped token (API or session token).
-            team_id: Optional specific team filter.
+            team_id: Optional specific team filter. When supplied, every caller
+                shape - including the admin bypasses - is narrowed to that team
+                plus globally-public rows from any team.
 
         Returns:
             Query with visibility WHERE clauses applied. Admin bypass excludes
@@ -107,6 +109,8 @@ class BaseService(ABC):
         # Matches the pattern in a2a_service._visible_agent_ids.
         model_cls = self._visibility_model_cls
         if user_email is None and token_teams is None:
+            if team_id:
+                return query.where(or_(*self._team_scoped_conditions(team_id)))
             return query.where(model_cls.visibility != "private")
 
         # Admin bypass path: only check DB for users with token_teams=None
@@ -115,6 +119,8 @@ class BaseService(ABC):
         if token_teams is None:
             user_is_admin = user_email and is_user_admin(db, user_email)
             if user_is_admin:
+                if team_id:
+                    return query.where(or_(*self._team_scoped_conditions(team_id, owner_email=user_email)))
                 return query.where(
                     or_(
                         model_cls.visibility != "private",
@@ -137,6 +143,35 @@ class BaseService(ABC):
         filter_email = None if token_teams == [] else user_email
 
         return self._apply_visibility_filter(query, filter_email, effective_teams, team_id)
+
+    def _team_scoped_conditions(self, team_id: str, owner_email: Optional[str] = None) -> List[Any]:
+        """Build the OR-conditions selecting rows for an explicit ``team_id`` filter.
+
+        Single definition of what ``?team_id=`` means, shared by the admin and
+        anonymous bypass branches of :meth:`_apply_access_control` and by the
+        team-scoped branch of :meth:`_apply_visibility_filter`, so that adding a
+        visibility tier only requires updating one place.
+
+        Globally-public rows owned by *other* teams stay visible (issue #4732,
+        fixed in PR #4773): ``team_id`` narrows team-scoped rows, it does not
+        suppress platform-public ones.
+
+        Args:
+            team_id: Team to narrow to.
+            owner_email: When set, the caller's own private rows within that team
+                are included. ``None`` suppresses owner access.
+
+        Returns:
+            List of conditions intended to be combined with :func:`sqlalchemy.or_`.
+        """
+        model_cls = self._visibility_model_cls
+        conditions = [
+            and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"])),
+            model_cls.visibility == "public",  # globally public items from any team are always visible
+        ]
+        if owner_email:
+            conditions.append(and_(model_cls.team_id == team_id, model_cls.visibility == "private", model_cls.owner_email == owner_email))
+        return conditions
 
     def _apply_visibility_filter(
         self,
@@ -170,13 +205,7 @@ class BaseService(ABC):
             if team_id not in token_teams:
                 return query.where(False)
 
-            access_conditions = [
-                and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"])),
-                model_cls.visibility == "public",  # globally public items from any team are always visible
-            ]
-            if user_email:
-                access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
-            return query.where(or_(*access_conditions))
+            return query.where(or_(*self._team_scoped_conditions(team_id, owner_email=user_email)))
 
         access_conditions = [model_cls.visibility == "public"]
 

@@ -4,7 +4,7 @@
  *        resetImportSelection, displayImportPreview, handleSelectiveImport
  */
 
-import { describe, test, expect, vi, afterEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
   updateSelectionCount,
@@ -30,7 +30,13 @@ vi.mock("../../../mcpgateway/admin_ui/fileTransfer.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
   getAuthToken: vi.fn().mockResolvedValue("test-token"),
 }));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+
+// Handle for per-test overrides (e.g. the httponly session-cookie case where
+// getAuthToken() resolves to "").
+import { getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
+
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showNotification: vi.fn(),
 }));
@@ -630,5 +636,86 @@ describe("displayImportPreview", () => {
     // The count element is rendered inside the preview container by the template.
     const count = document.getElementById("selection-count");
     expect(count.textContent).toContain("0 items selected");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request headers for /admin/import/configuration writes (issue #5964)
+// ---------------------------------------------------------------------------
+describe("selective import request headers", () => {
+  const CSRF_COOKIE_VALUE = "test-csrf-value";
+
+  function setCsrfCookie(value = CSRF_COOKIE_VALUE) {
+    document.cookie = `mcpgateway_csrf_token=${value}`;
+  }
+
+  function clearCsrfCookie() {
+    document.cookie = "mcpgateway_csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  }
+
+  let fetchSpy;
+
+  beforeEach(() => {
+    window.ROOT_PATH = "";
+    window.Admin = { currentImportData: { tools: [] } };
+    // addCheckboxes() appends UNCHECKED boxes; collectUserSelections() then
+    // returns {} and handleSelectiveImport bails out before fetch. Check one,
+    // matching the existing "sends import request when items are selected"
+    // test at line 227.
+    const { item1 } = addCheckboxes();
+    item1.checked = true;
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: "ok" }),
+    });
+  });
+
+  afterEach(() => {
+    clearCsrfCookie();
+    fetchSpy.mockRestore();
+    document.body.innerHTML = "";
+    delete window.ROOT_PATH;
+    delete window.Admin;
+    vi.clearAllMocks();
+  });
+
+  test("sends X-CSRF-Token from the cookie", async () => {
+    setCsrfCookie();
+
+    await handleSelectiveImport(true);
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers["X-CSRF-Token"]).toBe(CSRF_COOKIE_VALUE);
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("omits X-CSRF-Token when no cookie is set", async () => {
+    clearCsrfCookie();
+
+    await handleSelectiveImport(true);
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers).not.toHaveProperty("X-CSRF-Token");
+  });
+
+  test("omits Authorization when no bearer token is available", async () => {
+    setCsrfCookie();
+    getAuthToken.mockResolvedValueOnce("");
+
+    await handleSelectiveImport(true);
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers).not.toHaveProperty("Authorization");
+    expect(headers["X-CSRF-Token"]).toBe(CSRF_COOKIE_VALUE);
+    getAuthToken.mockResolvedValue("test-token");
+  });
+
+  test("sends Authorization when a bearer token is available", async () => {
+    setCsrfCookie();
+
+    await handleSelectiveImport(true);
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers.Authorization).toBe("Bearer test-token");
   });
 });

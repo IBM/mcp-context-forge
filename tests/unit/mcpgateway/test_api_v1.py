@@ -139,13 +139,17 @@ class TestBuildV1RouterGroupA:
         settings = _settings()
         kwargs = _required_kwargs()
         v1 = build_v1_router(settings, **kwargs)
-        assert "/v1/sentinel-gateway" in _route_paths(v1)
+        paths = _route_paths(v1)
+        assert "/v1/gateways/sentinel-gateway" in paths
+        assert "/v1/mcp-servers/sentinel-gateway" in paths
 
     def test_server_router_included(self):
         settings = _settings()
         kwargs = _required_kwargs()
         v1 = build_v1_router(settings, **kwargs)
-        assert "/v1/sentinel-server" in _route_paths(v1)
+        paths = _route_paths(v1)
+        assert "/v1/servers/sentinel-server" in paths
+        assert "/v1/virtual-servers/sentinel-server" in paths
 
     def test_metrics_router_included(self):
         settings = _settings()
@@ -221,19 +225,29 @@ class TestBuildV1RouterGroupC:
 
     # Observability --------------------------------------------------------------
 
+    def _observability_mock(self):
+        """Fake observability module exposing both the gated router and the always-mounted metrics one."""
+        mod = _make_mock_router_module("/sentinel-observability")
+        mod.observability_metrics_router = _sentinel_router("/sentinel-observability-metrics")
+        return mod
+
     def test_observability_router_included_when_enabled(self):
         settings = _settings(observability_enabled=True)
-        mock_mod = _make_mock_router_module("/sentinel-observability")
-        with patch.dict(sys.modules, {"mcpgateway.routers.observability": mock_mod}):
+        with patch.dict(sys.modules, {"mcpgateway.routers.observability": self._observability_mock()}):
             v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/sentinel-observability" in _route_paths(v1)
 
     def test_observability_router_excluded_when_disabled(self):
         settings = _settings(observability_enabled=False)
-        mock_mod = _make_mock_router_module("/sentinel-observability")
-        with patch.dict(sys.modules, {"mcpgateway.routers.observability": mock_mod}):
+        with patch.dict(sys.modules, {"mcpgateway.routers.observability": self._observability_mock()}):
             v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/sentinel-observability" not in _route_paths(v1)
+
+    def test_observability_metrics_router_mounted_even_when_disabled(self):
+        settings = _settings(observability_enabled=False)
+        with patch.dict(sys.modules, {"mcpgateway.routers.observability": self._observability_mock()}):
+            v1 = build_v1_router(settings, **_required_kwargs())
+        assert "/v1/sentinel-observability-metrics" in _route_paths(v1)
 
     # Reverse proxy --------------------------------------------------------------
 
@@ -510,6 +524,16 @@ class TestBuildV1RouterGroupF:
         admin_mod.admin_router = _sentinel_router("/sentinel-admin")
         admin_mod.set_logging_service = MagicMock()
         admin_mod.validate_section_permissions = MagicMock()
+
+        # _assemble_routers imports enforce_admin_csrf from mcpgateway.admin to guard
+        # the runtime-admin mount. It must be a real callable, not a MagicMock:
+        # FastAPI inspects a dependency's signature when the router is included, and
+        # omitting it entirely makes the whole admin `try` block raise ImportError,
+        # silently dropping the runtime-admin and well-known includes that follow it.
+        async def _noop_enforce_admin_csrf() -> None:
+            return None
+
+        admin_mod.enforce_admin_csrf = _noop_enforce_admin_csrf
 
         runtime_admin_mod = ModuleType("_mock_runtime_admin")
         runtime_admin_mod.runtime_admin_router = _sentinel_router("/sentinel-runtime-admin")

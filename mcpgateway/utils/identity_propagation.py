@@ -60,7 +60,8 @@ def _sign_claims(payload: str) -> str:
     Returns:
         Hex-encoded HMAC signature.
     """
-    secret = settings.identity_claims_secret or (settings.jwt_secret_key.get_secret_value() if settings.jwt_secret_key else "")
+    configured = settings.identity_claims_secret.get_secret_value() if settings.identity_claims_secret else ""
+    secret = configured or (settings.jwt_secret_key.get_secret_value() if settings.jwt_secret_key else "")
     return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
 
 

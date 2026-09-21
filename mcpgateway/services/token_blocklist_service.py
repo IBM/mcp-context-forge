@@ -79,7 +79,9 @@ class TokenBlocklistService:
 
         return self._redis_client if self._redis_client is not False else None
 
-    def revoke_token(self, jti: str, revoked_by: str, reason: str = "logout", token_expiry: Optional[datetime] = None, last_activity: Optional[datetime] = None) -> bool:
+    def revoke_token(
+        self, jti: str, revoked_by: str, reason: str = "logout", token_expiry: Optional[datetime] = None, last_activity: Optional[datetime] = None, fail_if_already_revoked: bool = False
+    ) -> bool:
         """Revoke a token by adding it to the blocklist.
 
         Args:
@@ -88,6 +90,8 @@ class TokenBlocklistService:
             reason: Reason for revocation (logout, idle_timeout, security, token_refresh, etc.)
             token_expiry: Original token expiry for cleanup scheduling
             last_activity: Last activity timestamp for audit trail
+            fail_if_already_revoked: When True, an already-revoked jti returns False
+                instead of True (single-use/compare-and-set semantics for rotation)
 
         Returns:
             True if token was revoked successfully, False otherwise.
@@ -106,7 +110,7 @@ class TokenBlocklistService:
 
                 if existing:
                     logger.debug("Token %s already revoked", jti)
-                    return True
+                    return not fail_if_already_revoked
 
                 # Create revocation record
                 revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
@@ -121,7 +125,7 @@ class TokenBlocklistService:
 
                     if existing:
                         logger.debug("Token %s already revoked", jti)
-                        return True
+                        return not fail_if_already_revoked
 
                     # Create revocation record
                     revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())

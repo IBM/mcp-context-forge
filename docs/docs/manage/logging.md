@@ -412,6 +412,7 @@ When `STRUCTURED_LOGGING_DATABASE_ENABLED=true`, you get:
 | **Performance Metrics** | `GET /api/logs/performance-metrics` | Aggregated p50/p95/p99 latencies, error rates by component |
 | **Security Events** | `GET /api/logs/security-events` | Authentication failures, threat detection, security audit |
 | **Audit Trails** | `GET /api/logs/audit-trails` | CRUD operations, data access compliance logging |
+| **Recent Activity** | `GET /api/logs/activity` | Unified newest-first feed merging audit trails and security events (powers the UI home page) |
 
 ### Example: Search Logs via API
 
@@ -428,6 +429,23 @@ curl -X POST "http://localhost:4444/api/logs/search" \
 
 # Trace all logs for a specific request
 curl "http://localhost:4444/api/logs/trace/abc-123-correlation-id" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Recent Activity Feed
+
+`GET /api/logs/activity` returns a single newest-first list merging audit trails and security
+events, with a server-rendered title, description and status per entry.
+
+- Entry is gated by `audit:read`. Security events are **additive**: they appear only when the
+  caller also holds `security:read`. Lacking it narrows the feed rather than returning `403`.
+- Non-admin callers see audit rows for their own teams, security events they triggered, and no
+  `restricted`-classified rows.
+- `limit` (default `50`, max `100`) caps the merged list; `since` is strictly-after.
+
+```bash
+# Newest 20 activity entries since a timestamp
+curl "http://localhost:4444/api/logs/activity?limit=20&since=2025-01-01T12:00:00Z" \
   -H "Authorization: Bearer $TOKEN"
 ```
 

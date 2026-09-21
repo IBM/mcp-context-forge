@@ -51,7 +51,13 @@ jobs:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       REQUIRE_RUST: "1"
+      JWT_SECRET_KEY: "ci-rust-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
       AUTH_ENCRYPTION_SECRET: ci-rust-auth-encryption-secret-1234567890 # pragma: allowlist secret
+      # PLATFORM_ADMIN_PASSWORD/DEFAULT_USER_PASSWORD are feature-gated on EMAIL_AUTH_ENABLED
+      # (default true) — required because --doctest-modules mcpgateway/ imports mcpgateway.config
+      # outside of tests/conftest.py, which normally supplies these.
+      PLATFORM_ADMIN_PASSWORD: "ci-rust-admin-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
+      DEFAULT_USER_PASSWORD: "ci-rust-user-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
       REDIS_URL: redis://127.0.0.1:6379/0
       MCP_RUST_REDIS_URL: redis://127.0.0.1:6379/0
 
@@ -99,6 +105,7 @@ jobs:
             --durations=5 \
             --ignore=tests/fuzz \
             --cov=mcpgateway \
+            --cov-config=.github/pytest-branch-coverage.coveragerc \
             --cov-report=xml \
             --cov-report=html \
             --cov-report=term \
