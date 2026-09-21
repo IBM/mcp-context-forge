@@ -1136,6 +1136,11 @@ export const handleEditResFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
+  const customNameField = form.querySelector("#edit-resource-custom-name");
+  // Preserve the derived name on unchanged saves, including empty/long bases.
+  if (customNameField && customNameField.value !== customNameField.dataset.originalValue) {
+    formData.set("name", customNameField.value);
+  }
 
   try {
     // Validate inputs
