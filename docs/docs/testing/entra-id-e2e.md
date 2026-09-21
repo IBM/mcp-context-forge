@@ -494,22 +494,54 @@ make testing-up-entra
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ENTRA_LIVE_TOKEN_FILE` | Yes, or use the directory or ROPC variables | Path to a non-overage, unexpired Entra v2 end-user token with inline `groups` claims |
+| `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` | Preferred automated mode | Self-provisioning mode. The harness creates a security group and a test user, acquires a v2 token through ROPC, and deletes both objects after the session. Requires admin-consented Graph permissions `User.ReadWrite.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All`. |
+| `ENTRA_LIVE_TOKEN_FILE` | Alternative to `AZURE_*` | Path to a non-overage, unexpired Entra v2 end-user token with inline `groups` claims |
 | `ENTRA_LIVE_TOKEN_DIR` | Alternative to the file variable | Directory that contains `entra-token-valid-v2.txt` |
-| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_TEST_USERNAME`, `ENTRA_TEST_PASSWORD` | Alternative to a token file | Acquire the token through ROPC. The flow requires public client flows and a test account without interactive MFA. |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_TEST_USERNAME`, `ENTRA_TEST_PASSWORD` | Alternative to `AZURE_*` | Acquire the token through ROPC for a pre-existing account. The flow requires public client flows and a test account without interactive MFA. |
 | `ENTRA_OVERAGE_TOKEN_FILE` | Use case 4 only | Entra v2 token for a user in more than 200 groups, with the group-overage marker |
 | `ENTRA_GRAPH_CLIENT_ID`, `ENTRA_GRAPH_CLIENT_SECRET` | Use case 4 only | App Registration with the admin-consented `GroupMember.Read.All` permission. The tests use `ENTRA_CLIENT_ID` and `ENTRA_CLIENT_SECRET` when these variables are unset. |
 | `ENTRA_OVERAGE_MAPPED_GROUP` | Use case 4 only | Group GUID that Microsoft Graph resolves. Set this variable when the overage token carries no inline groups. |
-| `STUB_AGENT_GATEWAY_HOST` | No | Host name that the gateway container uses to reach the in-process stub agent. The default is `host.docker.internal`. |
 
+
+### Required Microsoft Graph permissions
+
+Grant these **application permissions** to the App Registration, with admin
+consent. The self-provisioning mode needs all four. Use case 4 needs the fifth,
+or it is covered by `GroupMember.ReadWrite.All`.
+
+| Permission | Used for |
+|-----------|----------|
+| `User.ReadWrite.All` | Create and delete the throwaway test user |
+| `Group.ReadWrite.All` | Create and delete the security group |
+| `GroupMember.ReadWrite.All` | Add the test user to the group |
+| `Application.ReadWrite.All` | Read and set `groupMembershipClaims` on the App Registration |
+| `GroupMember.Read.All` | Use case 4 only: the gateway resolves group overage through Graph. `GroupMember.ReadWrite.All` already covers this. |
+
+Without `Application.ReadWrite.All`, the harness cannot set
+`groupMembershipClaims` itself. Set it to `"SecurityGroup"` in the App
+Registration manifest by hand, or the token never carries the `groups` claim.
 ### Run the tests
 
 ```bash
+TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com" \
 JWT_TRUST_MODE=jwt-trust \
 JWT_SECRET_KEY="$(docker compose exec -T gateway printenv JWT_SECRET_KEY)" \
-ENTRA_LIVE_TOKEN_FILE=/path/to/entra-token-valid-v2.txt \
     uv run pytest tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py -v
 ```
+
+`TESTS_DNS_PASSTHROUGH_HOSTS` is required: `tests/conftest.py` blackholes
+external DNS by default, and the passthrough list lets the harness reach the
+Entra token endpoint and Microsoft Graph.
+
+### Entra v1 issuers and single-gateway topology
+
+The trust-mode suite works with v1-format tokens (`sts.windows.net`
+issuers). The seeding helper records a same-origin `jwks_uri` on the
+provider (`<issuer>/discovery/keys`), because v1 discovery documents
+point at a cross-origin JWKS by design and the gateway rejects those.
+`make testing-up-entra` scales the gateway to one replica: the suite
+changes the group mapping between requests, and a single gateway gives
+deterministic cache-invalidation semantics.
 
 A missing prerequisite causes a skip, not a failure. The skip message names
 the exact missing variables. The module docstring is the authoritative
