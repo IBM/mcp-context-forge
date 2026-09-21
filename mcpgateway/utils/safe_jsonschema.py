@@ -63,6 +63,12 @@ _DRAFT_NAMES = {cls: name for name, cls in _DRAFTS.items()}
 
 _SANDBOX_DOWN = False
 
+# Names the real cause, because "unavailable on this platform" sends an operator to the
+# platform when the fault is usually configuration. The cause fills the placeholder.
+_SANDBOX_DOWN_MESSAGE = (
+    "Schema validation sandbox could not start (%s). A schema carrying a regex keyword will be refused rather than validated. Tools and prompts using such a schema will fail validation here."
+)
+
 # The Task 1 gate establishes which start methods work here.
 _START_METHOD = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
 
@@ -137,22 +143,20 @@ def sandbox_unavailable() -> bool:
 def start_validation_pool() -> None:
     """Create the validation worker pool for this process.
 
-    Call from application startup, after any fork the server performs. A platform without a
-    usable start method refuses regex-bearing schemas instead of failing to boot.
+    Call from application startup, after any fork the server performs. A start failure refuses
+    regex-bearing schemas instead of failing to boot, and names its cause in the log.
     """
     global _SANDBOX_DOWN  # pylint: disable=global-statement
     try:
         _SANDBOX.start()
         _SANDBOX_DOWN = False
         return
-    except SandboxUnavailable:
-        pass
-    except Exception:  # pylint: disable=broad-except
-        logger.warning("Validation sandbox failed to start", exc_info=True)
-    _SANDBOX_DOWN = True
-    logger.warning(
-        "Schema validation sandbox unavailable on this platform. A schema carrying a regex keyword will be refused rather than validated. Tools and prompts using such a schema will fail validation here.",
-    )
+    except SandboxUnavailable as exc:
+        _SANDBOX_DOWN = True
+        logger.warning(_SANDBOX_DOWN_MESSAGE, f"no sandbox on this platform: {exc}", exc_info=True)
+    except Exception as exc:  # pylint: disable=broad-except
+        _SANDBOX_DOWN = True
+        logger.warning(_SANDBOX_DOWN_MESSAGE, f"{type(exc).__name__}: {exc}", exc_info=True)
 
 
 def shutdown_validation_pool() -> None:
