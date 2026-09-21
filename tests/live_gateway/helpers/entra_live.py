@@ -5,16 +5,29 @@ SPDX-License-Identifier: Apache-2.0
 
 Live Microsoft Entra token sourcing for inline-groups e2e tests.
 
-Tokens are NEVER mocked and NEVER logged. Two sourcing modes, first
+Tokens are NEVER mocked and NEVER logged. Three sourcing modes, first
 match wins:
 
 1. ``ENTRA_LIVE_TOKEN_FILE`` (or ``ENTRA_LIVE_TOKEN_DIR`` containing
    ``entra-token-valid-v2.txt``): a pre-acquired v2 end-user token, as
    produced interactively for the manual test run.
-2. ROPC acquisition when ``ENTRA_TENANT_ID``, ``ENTRA_CLIENT_ID``,
-   ``ENTRA_TEST_USERNAME`` and ``ENTRA_TEST_PASSWORD`` are set. ROPC
-   requires a dedicated test account without interactive MFA; tenants
-   that block ROPC should use mode 1.
+2. Self-provisioning when ``AZURE_CLIENT_ID``, ``AZURE_CLIENT_SECRET``
+   and ``AZURE_TENANT_ID`` are set (the repository's integration-test
+   credential names). The helper creates a security group and a test
+   user, adds the user to the group, sets ``groupMembershipClaims`` on
+   the application when missing, and acquires a v2 token through ROPC.
+   The fixture deletes the user and the group after the session.
+3. ROPC acquisition for a pre-existing account when ``ENTRA_TENANT_ID``,
+   ``ENTRA_CLIENT_ID``, ``ENTRA_TEST_USERNAME`` and
+   ``ENTRA_TEST_PASSWORD`` are set.
+
+The self-provisioning mode needs these admin-consented Microsoft
+Graph application permissions: ``User.ReadWrite.All``,
+``Group.ReadWrite.All``, ``GroupMember.ReadWrite.All`` and
+``Application.ReadWrite.All``. The last permission lets the helper set
+``groupMembershipClaims``. The Graph API expects the string value
+``"SecurityGroup"``, not an array. Without the permission, set the
+manifest value by hand.
 
 The gateway performs the real verification against Entra JWKS; the
 payload decode here is for extracting seeding values only.
@@ -27,6 +40,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import secrets
+import string
 import time
 from typing import Any, Optional
 
@@ -115,22 +130,213 @@ def acquire_entra_token_ropc() -> Optional[str]:
     return response.json()["access_token"]
 
 
+class _ProvisioningError(RuntimeError):
+    """Raised when AZURE_* self-provisioning cannot complete."""
+
+
+def _azure_graph_token(client_id: str, client_secret: str, tenant_id: str) -> str:
+    """Acquire an app-only Microsoft Graph token via client credentials."""
+    response = httpx.post(
+        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": "https://graph.microsoft.com/.default",
+        },
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise _ProvisioningError(f"client-credentials token failed with HTTP {response.status_code}; the body carried no logged secrets")
+    return response.json()["access_token"]
+
+
+def _ensure_group_claims(headers: dict[str, str], client_id: str) -> None:
+    """Set groupMembershipClaims on the application when it is missing.
+
+    A 403 means the credential lacks Application.ReadWrite.All. The
+    check is an optimization: proceed, and let the token validation
+    report a missing groups claim with the manual remediation.
+    """
+    lookup = httpx.get(
+        "https://graph.microsoft.com/v1.0/applications",
+        params={"$filter": f"appId eq '{client_id}'", "$select": "id,groupMembershipClaims"},
+        headers=headers,
+        timeout=30,
+    )
+    if lookup.status_code == 403:
+        print("WARNING: cannot read the application manifest (HTTP 403); proceeding without the groupMembershipClaims check")
+        return
+    if lookup.status_code != 200:
+        raise _ProvisioningError(f"application lookup failed with HTTP {lookup.status_code}")
+    matches = lookup.json().get("value", [])
+    if not matches:
+        raise _ProvisioningError("the application object was not found for AZURE_CLIENT_ID")
+    claims = matches[0].get("groupMembershipClaims") or []
+    if "SecurityGroup" in claims or "All" in claims:
+        return
+    patch = httpx.patch(
+        f"https://graph.microsoft.com/v1.0/applications/{matches[0]['id']}",
+        headers=headers,
+            json={"groupMembershipClaims": "SecurityGroup"},
+        timeout=30,
+    )
+    if patch.status_code >= 300:
+        raise _ProvisioningError(
+            f"setting groupMembershipClaims failed with HTTP {patch.status_code}; "
+            "set it to [\"SecurityGroup\"] manually on the App Registration"
+        )
+
+
+def _cleanup_entra_test_identity(cleanup: dict[str, str]) -> None:
+    """Delete the provisioned user and group. Best effort; errors are logged only."""
+    if not cleanup:
+        return
+    try:
+        token = _azure_graph_token(cleanup["client_id"], cleanup["client_secret"], cleanup["tenant_id"])
+        headers = {"Authorization": f"Bearer {token}"}
+        if cleanup.get("user_id"):
+            httpx.delete(f"https://graph.microsoft.com/v1.0/users/{cleanup['user_id']}", headers=headers, timeout=30)
+        if cleanup.get("group_id"):
+            httpx.delete(f"https://graph.microsoft.com/v1.0/groups/{cleanup['group_id']}", headers=headers, timeout=30)
+    except Exception as exc:  # noqa: BLE001 — cleanup failures never fail the session
+        print(f"WARNING: Entra cleanup incomplete ({exc}); delete these objects manually: {cleanup.get('user_id')} {cleanup.get('group_id')}")
+
+
+def provision_entra_test_identity() -> tuple[str, dict[str, str]]:
+    """Provision a throwaway user, group, and membership; return (token, cleanup).
+
+    Uses ``AZURE_CLIENT_ID``/``AZURE_CLIENT_SECRET``/``AZURE_TENANT_ID``.
+    Raises ``_ProvisioningError`` when a step fails. The caller MUST pass
+    the cleanup dict to ``_cleanup_entra_test_identity`` afterwards, even
+    on failure paths: this function cleans up its own partial state
+    before re-raising.
+    """
+    client_id = os.getenv("AZURE_CLIENT_ID", "")
+    client_secret = os.getenv("AZURE_CLIENT_SECRET", "")
+    tenant_id = os.getenv("AZURE_TENANT_ID", "")
+    if not (client_id and client_secret and tenant_id):
+        raise _ProvisioningError("AZURE_CLIENT_ID, AZURE_CLIENT_SECRET and AZURE_TENANT_ID are not all set")
+    cleanup: dict[str, str] = {"client_id": client_id, "client_secret": client_secret, "tenant_id": tenant_id}
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    try:
+        graph_token = _azure_graph_token(client_id, client_secret, tenant_id)
+        headers = {"Authorization": f"Bearer {graph_token}", "Content-Type": "application/json"}
+        _ensure_group_claims(headers, client_id)
+        org = httpx.get("https://graph.microsoft.com/v1.0/organization", params={"$select": "verifiedDomains"}, headers=headers, timeout=30)
+        domain = None
+        if org.status_code == 200:
+            for org_row in org.json().get("value", []):
+                for verified in org_row.get("verifiedDomains", []):
+                    if verified.get("isDefault"):
+                        domain = verified.get("name")
+                        break
+                if domain:
+                    break
+        if not domain:
+            raise _ProvisioningError("the default tenant domain could not be resolved through GET /organization")
+        unique = f"cf-live-e2e-{int(time.time())}"
+        group = httpx.post(
+            "https://graph.microsoft.com/v1.0/groups",
+            headers=headers,
+            json={"displayName": f"ContextForge-LiveE2E-{int(time.time())}", "mailNickname": unique, "mailEnabled": False, "securityEnabled": True},
+            timeout=30,
+        )
+        if group.status_code not in (200, 201):
+            raise _ProvisioningError(f"group creation failed with HTTP {group.status_code}; the Graph application permissions may be missing")
+        cleanup["group_id"] = group.json()["id"]
+        password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20)) + "!E2e-Aa9"
+        user = httpx.post(
+            "https://graph.microsoft.com/v1.0/users",
+            headers=headers,
+            json={
+                "accountEnabled": True,
+                "displayName": f"CF Live E2E {int(time.time())}",
+                "mailNickname": unique,
+                "userPrincipalName": f"{unique}@{domain}",
+                "passwordProfile": {"password": password, "forceChangePasswordNextSignIn": False},
+            },
+            timeout=30,
+        )
+        if user.status_code not in (200, 201):
+            raise _ProvisioningError(f"user creation failed with HTTP {user.status_code}; the Graph application permissions may be missing")
+        cleanup["user_id"] = user.json()["id"]
+        member = None
+        for attempt in range(3):
+            member = httpx.post(
+                f"https://graph.microsoft.com/v1.0/groups/{cleanup['group_id']}/members/$ref",
+                headers=headers,
+                json={"@odata.id": f"https://graph.microsoft.com/v1.0/users/{cleanup['user_id']}"},
+                timeout=30,
+            )
+            if member.status_code in (200, 201, 204) or member.status_code != 404:
+                break
+            time.sleep(10)  # a fresh user can 404 on members/$ref until directory replication lands
+        if member is None or member.status_code not in (200, 201, 204):
+            raise _ProvisioningError(f"group membership failed with HTTP {member.status_code if member else 'n/a'}: {member.text[:200] if member else ''} (group={cleanup['group_id']} user={cleanup['user_id']})")
+        # Group-claim propagation can lag membership by a short delay: retry ROPC.
+        last_problems: list[str] = []
+        for _ in range(3):
+            time.sleep(15)
+            response = httpx.post(
+                token_url,
+                data={
+                    "grant_type": "password",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "username": f"{unique}@{domain}",
+                    "password": password,
+                    "scope": f"{client_id}/.default openid profile",
+                },
+                timeout=30,
+            )
+            if response.status_code != 200:
+                error = response.json().get("error", "unknown_error")
+                raise _ProvisioningError(f"ROPC acquisition failed with HTTP {response.status_code} ({error}); the tenant may block ROPC")
+            candidate = response.json()["access_token"]
+            last_problems = validate_for_inline_groups(inspect_token(candidate))
+            if not last_problems:
+                return candidate, cleanup
+        raise _ProvisioningError(f"the provisioned token never carried inline groups: {'; '.join(last_problems)}")
+    except _ProvisioningError:
+        _cleanup_entra_test_identity(cleanup)
+        raise
+
+
 @pytest.fixture(scope="session")
 def entra_inline_token() -> Any:
     """Yield (token, info) from a REAL Entra v2 token; skip when unavailable.
 
-    Skip reasons name the exact environment variables that enable the
-    test; a skipped run never fails the suite.
+    Skip reasons name the exact environment variables or the failing
+    provisioning step; a skipped run never fails the suite.
     """
-    token = load_entra_token() or acquire_entra_token_ropc()
+    token = load_entra_token()
+    cleanup: dict[str, str] = {}
+    if not token:
+        if os.getenv("AZURE_CLIENT_ID") and os.getenv("AZURE_CLIENT_SECRET") and os.getenv("AZURE_TENANT_ID"):
+            try:
+                token, cleanup = provision_entra_test_identity()
+            except _ProvisioningError as exc:
+                pytest.skip(f"AZURE_* self-provisioning failed: {exc}")
+            except httpx.HTTPError as exc:
+                pytest.skip(
+                    f"AZURE_* self-provisioning cannot reach Entra endpoints ({type(exc).__name__}); "
+                    'set TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com" '
+                    "(tests/conftest.py blackholes external DNS by default)"
+                )
+        else:
+            token = acquire_entra_token_ropc()
+
     if not token:
         pytest.skip(
             "live Entra token not configured: set ENTRA_LIVE_TOKEN_FILE (or "
-            "ENTRA_LIVE_TOKEN_DIR/entra-token-valid-v2.txt), or ROPC env "
-            "ENTRA_TENANT_ID + ENTRA_CLIENT_ID + ENTRA_TEST_USERNAME + ENTRA_TEST_PASSWORD"
+            "ENTRA_LIVE_TOKEN_DIR/entra-token-valid-v2.txt), or AZURE_CLIENT_ID + "
+            "AZURE_CLIENT_SECRET + AZURE_TENANT_ID, or ROPC env ENTRA_TENANT_ID + "
+            "ENTRA_CLIENT_ID + ENTRA_TEST_USERNAME + ENTRA_TEST_PASSWORD"
         )
     info = inspect_token(token)
     problems = validate_for_inline_groups(info)
     if problems:
         pytest.skip(f"live Entra token unusable for inline-groups tests: {'; '.join(problems)}")
     yield token, info
+    _cleanup_entra_test_identity(cleanup)
