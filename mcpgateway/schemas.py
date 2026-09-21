@@ -2342,6 +2342,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
+    custom_name: Optional[str] = Field(None, description="Explicit resource base name; takes precedence over name when non-null. Local names remain literal.")
     description: Optional[str] = Field(None, description="Resource description")
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
@@ -2367,6 +2368,19 @@ class ResourceUpdate(BaseModelWithConfigDict):
             List of validated tag strings or None if input is None
         """
         return validate_tags_field(v)
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate an explicit rename without changing the legacy name contract.
+
+        Args:
+            v: Requested base name, or None to use legacy name handling.
+
+        Returns:
+            Validated name or None.
+        """
+        return SecurityValidator.validate_name(v, "Resource name") if v is not None else None
 
     @field_validator("name")
     @classmethod
@@ -2482,7 +2496,7 @@ class ResourceRead(BaseModelWithConfigDict):
     id: str = Field(description="Unique ID of the resource")
     uri: str
     name: str
-    original_name: Optional[str] = Field(None, description="Upstream name as reported by the federated server")
+    original_name: Optional[str] = Field(None, description="Upstream name for federated resources; initial naming history for local resources")
     custom_name_slug: Optional[str] = Field(None, description="Slugified base used to compose the namespaced name")
     description: Optional[str]
     mime_type: Optional[str]

@@ -8,10 +8,12 @@ Persistence and lifecycle regressions for resource namespacing.
 
 # Standard
 import importlib
+from unittest.mock import AsyncMock, patch
 
 # Third-Party
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from pydantic import ValidationError
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import event
@@ -20,8 +22,9 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base, Gateway, Resource, resource_has_name_override
-from mcpgateway.schemas import ResourceCreate
+from mcpgateway.schemas import ResourceCreate, ResourceUpdate
 from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.utils.create_slug import slugify
 
 
@@ -230,3 +233,103 @@ def test_resource_migration_batches_updates():
         assert connection.execute(sa.text("SELECT count(*) FROM resources WHERE original_name IS NULL")).scalar_one() == 0
         assert connection.execute(sa.text("SELECT name FROM resources WHERE id = '1000'")).scalar_one() == "upstream-report-1000"
     engine.dispose()
+
+
+@pytest.mark.parametrize("field", ["custom_name", "customName"])
+@pytest.mark.parametrize("value", [None, "Weekly Report", "---", "a" * 255])
+def test_explicit_resource_name_schema(field, value):
+    """Both API spellings accept valid names and nullable omission semantics."""
+    update = ResourceUpdate.model_validate({field: value})
+    assert update.custom_name == value
+    assert ResourceUpdate().custom_name is None
+
+
+@pytest.mark.parametrize("value", ["", "a" * 256, "<script>", "bad/name"])
+def test_explicit_resource_name_schema_rejects_invalid(value):
+    """Explicit names do not bypass the existing resource validator."""
+    with pytest.raises(ValidationError):
+        ResourceUpdate(custom_name=value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("federated", [False, True])
+@pytest.mark.parametrize(
+    "payload,expected_base",
+    [
+        ({"custom_name": "Weekly Report"}, "weekly-report"),
+        ({"name": "Ignored", "custom_name": "Weekly Report"}, "weekly-report"),
+        ({"name": "Weekly Report", "custom_name": None}, "weekly-report"),
+        ({"name": "Weekly Report"}, "weekly-report"),
+        ({"custom_name": "upstream-report"}, "upstream-report"),
+        ({"custom_name": "---"}, ""),
+    ],
+)
+async def test_explicit_resource_rename_persists(naming_db, federated, payload, expected_base):
+    """Explicit intent wins over legacy names and persists through ORM listeners."""
+    gateway = Gateway(name="Upstream", slug="upstream", url="https://example.com/mcp", capabilities={})
+    resource = Resource(uri="test://rename", name="Report", visibility="public")
+    naming_db.add(gateway)
+    if federated:
+        gateway.resources = [resource]
+    else:
+        naming_db.add(resource)
+    naming_db.commit()
+    service = ResourceService()
+    with (
+        patch("mcpgateway.services.resource_service.audit_trail.log_action"),
+        patch.object(service, "_notify_resource_updated", new_callable=AsyncMock),
+    ):
+        await service.update_resource(naming_db, resource.id, ResourceUpdate(**payload))
+        naming_db.expire(resource)
+        expected = (f"upstream-{expected_base}" if expected_base else "upstream") if federated else (payload.get("custom_name") or payload["name"])
+        assert resource.name == expected
+        assert resource.custom_name_slug == expected_base
+        assert resource.original_name == "Report"
+        await service.update_resource(naming_db, resource.id, ResourceUpdate(description="Unchanged base"))
+        naming_db.expire(resource)
+        assert resource.name == expected
+        assert resource.custom_name_slug == expected_base
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gateway_name", [None, "Upstream", "---"])
+@pytest.mark.parametrize("submitted", ["Weekly Report", "unchanged", "---"])
+async def test_bulk_resource_rename_preserves_identity(naming_db, gateway_name, submitted):
+    """Bulk imports persist operator renames without overwriting upstream identity."""
+    gateway = Gateway(name=gateway_name or "Upstream", slug="upstream", url="https://example.com/mcp", capabilities={})
+    resource = Resource(uri="test://bulk", name="Report", visibility="public")
+    naming_db.add(gateway)
+    if gateway_name is not None:
+        gateway.resources = [resource]
+    else:
+        naming_db.add(resource)
+    naming_db.commit()
+    old_name = resource.name
+    name = old_name if submitted == "unchanged" else submitted
+    upstream = ResourceCreate(uri=resource.uri, name=name, gateway_id=resource.gateway_id, content="")
+    service = ResourceService()
+    with patch("mcpgateway.services.resource_service.audit_trail.log_action"):
+        result = await service.register_resources_bulk(naming_db, [upstream], conflict_strategy="update")
+    assert result["updated"] == 1
+    assert result["failed"] == 0
+    naming_db.expire(resource)
+    base = "report" if submitted == "unchanged" else slugify(name)
+    assert resource.original_name == "Report"
+    assert resource.custom_name_slug == base
+    if gateway_name == "---":
+        assert resource.name == old_name
+    elif gateway_name is None:
+        assert resource.name == name
+        gateway.resources.append(resource)
+        naming_db.flush()
+    else:
+        assert resource.name == (f"upstream-{base}" if base else "upstream")
+    # An imported override survives refresh; an unchanged base follows upstream.
+    upstream.name = "Monthly Report"
+    GatewayService()._update_or_create_resources(naming_db, [upstream], gateway, "federation")
+    naming_db.flush()
+    naming_db.expire(resource)
+    assert resource.original_name == "Monthly Report"
+    assert resource.custom_name_slug == ("monthly-report" if submitted == "unchanged" else base)
+    if gateway_name == "---":
+        assert resource.name == old_name

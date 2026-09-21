@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 def _exportable_resource_base(resource: DbResource | ResourceRead) -> str:
     """Select a resource export name without changing local names.
 
+    Federated candidates are custom_name_slug, original_name, then name. Each
+    nonempty candidate is capped at the smaller of 255 and the configured name
+    limit before validation. Invalid candidates are skipped. If none validate,
+    warn and return the derived name unchanged. Local names are always returned
+    verbatim, with a warning if they fail validation.
+
     Args:
         resource: Resource to export.
 

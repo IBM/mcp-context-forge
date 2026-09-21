@@ -24,6 +24,15 @@ slug. Local resource names and resource URIs are unchanged. Names are limited to
 long prefixes can consume the resource portion, and gateway slugs can collide. A virtual-server-scoped read resolves
 a shared URI only when that server has one matching resource; prefixing names does not change URI routing.
 
+Upgrading applies these prefixes to existing federated resource names. Integrations or saved searches that match
+names may need updating; resource IDs and URIs do not change. Previously exported files are not rewritten.
+
+Resource read responses include `original_name` and `custom_name_slug` for local resources too. For a local resource,
+`original_name` records its initial naming history, not an upstream identity. Its visible name remains literal.
+Updates can supply `custom_name` to explicitly rename the base (or the literal local name). A non-null `custom_name`
+takes precedence over `name`; omitted or null values retain legacy `name` handling. Admin submits an explicit base
+only when it changes. Bulk import updates treat the imported name as operator intent and preserve upstream identity.
+
 Exports preserve local names verbatim. Federated exports select the effective base, then the upstream name, then the
 derived name, using the first candidate that validates after applying the configured length limit (at most 255).
 If none validates, the derived name is exported unchanged with a warning. Full `original_name` and `custom_name_slug`
