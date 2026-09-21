@@ -82,9 +82,9 @@ import httpx
 import pytest
 
 # Local
-from tests.helpers.auth import make_test_jwt
 from .helpers.local_oidc_issuer import local_oidc_issuer  # noqa: F401  # fixture re-export
-from .helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_no_gateway
+from .helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
+from .helpers.trust_mode_seed import admin_headers, seed_agent, seed_mapping, seed_provider, seed_team
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
@@ -136,18 +136,6 @@ MATRIX = [
 ]
 
 
-def _admin_headers() -> dict[str, str]:
-    """Gateway-signed platform-admin headers for seeding (shared test secret).
-
-    token_use="session" gives DB-authoritative team resolution: the platform
-    admin resolves to the admin bypass (token_teams=None), whereas a
-    claim-less token would resolve token_teams=[] and the public-only
-    semantics would suppress admin bypass on the admin APIs.
-    """
-    token = make_test_jwt(ADMIN_EMAIL, is_admin=True, secret=JWT_SECRET, token_use="session")
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-
 def _base_claims(local_oidc_issuer, subject: str) -> dict:
     """Standard claim set for a local-issuer end-user token."""
     now = datetime.now(timezone.utc)
@@ -180,73 +168,6 @@ def _invoke_agent(agent_name: str, token: str) -> httpx.Response:
     )
 
 
-def _seed_team(client: httpx.Client) -> str:
-    """Create (or reuse) team ``agent-a-team``; return its team ID."""
-    response = client.post(f"{BASE_URL}/teams/", json={"name": TEAM_NAME, "description": "T9 ingress matrix team"})
-    if response.status_code not in (200, 201):
-        # Re-run against a reused database: find the existing team by name.
-        listing = client.get(f"{BASE_URL}/teams/", params={"include_inactive": "false"})
-        assert listing.status_code == 200, f"team seed failed: {response.status_code} {response.text[:200]}; listing failed: {listing.status_code}"
-        body = listing.json()
-        teams = body.get("teams", body) if isinstance(body, dict) else body
-        for team in teams:
-            if isinstance(team, dict) and team.get("name") == TEAM_NAME:
-                return team["id"]
-        raise AssertionError(f"team seed failed: {response.status_code} {response.text[:200]}")
-    return response.json()["id"]
-
-
-def _seed_provider(client: httpx.Client, local_oidc_issuer) -> None:
-    """Create the SSOProvider trust root for the local issuer (idempotent)."""
-    # Delete-first keeps re-runs against a reused database deterministic.
-    client.delete(f"{BASE_URL}/auth/sso/admin/providers/{PROVIDER_ID}")
-    payload = {
-        "id": PROVIDER_ID,
-        "name": PROVIDER_ID,
-        "display_name": "Local OIDC Test Issuer",
-        "provider_type": "oidc",
-        "client_id": "local-oidc-test-client",
-        "client_secret": "local-oidc-test-secret",  # pragma: allowlist secret
-        "authorization_url": f"{local_oidc_issuer.issuer}/authorize",
-        "token_url": f"{local_oidc_issuer.issuer}/token",
-        "userinfo_url": f"{local_oidc_issuer.issuer}/userinfo",
-        "issuer": local_oidc_issuer.issuer,
-        "trusted_for_api_auth": True,
-        "api_audience": API_AUDIENCE,
-    }
-    response = client.post(f"{BASE_URL}/auth/sso/admin/providers", json=payload)
-    assert response.status_code in (200, 201), f"provider seed failed: {response.status_code} {response.text[:200]}"
-
-
-def _seed_agent(client: httpx.Client, team_id: str, local_oidc_issuer) -> None:
-    """Register Agent-A (team-visible, endpoint = harness stub agent)."""
-    payload = {
-        "agent": {
-            "name": AGENT_NAME,
-            "description": "T9 ingress matrix stub agent",
-            "endpoint_url": local_oidc_issuer.stub_agent_url,
-            "agent_type": "generic",
-        },
-        "team_id": team_id,
-        "visibility": "team",
-    }
-    response = client.post(f"{BASE_URL}/a2a/", json=payload)
-    assert response.status_code in (200, 201, 409), f"agent seed failed: {response.status_code} {response.text[:200]}"
-
-
-def _seed_mapping(client: httpx.Client, team_id: str, local_oidc_issuer) -> None:
-    """Map external group -> team + developer role (idempotent on re-run)."""
-    payload = {
-        "issuer": local_oidc_issuer.issuer,
-        "tenant": None,
-        "external_group_id": MAPPED_GROUP,
-        "cf_team_id": team_id,
-        "cf_role": "developer",
-    }
-    response = client.post(f"{BASE_URL}/admin/external-group-mappings", json=payload)
-    assert response.status_code in (200, 201, 409), f"mapping seed failed: {response.status_code} {response.text[:200]}"
-
-
 @pytest.fixture(scope="module")
 def seeded_gateway(local_oidc_issuer) -> dict[str, str]:
     """Seed the trust root, team, agent, and mapping; mint scenario tokens.
@@ -254,11 +175,11 @@ def seeded_gateway(local_oidc_issuer) -> dict[str, str]:
     Returns a scenario -> bearer-token mapping. Token material stays inside
     the fixture; tests only forward it in the Authorization header.
     """
-    with httpx.Client(headers=_admin_headers(), timeout=20) as client:
-        team_id = _seed_team(client)
-        _seed_provider(client, local_oidc_issuer)
-        _seed_agent(client, team_id, local_oidc_issuer)
-        _seed_mapping(client, team_id, local_oidc_issuer)
+    with httpx.Client(headers=admin_headers(), timeout=20) as client:
+        team_id = seed_team(client, TEAM_NAME, "T9 ingress matrix team")
+        seed_provider(client, PROVIDER_ID, local_oidc_issuer.issuer, API_AUDIENCE)
+        seed_agent(client, AGENT_NAME, team_id, local_oidc_issuer.stub_agent_url, "T9 ingress matrix stub agent")
+        seed_mapping(client, local_oidc_issuer.issuer, None, MAPPED_GROUP, team_id, "developer")
 
     mapped_token = _mint_user_token(local_oidc_issuer, "oid-mapped-user-0001", groups=[MAPPED_GROUP])
     unmapped_token = _mint_user_token(local_oidc_issuer, "oid-unmapped-user-0001", groups=[UNMAPPED_GROUP])
