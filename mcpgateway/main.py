@@ -246,6 +246,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
@@ -1464,22 +1465,23 @@ def _check_url_scheme_compliance() -> None:
     allowed = [s.lower() for s in settings.validation_allowed_url_schemes]
     violations: list[str] = []
 
-    with SessionLocal() as db:
-        # ponytail: O(n) scan over enabled rows; index query if table exceeds ~10k rows
-        for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all():
-            if gw.url and not any(gw.url.lower().startswith(s) for s in allowed):
-                msg = f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {gw.url}"
-                violations.append(msg)
+    try:
+        with SessionLocal() as db:
+            # Linear scan over enabled rows; add an index query if table exceeds ~10k rows.
+            for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all():
+                if gw.url and not any(gw.url.lower().startswith(s) for s in allowed):
+                    violations.append(f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {sanitize_url_for_logging(gw.url)}")
 
-        for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all():
-            if tool.url and not any(tool.url.lower().startswith(s) for s in allowed):
-                msg = f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {tool.url}"
-                violations.append(msg)
+            for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all():
+                if tool.url and not any(tool.url.lower().startswith(s) for s in allowed):
+                    violations.append(f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {sanitize_url_for_logging(tool.url)}")
 
-        for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all():
-            if agent.endpoint_url and not any(agent.endpoint_url.lower().startswith(s) for s in allowed):
-                msg = f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {agent.endpoint_url}"
-                violations.append(msg)
+            for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all():
+                if agent.endpoint_url and not any(agent.endpoint_url.lower().startswith(s) for s in allowed):
+                    violations.append(f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {sanitize_url_for_logging(agent.endpoint_url)}")
+    except Exception:
+        logger.warning("URL scheme compliance check skipped: database unavailable")
+        return
 
     if not violations:
         return

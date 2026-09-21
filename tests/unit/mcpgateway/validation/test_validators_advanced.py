@@ -92,6 +92,9 @@ def patch_logger(monkeypatch):
 @pytest.fixture(autouse=True)
 def patch_settings_and_classvars(monkeypatch):
     """Patch settings and SecurityValidator class variables for testing."""
+    from mcpgateway.config import get_settings
+    real = get_settings()
+    monkeypatch.setattr(real, "validation_allowed_url_schemes", DummySettings.validation_allowed_url_schemes)
     with patch("mcpgateway.config.settings", new=DummySettings):
         # Update all class variables to use test settings
         SecurityValidator.MAX_NAME_LENGTH = DummySettings.validation_max_name_length
@@ -102,7 +105,6 @@ def patch_settings_and_classvars(monkeypatch):
         SecurityValidator.MAX_URL_LENGTH = DummySettings.validation_max_url_length
         SecurityValidator.DANGEROUS_HTML_PATTERN = DummySettings.validation_dangerous_html_pattern
         SecurityValidator.DANGEROUS_JS_PATTERN = DummySettings.validation_dangerous_js_pattern
-        SecurityValidator.ALLOWED_URL_SCHEMES = DummySettings.validation_allowed_url_schemes
         SecurityValidator.NAME_PATTERN = DummySettings.validation_name_pattern
         SecurityValidator.IDENTIFIER_PATTERN = DummySettings.validation_identifier_pattern
         SecurityValidator.VALIDATION_SAFE_URI_PATTERN = DummySettings.validation_safe_uri_pattern

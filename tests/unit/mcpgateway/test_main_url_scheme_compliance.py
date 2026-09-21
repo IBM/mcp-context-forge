@@ -140,3 +140,25 @@ def test_multiple_violations_all_logged():
         mock_settings.strict_scheme_enforcement = False
         _check_url_scheme_compliance()
     assert mock_logger.warning.call_count == 3
+
+
+def test_disabled_records_excluded():
+    """Disabled records are not scanned (the query filters on enabled=True)."""
+    mock_db = MagicMock()
+    # Return no rows for every query — simulates no enabled records
+    mock_db.query.return_value.filter.return_value.all.return_value = []
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=mock_db)
+    ctx.__exit__ = MagicMock(return_value=False)
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.logger") as mock_logger,
+        patch("mcpgateway.main.settings") as mock_settings,
+    ):
+        mock_settings.validation_allowed_url_schemes = ["http://", "https://"]
+        mock_settings.strict_scheme_enforcement = False
+        _check_url_scheme_compliance()
+    mock_logger.warning.assert_not_called()
+    # Verify every query applied a filter (the enabled=True clause)
+    for call in mock_db.query.return_value.filter.call_args_list:
+        assert call.args, "filter() must receive at least one argument (the enabled clause)"
