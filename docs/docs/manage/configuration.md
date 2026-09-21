@@ -915,7 +915,7 @@ mcpContextForge:
 
 ### URL Scheme Allowlist
 
-Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. Changes require a full process restart.
+Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation; restart required to re-run the startup database scan.
 
 | Setting | Description | Default | Options |
 | --- | --- | --- | --- |
