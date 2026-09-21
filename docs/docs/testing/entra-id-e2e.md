@@ -473,9 +473,11 @@ A second Entra test suite covers external-IdP trust mode
 (`JWT_TRUST_MODE=jwt-trust`). The module
 `tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py` reproduces
 the four inline-groups access cases:
-The tests run against a real Entra tenant. They use real v2 tokens, the real
+The tests run against a real Entra tenant. They use real tokens, the real
 issuer and JWKS, and real Microsoft Graph for group-overage resolution. The
-tests do not mock any Entra component.
+tests do not mock any Entra component. With `AZURE_*` credentials exported,
+all four cases run without operator input in three to four minutes. Use
+case 4 provisions 201 throwaway groups.
 
 This suite is separate from the SSO role-sync suite above. It exercises token
 dispatch, group-to-team mapping, and A2A agent visibility and invocation
@@ -494,20 +496,18 @@ make testing-up-entra
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` | Preferred automated mode | Self-provisioning mode. The harness creates a security group and a test user, acquires a v2 token through ROPC, and deletes both objects after the session. Requires admin-consented Graph permissions `User.ReadWrite.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All`. |
+| `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` | Preferred (self-provisioning) | Self-provisioning mode. The harness provisions a user and one group for use cases 1-3. For use case 4 it provisions a user in 201 groups. It deletes every object after the session. Requires admin-consented Graph permissions `User.ReadWrite.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All`, `Application.ReadWrite.All`. |
 | `ENTRA_LIVE_TOKEN_FILE` | Alternative to `AZURE_*` | Path to a non-overage, unexpired Entra v2 end-user token with inline `groups` claims |
-| `ENTRA_LIVE_TOKEN_DIR` | Alternative to the file variable | Directory that contains `entra-token-valid-v2.txt` |
-| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_TEST_USERNAME`, `ENTRA_TEST_PASSWORD` | Alternative to `AZURE_*` | Acquire the token through ROPC for a pre-existing account. The flow requires public client flows and a test account without interactive MFA. |
-| `ENTRA_OVERAGE_TOKEN_FILE` | Use case 4 only | Entra v2 token for a user in more than 200 groups, with the group-overage marker |
-| `ENTRA_GRAPH_CLIENT_ID`, `ENTRA_GRAPH_CLIENT_SECRET` | Use case 4 only | App Registration with the admin-consented `GroupMember.Read.All` permission. The tests use `ENTRA_CLIENT_ID` and `ENTRA_CLIENT_SECRET` when these variables are unset. |
-| `ENTRA_OVERAGE_MAPPED_GROUP` | Use case 4 only | Group GUID that Microsoft Graph resolves. Set this variable when the overage token carries no inline groups. |
+| `ENTRA_OVERAGE_TOKEN_FILE` | Use case 4 alternative | Pre-acquired token for a user in more than 200 groups, with the group-overage marker. With `AZURE_*` set, the harness provisions a user in 201 groups and deletes it after the session |
+| `ENTRA_GRAPH_CLIENT_ID`, `ENTRA_GRAPH_CLIENT_SECRET` | Use case 4 only | App Registration with the admin-consented `GroupMember.Read.All` permission. The tests use `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` or `ENTRA_CLIENT_ID`/`ENTRA_CLIENT_SECRET` when these variables are unset. |
+| `ENTRA_OVERAGE_MAPPED_GROUP` | Use case 4 operator mode only | Group GUID that Microsoft Graph resolves. The operator token mode needs it when the token carries no inline groups. The self-provisioning mode supplies the GUID itself. |
 
 
 ### Required Microsoft Graph permissions
 
 Grant these **application permissions** to the App Registration, with admin
-consent. The self-provisioning mode needs all four. Use case 4 needs the fifth,
-or it is covered by `GroupMember.ReadWrite.All`.
+consent. The self-provisioning mode needs all four. Use case 4 also needs
+the fifth permission. `GroupMember.ReadWrite.All` already covers it.
 
 | Permission | Used for |
 |-----------|----------|
@@ -520,12 +520,14 @@ or it is covered by `GroupMember.ReadWrite.All`.
 Without `Application.ReadWrite.All`, the harness cannot set
 `groupMembershipClaims` itself. Set it to `"SecurityGroup"` in the App
 Registration manifest by hand, or the token never carries the `groups` claim.
+
 ### Run the tests
 
 ```bash
 TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com" \
 JWT_TRUST_MODE=jwt-trust \
 JWT_SECRET_KEY="$(docker compose exec -T gateway printenv JWT_SECRET_KEY)" \
+JWT_TRUST_OVERAGE_POLICY=graph_lookup \
     uv run pytest tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py -v
 ```
 
@@ -537,9 +539,9 @@ Entra token endpoint and Microsoft Graph.
 
 The trust-mode suite works with v1-format tokens (`sts.windows.net`
 issuers). The seeding helper records a same-origin `jwks_uri` on the
-provider (`<issuer>/discovery/keys`), because v1 discovery documents
-point at a cross-origin JWKS by design and the gateway rejects those.
-`make testing-up-entra` scales the gateway to one replica: the suite
+provider (`<issuer>/discovery/keys`). V1 discovery documents point at a
+cross-origin JWKS by design. The gateway rejects those URIs.
+`make testing-up-entra` scales the gateway to one replica. The suite
 changes the group mapping between requests, and a single gateway gives
 deterministic cache-invalidation semantics.
 
