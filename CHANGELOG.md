@@ -8,6 +8,22 @@
 
 ## [Unreleased]
 
+## [1.0.7-20260921] - 2026-09-21 - Upstream MCP Pagination Fix and Security Dependency Updates
+
+### Overview
+
+Maintenance patch release for the `v1.0.7` support line addressing upstream MCP pagination discovery and patching vulnerable dependencies and container base images.
+
+### Fixed
+
+- **Upstream MCP Pagination** ([#6809](https://github.com/IBM/mcp-context-forge/pull/6809)) - Follow `nextCursor` when discovering tools, resources, and prompts from upstream MCP servers across SSE, OAuth SSE, and Streamable HTTP transports rather than only fetching the first page.
+
+### Security
+
+- **Container Base Images** - Updated Red Hat UBI 10 base images to `10.2-1789952991` (`ubi10`), `10.2-1789645153` (`ubi10-minimal`), and `10.2-1789966145` (`nodejs-24`).
+- **Python Dependencies** - Patched `h2`, `pip` and `tornado`.
+- **Node Dependencies** - Patched `vitest` / `@vitest/mocker` and `fast-uri`.
+
 ## [1.0.7] - 2026-08-04 - Security Hardening, Unified Search, OAuth Improvements, Dataplane Enhancements, and Operational Reliability
 
 ### Overview
