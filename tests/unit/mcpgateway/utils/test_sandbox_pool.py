@@ -133,6 +133,40 @@ def test_settings_are_read_at_call_time_not_construction():
         instance.shutdown()
 
 
+def test_a_raising_timeout_function_does_not_leak_a_permit():
+    """A failing budget read must not consume a worker slot forever.
+
+    Reading the budget after taking a permit leaves a window with no release path. One
+    failure there would strand the permit and make every later call return SandboxBusy.
+    """
+    state = {"raising": False}
+
+    def timeout_fn():
+        """Return the budget, or fail once the test arms the failure.
+
+        Returns:
+            The wall-clock limit in seconds.
+
+        Raises:
+            RuntimeError: When the test has armed the failure.
+        """
+        if state["raising"]:
+            raise RuntimeError("settings unavailable")
+        return 5.0
+
+    instance = SandboxPool(name="test-leak", workers_fn=lambda: 1, timeout_fn=timeout_fn)
+    instance.start()
+    try:
+        state["raising"] = True
+        with pytest.raises(RuntimeError):
+            instance.submit(_echo, "boom")
+
+        state["raising"] = False
+        assert instance.submit(_echo, "still here") == "still here"
+    finally:
+        instance.shutdown()
+
+
 def test_gate_is_stamped_on_the_executor(pool):
     """The admission gate must travel with the executor it admits to.
 

@@ -177,13 +177,16 @@ class SandboxPool:
         """
         pool = self._ensure()
         gate = getattr(pool, _GATE_ATTR, None)
+        # Read the budget BEFORE taking a permit. Between acquire() and the try/finally
+        # there is no release path, so a raising timeout_fn would leak the permit
+        # permanently and brick the pool into returning SandboxBusy forever.
+        timeout = self._timeout_fn()
         # ProcessPoolExecutor queues a task the instant every worker is busy, and
         # Future.result(timeout=...) cannot tell "still queued" apart from "running past
         # its budget". Reserving a slot first means a submission only reaches the pool
         # when a worker is free, so a timeout on it is never queueing pressure.
         if gate is None or not gate.acquire(blocking=False):
             raise SandboxBusy(f"{self._name} sandbox has no free worker")
-        timeout = self._timeout_fn()
         try:
             try:
                 return pool.submit(fn, *args).result(timeout=timeout)
