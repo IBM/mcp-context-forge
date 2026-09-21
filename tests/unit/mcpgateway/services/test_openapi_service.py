@@ -22,6 +22,7 @@ import pytest
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
     _OPENAPI_SPEC_CACHE_TTL,
+    _estimate_openapi_spec_cache_size,
     _openapi_spec_cache,
     _openapi_spec_inflight,
     extract_schemas_from_openapi,
@@ -399,6 +400,62 @@ class TestFetchOpenAPISpec:
                 await fetch_openapi_spec("http://example.com/two.json")
 
         assert mock_client.stream.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_evicts_oldest_entries_to_fit_byte_budget(self):
+        """The aggregate cache size stays within budget by evicting the oldest entry."""
+        first_url = "http://example.com/one.json"
+        second_url = "http://example.com/two.json"
+        first_spec = {"openapi": "3.0.0", "paths": {"/one": {"get": {}}}}
+        second_spec = {"openapi": "3.0.0", "paths": {"/two": {"get": {}}}}
+        first_size = _estimate_openapi_spec_cache_size(first_url, first_spec, 1_000_000)
+        second_size = _estimate_openapi_spec_cache_size(second_url, second_spec, 1_000_000)
+        budget = max(first_size, second_size)
+        mock_client = _mock_http_client(orjson.dumps(first_spec))
+        mock_client.stream.side_effect = [
+            _mock_stream(orjson.dumps(first_spec)),
+            _mock_stream(orjson.dumps(second_spec)),
+        ]
+
+        with patch(_PATCH_CLIENT, new=AsyncMock(return_value=mock_client)):
+            with patch(_PATCH_VALIDATE):
+                with patch("mcpgateway.services.openapi_service._OPENAPI_SPEC_CACHE_MAX_BYTES", budget):
+                    await fetch_openapi_spec(first_url)
+                    await fetch_openapi_spec(second_url)
+
+        assert first_url not in _openapi_spec_cache
+        assert second_url in _openapi_spec_cache
+        assert sum(entry[2] for entry in _openapi_spec_cache.values()) <= budget
+
+    @pytest.mark.asyncio
+    async def test_spec_larger_than_cache_budget_is_returned_but_not_cached(self):
+        """A response larger than the cache budget remains usable without being retained."""
+        spec = {"openapi": "3.0.0", "paths": {}}
+        mock_client = _mock_http_client(orjson.dumps(spec))
+
+        with patch(_PATCH_CLIENT, new=AsyncMock(return_value=mock_client)):
+            with patch(_PATCH_VALIDATE):
+                with patch("mcpgateway.services.openapi_service._OPENAPI_SPEC_CACHE_MAX_BYTES", 1):
+                    result = await fetch_openapi_spec("http://example.com/openapi.json")
+
+        assert result == spec
+        assert not _openapi_spec_cache
+
+    @pytest.mark.asyncio
+    async def test_cache_entry_limit_remains_in_effect(self):
+        """The entry cap still evicts old entries independently of the byte budget."""
+        first_url = "http://example.com/one.json"
+        second_url = "http://example.com/two.json"
+        mock_client = _mock_http_client(orjson.dumps({"openapi": "3.0.0"}))
+
+        with patch(_PATCH_CLIENT, new=AsyncMock(return_value=mock_client)):
+            with patch(_PATCH_VALIDATE):
+                with patch("mcpgateway.services.openapi_service._OPENAPI_SPEC_CACHE_MAX_ENTRIES", 1):
+                    await fetch_openapi_spec(first_url)
+                    await fetch_openapi_spec(second_url)
+
+        assert first_url not in _openapi_spec_cache
+        assert second_url in _openapi_spec_cache
 
     @pytest.mark.asyncio
     async def test_fetch_with_ssrf_validation(self):

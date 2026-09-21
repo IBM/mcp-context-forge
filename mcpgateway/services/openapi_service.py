@@ -10,6 +10,9 @@ This module provides services for fetching and extracting schemas from OpenAPI s
 # Standard
 import asyncio
 import logging
+from collections.abc import Iterator
+from itertools import chain
+from sys import getsizeof
 from time import monotonic
 from typing import Any, Optional, Tuple
 import urllib.parse
@@ -58,8 +61,10 @@ def _resolve_schema(schema_obj: Optional[dict[str, Any]], components_schemas: di
 _MAX_SPEC_BYTES = 10 * 1024 * 1024
 _OPENAPI_SPEC_CACHE_TTL = 60.0
 _OPENAPI_SPEC_CACHE_MAX_ENTRIES = 128
+_OPENAPI_SPEC_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_OPENAPI_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
 
-_openapi_spec_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_openapi_spec_cache: dict[str, tuple[float, dict[str, Any], int]] = {}
 _openapi_spec_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 _openapi_spec_cache_lock = asyncio.Lock()
 
@@ -98,15 +103,45 @@ async def _fetch_openapi_spec_uncached(spec_url: str, timeout: float) -> dict[st
         raise ValueError("Response is not valid JSON. Ensure the URL points to a JSON OpenAPI specification.") from exc
 
 
+def _estimate_openapi_spec_cache_size(spec_url: str, spec: dict[str, Any], max_bytes: int) -> int:
+    """Estimate retained cache bytes, stopping once the budget is exceeded."""
+    total = getsizeof(spec_url) + _OPENAPI_SPEC_CACHE_ENTRY_OVERHEAD_BYTES
+    if total > max_bytes:
+        return total
+
+    pending: list[Iterator[Any]] = [iter((spec,))]
+    while pending:
+        try:
+            value = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        total += getsizeof(value)
+        if total > max_bytes:
+            return total
+        if isinstance(value, dict):
+            pending.append(chain(value.keys(), value.values()))
+        elif isinstance(value, (list, tuple)):
+            pending.append(iter(value))
+
+    return total
+
+
 async def _fetch_and_cache_openapi_spec(spec_url: str, timeout: float) -> dict[str, Any]:
     """Fetch a specification and cache it only after a successful response."""
     spec = await _fetch_openapi_spec_uncached(spec_url, timeout)
+    entry_size = _estimate_openapi_spec_cache_size(spec_url, spec, _OPENAPI_SPEC_CACHE_MAX_BYTES)
 
     async with _openapi_spec_cache_lock:
-        _openapi_spec_cache[spec_url] = (monotonic(), spec)
-        while len(_openapi_spec_cache) > _OPENAPI_SPEC_CACHE_MAX_ENTRIES:
+        _openapi_spec_cache.pop(spec_url, None)
+        total_size = sum(entry[2] for entry in _openapi_spec_cache.values())
+        if entry_size <= _OPENAPI_SPEC_CACHE_MAX_BYTES:
+            _openapi_spec_cache[spec_url] = (monotonic(), spec, entry_size)
+            total_size += entry_size
+        while len(_openapi_spec_cache) > _OPENAPI_SPEC_CACHE_MAX_ENTRIES or total_size > _OPENAPI_SPEC_CACHE_MAX_BYTES:
             oldest_url = min(_openapi_spec_cache, key=lambda url: _openapi_spec_cache[url][0])
-            del _openapi_spec_cache[oldest_url]
+            _, _, oldest_size = _openapi_spec_cache.pop(oldest_url)
+            total_size -= oldest_size
 
     return spec
 
@@ -144,7 +179,7 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict[str, 
     async with _openapi_spec_cache_lock:
         cached = _openapi_spec_cache.get(spec_url)
         if cached is not None:
-            cached_at, spec = cached
+            cached_at, spec, _ = cached
             if monotonic() - cached_at < _OPENAPI_SPEC_CACHE_TTL:
                 return spec
             del _openapi_spec_cache[spec_url]
