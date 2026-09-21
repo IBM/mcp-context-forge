@@ -58,15 +58,15 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.aws-lc-rs]]
-version = "1.17.0"
-when = "2026-05-13"
+version = "1.18.0"
+when = "2026-08-07"
 user-id = 156764
 user-login = "justsmth"
 user-name = "Justin W Smith"
 
 [[publisher.aws-lc-sys]]
-version = "0.41.0"
-when = "2026-05-13"
+version = "0.44.0"
+when = "2026-08-07"
 user-id = 156764
 user-login = "justsmth"
 user-name = "Justin W Smith"
@@ -217,8 +217,8 @@ user-login = "newpavlov"
 user-name = "Artyom Pavlov"
 
 [[publisher.h2]]
-version = "0.4.15"
-when = "2026-06-15"
+version = "0.4.16"
+when = "2026-08-17"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
@@ -571,8 +571,8 @@ user-login = "djc"
 user-name = "Dirkjan Ochtman"
 
 [[publisher.rustls-webpki]]
-version = "0.103.11"
-when = "2026-04-10"
+version = "0.103.14"
+when = "2026-08-11"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"

@@ -659,10 +659,6 @@ async def test_admin_get_update_delete_user():
         delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert delete_response.success is True
 
-        # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
-        assert datetime.now(timezone.utc) < datetime(2026, 8, 16, 23, 59, 59, tzinfo=timezone.utc), "Sunset reached: remove deprecated PUT endpoint. See #2754"
-        # ----------->
-
 
 @pytest.mark.asyncio
 async def test_admin_update_user_without_full_name_and_is_admin():

@@ -22,20 +22,17 @@ name: Plugin Integration E2E
 # surfaces as a failing job rather than a silently skipped test.
 #
 # Runs in the merge queue (merge_group) so plugin behaviour is verified before
-# code lands, and on pull_request when the inputs that affect plugin loading or
-# the suites themselves change.
+# code lands on main; also runs on every pull_request against a support/** branch (those
+# have no merge queue, so the PR is the only gate); and on pull_request against
+# main when the inputs that affect plugin loading or the suites themselves
+# change. That path gate lives in the plugin-inputs job rather than on the
+# trigger, because trigger path filters cannot differ per target branch.
 
 on:
     merge_group:
     pull_request:
-        branches: [main]
+        branches: [main, "support/**"]
         types: [opened, synchronize, reopened, ready_for_review]
-        paths:
-            - "pyproject.toml"
-            - "uv.lock"
-            - "plugins/config.yaml"
-            - "tests/live_gateway/plugins/**"
-            - ".github/workflows/plugin-integration.yml"
     workflow_dispatch:
 
 permissions:
@@ -46,8 +43,66 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    plugin-e2e:
+    # Decide whether the matrix must run for this event:
+    #   * merge_group / workflow_dispatch      -> always
+    #   * pull_request against support/**     -> always (no merge queue there)
+    #   * pull_request against main           -> only when a plugin-loading
+    #     input or a suite changed (same list the trigger path filter used).
+    plugin-inputs:
         if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: Plugin E2E inputs
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            pull-requests: read
+        outputs:
+            run: ${{ steps.decide.outputs.run }}
+        steps:
+            - name: Decide whether the plugin E2E matrix runs
+              id: decide
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  EVENT_NAME: ${{ github.event_name }}
+                  BASE_REF: ${{ github.base_ref }}
+                  REPO: ${{ github.repository }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+              run: |
+                  set -euo pipefail
+
+                  if [[ "${EVENT_NAME}" != "pull_request" ]]; then
+                    echo "Plugin E2E matrix: run (event ${EVENT_NAME} always runs it)."
+                    echo "run=true" >> "${GITHUB_OUTPUT}"
+                    exit 0
+                  fi
+
+                  if [[ "${BASE_REF}" == support/* ]]; then
+                    echo "Plugin E2E matrix: run (PR against ${BASE_REF} - has no merge queue)."
+                    echo "run=true" >> "${GITHUB_OUTPUT}"
+                    exit 0
+                  fi
+
+                  # get changed files
+                  changed_paths="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
+
+                  run=false
+                  while IFS= read -r path; do
+                    case "${path}" in
+                      pyproject.toml|uv.lock|plugins/config.yaml|tests/live_gateway/plugins/*|.github/workflows/plugin-integration.yml)
+                        run=true ;;
+                    esac
+                  done <<< "${changed_paths}"
+
+                  if [[ "${run}" == "true" ]]; then
+                    echo "Plugin E2E matrix: run (PR against ${BASE_REF} touches plugin E2E inputs)."
+                  else
+                    echo "Plugin E2E matrix: skip (PR against ${BASE_REF} does not touch plugin E2E inputs)."
+                  fi
+                  echo "run=${run}" >> "${GITHUB_OUTPUT}"
+
+    plugin-e2e:
+        needs: plugin-inputs
+        if: needs.plugin-inputs.outputs.run == 'true'
         name: ${{ matrix.plugin.name }} (${{ matrix.plugin.enforcement }}) E2E
         runs-on: ubuntu-latest
         timeout-minutes: 30
@@ -308,20 +363,30 @@ jobs:
                   if-no-files-found: ignore
 
     # Aggregation gate: a single, stable check name that branch protection /
-    # the merge queue can require. It succeeds only when every matrix leg
-    # passes. The companion plugin-integration-required.yml skip reporter
-    # reports the same "Plugin Integration Complete" name on every PR so that
-    # PRs whose paths don't trigger this suite are never blocked.
+    # the merge queue can require. It succeeds when every matrix leg passes,
+    # or when plugin-inputs decided the matrix is not needed for this event
+    # (main PR without plugin-related changes, or a draft PR). It fails when
+    # the matrix was required but did not succeed. Because this workflow now
+    # starts on every PR and this job always reports, no separate skip
+    # reporter workflow is needed to keep the required check present.
     plugin-integration-complete:
         name: Plugin Integration Complete
         runs-on: ubuntu-latest
-        needs: [plugin-e2e]
+        needs: [plugin-inputs, plugin-e2e]
         if: always()
         steps:
             - name: Verify all plugin E2E legs succeeded
+              env:
+                  RUN_REQUIRED: ${{ needs.plugin-inputs.outputs.run }}
+                  MATRIX_RESULT: ${{ needs.plugin-e2e.result }}
               run: |
-                  if [ "${{ needs.plugin-e2e.result }}" != "success" ]; then
-                    echo "Plugin E2E matrix result: ${{ needs.plugin-e2e.result }}"
-                    exit 1
+                  if [ "${MATRIX_RESULT}" = "success" ]; then
+                    echo "All plugin E2E legs passed."
+                    exit 0
                   fi
-                  echo "All plugin E2E legs passed."
+                  if [ "${MATRIX_RESULT}" = "skipped" ] && [ "${RUN_REQUIRED}" != "true" ]; then
+                    echo "Plugin E2E matrix not required for this event; nothing to verify."
+                    exit 0
+                  fi
+                  echo "Plugin E2E matrix result: ${MATRIX_RESULT} (required: ${RUN_REQUIRED:-false})"
+                  exit 1
