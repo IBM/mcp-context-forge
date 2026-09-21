@@ -53,7 +53,6 @@ from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, valida
 import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
-import referencing
 import referencing.exceptions
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -643,10 +642,11 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
 # own input/output schema — and jsonschema's default registry resolves remote ``$ref`` URIs by
 # fetching them with ``urllib.request.urlopen``. That is an SSRF primitive reachable from the
 # preview route and from every live invocation. Two layers close it: non-local refs are refused
-# outright (below), and validators are built against this registry, which holds only the bundled
-# metaschemas and has no ``retrieve`` callable, so any residual resolution attempt raises
+# outright, by ``_assert_local_refs_only`` below, before any validator sees the schema; and
+# ``validate_safely`` (``mcpgateway.utils.safe_jsonschema``) builds every validator — inline and
+# inside the sandbox worker — against an empty ``referencing.Registry()``, which holds only the
+# bundled metaschemas and has no ``retrieve`` callable, so any residual resolution attempt raises
 # ``referencing.exceptions.Unresolvable`` instead of hitting the network.
-_NO_RETRIEVE_REGISTRY: referencing.Registry = referencing.Registry()
 
 # Every keyword whose value is a reference URI, across the drafts we accept.
 _REFERENCE_KEYWORDS = ("$ref", "$dynamicRef", "$recursiveRef")
@@ -743,19 +743,21 @@ def _canonicalize_schema(schema: dict) -> str:
 
 
 def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
-    """Validate instance against schema using cached validator class.
+    """Validate instance against schema using the cached validator class.
 
-    Creates a fresh validator instance for thread safety, but reuses
-    the cached validator class and schema check. Uses best_match to
-    preserve jsonschema.validate() error selection semantics.
+    Reuses the cached validator class and schema check, then delegates the actual
+    validation to ``validate_safely``, which runs it inline for a regex-free schema and
+    behind a killable sandbox process for a schema that carries a regex keyword.
 
     Args:
         instance: The data to validate.
         schema: The JSON Schema to validate against.
 
     Raises:
-        error: The best matching ValidationError from jsonschema validation.
-        jsonschema.exceptions.ValidationError: If validation fails.
+        jsonschema.exceptions.ValidationError: If validation fails, or if the sandbox path
+            could not complete safely (timeout, busy pool, broken pool, an oversized
+            instance, unserializable input, or the sandbox being unavailable) — ``validate_safely``
+            never fails open.
         jsonschema.exceptions.SchemaError: If the schema itself is invalid or carries a
             non-local ``$ref``.
         referencing.exceptions.Unresolvable: If a reference cannot be resolved from the

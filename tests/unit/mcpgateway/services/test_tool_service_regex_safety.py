@@ -36,6 +36,7 @@ def _pool():
     shutdown_validation_pool()
 
 
+@pytest.mark.timeout(30)
 def test_input_validation_is_bounded_and_fails_closed():
     """A hostile subject must not run unbounded, and must not be reported as valid."""
     start = time.perf_counter()
@@ -45,6 +46,7 @@ def test_input_validation_is_bounded_and_fails_closed():
     assert error is not None, "a truncated validation must fail closed"
 
 
+@pytest.mark.timeout(30)
 def test_output_validation_is_bounded():
     """Site 2: output schemas come from a remote server and need the same bound."""
     start = time.perf_counter()
