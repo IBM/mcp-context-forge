@@ -23,6 +23,12 @@ CATASTROPHIC_SCHEMA = {
     "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
 }
 
+# The wording the timeout path alone produces. A pattern that merely fails to match gives a
+# jsonschema mismatch message, and any other sandbox fault gives the broader "could not be
+# completed safely" text. Elapsed time plus "an error happened" cannot tell "the sandbox
+# bounded a runaway" apart from "rejected instantly for an unrelated reason"; this phrase can.
+BOUNDED = "exceeded the execution time limit"
+
 
 @pytest.fixture(autouse=True)
 def _pool():
@@ -44,15 +50,17 @@ def test_input_validation_is_bounded_and_fails_closed():
     elapsed = time.perf_counter() - start
     assert elapsed < 10.0, f"validation took {elapsed:.1f}s; the sandbox did not bound it"
     assert error is not None, "a truncated validation must fail closed"
+    assert BOUNDED in error, f"the budget must be what stopped it; got {error!r}"
 
 
 @pytest.mark.timeout(30)
 def test_output_validation_is_bounded():
     """Site 2: output schemas come from a remote server and need the same bound."""
     start = time.perf_counter()
-    with pytest.raises(jsonschema.exceptions.ValidationError):
+    with pytest.raises(jsonschema.exceptions.ValidationError) as raised:
         _validate_with_cached_schema({"q": "a" * 40 + "b"}, CATASTROPHIC_SCHEMA)
     assert time.perf_counter() - start < 10.0
+    assert BOUNDED in str(raised.value), f"the budget must be what stopped it; got {raised.value!r}"
 
 
 def test_valid_subject_still_validates():
