@@ -217,6 +217,25 @@ def validate_safely(instance: Any, schema: dict, validator_cls: type) -> None:
         raise jsonschema.exceptions.ValidationError(message)
 
 
+def _report_diagnostic_failure(message: str, source: str) -> None:
+    """Log that a never-raises diagnostic failed, and swallow a failure to log that.
+
+    The callers below promise never to raise, and they run inside a SQLAlchemy
+    ``before_insert`` listener, a federation sync loop, and a plugin load path. An unguarded
+    fallback log would break that promise whenever logging itself is the thing that failed,
+    which is the case their own ``except`` handler exists to report. Nothing remains to do
+    once logging is unusable, so the second failure is dropped.
+
+    Args:
+        message: A printf-style message with one ``%s`` placeholder for the source.
+        source: A short identifier for the log line, such as ``tool:weather``.
+    """
+    try:
+        logger.warning(message, source, exc_info=True)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 def warn_unprovable_patterns(schema: Any, *, source: str) -> None:
     """Log one warning when a registered schema carries a regex keyword.
 
@@ -242,7 +261,7 @@ def warn_unprovable_patterns(schema: Any, *, source: str) -> None:
                 extra={"source": source},
             )
     except Exception:
-        logger.warning("Schema regex inventory check failed for source=%s; continuing without a warning", source, exc_info=True)
+        _report_diagnostic_failure("Schema regex inventory check failed for source=%s; continuing without a warning", source)
 
 
 def warn_unprovable_pattern_source(pattern: str, *, source: str) -> None:
@@ -272,4 +291,4 @@ def warn_unprovable_pattern_source(pattern: str, *, source: str) -> None:
             extra={"source": source, "pattern_length": len(pattern)},
         )
     except Exception:
-        logger.warning("Regex pattern compile warning failed for source=%s; continuing without a warning", source, exc_info=True)
+        _report_diagnostic_failure("Regex pattern compile warning failed for source=%s; continuing without a warning", source)

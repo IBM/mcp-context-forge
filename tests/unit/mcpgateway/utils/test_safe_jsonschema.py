@@ -11,6 +11,7 @@ and patterns reachable only through additionalProperties.
 """
 
 # Standard
+from contextlib import nullcontext
 import logging
 import time
 from unittest.mock import patch
@@ -21,7 +22,15 @@ import pytest
 
 # First-Party
 from mcpgateway.utils import safe_jsonschema
-from mcpgateway.utils.safe_jsonschema import sandbox_unavailable, schema_uses_regex, shutdown_validation_pool, start_validation_pool, validate_safely, warn_unprovable_patterns
+from mcpgateway.utils.safe_jsonschema import (
+    sandbox_unavailable,
+    schema_uses_regex,
+    shutdown_validation_pool,
+    start_validation_pool,
+    validate_safely,
+    warn_unprovable_pattern_source,
+    warn_unprovable_patterns,
+)
 
 DRAFT = jsonschema.Draft202012Validator
 
@@ -236,11 +245,14 @@ def _break_schema_uses_regex():
     return patch("mcpgateway.utils.safe_jsonschema.schema_uses_regex", side_effect=RuntimeError("simulated internal failure"))
 
 
-def _break_success_path_warning():
-    """Make the success-path log statement inside warn_unprovable_patterns raise.
+def _break_warning_matching(prefix):
+    """Make one log statement raise and pass every other logging call through.
 
-    Only the inventory warning is broken. The fallback warning in the except handler still
-    reaches the real logger, so the test can assert the function reported the failure.
+    The fallback warning in the except handler still reaches the real logger, so a test can
+    assert the function reported the failure it swallowed.
+
+    Args:
+        prefix: The start of the message to break.
 
     Returns:
         A patch context manager.
@@ -248,7 +260,7 @@ def _break_success_path_warning():
     real_warning = safe_jsonschema.logger.warning
 
     def _warning(msg, *args, **kwargs):
-        """Raise for the inventory warning and pass every other call through.
+        """Raise for the targeted message and pass every other call through.
 
         Args:
             msg: The log message or format string.
@@ -259,17 +271,73 @@ def _break_success_path_warning():
             Whatever the real logger returns for a pass-through call.
 
         Raises:
-            RuntimeError: When the inventory warning is logged.
+            RuntimeError: When the targeted message is logged.
         """
-        if str(msg).startswith("Schema carries a regex keyword"):
+        if str(msg).startswith(prefix):
             raise RuntimeError("simulated internal failure")
         return real_warning(msg, *args, **kwargs)
 
     return patch.object(safe_jsonschema.logger, "warning", _warning)
 
 
-@pytest.mark.parametrize("break_statement", [_break_schema_uses_regex, _break_success_path_warning], ids=["schema_uses_regex", "success_path_warning"])
-def test_warn_unprovable_patterns_never_raises_by_construction(break_statement, caplog):
+def _break_success_path_warning():
+    """Make the success-path log statement inside warn_unprovable_patterns raise.
+
+    Returns:
+        A patch context manager.
+    """
+    return _break_warning_matching("Schema carries a regex keyword")
+
+
+def _break_source_warning():
+    """Make the success-path log statement inside warn_unprovable_pattern_source raise.
+
+    Returns:
+        A patch context manager.
+    """
+    return _break_warning_matching("Operator-supplied regex compiled")
+
+
+def _break_all_logging():
+    """Make every logging call raise, including the fallback in the except handler.
+
+    Returns:
+        A patch context manager.
+    """
+    return patch.object(safe_jsonschema.logger, "warning", side_effect=RuntimeError("simulated internal failure"))
+
+
+def _no_break():
+    """Patch nothing, for a case whose argument alone makes a statement raise.
+
+    Returns:
+        A context manager that changes nothing.
+    """
+    return nullcontext()
+
+
+class _UnmeasurablePattern(str):
+    """A pattern whose length cannot be taken, standing in for a caller passing a bad value."""
+
+    def __len__(self):
+        """Refuse to report a length.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        raise RuntimeError("simulated internal failure")
+
+
+@pytest.mark.parametrize(
+    ("break_statement", "fallback_logged"),
+    [
+        (_break_schema_uses_regex, True),
+        (_break_success_path_warning, True),
+        (_break_all_logging, False),
+    ],
+    ids=["schema_uses_regex", "success_path_warning", "all_logging"],
+)
+def test_warn_unprovable_patterns_never_raises_by_construction(break_statement, fallback_logged, caplog):
     """warn_unprovable_patterns swallows any internal failure and returns normally.
 
     This pins the function's contract: every caller (a SQLAlchemy listener, a federation
@@ -281,9 +349,12 @@ def test_warn_unprovable_patterns_never_raises_by_construction(break_statement, 
     Each raisable statement in the function body is broken in turn. Pinning only the
     ``schema_uses_regex`` call would let a narrowed guard pass: moving the success-path
     warning out of the ``try`` reintroduces an unguarded statement that one case cannot see.
+    The ``all_logging`` case covers the fallback warning, which the docstring claims is
+    guarded too and which sits outside the ``try`` that guards everything else.
 
     Args:
         break_statement: A factory returning a patch that makes one statement raise.
+        fallback_logged: Whether the except handler can still reach the logger.
         caplog: The pytest log capture fixture.
     """
     with break_statement():
@@ -291,5 +362,40 @@ def test_warn_unprovable_patterns_never_raises_by_construction(break_statement, 
             result = warn_unprovable_patterns({"pattern": "^a$"}, source="tool:pinning-test")
 
     assert result is None
-    assert "Schema regex inventory check failed" in caplog.text
-    assert "simulated internal failure" in caplog.text
+    if fallback_logged:
+        assert "Schema regex inventory check failed" in caplog.text
+        assert "simulated internal failure" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("pattern", "break_statement", "fallback_logged"),
+    [
+        ("^a$", _break_source_warning, True),
+        ("^a$", _break_all_logging, False),
+        (_UnmeasurablePattern("^a$"), _no_break, True),
+    ],
+    ids=["success_path_warning", "all_logging", "pattern_length"],
+)
+def test_warn_unprovable_pattern_source_never_raises_by_construction(pattern, break_statement, fallback_logged, caplog):
+    """warn_unprovable_pattern_source swallows any internal failure and returns normally.
+
+    The function sits immediately before a plugin's ``re.compile`` call, which must not fail
+    to load because a diagnostic failed. It carries the same never-raises claim as
+    ``warn_unprovable_patterns`` and needs the same pinning, one raisable statement at a
+    time: the ``len(pattern)`` the log call evaluates, the log call itself, and the fallback
+    log in the except handler.
+
+    Args:
+        pattern: The pattern argument to pass.
+        break_statement: A factory returning a patch that makes one statement raise.
+        fallback_logged: Whether the except handler can still reach the logger.
+        caplog: The pytest log capture fixture.
+    """
+    with break_statement():
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+            result = warn_unprovable_pattern_source(pattern, source="plugin:pinning-test")
+
+    assert result is None
+    if fallback_logged:
+        assert "Regex pattern compile warning failed" in caplog.text
+        assert "simulated internal failure" in caplog.text
