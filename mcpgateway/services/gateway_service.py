@@ -2455,7 +2455,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             skip_stale_cleanup = not tools and not resources and not prompts
             if skip_stale_cleanup:
-                logger.warning("Empty catalog from auth_code gateway %s during OAuth fetch, preserving existing items", gateway.name)
+                logger.warning("Empty catalog from auth_code gateway %s during OAuth fetch, preserving existing items", SecurityValidator.sanitize_log_message(gateway.name))
 
             # Only prune entries that came from MCP discovery. API/UI and legacy
             # entries can share the gateway but are not authoritative upstream data.

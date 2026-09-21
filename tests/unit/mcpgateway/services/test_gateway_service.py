@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import httpx
 from pydantic import ValidationError
 import pytest
+from sqlalchemy import Delete
 from url_normalize import url_normalize
 
 # First-Party
@@ -5266,13 +5267,36 @@ async def test_fetch_tools_after_oauth_empty_catalog_preserves_existing_items(ga
     gateway.prompts = [SimpleNamespace(id=3, original_name="existing-prompt", created_via="oauth")]
 
     db = MagicMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = gateway
-    db.execute.return_value = result
+    # Mock the EmailUser lookup used to build user_context for token storage
+    mock_user = MagicMock()
+    mock_user.is_admin = False
+
+    gateway_result = MagicMock()
+    gateway_result.scalar_one_or_none.return_value = gateway
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = mock_user
+
+    # Record every statement so the test can assert that no DELETE is issued.
+    executed_statements = []
+    lookup_results = [gateway_result, user_result]
+
+    def mock_execute(statement, *args, **kwargs):
+        executed_statements.append(statement)
+        if len(executed_statements) <= len(lookup_results):
+            return lookup_results[len(executed_statements) - 1]
+        # Any further statement would be part of the stale cleanup this guard prevents
+        return MagicMock()
+
+    db.execute.side_effect = mock_execute
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
 
     class DummyTokenStorage:
-        def __init__(self, _db):
+        def __init__(self, _db, user_context=None):
             self.db = _db
+            self.user_context = user_context
 
         async def get_user_token(self, _gateway_id, _email):
             return "token"
@@ -5303,7 +5327,7 @@ async def test_fetch_tools_after_oauth_empty_catalog_preserves_existing_items(ga
     assert gateway.tools[0].original_name == "existing-tool"
     assert gateway.resources[0].uri == "existing://resource"
     assert gateway.prompts[0].original_name == "existing-prompt"
-    assert db.execute.call_count == 1
+    assert [statement for statement in executed_statements if isinstance(statement, Delete)] == []
     assert "preserving existing items" in caplog.text
 
 
