@@ -374,7 +374,7 @@ class TestIngressExternalDispatch:
         external_dispatch = AsyncMock(side_effect=AssertionError("external path entered in db mode"))
         monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=None)
 
@@ -409,7 +409,7 @@ class TestIngressExternalDispatch:
         internal_verifier = AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))
 
         request = SimpleNamespace(state=SimpleNamespace())
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
                 user = await get_current_user(credentials=credentials, request=request)
 
@@ -440,7 +440,7 @@ class TestIngressExternalDispatch:
         monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
         internal_verifier = AsyncMock(return_value={"sub": "internal@example.com", "exp": _exp(), "jti": "internal-jti"})
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=SimpleNamespace(state=SimpleNamespace()))
 
@@ -482,7 +482,7 @@ class TestIngressExternalDispatch:
         monkeypatch.setattr(vc, "_maybe_verify_external", external_dispatch)
         internal_verifier = AsyncMock(return_value=jwt_payload)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=_make_user("api@example.com")):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     user = await get_current_user(credentials=credentials, request=request)
