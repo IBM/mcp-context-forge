@@ -26,7 +26,7 @@ name: Dependency Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths:
       - "pyproject.toml"
       - "Cargo.lock"

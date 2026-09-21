@@ -2,11 +2,11 @@ name: Pre-commit Checks
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "support/**"]
     tags: ["*"]
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "support/**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

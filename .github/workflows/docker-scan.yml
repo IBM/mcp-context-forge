@@ -28,7 +28,7 @@ name: Docker Security Scan
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "support/**"]
     paths:
       - 'Containerfile'
       - 'infra/nginx/**'
@@ -40,7 +40,7 @@ on:
   merge_group:
     branches: ["main"]
   push:
-    branches: ["main"]
+    branches: ["main", "support/**"]
   workflow_dispatch:
 
 concurrency:
@@ -98,7 +98,7 @@ jobs:
 
   container-smoke:
     needs: [hadolint]
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && startsWith(github.base_ref, 'support/'))
     name: Container Smoke (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -135,7 +135,7 @@ jobs:
   # ---------------------------------------------------------------
   fedramp-compliance:
     needs: [hadolint]
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && startsWith(github.base_ref, 'support/'))
     name: FedRAMP Compliance
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -235,7 +235,7 @@ jobs:
   # ---------------------------------------------------------------
   scan:
     needs: [hadolint]
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && startsWith(github.base_ref, 'support/'))
     name: Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 30

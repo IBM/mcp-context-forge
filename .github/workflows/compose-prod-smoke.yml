@@ -17,6 +17,10 @@
 name: Compose Production Smoke
 
 on:
+  # support/** branches have no merge queue, so the smoke test runs on PRs there.
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["support/**"]
   merge_group:
   workflow_dispatch:
 
@@ -30,6 +34,7 @@ concurrency:
 jobs:
   compose-prod-smoke:
     name: compose-prod-smoke
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -210,9 +215,10 @@ jobs:
   # ── Required status check gate ─────────────────────────────────
   # Single job whose name is registered as the required check so
   # the merge queue can require it. Succeeds only when the smoke
-  # job above passes. The companion compose-prod-smoke-required.yml
+  # job above passes. On main the companion compose-prod-smoke-required.yml
   # skip reporter reports the same name on every PR so that PRs are
   # never blocked waiting for a check that only runs in the merge queue.
+  # On support/** branches (no merge queue) this workflow runs on the PR itself.
   compose-prod-smoke-complete:
     name: Compose Production Smoke Complete
     runs-on: ubuntu-latest
