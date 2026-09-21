@@ -9,14 +9,19 @@ Runbook (from the repo root):
     #    with the strong secrets from make init-secrets-patch-env):
     make docker-nuke && make testing-up-entra
 
-    # 2. Acquire a fresh Entra v2 end-user token with inline groups
-    #    (a non-overage end-user token)
-    #    and save it to an untracked file.
+    # 2. Token sourcing, first match wins:
+    #    a) Export AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_TENANT_ID.
+    #       The harness provisions a throwaway user and group, acquires a
+    #       v2 token through ROPC, and deletes both objects after the session.
+    #    b) Or set ENTRA_LIVE_TOKEN_FILE to a pre-acquired non-overage
+    #       end-user token saved in an untracked file.
 
-    # 3. Run (JWT_SECRET_KEY must match the running gateway container's value):
+    # 3. Run (JWT_SECRET_KEY must match the running gateway container's value;
+    #    TESTS_DNS_PASSTHROUGH_HOSTS is required because tests/conftest.py
+    #    blackholes external DNS by default):
+    TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com" \
     JWT_TRUST_MODE=jwt-trust \
     JWT_SECRET_KEY="$(docker compose exec -T gateway printenv JWT_SECRET_KEY)" \
-    ENTRA_LIVE_TOKEN_FILE=/path/to/entra-token-valid-v2.txt \
         uv run pytest tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py -v
 
 The gateway is the compose testing gateway behind nginx :8080
@@ -83,7 +88,11 @@ def entra_seeded(entra_inline_token, local_oidc_issuer):  # noqa: F811  # params
     with httpx.Client(headers=admin_headers(), timeout=30) as client:
         team_id = seed_team(client, "Entra Live Agent Team", "Live Entra inline-groups e2e")
         no_agent_team_id = seed_team(client, NO_AGENT_TEAM_NAME, "Mapped team without agent access")
-        seed_provider(client, PROVIDER_ID, info["issuer"], info["audience"])
+        # Entra v1 issuers (sts.windows.net) publish a cross-origin JWKS by
+        # design; the provider-level jwks_uri override points verification
+        # at the same-origin tenant keys instead.
+        v1_jwks = info["issuer"].rstrip("/") + "/discovery/keys" if "sts.windows.net" in info["issuer"] else None
+        seed_provider(client, PROVIDER_ID, info["issuer"], info["audience"], jwks_uri=v1_jwks)
         seed_agent(client, AGENT_NAME, team_id, local_oidc_issuer.stub_agent_url_for_gateway, "Live Entra stub-backed agent")
         mapping_id = seed_mapping(client, info["issuer"], info["tenant_id"], info["groups"][0], team_id, "developer")
     yield {
@@ -179,12 +188,12 @@ def test_uc4_overage_resolved_via_graph_allows_invoke(entra_overage_token, local
     """
     if os.getenv("JWT_TRUST_OVERAGE_POLICY", "fail_closed") != "graph_lookup":
         pytest.skip("UC4 requires the gateway started with JWT_TRUST_OVERAGE_POLICY=graph_lookup (make testing-up-entra)")
-    graph_client_id = os.getenv("ENTRA_GRAPH_CLIENT_ID") or os.getenv("ENTRA_CLIENT_ID")
-    graph_client_secret = os.getenv("ENTRA_GRAPH_CLIENT_SECRET") or os.getenv("ENTRA_CLIENT_SECRET")
+    graph_client_id = os.getenv("ENTRA_GRAPH_CLIENT_ID") or os.getenv("AZURE_CLIENT_ID") or os.getenv("ENTRA_CLIENT_ID")
+    graph_client_secret = os.getenv("ENTRA_GRAPH_CLIENT_SECRET") or os.getenv("AZURE_CLIENT_SECRET") or os.getenv("ENTRA_CLIENT_SECRET")
     if not (graph_client_id and graph_client_secret):
         pytest.skip(
             "UC4 needs Graph-capable app credentials (admin-consented GroupMember.Read.All): "
-            "set ENTRA_GRAPH_CLIENT_ID + ENTRA_GRAPH_CLIENT_SECRET"
+            "set ENTRA_GRAPH_CLIENT_ID + ENTRA_GRAPH_CLIENT_SECRET (or AZURE_CLIENT_ID + AZURE_CLIENT_SECRET)"
         )
     token, info = entra_overage_token
     # ENTRA_OVERAGE_MAPPED_GROUP: when the overage token carries NO inline groups,
