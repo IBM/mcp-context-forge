@@ -101,6 +101,7 @@ from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
@@ -1460,27 +1461,22 @@ def _check_url_scheme_compliance() -> None:
     Logs a WARNING per non-compliant record. When ``STRICT_SCHEME_ENFORCEMENT``
     is ``True``, raises ``SystemExit`` instead so the process refuses to start.
     """
-    # First-Party
-    from mcpgateway.db import A2AAgent as _A2AAgent  # pylint: disable=import-outside-toplevel
-    from mcpgateway.db import Gateway as _Gateway  # pylint: disable=import-outside-toplevel
-    from mcpgateway.db import Tool as _Tool  # pylint: disable=import-outside-toplevel
-
     allowed = [s.lower() for s in settings.validation_allowed_url_schemes]
     violations: list[str] = []
 
     with SessionLocal() as db:
         # ponytail: O(n) scan over enabled rows; index query if table exceeds ~10k rows
-        for gw in db.query(_Gateway.id, _Gateway.name, _Gateway.url).filter(_Gateway.enabled.is_(True)).all():
+        for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all():
             if gw.url and not any(gw.url.lower().startswith(s) for s in allowed):
                 msg = f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {gw.url}"
                 violations.append(msg)
 
-        for tool in db.query(_Tool.id, _Tool.original_name, _Tool.url).filter(_Tool.enabled.is_(True)).all():
+        for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all():
             if tool.url and not any(tool.url.lower().startswith(s) for s in allowed):
                 msg = f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {tool.url}"
                 violations.append(msg)
 
-        for agent in db.query(_A2AAgent.id, _A2AAgent.name, _A2AAgent.endpoint_url).filter(_A2AAgent.enabled.is_(True)).all():
+        for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all():
             if agent.endpoint_url and not any(agent.endpoint_url.lower().startswith(s) for s in allowed):
                 msg = f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {agent.endpoint_url}"
                 violations.append(msg)
