@@ -370,12 +370,19 @@ def _strip_html_tags(value: str) -> str:
     return s.get_data()
 
 
+def url_scheme_allowed(url: str, allowed_schemes: list[str]) -> bool:
+    """Return whether *url* starts with one of *allowed_schemes* (case-insensitive)."""
+    url_lower = url.lower()
+    return any(url_lower.startswith(s.lower()) for s in allowed_schemes)
+
+
 class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
-    # Configurable patterns (from settings)
+    # ponytail: these class attrs are frozen at import; convert to call-time reads when SIGHUP reload matters for them
     DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern  # Default: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>'
     DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern  # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
+    ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # ponytail: compat shim, frozen at import; validate_url() reads settings at call time
     # Character type patterns
     NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_.\- ]+$ (literal space, not \s)
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
@@ -1266,10 +1273,9 @@ class SecurityValidator:
         if "\ufffd" in decoded_value:
             raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
 
-        # Check allowed schemes (lowercase value once, not per scheme).
+        # Check allowed schemes (case-insensitive).
         allowed_schemes = settings.validation_allowed_url_schemes
-        value_lower = value.lower()
-        if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
+        if not url_scheme_allowed(value, allowed_schemes):
             raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
 
         # Block dangerous URL patterns anywhere in the decoded URL (defense-in-depth:

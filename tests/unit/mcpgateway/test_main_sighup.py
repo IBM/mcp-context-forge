@@ -194,3 +194,22 @@ def test_restore_default_sighup_handler_skips_outside_main_thread(monkeypatch):
 
     main_mod._restore_default_sighup_handler()  # pylint: disable=protected-access
     mock_signal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sighup_reload_logs_warning_on_settings_cache_clear_failure():
+    """sighup_reload() logs a warning when get_settings.cache_clear() raises."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
+    mock_get_settings = MagicMock()
+    mock_get_settings.cache_clear = MagicMock(side_effect=RuntimeError("cache boom"))
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache", new_callable=AsyncMock),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
+        patch("mcpgateway.config.get_settings", mock_get_settings),
+        patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
+    ):
+        await sighup_reload()
+    warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+    assert any("settings cache clear failed" in m for m in warning_messages)
