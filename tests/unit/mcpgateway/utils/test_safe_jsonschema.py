@@ -34,10 +34,11 @@ HOSTILE = [
     ("dot polynomial", r"^.*a.*a.*a$", "a" * 3000 + "!"),
 ]
 
-# The wording validate_safely produces when the sandbox stopped the work. A pattern that
-# merely fails to match produces a jsonschema mismatch message instead, so this phrase tells
-# "the budget bounded it" apart from "it happened to reject quickly".
-BOUNDED = "could not be completed safely"
+# The wording produced on the timeout path alone. A pattern that merely fails to match
+# produces a jsonschema mismatch message, and any other sandbox fault produces the broader
+# "could not be completed safely" text. Matching the timeout phrase tells "the budget
+# stopped it" apart from both "it rejected quickly" and "the pool was broken".
+BOUNDED = "exceeded the execution time limit"
 
 
 @pytest.fixture(autouse=True)
@@ -113,37 +114,26 @@ def test_hostile_pattern_is_bounded_and_fails_closed(label, pattern, subject):
     assert BOUNDED in str(excinfo.value), f"{label} failed for another reason, so nothing proves the sandbox bounded it: {excinfo.value}"
 
 
-def test_additional_properties_bypass_is_bounded():
-    """jsonschema reaches stock re through additionalProperties, not the pattern keyword.
+@pytest.mark.parametrize("escape", ["additionalProperties", "unevaluatedProperties"])
+def test_pattern_properties_escape_is_bounded(escape):
+    """jsonschema reaches stock re through these keywords, not through the pattern keyword.
 
-    This is the escape that defeated the v1 keyword override.
+    ``jsonschema/_utils.py:82`` joins the patternProperties keys with ``|`` and calls stock
+    ``re.search`` on behalf of each of them. That escape defeated the v1 keyword override,
+    and the whole-validation process boundary is the only thing that closes it. The
+    assertion must name the timeout, because a bare except would equally absorb a refusal
+    from an absent sandbox and leave the escape untested.
+
+    Args:
+        escape: The keyword that reaches stock re on behalf of patternProperties.
     """
-    schema = {
-        "type": "object",
-        "patternProperties": {r"^(a+)+$": {"type": "string"}},
-        "additionalProperties": False,
-    }
+    schema = {"type": "object", "patternProperties": {r"^(a+)+$": {"type": "string"}}, escape: False}
     start = time.perf_counter()
-    try:
+    with pytest.raises(jsonschema.exceptions.ValidationError) as excinfo:
         validate_safely({"a" * 40 + "b": "x"}, schema, DRAFT)
-    except jsonschema.exceptions.ValidationError:
-        pass
-    assert time.perf_counter() - start < 10.0
-
-
-def test_unevaluated_properties_bypass_is_bounded():
-    """Same escape, via unevaluatedProperties."""
-    schema = {
-        "type": "object",
-        "patternProperties": {r"^(a+)+$": {"type": "string"}},
-        "unevaluatedProperties": False,
-    }
-    start = time.perf_counter()
-    try:
-        validate_safely({"a" * 40 + "b": "x"}, schema, DRAFT)
-    except jsonschema.exceptions.ValidationError:
-        pass
-    assert time.perf_counter() - start < 10.0
+    elapsed = time.perf_counter() - start
+    assert elapsed < 10.0, f"{escape} took {elapsed:.1f}s; the sandbox did not bound it"
+    assert BOUNDED in str(excinfo.value), f"{escape} failed for another reason, so nothing proves the sandbox bounded the escape: {excinfo.value}"
 
 
 def test_valid_subject_still_validates():
@@ -160,6 +150,27 @@ def test_ordinary_schema_behaves_as_before():
     validate_safely({"name": "alice"}, schema, DRAFT)
     with pytest.raises(jsonschema.exceptions.ValidationError):
         validate_safely({"name": "Alice"}, schema, DRAFT)
+
+
+def test_extended_validator_class_is_refused_for_a_regex_schema():
+    """An extended validator is refused, rather than silently validated as another draft.
+
+    A class from ``validators.extend()`` may carry a custom keyword or a format checker.
+    Substituting a stock draft would give the sandbox different semantics from the inline
+    path for the same class, which weakens the boundary without saying so.
+    """
+    extended = jsonschema.validators.extend(DRAFT, {})
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^a+$"}}}
+
+    with pytest.raises(jsonschema.exceptions.ValidationError) as excinfo:
+        validate_safely({"q": "aaa"}, schema, extended)
+    assert "not a stock jsonschema draft" in str(excinfo.value)
+
+
+def test_extended_validator_class_still_works_without_a_regex_keyword():
+    """The refusal is scoped to the sandbox path, so the inline path keeps its own class."""
+    extended = jsonschema.validators.extend(DRAFT, {})
+    validate_safely({"n": 1}, {"type": "object", "properties": {"n": {"type": "integer"}}}, extended)
 
 
 def test_oversized_instance_fails_closed():

@@ -170,7 +170,9 @@ def validate_safely(instance: Any, schema: dict, validator_cls: type) -> None:
     Args:
         instance: The data to validate.
         schema: The JSON Schema to validate against.
-        validator_cls: The stock jsonschema validator class chosen for this schema.
+        validator_cls: The stock jsonschema validator class chosen for this schema. A
+            regex-bearing schema accepts only a class in the draft table, because the worker
+            must reproduce the same semantics.
 
     Raises:
         jsonschema.exceptions.ValidationError: If the instance is invalid, or if validation
@@ -185,6 +187,13 @@ def validate_safely(instance: Any, schema: dict, validator_cls: type) -> None:
     if sandbox_unavailable():
         raise jsonschema.exceptions.ValidationError("schema carries a regex keyword and no validation sandbox is available on this platform")
 
+    draft_name = _DRAFT_NAMES.get(validator_cls)
+    if draft_name is None:
+        # Substituting a draft would give the sandbox different semantics from the inline
+        # path for the same class, which weakens the boundary silently. Refuse instead, so
+        # the call site that passed an extended validator is the thing that surfaces.
+        raise jsonschema.exceptions.ValidationError(f"validator class {validator_cls.__name__} is not a stock jsonschema draft, so the validation sandbox cannot reproduce its semantics")
+
     try:
         instance_json = orjson.dumps(instance)
         schema_json = orjson.dumps(schema)
@@ -195,7 +204,7 @@ def validate_safely(instance: Any, schema: dict, validator_cls: type) -> None:
         raise jsonschema.exceptions.ValidationError(f"instance of {len(instance_json)} bytes exceeds the {settings.regex_max_subject_bytes} byte limit for pattern validation")
 
     try:
-        message = _SANDBOX.submit(_validate_in_worker, _DRAFT_NAMES.get(validator_cls, "Draft202012"), schema_json, instance_json)
+        message = _SANDBOX.submit(_validate_in_worker, draft_name, schema_json, instance_json)
     except SandboxError as exc:
         logger.warning(
             "Schema validation failed closed",
