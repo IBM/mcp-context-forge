@@ -8,20 +8,15 @@ ObservabilityProvider protocol.
 
 The plugin framework defines a protocol-based ObservabilityProvider
 interface so that it stays decoupled from gateway internals. This
-adapter lives on the gateway side, wrapping ObservabilityService
-with its own database sessions so the executor can call
-start_span/end_span without needing a db parameter.
+adapter lives on the gateway side. ``ObservabilityService`` owns its
+short-lived database sessions, so the executor never needs one.
 """
 
 # Standard
 import logging
 from typing import Any, Dict, Optional
 
-# Third-Party
-from sqlalchemy.orm import Session
-
 # First-Party
-from mcpgateway.db import SessionLocal
 from mcpgateway.services.observability_service import ObservabilityService
 
 logger = logging.getLogger(__name__)
@@ -31,8 +26,8 @@ class ObservabilityServiceAdapter:
     """Bridges ObservabilityService to the ObservabilityProvider protocol.
 
     Satisfies the ObservabilityProvider protocol via duck typing (no explicit
-    inheritance needed). Each call creates its own short-lived DB session,
-    matching the pattern used in observability_middleware.py.
+    inheritance needed). ``ObservabilityService`` creates an independent
+    short-lived DB session for each write.
     """
 
     def __init__(self, service: Optional[ObservabilityService] = None):
@@ -43,14 +38,6 @@ class ObservabilityServiceAdapter:
         """
         self._service = service or ObservabilityService()
 
-    def _make_session(self) -> Session:
-        """Create a fresh DB session for observability writes.
-
-        Returns:
-            A new SQLAlchemy session.
-        """
-        return SessionLocal()
-
     def start_span(
         self,
         trace_id: str,
@@ -60,7 +47,7 @@ class ObservabilityServiceAdapter:
         resource_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        """Start a span by delegating to ObservabilityService with a fresh DB session.
+        """Start a span by delegating to ObservabilityService.
 
         Args:
             trace_id: The trace identifier.
@@ -73,11 +60,8 @@ class ObservabilityServiceAdapter:
         Returns:
             The span identifier, or None on failure.
         """
-        db: Optional[Session] = None
         try:
-            db = self._make_session()
             return self._service.start_span(
-                db=db,
                 trace_id=trace_id,
                 name=name,
                 kind=kind,
@@ -87,18 +71,7 @@ class ObservabilityServiceAdapter:
             )
         except Exception as exc:
             logger.warning("ObservabilityServiceAdapter.start_span failed: %s", exc)
-            if db:
-                try:
-                    db.rollback()
-                except Exception:  # nosec B110
-                    pass
             return None
-        finally:
-            if db:
-                try:
-                    db.close()
-                except Exception:  # nosec B110
-                    pass
 
     def end_span(
         self,
@@ -106,7 +79,7 @@ class ObservabilityServiceAdapter:
         status: str = "ok",
         attributes: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """End a span by delegating to ObservabilityService with a fresh DB session.
+        """End a span by delegating to ObservabilityService.
 
         Args:
             span_id: The span identifier returned by start_span.
@@ -115,25 +88,11 @@ class ObservabilityServiceAdapter:
         """
         if span_id is None:
             return
-        db: Optional[Session] = None
         try:
-            db = self._make_session()
             self._service.end_span(
-                db=db,
                 span_id=span_id,
                 status=status,
                 attributes=attributes,
             )
         except Exception as exc:
             logger.warning("ObservabilityServiceAdapter.end_span failed: %s", exc)
-            if db:
-                try:
-                    db.rollback()
-                except Exception:  # nosec B110
-                    pass
-        finally:
-            if db:
-                try:
-                    db.close()
-                except Exception:  # nosec B110
-                    pass
