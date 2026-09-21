@@ -105,6 +105,7 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.safe_jsonschema import schema_uses_regex
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import (
@@ -201,12 +202,20 @@ def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
 
 def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
     """Convert an internal tool record to the MCP transport model."""
+    # The vendored SDK validates outputSchema with stock jsonschema at
+    # mcp/server/lowlevel/server.py:573, which validate_input=False does not gate. A remote
+    # server controls this schema, so withhold one that can backtrack. The gateway's own
+    # bounded check in tool_service still validates the same data.
+    output_schema = tool.output_schema
+    if output_schema is not None and schema_uses_regex(output_schema):
+        logger.warning("Withholding outputSchema from advertised tool %s because it carries a regex keyword", sanitize_for_log(name or tool.name))
+        output_schema = None
     payload: Dict[str, Any] = {
         "name": name or tool.name,
         "title": _safe_str_attr(tool, "title"),
         "description": tool.description or "",
         "inputSchema": tool.input_schema,
-        "outputSchema": tool.output_schema,
+        "outputSchema": output_schema,
         "annotations": tool.annotations,
     }
     apply_tool_meta(payload, getattr(tool, "extension_metadata", None))
