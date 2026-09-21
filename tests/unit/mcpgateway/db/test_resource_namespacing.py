@@ -14,6 +14,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -92,7 +93,7 @@ def test_refresh_preserves_override_and_is_idempotent(naming_db):
         if statement.startswith("UPDATE resources"):
             statements.append(statement)
 
-    sa.event.listen(naming_db.bind, "before_cursor_execute", capture)
+    event.listen(naming_db.bind, "before_cursor_execute", capture)
     for _ in range(2):
         assert service._update_or_create_resources(naming_db, [upstream], gateway, "federation") == []
         naming_db.flush()
@@ -125,6 +126,30 @@ def test_duplicate_names_and_uris_preserve_resource_identity(naming_db):
     rows = naming_db.scalars(sa.select(Resource)).all()
     assert len(rows) == 4
     assert sorted(row.name for row in rows) == ["first-report", "first-report", "second-report", "second-report"]
+
+
+def test_refresh_reuses_gateway_name_for_dirty_resources(naming_db):
+    """Description-only refreshes do not resolve the gateway once per resource."""
+    gateway = Gateway(name="Upstream", slug="upstream", url="https://example.com/mcp", capabilities={})
+    gateway.resources = [Resource(uri=f"test://report/{index}", name=f"Report {index}") for index in range(30)]
+    naming_db.add(gateway)
+    naming_db.flush()
+    naming_db.expire_all()
+    assert gateway.name == "Upstream"
+    resources = naming_db.scalars(sa.select(Resource)).all()
+    assert all("gateway" not in sa.inspect(resource).dict for resource in resources)
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(naming_db.bind, "before_cursor_execute", capture)
+    upstream = [ResourceCreate(uri=resource.uri, name=resource.original_name, description="Changed", content="") for resource in resources]
+    GatewayService()._update_or_create_resources(naming_db, upstream, gateway, "federation")
+    naming_db.flush()
+    assert all(resource.description == "Changed" for resource in resources)
+    assert not any("FROM gateways" in statement for statement in statements)
+    assert all(resource.name.startswith("upstream-report-") for resource in resources)
 
 
 def test_empty_gateway_slug_preserves_names(naming_db):
@@ -175,4 +200,33 @@ def test_resource_migration_upgrade_downgrade(monkeypatch):
             migration.downgrade()
         assert connection.execute(sa.text("SELECT name FROM resources ORDER BY id")).scalars().all() == ["My Report", "Daily Report"]
         assert {column["name"] for column in sa.inspect(connection).get_columns("resources")} == {"id", "name", "gateway_id"}
+    engine.dispose()
+
+
+def test_resource_migration_batches_updates():
+    """Backfill bounds batch size and reruns without another UPDATE."""
+    migration = importlib.import_module("mcpgateway.alembic.versions.c7e91a2b4d60_add_resource_namespacing")
+    engine = sa.create_engine("sqlite://")
+    batches = []
+
+    def capture(_connection, _cursor, statement, parameters, _context, executemany):
+        if statement.startswith("UPDATE resources"):
+            batches.append(len(parameters) if executemany else 1)
+
+    with engine.begin() as connection:
+        connection.execute(sa.text("CREATE TABLE gateways (id TEXT PRIMARY KEY, name TEXT)"))
+        connection.execute(sa.text("CREATE TABLE resources (id TEXT PRIMARY KEY, name VARCHAR(255) NOT NULL, gateway_id TEXT)"))
+        connection.execute(sa.text("INSERT INTO gateways VALUES ('gw', 'Upstream')"))
+        connection.execute(
+            sa.text("INSERT INTO resources VALUES (:id, :name, 'gw')"),
+            [{"id": str(index), "name": f"Report {index}"} for index in range(1001)],
+        )
+        event.listen(connection, "before_cursor_execute", capture)
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert batches == [500, 500, 1]
+            migration.upgrade()
+            assert batches == [500, 500, 1]
+        assert connection.execute(sa.text("SELECT count(*) FROM resources WHERE original_name IS NULL")).scalar_one() == 0
+        assert connection.execute(sa.text("SELECT name FROM resources WHERE id = '1000'")).scalar_one() == "upstream-report-1000"
     engine.dispose()

@@ -6273,6 +6273,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         fields_to_update = True
 
                     if fields_to_update:
+                        setattr(existing_resource, "gateway_name_cache", gateway.name)
                         if upstream_renamed:
                             existing_resource.original_name = resource.name
                             if not has_override:

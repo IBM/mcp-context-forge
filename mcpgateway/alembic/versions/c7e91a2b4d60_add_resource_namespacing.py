@@ -40,21 +40,22 @@ def upgrade() -> None:
         if name not in columns:
             op.add_column("resources", sa.Column(name, sa.Text(), nullable=True))
 
-    rows = (
-        bind.execute(sa.text("SELECT r.id, r.name, r.gateway_id, g.name AS gateway_name " "FROM resources r LEFT JOIN gateways g ON r.gateway_id = g.id " "WHERE r.original_name IS NULL"))
-        .mappings()
-        .all()
+    select_rows = sa.text(
+        "SELECT r.id, r.name, r.gateway_id, g.name AS gateway_name "
+        "FROM resources r LEFT JOIN gateways g ON r.gateway_id = g.id "
+        "WHERE r.original_name IS NULL ORDER BY r.id LIMIT 500"
     )
-    for row in rows:
-        base = slugify(row["name"])
-        gateway_slug = slugify(row["gateway_name"]) if row["gateway_id"] and row["gateway_name"] else ""
-        name = row["name"]
-        if gateway_slug:
-            name = (f"{gateway_slug}{settings.gateway_tool_name_separator}{base}" if base else gateway_slug)[:255]
-        bind.execute(
-            sa.text("UPDATE resources SET original_name = :original, custom_name_slug = :base, name = :name WHERE id = :id"),
-            {"id": row["id"], "original": row["name"], "base": base, "name": name},
-        )
+    update_rows = sa.text("UPDATE resources SET original_name = :original, custom_name_slug = :base, name = :name WHERE id = :id AND original_name IS NULL")
+    while rows := bind.execute(select_rows).mappings().all():
+        updates = []
+        for row in rows:
+            base = slugify(row["name"])
+            gateway_slug = slugify(row["gateway_name"]) if row["gateway_id"] and row["gateway_name"] else ""
+            name = row["name"]
+            if gateway_slug:
+                name = (f"{gateway_slug}{settings.gateway_tool_name_separator}{base}" if base else gateway_slug)[:255]
+            updates.append({"id": row["id"], "original": row["name"], "base": base, "name": name})
+        bind.execute(update_rows, updates)
 
 
 def downgrade() -> None:
