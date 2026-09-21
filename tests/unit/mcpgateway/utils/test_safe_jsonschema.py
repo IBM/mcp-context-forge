@@ -227,7 +227,49 @@ def test_no_sandbox_still_validates_schema_without_regex():
         validate_safely({"n": 1}, schema, DRAFT)
 
 
-def test_warn_unprovable_patterns_never_raises_by_construction(caplog):
+def _break_schema_uses_regex():
+    """Make the routing call inside warn_unprovable_patterns raise.
+
+    Returns:
+        A patch context manager.
+    """
+    return patch("mcpgateway.utils.safe_jsonschema.schema_uses_regex", side_effect=RuntimeError("simulated internal failure"))
+
+
+def _break_success_path_warning():
+    """Make the success-path log statement inside warn_unprovable_patterns raise.
+
+    Only the inventory warning is broken. The fallback warning in the except handler still
+    reaches the real logger, so the test can assert the function reported the failure.
+
+    Returns:
+        A patch context manager.
+    """
+    real_warning = safe_jsonschema.logger.warning
+
+    def _warning(msg, *args, **kwargs):
+        """Raise for the inventory warning and pass every other call through.
+
+        Args:
+            msg: The log message or format string.
+            *args: Format arguments.
+            **kwargs: Logging keyword arguments.
+
+        Returns:
+            Whatever the real logger returns for a pass-through call.
+
+        Raises:
+            RuntimeError: When the inventory warning is logged.
+        """
+        if str(msg).startswith("Schema carries a regex keyword"):
+            raise RuntimeError("simulated internal failure")
+        return real_warning(msg, *args, **kwargs)
+
+    return patch.object(safe_jsonschema.logger, "warning", _warning)
+
+
+@pytest.mark.parametrize("break_statement", [_break_schema_uses_regex, _break_success_path_warning], ids=["schema_uses_regex", "success_path_warning"])
+def test_warn_unprovable_patterns_never_raises_by_construction(break_statement, caplog):
     """warn_unprovable_patterns swallows any internal failure and returns normally.
 
     This pins the function's contract: every caller (a SQLAlchemy listener, a federation
@@ -236,10 +278,15 @@ def test_warn_unprovable_patterns_never_raises_by_construction(caplog):
     test is the signal that someone removed the guard rather than the call-site discipline
     the guard was written to replace.
 
+    Each raisable statement in the function body is broken in turn. Pinning only the
+    ``schema_uses_regex`` call would let a narrowed guard pass: moving the success-path
+    warning out of the ``try`` reintroduces an unguarded statement that one case cannot see.
+
     Args:
+        break_statement: A factory returning a patch that makes one statement raise.
         caplog: The pytest log capture fixture.
     """
-    with patch("mcpgateway.utils.safe_jsonschema.schema_uses_regex", side_effect=RuntimeError("simulated internal failure")):
+    with break_statement():
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
             result = warn_unprovable_patterns({"pattern": "^a$"}, source="tool:pinning-test")
 
