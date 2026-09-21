@@ -127,7 +127,7 @@ maintainer.
 ## Coding Standards
 
 - **Python >= 3.11** with type hints
-- **Formatting**: Black (line length 200), isort (profile=black)
+- **Formatting**: Ruff (line length 200), isort (profile=black)
 - **Linting**: Ruff, Pylint per `pyproject.toml`
 - **Naming**: `snake_case` functions, `PascalCase` classes, `UPPER_CASE` constants
 
