@@ -1,0 +1,28 @@
+# Entra live-testing override for the gateway service.
+#
+# Apply on top of the base compose file together with the testing
+# profile (see `make testing-up-entra`):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.entra.yml --profile testing up -d
+#
+# Switches the gateway to external-IdP trust mode with the Entra v2
+# claim conventions used by the inline-groups live e2e suite:
+#   - user identity from the Entra `oid` claim
+#   - revocation keyed on the Entra `uti` claim
+#   - group overage resolved through Microsoft Graph (app-only)
+# The base compose file stays untouched so db-mode suites and other
+# profiles keep their defaults.
+services:
+  gateway:
+    environment:
+      - SSO_ENABLED=true
+      - JWT_TRUST_MODE=jwt-trust
+      - SSO_API_TOKEN_AUTH_ENABLED=true
+      - JWT_TRUST_OVERAGE_POLICY=graph_lookup
+      - JWT_TRUST_REVOCATION_CLAIM=uti
+      - JWT_CLAIM_USER_ID=oid
+    extra_hosts:
+      # Linux: map host.docker.internal to the host so the gateway can
+      # reach the host-run stub A2A agent. Docker Desktop provides this
+      # mapping natively; the extra host is harmless there.
+      - "host.docker.internal:host-gateway"
