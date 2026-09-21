@@ -969,6 +969,10 @@ async def _assemble_oauth_config_from_fields(
       create path, where encryption happens downstream in the service layer).
     * On edit, ``existing_config`` preserves stored credentials when password
       inputs are intentionally left blank rather than echoing secrets to the UI.
+      Preservation is scoped to the credentials the submitted configuration
+      still uses, so switching ``auth_type`` away from OAuth (or, for the
+      resource-owner password, switching off the ``password`` grant) unsets
+      the stored value instead of carrying it forward for good.
 
     Args:
         fields: Mapping with ``.get()`` (a form dict or parsed JSON body)
@@ -981,6 +985,7 @@ async def _assemble_oauth_config_from_fields(
         Assembled ``oauth_config`` dict, or ``None`` when no meaningful OAuth
         field was provided.
     """
+    auth_type = str(fields.get("auth_type", "")).strip().lower()
     oauth_grant_type = str(fields.get("oauth_grant_type", ""))
     oauth_issuer = str(fields.get("oauth_issuer", ""))
     oauth_token_url = str(fields.get("oauth_token_url", ""))
@@ -996,6 +1001,16 @@ async def _assemble_oauth_config_from_fields(
 
     if not any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
         return None
+
+    # A stored credential is only carried over while the submitted configuration
+    # still uses it; otherwise the edit unsets it.  The OAuth inputs stay in the
+    # DOM (and keep posting their old values) when the form hides them, so
+    # without this gate a secret that is no longer reachable from the UI could
+    # never be cleared again.  An empty ``auth_type`` still counts as OAuth
+    # because the edit handlers fall back to ``auth_type="oauth"`` whenever an
+    # OAuth config was assembled.
+    uses_oauth_credentials = auth_type in ("", "oauth")
+    uses_password_grant = uses_oauth_credentials and oauth_grant_type == "password"
 
     oauth_config: Dict[str, Any] = {}
     if oauth_grant_type:
@@ -1016,13 +1031,13 @@ async def _assemble_oauth_config_from_fields(
             oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
         else:
             oauth_config["client_secret"] = oauth_client_secret
-    elif existing_config and existing_config.get("client_secret"):
+    elif uses_oauth_credentials and existing_config and existing_config.get("client_secret"):
         oauth_config["client_secret"] = existing_config["client_secret"]
     if oauth_username:
         oauth_config["username"] = oauth_username
     if oauth_password:
         oauth_config["password"] = oauth_password
-    elif oauth_grant_type == "password" and existing_config and existing_config.get("password"):
+    elif uses_password_grant and existing_config and existing_config.get("password"):
         oauth_config["password"] = existing_config["password"]
     if oauth_audience:
         oauth_config["audience"] = oauth_audience
