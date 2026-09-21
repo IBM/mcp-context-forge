@@ -17,16 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 async def sighup_reload() -> None:
-    """Clear SSL context cache + drain upstream sessions on SIGHUP for certificate rotation.
+    """Reload runtime state on SIGHUP: SSL certs, upstream sessions, and settings cache.
 
-    Three things have to happen in order for new TLS material to take effect
-    on a worker without restart:
+    Four things have to happen for a graceful reload without restart:
       1. Clear the SSL context cache so the next build uses new certs.
       2. Close every in-process upstream MCP session — they hold their TLS
          context on the socket and would keep using the old certs forever.
       3. Drain the session-affinity in-memory mapping so the next downstream
          request re-registers (Redis state survives; only the local fast-
          path cache is cleared).
+      4. Clear the ``get_settings`` lru_cache so the next attribute access
+         re-reads environment variables (e.g. ``VALIDATION_ALLOWED_URL_SCHEMES``).
     """
     try:
         # First-Party
@@ -62,6 +63,15 @@ async def sighup_reload() -> None:
         logger.info("SIGHUP: session-affinity mapping drained")
     except Exception as exc:
         logger.debug(f"SIGHUP: session-affinity drain skipped: {exc}")
+
+    try:
+        # First-Party
+        from mcpgateway.config import get_settings  # pylint: disable=import-outside-toplevel
+
+        get_settings.cache_clear()
+        logger.info("SIGHUP: settings cache cleared")
+    except Exception as exc:
+        logger.warning(f"SIGHUP: settings cache clear failed: {exc}")
 
 
 def sighup_handler(_signum: int, _frame: Any) -> None:

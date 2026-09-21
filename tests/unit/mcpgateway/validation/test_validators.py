@@ -21,7 +21,7 @@ class DummySettings:
     # Updated to match the patterns in the code (no double escaping)
     validation_dangerous_html_pattern = r"<(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>"
     validation_dangerous_js_pattern = r"javascript:|vbscript:|on\w+\s*=|data:.*script"  # <-- fix: single backslash
-    validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
+    validation_allowed_url_schemes = ["http://", "https://"]
     validation_name_pattern = r"^[a-zA-Z0-9_\-]+$"
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"

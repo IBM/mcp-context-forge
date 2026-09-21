@@ -63,7 +63,7 @@ from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import DataError, IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
@@ -96,7 +96,7 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
@@ -1467,19 +1467,20 @@ def _check_url_scheme_compliance() -> None:
 
     try:
         with SessionLocal() as db:
-            # Linear scan over enabled rows; add an index query if table exceeds ~10k rows.
             for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all():
-                if gw.url and not any(gw.url.lower().startswith(s) for s in allowed):
+                if gw.url and not url_scheme_allowed(gw.url, allowed):
                     violations.append(f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {sanitize_url_for_logging(gw.url)}")
 
             for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all():
-                if tool.url and not any(tool.url.lower().startswith(s) for s in allowed):
+                if tool.url and not url_scheme_allowed(tool.url, allowed):
                     violations.append(f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {sanitize_url_for_logging(tool.url)}")
 
             for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all():
-                if agent.endpoint_url and not any(agent.endpoint_url.lower().startswith(s) for s in allowed):
+                if agent.endpoint_url and not url_scheme_allowed(agent.endpoint_url, allowed):
                     violations.append(f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {sanitize_url_for_logging(agent.endpoint_url)}")
-    except Exception:
+    except SQLAlchemyError:
+        if settings.strict_scheme_enforcement:
+            raise SystemExit("STRICT_SCHEME_ENFORCEMENT is enabled but the URL scheme compliance check could not query the database. Resolve the database connection or disable enforcement to start.")
         logger.warning("URL scheme compliance check skipped: database unavailable")
         return
 
@@ -1846,9 +1847,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         refresh_slugs_on_startup()
 
-        # Issue #6264: warn (or fail) on existing records whose URL schemes
-        # violate the current VALIDATION_ALLOWED_URL_SCHEMES allowlist.
-        _check_url_scheme_compliance()
+        await asyncio.to_thread(_check_url_scheme_compliance)
 
         # Initialize experimental dataplane publisher to send config data to redis
         if settings.dataplane_publisher:

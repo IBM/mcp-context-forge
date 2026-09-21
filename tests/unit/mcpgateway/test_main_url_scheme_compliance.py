@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
+
 
 # First-Party
 from mcpgateway.main import _check_url_scheme_compliance
@@ -159,6 +161,68 @@ def test_disabled_records_excluded():
         mock_settings.strict_scheme_enforcement = False
         _check_url_scheme_compliance()
     mock_logger.warning.assert_not_called()
-    # Verify every query applied a filter (the enabled=True clause)
-    for call in mock_db.query.return_value.filter.call_args_list:
+    # Verify filter was called exactly 3 times (Gateway, Tool, A2AAgent) with the enabled clause
+    filter_mock = mock_db.query.return_value.filter
+    assert filter_mock.call_count == 3, f"Expected 3 filter() calls, got {filter_mock.call_count}"
+    for call in filter_mock.call_args_list:
         assert call.args, "filter() must receive at least one argument (the enabled clause)"
+
+
+def test_none_and_empty_urls_skipped():
+    """Records with None or empty URLs are silently skipped (no violation)."""
+    ctx = _mock_session(
+        gateways=[GwRow("g1", "null-gw", None), GwRow("g2", "empty-gw", "")],
+        tools=[ToolRow("t1", "null-tool", None)],
+        agents=[AgentRow("a1", "empty-agent", "")],
+    )
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.logger") as mock_logger,
+    ):
+        _check_url_scheme_compliance()
+    mock_logger.warning.assert_not_called()
+
+
+def test_mixed_case_scheme_accepted():
+    """Mixed-case schemes like HTTPS:// match the allowlist (case-insensitive)."""
+    ctx = _mock_session(
+        gateways=[GwRow("g1", "upper-gw", "HTTPS://example.com")],
+        tools=[ToolRow("t1", "mixed-tool", "Http://example.com")],
+    )
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.logger") as mock_logger,
+    ):
+        _check_url_scheme_compliance()
+    mock_logger.warning.assert_not_called()
+
+
+def test_db_error_strict_mode_exits():
+    """Strict mode raises SystemExit when the compliance query fails."""
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(side_effect=SQLAlchemyError("connection refused"))
+    ctx.__exit__ = MagicMock(return_value=False)
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.settings") as mock_settings,
+    ):
+        mock_settings.validation_allowed_url_schemes = ["https"]
+        mock_settings.strict_scheme_enforcement = True
+        with pytest.raises(SystemExit, match="STRICT_SCHEME_ENFORCEMENT"):
+            _check_url_scheme_compliance()
+
+
+def test_db_error_nonstrict_mode_warns():
+    """Non-strict mode logs a warning and returns when the compliance query fails."""
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(side_effect=SQLAlchemyError("connection refused"))
+    ctx.__exit__ = MagicMock(return_value=False)
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.settings") as mock_settings,
+        patch("mcpgateway.main.logger") as mock_logger,
+    ):
+        mock_settings.validation_allowed_url_schemes = ["https"]
+        mock_settings.strict_scheme_enforcement = False
+        _check_url_scheme_compliance()
+    mock_logger.warning.assert_called_once_with("URL scheme compliance check skipped: database unavailable")
