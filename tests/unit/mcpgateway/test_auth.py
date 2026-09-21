@@ -4955,6 +4955,44 @@ class TestVerifyOauthAccessToken:
         assert result["sub"] == "user@example.com"
 
     @pytest.mark.asyncio
+    async def test_jwks_uri_override_same_origin_verifies_without_discovery(self):
+        """A same-origin jwks_uri_override verifies and skips OIDC discovery."""
+        override_uri = "https://auth.example.com/application/o/test/override-keys/"
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = public_key
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        # Discovery returns None: with an override it must never be consulted,
+        # so verification succeeds only through the override path.
+        with (
+            patch("mcpgateway.utils.verify_credentials._oauth_jwks_client_cache", {override_uri: mock_jwks_client}),
+            patch("mcpgateway.utils.verify_credentials._discover_oidc_metadata", AsyncMock(return_value=None)),
+        ):
+            result = await verify_oauth_access_token(token, [self.ISSUER], jwks_uri_override=override_uri)
+
+        assert result is not None
+        assert result["sub"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_jwks_uri_override_cross_origin_rejected(self, caplog):
+        """A cross-origin jwks_uri_override is rejected by the SSRF defense."""
+        # Standard
+        import logging  # pylint: disable=import-outside-toplevel
+
+        private_key, _ = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "attacker", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.verify_credentials"):
+            result = await verify_oauth_access_token(token, [self.ISSUER], jwks_uri_override="https://evil.example.com/keys")
+
+        assert result is None
+        assert "SSRF defense" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_issuer_not_in_allowlist_returns_none(self):
         """A token whose issuer is not in the allowlist is rejected."""
         private_key, _ = self._generate_rsa_keypair()

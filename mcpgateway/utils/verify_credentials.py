@@ -516,11 +516,24 @@ def _effective_ttl(token_exp: Optional[int]) -> int:
 
 
 async def invalidate_external_identity_cache() -> None:
-    """Clear the in-memory fallback identity cache (test hook / admin reset).
+    """Clear the external identity cache everywhere.
 
-    Redis entries expire by their own TTL; this clears only the local map.
+    Mapping and trust-root changes must withdraw access on the next
+    request. The in-memory fallback map is cleared directly; the
+    Redis-backed per-token entries are deleted by a prefix scan. Redis
+    errors degrade to clearing only the local map (best effort): the
+    entries then age out by their own TTL.
     """
     _external_identity_cache.clear()
+    redis = await get_redis_client()
+    if redis is None:
+        return
+    try:
+        keys = [key async for key in redis.scan_iter(match=_EXTERNAL_IDENTITY_REDIS_PREFIX + "*")]
+        if keys:
+            await redis.delete(*keys)
+    except Exception as exc:  # noqa: BLE001 - best-effort invalidation, never fail the admin write
+        logger.warning("External identity cache Redis invalidation failed (entries age out by TTL): %s", exc)
 
 
 async def _external_identity_cache_get(token_hash: str) -> Optional[dict]:
@@ -2001,15 +2014,23 @@ async def verify_oauth_access_token(
     authorization_servers: list[str],
     *,
     expected_audience: Optional[Union[str, list[str]]] = None,
+    jwks_uri_override: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Verify an OAuth access token issued by a configured authorization server.
 
-    Used for Virtual Server MCP endpoints with ``oauth_enabled=True``.
-    Validates the token issuer against the server's allowlist, discovers
-    the JWKS endpoint via RFC 8414 / OIDC metadata, and verifies the signature.
-    When ``expected_audience`` is provided, the token's ``aud`` claim is also
-    validated; a list value means any one of the supplied audiences is
-    accepted (PyJWT's native semantics).
+    Used for Virtual Server MCP endpoints with ``oauth_enabled=True`` and by
+    the external-IdP trust funnel. Validates the token issuer against the
+    server's allowlist, resolves the JWKS endpoint via RFC 8414 / OIDC
+    metadata — or an explicit ``jwks_uri_override`` when the caller has a
+    configured one — and verifies the signature. When ``expected_audience``
+    is provided, the token's ``aud`` claim is also validated; a list value
+    means any one of the supplied audiences is accepted (PyJWT's native
+    semantics).
+
+    The override exists for IdPs whose published discovery document points
+    at a cross-origin JWKS (Entra v1 ``sts.windows.net`` issuers do this by
+    design). It is held to the SAME SSRF contract as discovered URIs:
+    HTTPS and the issuer's origin, enforced below.
 
     Args:
         token: Raw JWT Bearer token string.
@@ -2017,6 +2038,8 @@ async def verify_oauth_access_token(
         expected_audience: Audience value(s) to validate against. Typically
             the canonical MCP resource URL (RFC 8707/9728), optionally plus
             the OAuth client_id for IdPs that populate ``aud`` that way.
+        jwks_uri_override: Explicit JWKS endpoint from configuration (e.g.
+            the SSO provider record). Takes precedence over discovery.
 
     Returns:
         Verified claims dict on success, None on failure.
@@ -2037,15 +2060,18 @@ async def verify_oauth_access_token(
         logger.warning("OAuth token issuer %s not in allowlist %s", sanitize_for_log(normalized_issuer), normalized_allowed)
         return None
 
-    # Discover OIDC metadata and resolve JWKS URI
-    metadata = await _discover_oidc_metadata(normalized_issuer)
-    if not metadata:
-        return None
-
-    jwks_uri = metadata.get("jwks_uri")
-    if not isinstance(jwks_uri, str) or not jwks_uri.strip():
-        logger.warning("No jwks_uri in OIDC metadata for issuer %s", sanitize_for_log(normalized_issuer))
-        return None
+    # Resolve the JWKS URI: an explicit override from configuration wins
+    # (Entra v1 issuers publish a cross-origin JWKS by design); otherwise
+    # discover it from OIDC metadata.
+    jwks_uri = jwks_uri_override.strip() if isinstance(jwks_uri_override, str) and jwks_uri_override.strip() else None
+    if jwks_uri is None:
+        metadata = await _discover_oidc_metadata(normalized_issuer)
+        if not metadata:
+            return None
+        jwks_uri = metadata.get("jwks_uri")
+        if not isinstance(jwks_uri, str) or not jwks_uri.strip():
+            logger.warning("No jwks_uri in OIDC metadata for issuer %s", sanitize_for_log(normalized_issuer))
+            return None
 
     # Defense-in-depth: the jwks_uri from metadata must share the issuer's
     # origin and use HTTPS. A compromised metadata endpoint could otherwise
@@ -2167,6 +2193,7 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
         token,
         authorization_servers=[provider.issuer],
         expected_audience=provider.api_audience,
+        jwks_uri_override=getattr(provider, "jwks_uri", None),
     )
     if claims is None:
         logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))
