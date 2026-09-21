@@ -200,22 +200,56 @@ def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def _guard_output_schema(output_schema: Any, tool_name: Any) -> Any:
+    """Return an output schema, or ``None`` when it carries a regex keyword.
+
+    The vendored SDK validates ``outputSchema`` with stock ``jsonschema`` at
+    ``mcp/server/lowlevel/server.py:573``, which ``validate_input=False`` does not gate. A remote
+    server controls this schema, so withhold one that can backtrack. The gateway's own bounded
+    check in ``tool_service`` still validates the same data.
+
+    Args:
+        output_schema: The schema a tool advertises, or ``None``.
+        tool_name: The advertised tool name, used for the log line only.
+
+    Returns:
+        The schema unchanged, or ``None`` when it carries ``pattern`` or ``patternProperties``.
+    """
+    if output_schema is not None and schema_uses_regex(output_schema):
+        logger.warning("Withholding outputSchema from advertised tool %s because it carries a regex keyword", sanitize_for_log(tool_name))
+        return None
+    return output_schema
+
+
+def _guard_proxied_tools(tools: Iterable[Any]) -> List[Any]:
+    """Apply the output-schema guard to tools proxied straight from a remote gateway.
+
+    Direct-proxy tools bypass :func:`_to_mcp_tool`, so the already-constructed SDK models need
+    the same guard. The SDK skips output validation when ``outputSchema`` is ``None``.
+
+    Args:
+        tools: SDK tool models returned by a remote gateway.
+
+    Returns:
+        The tools, with any regex-bearing ``outputSchema`` replaced by ``None``.
+    """
+    guarded: List[Any] = []
+    for tool in tools:
+        output_schema = getattr(tool, "outputSchema", None)
+        if output_schema is not None and _guard_output_schema(output_schema, getattr(tool, "name", "")) is None:
+            tool = tool.model_copy(update={"outputSchema": None})
+        guarded.append(tool)
+    return guarded
+
+
 def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
     """Convert an internal tool record to the MCP transport model."""
-    # The vendored SDK validates outputSchema with stock jsonschema at
-    # mcp/server/lowlevel/server.py:573, which validate_input=False does not gate. A remote
-    # server controls this schema, so withhold one that can backtrack. The gateway's own
-    # bounded check in tool_service still validates the same data.
-    output_schema = tool.output_schema
-    if output_schema is not None and schema_uses_regex(output_schema):
-        logger.warning("Withholding outputSchema from advertised tool %s because it carries a regex keyword", sanitize_for_log(name or tool.name))
-        output_schema = None
     payload: Dict[str, Any] = {
         "name": name or tool.name,
         "title": _safe_str_attr(tool, "title"),
         "description": tool.description or "",
         "inputSchema": tool.input_schema,
-        "outputSchema": output_schema,
+        "outputSchema": _guard_output_schema(tool.output_schema, name or tool.name),
         "annotations": tool.annotations,
     }
     apply_tool_meta(payload, getattr(tool, "extension_metadata", None))
@@ -1519,7 +1553,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                 tools_result = await client.list_tools(meta=meta)
             else:
                 tools_result = await client.list_tools()
-            return filter_model_visible_tools(tools_result.tools)
+            return _guard_proxied_tools(filter_model_visible_tools(tools_result.tools))
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
