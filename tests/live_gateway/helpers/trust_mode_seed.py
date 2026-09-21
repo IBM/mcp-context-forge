@@ -59,6 +59,7 @@ def seed_provider(
     audience: str,
     *,
     token_url: Optional[str] = None,
+    jwks_uri: Optional[str] = None,
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
 ) -> None:
@@ -73,6 +74,7 @@ def seed_provider(
         "client_secret": client_secret or "local-oidc-test-secret",  # pragma: allowlist secret
         "authorization_url": f"{issuer}/authorize",
         "token_url": token_url or f"{issuer}/token",
+        "jwks_uri": jwks_uri,
         "userinfo_url": f"{issuer}/userinfo",
         "issuer": issuer,
         "trusted_for_api_auth": True,

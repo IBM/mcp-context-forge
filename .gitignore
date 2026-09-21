@@ -363,3 +363,5 @@ tools_rust/mcp_runtime/perf.data*
 
 # Git worktrees
 .worktrees/
+.omp/
+docs/mcpgateway-docs.html

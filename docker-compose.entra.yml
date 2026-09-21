@@ -21,6 +21,9 @@ services:
       - JWT_TRUST_OVERAGE_POLICY=graph_lookup
       - JWT_TRUST_REVOCATION_CLAIM=uti
       - JWT_CLAIM_USER_ID=oid
+      # INFO surfaces the trust-funnel denial reasons (warning-level logs);
+      # the base stack's ERROR default hides them.
+      - LOG_LEVEL=INFO
     extra_hosts:
       # Linux: map host.docker.internal to the host so the gateway can
       # reach the host-run stub A2A agent. Docker Desktop provides this

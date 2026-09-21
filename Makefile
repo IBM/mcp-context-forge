@@ -1820,7 +1820,7 @@ testing-up-entra:                          ## Start testing stack with the gatew
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.entra.yml --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.entra.yml --profile testing --profile inspector up -d --scale gateway=1 --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Entra trust-mode testing stack started! Gateway: http://localhost:8080"
 
