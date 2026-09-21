@@ -93,6 +93,7 @@ def test_regex_schema_is_submitted_to_the_sandbox_and_plain_schema_is_not():
         assert submit.call_count == 1, "a schema carrying a regex keyword must be validated in the sandbox, never inline"
 
 
+@pytest.mark.timeout(30)
 @pytest.mark.parametrize("label,pattern,subject", HOSTILE, ids=[c[0] for c in HOSTILE])
 def test_hostile_pattern_is_bounded_and_fails_closed(label, pattern, subject):
     """Every category that broke v1 must now be bounded and reported as a failure.
@@ -114,6 +115,7 @@ def test_hostile_pattern_is_bounded_and_fails_closed(label, pattern, subject):
     assert BOUNDED in str(excinfo.value), f"{label} failed for another reason, so nothing proves the sandbox bounded it: {excinfo.value}"
 
 
+@pytest.mark.timeout(30)
 @pytest.mark.parametrize("escape", ["additionalProperties", "unevaluatedProperties"])
 def test_pattern_properties_escape_is_bounded(escape):
     """jsonschema reaches stock re through these keywords, not through the pattern keyword.
@@ -136,6 +138,7 @@ def test_pattern_properties_escape_is_bounded(escape):
     assert BOUNDED in str(excinfo.value), f"{escape} failed for another reason, so nothing proves the sandbox bounded the escape: {excinfo.value}"
 
 
+@pytest.mark.timeout(30)
 def test_valid_subject_still_validates():
     """A matching subject keeps working and stays fast."""
     schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}}}
