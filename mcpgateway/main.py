@@ -235,7 +235,6 @@ from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
-from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -243,6 +242,7 @@ from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user

@@ -2749,7 +2749,7 @@ class Settings(BaseSettings):
         description="Number of forked jq worker processes per gateway worker. Default: 2.",
     )
 
-    # Schema validation sandbox - see docs/superpowers/specs/2026-09-21-schema-regex-redos-design.md
+    # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.
     regex_timeout_seconds: float = Field(
         default=1.0,
         gt=0,
