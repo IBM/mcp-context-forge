@@ -187,7 +187,7 @@ class TestTrustModeNoProvisioning:
         claims = _claims(email=CALLER_EMAIL, groups=["entra-group-guid-2"])
         token = pyjwt.encode(claims, "k", algorithm="HS256")
 
-        async def fake_verify_oauth(_token, authorization_servers, *, expected_audience=None):
+        async def fake_verify_oauth(_token, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
             return claims
 
         monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify_oauth)
@@ -318,3 +318,37 @@ class TestTrustIdentityCache:
         await vc.invalidate_external_identity_cache()
 
         assert await vc._external_identity_cache_get(token_hash) is None  # pylint: disable=protected-access
+
+    @pytest.mark.asyncio
+    async def test_invalidate_deletes_redis_entries_by_prefix(self, monkeypatch):
+        """Invalidate deletes Redis identity entries so mapping changes apply at once."""
+
+        class FakeRedis:
+            """Async scan_iter/delete recorder with prefix-matched storage."""
+
+            def __init__(self):
+                self.store = {f"{vc._EXTERNAL_IDENTITY_REDIS_PREFIX}abc": "x", "other:unrelated": "y"}  # pylint: disable=protected-access
+                self.deleted = []
+
+            async def scan_iter(self, match=None):
+                for key in list(self.store):
+                    if match is None or key.startswith(match.rstrip("*")):
+                        yield key
+
+            async def delete(self, *keys):
+                self.deleted.extend(keys)
+                for key in keys:
+                    self.store.pop(key, None)
+
+        fake = FakeRedis()
+
+        async def fake_client():
+            return fake
+
+        monkeypatch.setattr(vc, "get_redis_client", fake_client)
+
+        await vc.invalidate_external_identity_cache()
+
+        assert fake.deleted == [f"{vc._EXTERNAL_IDENTITY_REDIS_PREFIX}abc"]  # pylint: disable=protected-access
+        assert f"{vc._EXTERNAL_IDENTITY_REDIS_PREFIX}abc" not in fake.store  # pylint: disable=protected-access
+        assert "other:unrelated" in fake.store
