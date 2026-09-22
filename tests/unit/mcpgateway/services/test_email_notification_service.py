@@ -63,41 +63,47 @@ class TestAuthEmailNotificationService:
             mock_settings.smtp_from_email = "noreply@example.com"
             assert service._smtp_ready() is True
 
-    def test_build_frontend_url_prefers_ui_base_and_encodes_token(self):
-        """Frontend links use configured React base and encode token as one segment."""
+    @pytest.mark.parametrize("admin_api_enabled", [True, False])
+    @pytest.mark.parametrize("path", ["/accept-invitation", "/reset-password", "/forgot-password"])
+    def test_build_frontend_url_prefers_ui_base_and_encodes_token(self, path, admin_api_enabled):
+        """Configured frontend links use React routes regardless of legacy Admin availability."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = "https://ui.example.com/contextforge/"
-            result = build_frontend_url("/accept-invitation", "tok/en ?")
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
+            token = None if path == "/forgot-password" else "tok/en ?"
+            result = build_frontend_url(path, token)
 
-        assert result == "https://ui.example.com/contextforge/accept-invitation/tok%2Fen%20%3F"
+        suffix = "" if token is None else "/tok%2Fen%20%3F"
+        assert result == f"https://ui.example.com/contextforge/app{path}{suffix}"
 
-    @pytest.mark.parametrize(
-        ("admin_api_enabled", "expected_url"),
-        [
-            (True, "https://gateway.example.com/root/admin/forgot-password"),
-            (False, "https://gateway.example.com/root/forgot-password"),
-        ],
-    )
-    def test_build_frontend_url_falls_back_to_domain_and_root_path(self, admin_api_enabled, expected_url):
+    @pytest.mark.parametrize("root_path", ["", "/root/"])
+    @pytest.mark.parametrize("admin_api_enabled, prefix", [(True, "/admin"), (False, "/app")])
+    @pytest.mark.parametrize("path", ["/forgot-password", "/reset-password"])
+    def test_build_frontend_url_falls_back_to_domain_and_root_path(self, path, admin_api_enabled, prefix, root_path):
         """Password fallback uses Admin UI only when its routes are mounted."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
-            mock_settings.app_root_path = "/root/"
+            mock_settings.app_root_path = root_path
             mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
-            result = build_frontend_url("/forgot-password")
+            token = "tok/en" if path == "/reset-password" else None
+            result = build_frontend_url(path, token)
 
-        assert result == expected_url
+        root = "/root" if root_path else ""
+        suffix = "/tok%2Fen" if token else ""
+        assert result == f"https://gateway.example.com{root}{prefix}{path}{suffix}"
 
-    def test_build_frontend_url_invitation_fallback_remains_frontend_route(self):
+    @pytest.mark.parametrize("admin_api_enabled", [True, False])
+    def test_build_frontend_url_invitation_fallback_remains_frontend_route(self, admin_api_enabled):
         """Invitation fallback does not inherit legacy Admin UI prefix."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
             result = build_frontend_url("/accept-invitation", "tok/en")
 
-        assert result == "https://gateway.example.com/root/accept-invitation/tok%2Fen"
+        assert result == "https://gateway.example.com/root/app/accept-invitation/tok%2Fen"
 
     def test_build_frontend_url_rejects_untrusted_path_shape(self):
         """Frontend helper rejects relative and scheme-relative paths."""
