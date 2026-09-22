@@ -3260,8 +3260,7 @@ class ResourceService(BaseService):
             requested_name = resource_update.custom_name if resource_update.custom_name is not None else resource_update.name
             if requested_name is not None:
                 if resource.gateway_id:
-                    # Legacy name clients may resubmit the derived name. Explicit bases
-                    # disambiguate a deliberate rename to that same value.
+                    # Keep unchanged names unless custom_name explicitly requests a rename.
                     if resource_update.custom_name is not None or requested_name not in (resource.name, resource.custom_name_slug):
                         resource.custom_name_slug = slugify(requested_name)
                 else:
