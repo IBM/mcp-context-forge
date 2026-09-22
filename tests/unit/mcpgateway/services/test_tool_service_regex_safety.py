@@ -23,10 +23,11 @@ CATASTROPHIC_SCHEMA = {
     "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
 }
 
-# The wording the timeout path alone produces. A pattern that merely fails to match gives a
-# jsonschema mismatch message, and any other sandbox fault gives the broader "could not be
-# completed safely" text. Elapsed time plus "an error happened" cannot tell "the sandbox
-# bounded a runaway" apart from "rejected instantly for an unrelated reason"; this phrase can.
+# The phrase the timeout path alone contributes. validate_safely wraps every sandbox fault,
+# this one included, in "schema validation could not be completed safely", so that outer
+# text does not discriminate. This inner phrase comes from SandboxTimeout only. Elapsed time
+# plus "an error happened" cannot tell "the sandbox bounded a runaway" apart from "rejected
+# instantly for an unrelated reason"; this phrase can.
 BOUNDED = "exceeded the execution time limit"
 
 
