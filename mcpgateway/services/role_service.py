@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import resolve_canonical_user_id
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, Role, UserRole, utc_now
 
@@ -636,6 +637,12 @@ class RoleService:
             ...         'not found or inactive' in str(e)
             True
         """
+        # Resolve the canonical user ID once for the dual-write: user_email
+        # keeps the FK-valid e-mail (existing-row lookups key on it), while
+        # the stored row also carries the canonical ID in user_id so diverged
+        # users (user_id != email) stay joinable.
+        canonical = resolve_canonical_user_id(user_email, self.db)
+
         # Validate role exists and is active
         role = await self.get_role_by_id(role_id)
         if not role or not role.is_active:
@@ -681,7 +688,7 @@ class RoleService:
         # Create the assignment with savepoint to handle race conditions
         # If another process created the same assignment concurrently, we'll catch IntegrityError
         # and return the existing assignment instead of failing
-        user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
+        user_role = UserRole(user_email=user_email, user_id=canonical, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
         try:
             # Use nested transaction (savepoint) to allow rollback on conflict

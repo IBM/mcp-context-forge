@@ -176,7 +176,10 @@ class TestAddMemberToTeamExceptionPath:
         # Make db.add raise an exception to trigger the exception handler
         db.add.side_effect = RuntimeError("Database error during add")
 
-        with pytest.raises(TeamMemberAddError) as exc_info:
+        with (
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
+            pytest.raises(TeamMemberAddError) as exc_info,
+        ):
             await svc.add_member_to_team("t1", "newuser@example.com", "member", invited_by="admin@example.com")
 
         assert "Failed to add member to team" in str(exc_info.value)
@@ -210,7 +213,11 @@ class TestCreateTeamReactivation:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with (
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+        ):
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -363,7 +370,10 @@ class TestAddMemberEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
+        with (
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+        ):
             with pytest.raises(TeamMemberLimitExceededError, match="Team has reached maximum member limit of 2"):
                 await svc.add_member_to_team("t1", "new@t.com")
 
@@ -381,6 +391,7 @@ class TestAddMemberEdge:
 
         with (
             patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
         ):
@@ -823,6 +834,7 @@ class TestApproveJoinRequestEdge:
         team = _mock_team(max_members=None)
         with (
             patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
             patch.object(svc, "_log_team_member_action"),
             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
