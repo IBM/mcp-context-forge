@@ -234,10 +234,7 @@ class TestBaggageSecurityDenyPaths:
         )
 
         # Create value larger than configured max header value length
-        try:
-            max_length = settings.max_header_value_length
-        except (AttributeError, TypeError):
-            max_length = 16384
+        max_length = settings.max_header_value_length
         large_value = "a" * (max_length + 1000)
 
         headers = {

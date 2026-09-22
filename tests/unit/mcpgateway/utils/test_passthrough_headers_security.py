@@ -68,10 +68,7 @@ class TestHeaderSecurity:
 
     def test_sanitize_header_value_length_limit(self):
         """Test that header values are limited to prevent DoS attacks."""
-        try:
-            max_length = settings.max_header_value_length
-        except (AttributeError, TypeError):
-            max_length = 16384
+        max_length = settings.max_header_value_length
         oversized_value = "A" * (max_length * 2)
         result = sanitize_header_value(oversized_value)
 

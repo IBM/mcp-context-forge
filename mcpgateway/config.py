@@ -3905,9 +3905,7 @@ Disallow: /
     max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
     max_header_count: int = Field(default=100, description="Maximum number of header fields")
     max_header_value_length: int = Field(
-        default=4096,
-        description="Maximum length for individual header values during sanitization (4KB default). "
-        "Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+).",
+        default=4096, description="Maximum length for individual header values during sanitization (4KB default). Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+)."
     )
 
     @field_validator("max_header_value_length")

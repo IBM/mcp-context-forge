@@ -511,10 +511,7 @@ if __name__ == "__main__":
         env_vars = extract_env_vars_from_headers(headers, mappings)
 
         # Verify truncation
-        try:
-            max_length = settings.max_header_value_length
-        except (AttributeError, TypeError):
-            max_length = 16384
+        max_length = settings.max_header_value_length
         assert len(env_vars["GITHUB_TOKEN"]) == max_length
         assert env_vars["TENANT_ID"] == "acme-corp"
 
