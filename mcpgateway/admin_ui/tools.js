@@ -62,6 +62,77 @@ function allowsNullSchemaType(prop) {
   );
 }
 
+/**
+ * Returns true when a JSON Schema property union contains a non-object,
+ * non-null scalar arm (e.g. `type: "string"`, `type: "number"`).
+ * A plain `prop.type === "object"` descriptor has no union arms, so it
+ * returns false, meaning SyntaxErrors must always be rejected for it.
+ *
+ * @param {object} prop - A JSON Schema property descriptor.
+ * @returns {boolean}
+ */
+function hasScalarUnionArm(prop) {
+  const SCALAR_TYPES = new Set(["string", "number", "integer", "boolean"]);
+  const arms = prop.anyOf || prop.oneOf;
+  return !!(arms && arms.some((s) => SCALAR_TYPES.has(s.type)));
+}
+
+/**
+ * Parses a field value for an object-typed (or object-union) schema property.
+ *
+ * Rules:
+ * - If `value` is valid JSON that is a non-array object, return the parsed value.
+ * - If `value` is valid JSON null and the schema allows null, return null.
+ * - If `value` is valid JSON that is a scalar AND the schema union has a scalar
+ *   arm (e.g. `anyOf:[{type:"object"},{type:"string"}]`), return the raw string
+ *   so the server can coerce it.  This handles the case where `JSON.parse("42")`
+ *   succeeds but the intent is a string field.
+ * - If `value` is invalid JSON AND the schema union has a scalar arm, return the
+ *   raw string (the server will handle type coercion).
+ * - Otherwise throw with a user-visible message.
+ *
+ * @param {object} prop  - A JSON Schema property descriptor.
+ * @param {string} value - The raw string value from the form field.
+ * @param {string} key   - The field name, used in error messages.
+ * @returns {*} The value to place in the params object.
+ * @throws {Error} When the value is structurally invalid and no fallback applies.
+ */
+function parseObjectFieldValue(prop, value, key) {
+  try {
+    const parsed = JSON.parse(value);
+
+    // Valid JSON object (not null, not array) — always accept.
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed;
+    }
+
+    // Valid JSON null — accept only when the schema permits it.
+    if (parsed === null && allowsNullSchemaType(prop)) {
+      return parsed;
+    }
+
+    // Valid JSON scalar (string/number/boolean) — accept only when the
+    // union has a matching scalar arm; the value stays as a raw string so
+    // the server can handle coercion.
+    if (typeof parsed !== "object" && hasScalarUnionArm(prop)) {
+      return value;
+    }
+
+    throw new Error("Value must be an object");
+  } catch (error) {
+    if (error.message === "Value must be an object") {
+      throw error;
+    }
+    // SyntaxError from JSON.parse: fall back to raw string only when the
+    // union declares a scalar arm.  For pure object or object/null unions,
+    // the raw string is structurally invalid JSON and must be rejected.
+    if (error instanceof SyntaxError && hasScalarUnionArm(prop)) {
+      return value;
+    }
+    throw new Error(`Invalid JSON object for "${key}": ${error.message}`);
+  }
+}
+
 // ===================================================================
 // ENHANCED TOOL VIEWING with Secure Display
 // ===================================================================
@@ -2933,26 +3004,10 @@ export const runToolValidation = async function (testIndex) {
             }
           } else if (isObjectSchemaType(prop)) {
             try {
-              const parsed = JSON.parse(value);
-              if (
-                (!allowsNullSchemaType(prop) && parsed === null) ||
-                typeof parsed !== "object" ||
-                Array.isArray(parsed)
-              ) {
-                throw new Error("Value must be an object");
-              }
-              params[keyValidation.value] = parsed;
+              params[keyValidation.value] = parseObjectFieldValue(prop, value, key);
             } catch (error) {
-              if (error instanceof SyntaxError && prop.type !== "object") {
-                // Mixed union (e.g. anyOf: [{type:"object"},{type:"string"}]):
-                // JSON parse failed, so treat the value as a plain scalar.
-                params[keyValidation.value] = value;
-              } else {
-                showErrorMessage(
-                  `Invalid JSON object for ${key}: ${error.message}`
-                );
-                throw error;
-              }
+              showErrorMessage(error.message);
+              throw error;
             }
           } else {
             params[keyValidation.value] = value;
@@ -3362,25 +3417,11 @@ export const runToolTest = async function () {
             }
           } else if (isObjectSchemaType(prop)) {
             try {
-              const parsed = JSON.parse(value);
-              if (
-                (!allowsNullSchemaType(prop) && parsed === null) ||
-                typeof parsed !== "object" ||
-                Array.isArray(parsed)
-              ) {
-                throw new Error("Value must be an object");
-              }
-              params[keyValidation.value] = parsed;
+              params[keyValidation.value] = parseObjectFieldValue(prop, value, key);
             } catch (error) {
-              if (error instanceof SyntaxError && prop.type !== "object") {
-                // Mixed union (e.g. anyOf: [{type:"object"},{type:"string"}]):
-                // JSON parse failed, so treat the value as a plain scalar.
-                params[keyValidation.value] = value;
-              } else {
-                console.error(`Error parsing object value for ${key}:`, error);
-                showErrorMessage(`Invalid JSON object format for ${key}`);
-                throw error;
-              }
+              console.error(`Error parsing object value for ${key}:`, error);
+              showErrorMessage(error.message);
+              throw error;
             }
           } else {
             params[keyValidation.value] = value;
