@@ -4970,6 +4970,73 @@ class TestToolService:
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once()
 
+    @pytest.mark.parametrize(
+        "gateway_allowlist, expected_forwarded, expected_dropped",
+        [
+            # Unset per-gateway allowlist: the global allowlist applies.
+            (None, ["X-Tenant-Id"], ["X-Other"]),
+            # Explicit empty per-gateway allowlist: still an override that forwards nothing.
+            ([], [], ["X-Tenant-Id", "X-Other"]),
+            # Explicit per-gateway allowlist: replaces the global one.
+            (["X-Other"], ["X-Other"], ["X-Tenant-Id"]),
+        ],
+    )
+    async def test_invoke_tool_mcp_applies_global_passthrough_when_gateway_allowlist_unset(
+        self, tool_service, mock_tool, mock_gateway, test_db, gateway_allowlist, expected_forwarded, expected_dropped
+    ):
+        """Global passthrough headers reach an MCP gateway tool unless the gateway sets its own allowlist.
+
+        Regression: the tool cache payload coerced an unset ``gateway.passthrough_headers`` to ``[]``,
+        which ``compute_passthrough_headers_cached`` reads as an explicit empty per-gateway allowlist,
+        so the global allowlist was never applied to tools served by an MCP gateway.
+        """
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "sse"
+        mock_gateway.auth_value = None
+        mock_gateway.passthrough_headers = gateway_allowlist
+
+        mock_scalar1 = Mock()
+        mock_scalar1.scalar_one_or_none.return_value = mock_tool
+        mock_scalar1.scalars.return_value = mock_scalar1
+        mock_scalar1.all.return_value = [mock_tool]
+        mock_scalar2 = Mock()
+        mock_scalar2.scalar_one_or_none.return_value = mock_gateway
+        mock_scalar3 = Mock()
+        mock_scalar3.scalar_one_or_none.return_value = mock_gateway
+        test_db.execute = Mock(side_effect=[mock_scalar1, mock_scalar2, mock_scalar3])
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+        sse_ctx = AsyncMock()
+        sse_ctx.__aenter__.return_value = ("read", "write")
+        sse_client_mock = Mock(return_value=sse_ctx)
+
+        request_headers = {"X-Tenant-Id": "tenant-1", "X-Other": "other", "Authorization": "Bearer test"}
+
+        with (
+            patch("mcpgateway.services.tool_service.sse_client", sse_client_mock),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            # The real compute_passthrough_headers_cached runs; only its configuration is pinned.
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=["X-Tenant-Id"]),
+            patch("mcpgateway.utils.passthrough_headers.settings") as passthrough_settings,
+        ):
+            passthrough_settings.enable_header_passthrough = True
+            passthrough_settings.enable_overwrite_base_headers = False
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+
+        session_mock.call_tool.assert_awaited_once()
+        forwarded = sse_client_mock.call_args.kwargs["headers"]
+        for header in expected_forwarded:
+            assert forwarded.get(header) == request_headers[header], f"{header} not forwarded: {forwarded}"
+        for header in expected_dropped:
+            assert header not in forwarded, f"{header} forwarded unexpectedly: {forwarded}"
+
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with successful plugin post-invoke hook."""
         # Third-Party
@@ -8404,7 +8471,12 @@ class TestToolServiceHelpers:
         assert payload["tool"]["header_mapping"] == {}
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
-        assert payload["gateway"]["passthrough_headers"] == []
+        # None must survive: compute_passthrough_headers_cached() treats any list as a per-gateway
+        # override of the global allowlist, so an unset value coerced to [] would disable global
+        # passthrough headers for every gateway tool.
+        assert payload["gateway"]["passthrough_headers"] is None
+        gateway.passthrough_headers = ["X-Tenant-Id"]
+        assert service._build_tool_cache_payload(tool, gateway)["gateway"]["passthrough_headers"] == ["X-Tenant-Id"]
         # auth_value is now included in gateway cache payload (required by Gateway Pydantic model)
         assert payload["gateway"]["auth_value"] == "secret"
         assert "oauth_config" not in payload["gateway"]

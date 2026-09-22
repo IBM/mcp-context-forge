@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- **Global passthrough headers now reach MCP gateway tools** ([#6963](https://github.com/IBM/mcp-context-forge/issues/6963)) - The tool-lookup cache payload coerced an unset gateway `passthrough_headers` (NULL) to `[]`, which `compute_passthrough_headers_cached()` reads as an explicit, empty per-gateway allowlist that replaces the global one. With `ENABLE_HEADER_PASSTHROUGH=true`, tools served by an MCP gateway that had no allowlist of its own therefore forwarded none of the globally allowlisted headers; the global list only worked when duplicated onto every gateway. The payload now preserves `None`, so such gateways inherit the global allowlist as documented, while an explicit `[]` on a gateway still forwards nothing.
+
 - **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly.
 
 - **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).
