@@ -16,12 +16,12 @@ external-issuer bearers to the trusted-OIDC-issuer (JWKS) verifier when
     missing_revocation_claim     -> 401  (no jti -> unrevocable -> reject, fail-closed)
     nonexistent_agent_with_role  -> 404  (authn + RBAC ok, agent lookup terminates at 404)
 
-Branch note (PR #6750): rows 1 and 5 are marked ``xfail(strict=False)``.
-On this branch the TokenScopingMiddleware still validates claim-derived
-teams against local ``email_team_members`` and 403s trust-only principals
-("User is no longer a member of the associated team") before RBAC/agent
-lookup. The trusted-team exemption is Task 10 (#5904, PR #6751); both rows
-flip to their pinned status there (XPASS), and rows 2-4 are green here.
+Branch note (PR #6750): rows 1 and 5 were marked ``xfail(strict=False)``
+because TokenScopingMiddleware validated claim-derived teams against local
+``email_team_members`` and 403'd trust-only principals ("User is no longer
+a member of the associated team") before RBAC/agent lookup. Task 10 (#5904,
+PR #6751) landed the trusted-team exemption: both rows XPASS'd and the
+markers were removed; the full matrix is green on this branch.
 
 Gateway startup (operator-provided; run from the repo root). This exact
 env was verified against a live run: the secret-strength validator rejects
@@ -107,32 +107,16 @@ NONEXISTENT_AGENT = "Agent-A-that-does-not-exist"
 
 MATRIX = [
     # (scenario, expected status)
-    pytest.param(
-        "mapped_user_invokes_agent",
-        200,  # #6272 acceptance row
-        marks=pytest.mark.xfail(
-            reason=(
-                "TokenScopingMiddleware validates mapped teams against local email_team_members; "
-                "trust-only principals have none -> 403 'User is no longer a member'. "
-                "The trusted-team exemption is Task 10 (#5904, PR #6751); this row flips to 200 there."
-            ),
-            strict=False,
-        ),
-    ),
+    # #6272 acceptance row. Previously xfail(strict=False): the TokenScopingMiddleware
+    # membership check 403'd trust-only principals; Task 10 (#5904, PR #6751)
+    # exempted resolver-derived trusted teams and this row went green (XPASS).
+    ("mapped_user_invokes_agent", 200),
     ("unmapped_user_invoke", 403),  # authn ok, RBAC deny (deny without disclosure)
     ("wrong_audience_token", 401),  # trust-root token, definitive failure -> fail-closed
     ("missing_revocation_claim", 401),  # no jti -> unrevocable -> reject
-    pytest.param(
-        "nonexistent_agent_with_role",
-        404,  # authenticated + authorized -> agent lookup 404
-        marks=pytest.mark.xfail(
-            reason=(
-                "Blocked upstream of agent lookup by the same TokenScopingMiddleware membership check; "
-                "Task 10 (#5904, PR #6751) exempts resolver-derived trusted teams and this row flips to 404."
-            ),
-            strict=False,
-        ),
-    ),
+    # Previously xfail(strict=False): blocked upstream of agent lookup by the same
+    # membership check; Task 10 (#5904, PR #6751) closed it (XPASS at 404).
+    ("nonexistent_agent_with_role", 404),  # authenticated + authorized -> agent lookup 404
 ]
 
 
