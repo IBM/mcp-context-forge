@@ -30,7 +30,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
@@ -1128,6 +1128,50 @@ def _unwrap_exception_group(exc: BaseException) -> list[BaseException]:
     return [exc]
 
 
+# Transport-layer failures an MCP call can raise. The tuple lists these errors only.
+# Catching bare Exception would swallow the AssertionErrors below and the test could
+# never fail (#6839). ExceptionGroup is included because the SDK's ClientSession runs
+# call_tool() inside an anyio TaskGroup, which wraps a single McpError on the way out.
+_TRANSPORT_ERRORS = (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup)
+
+# Every RBAC denial in mcpgateway/middleware/rbac.py raises 403. A 401 means
+# authentication failed before RBAC ran, so it is not evidence of a denial.
+_DENIED_STATUSES = (403,)
+
+
+def _assert_denied_for_rbac(call: Callable[[], Any], context: str) -> None:
+    """Run an MCP call and assert the gateway denied it for an RBAC reason.
+
+    The gateway denies in either of two shapes. It answers the JSON-RPC call with
+    ``isError`` set, or it fails the call at the transport. Each shape gets its own
+    assertion, and each assertion checks the denial reason. A bare ``isError`` check
+    would also pass for an unrelated error, so it cannot detect an RBAC regression.
+
+    The assertions live in the ``except`` and ``else`` bodies. Neither body is covered
+    by the ``try``, so this structure cannot swallow an ``AssertionError``.
+
+    Args:
+        call: Zero-argument callable that performs the MCP tool call.
+        context: Short label for the call, used in the printed output.
+
+    Raises:
+        AssertionError: If the call succeeded, or failed for another reason.
+    """
+    try:
+        result = call()
+    except _TRANSPORT_ERRORS as exc:
+        leaves = _unwrap_exception_group(exc)
+        denied_by_status = any(getattr(getattr(leaf, "response", None), "status_code", None) in _DENIED_STATUSES for leaf in leaves)
+        denied_by_text = any("access denied" in str(leaf).lower() for leaf in leaves)
+        assert denied_by_status or denied_by_text, f"expected an access denial for {context}, got: {leaves!r}"
+        print(f"    -> Outsider {context} rejected at the transport (expected): {leaves[0]}")
+    else:
+        assert result.isError, f"Outsider {context} should be denied, got: {result}"
+        detail = result.content[0].text.lower()
+        assert "access denied" in detail, f"expected an access denial for {context}, got: {result.content[0].text}"
+        print(f"    -> Outsider {context} denied (expected): {result.content[0].text}")
+
+
 @asynccontextmanager
 async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[ClientSession]:
     """Open an initialized MCP client session over Streamable HTTP."""
@@ -1391,63 +1435,23 @@ class TestMcpToolCallByRole:
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
-        """Outsider has no team membership, so no tools.execute anywhere — denied.
-
-        The gateway denies in either of two shapes. It answers the JSON-RPC call
-        with ``isError`` set, or it fails the call at the transport. Each shape
-        gets its own assertion, and each assertion checks the denial reason. A
-        bare ``isError`` check would also pass for an unrelated error, so it
-        cannot detect an RBAC regression.
-        """
-        # The except clause lists transport errors only. Catching bare Exception here
-        # would swallow the AssertionError below and the test could never fail (#6839).
-        # ExceptionGroup is included because the SDK's ClientSession runs call_tool()
-        # inside an anyio TaskGroup, which wraps a single McpError on the way out.
-        # The asserts sit outside this try, so the tuple cannot swallow them.
-        _DENIED_STATUSES = (403,)
-        result = None
-        try:
-            result = _mcp_tool_call(outsider_user["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
-        except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
-            leaves = _unwrap_exception_group(exc)
-            denied_by_status = any(getattr(getattr(leaf, "response", None), "status_code", None) in _DENIED_STATUSES for leaf in leaves)
-            denied_by_text = any("access denied" in str(leaf).lower() for leaf in leaves)
-            assert denied_by_status or denied_by_text, f"expected an access denial, got: {leaves!r}"
-            print(f"    -> Outsider denied tools.execute at the transport (expected): {leaves[0]}")
-
-        if result is not None:
-            assert result.isError, f"Outsider should be denied tools.execute, got: {result}"
-            detail = result.content[0].text.lower()
-            assert "access denied" in detail, f"expected an access denial, got: {result.content[0].text}"
-            print(f"    -> Outsider denied tools.execute (expected): {result.content[0].text}")
+        """Outsider has no team membership, so no tools.execute anywhere — denied."""
+        _assert_denied_for_rbac(
+            lambda: _mcp_tool_call(outsider_user["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"}),
+            "tools.execute",
+        )
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
-        """An outsider calling an unknown tool gets an error, never a result.
+        """An outsider calling an unknown tool is denied by RBAC, not by name resolution.
 
         The outsider holds no team membership, so RBAC denies the call before the
-        gateway resolves the tool name. Both the returned-result path and the
-        raised path assert the reason. ``isError`` alone would stay true for a
-        plain name-resolution failure, so it cannot detect an RBAC regression.
+        gateway resolves the tool name. ``isError`` alone would stay true for a plain
+        name-resolution failure, so the helper asserts the denial reason instead.
         """
-        # The except clause lists transport errors only. Catching bare Exception here
-        # would swallow the AssertionError below and the test could never fail (#6839).
-        # The asserts sit outside this try, so the tuple cannot swallow them.
-        _DENIED_STATUSES = (403,)
-        result = None
-        try:
-            result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
-        except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
-            leaves = _unwrap_exception_group(exc)
-            denied_by_status = any(getattr(getattr(leaf, "response", None), "status_code", None) in _DENIED_STATUSES for leaf in leaves)
-            denied_by_text = any("access denied" in str(leaf).lower() for leaf in leaves)
-            assert denied_by_status or denied_by_text, f"expected an access denial, got: {leaves!r}"
-            print(f"    -> Outsider nonexistent tool rejected at the transport (expected): {leaves[0]}")
-
-        if result is not None:
-            assert result.isError, f"Nonexistent tool should return error, got: {result}"
-            detail = result.content[0].text.lower()
-            assert "access denied" in detail, f"expected an access denial, got: {result.content[0].text}"
-            print(f"    -> Outsider nonexistent tool: error (expected): {result.content[0].text}")
+        _assert_denied_for_rbac(
+            lambda: _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac"),
+            "nonexistent tool call",
+        )
 
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
