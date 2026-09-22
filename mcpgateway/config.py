@@ -3907,24 +3907,15 @@ Disallow: /
     max_header_value_length: int = Field(
         default=4096,
         description="Maximum length for individual header values during sanitization (4KB default). "
-        "Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+). "
-        "Must be <= max_header_field_size_bytes.",
+        "Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+).",
     )
 
     @field_validator("max_header_value_length")
     @classmethod
-    def validate_max_header_value_length(cls, v: int, info: ValidationInfo) -> int:
-        """Validate max_header_value_length is an integer and <= max_header_field_size_bytes."""
-        if not isinstance(v, int):
-            raise ValueError("max_header_value_length must be an integer")
+    def validate_max_header_value_length(cls, v: int) -> int:
+        """Validate max_header_value_length is a positive integer."""
         if v <= 0:
             raise ValueError("max_header_value_length must be positive")
-
-        # Check against max_header_field_size_bytes if it's been set
-        max_field_size = info.data.get("max_header_field_size_bytes", 8192)
-        if v > max_field_size:
-            raise ValueError(f"max_header_value_length ({v}) must be <= max_header_field_size_bytes ({max_field_size})")
-
         return v
 
     # Header passthrough feature (disabled by default for security)

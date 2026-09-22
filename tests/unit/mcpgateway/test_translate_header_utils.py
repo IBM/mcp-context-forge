@@ -94,17 +94,18 @@ def test_config_validation():
     # This test verifies that the field validation in config.py catches invalid values
     from mcpgateway.config import Settings
 
-    # Valid: integer <= max_header_field_size_bytes
-    s1 = Settings(max_header_value_length=4096, max_header_field_size_bytes=8192)
+    # Valid: default 4KB
+    s1 = Settings(max_header_value_length=4096)
     assert s1.max_header_value_length == 4096
 
-    # Valid: at the boundary
-    s2 = Settings(max_header_value_length=8192, max_header_field_size_bytes=8192)
-    assert s2.max_header_value_length == 8192
+    # Valid: 16KB (Atlassian Rovo recommended value — must not raise)
+    s2 = Settings(max_header_value_length=16384)
+    assert s2.max_header_value_length == 16384
 
-    # Invalid: exceeds max_header_field_size_bytes
-    with pytest.raises(ValueError, match="must be <= max_header_field_size_bytes"):
-        Settings(max_header_value_length=16384, max_header_field_size_bytes=8192)
+    # Valid: max_header_value_length is independent of max_header_field_size_bytes
+    s3 = Settings(max_header_value_length=4096, max_header_field_size_bytes=2048)
+    assert s3.max_header_value_length == 4096
+    assert s3.max_header_field_size_bytes == 2048
 
     # Invalid: non-positive
     with pytest.raises(ValueError, match="must be positive"):

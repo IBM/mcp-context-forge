@@ -285,7 +285,6 @@ class TestPassthroughHeaders:
     def test_no_auth_gateway_passes_authorization_when_feature_disabled(self, mock_settings):
         """When gateway.auth_type == 'none', the client's Authorization header
         should be passed through even if ENABLE_HEADER_PASSTHROUGH is False.
-        mock_settings.max_header_value_length = 4096
         This behavior is handled before the main allowlist processing.
         """
         mock_settings.max_header_value_length = 4096
