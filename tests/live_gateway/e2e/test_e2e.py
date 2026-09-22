@@ -3467,6 +3467,7 @@ class TestSchemaRegexReDoS:
         assert created.status in (200, 201), f"POST /tools returned {created.status}: {created.text()[:500]}"
         tool_id = _json_or_fail(created, "POST /tools")["id"]
 
+        server_id: str | None = None
         try:
             server_resp = create_server(tool_ids=[tool_id])
             assert server_resp.status == 201, f"POST /servers returned {server_resp.status}: {server_resp.text()[:500]}"
@@ -3475,10 +3476,27 @@ class TestSchemaRegexReDoS:
             observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, {tool_name})
             assert tool_name in observed, f"probe tool never appeared in the scoped MCP catalog; observed={sorted(observed)}"
 
+            # _mcp_tool_call rides a ClientSession capped at _CLIENT_TIMEOUT (default 5s,
+            # mcp/shared/session.py's anyio.fail_after). A genuine regression -- the sandbox
+            # no longer bounding the match -- surfaces as an uncaught McpError there, not as
+            # a slow "took Xs" assertion below: catastrophic backtracking on this input would
+            # run far longer than any client timeout, so the client gives up first. Catching
+            # it here turns that opaque timeout into a diagnostic that also names the other
+            # explanation -- an overloaded CI box exceeding MCP_E2E_CLIENT_TIMEOUT -- rather
+            # than leaving a bare traceback to interpret.
             start = time.perf_counter()
-            result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
+            try:
+                result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
+            except McpError as exc:
+                elapsed = time.perf_counter() - start
+                pytest.fail(
+                    f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
+                    f"(waited {elapsed:.1f}s): {exc}. Either the sandbox stopped bounding the catastrophic "
+                    "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
+                    "env var to rule out the latter before treating this as a regression."
+                )
             elapsed = time.perf_counter() - start
-            assert elapsed < 20.0, f"hostile call took {elapsed:.1f}s; the sandbox did not bound the match"
+            print(f"    -> hostile call rejected in {elapsed:.2f}s (client timeout is {_CLIENT_TIMEOUT:.1f}s)")
             assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
             text = result.content[0].text if result.content else ""
             assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
@@ -3489,5 +3507,20 @@ class TestSchemaRegexReDoS:
             health = admin_api.get("/health")
             assert health.status == 200, f"gateway did not answer /health immediately after the hostile call: {health.status} {health.text()[:200]}"
         finally:
-            with suppress(Exception):
-                admin_api.delete(f"/tools/{tool_id}")
+            # Delete the server before the tool: the tool is associated to it, and no
+            # other test in this file deletes an associated tool ahead of its server.
+            # create_server's own owned_objects teardown would also delete the server,
+            # but that runs after this function returns -- deleting it here first keeps
+            # deletion order the same as everywhere else, and _delete_owned treats the
+            # fixture's later redundant attempt as a harmless 404. Failures are surfaced,
+            # not swallowed: a cleanup problem here is itself worth knowing about.
+            failures = []
+            if server_id is not None:
+                failure = _delete_owned(admin_api, "/servers", server_id)
+                if failure:
+                    failures.append(failure)
+            failure = _delete_owned(admin_api, "/tools", tool_id)
+            if failure:
+                failures.append(failure)
+            if failures:
+                pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))
