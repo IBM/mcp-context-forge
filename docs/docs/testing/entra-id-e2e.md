@@ -472,12 +472,19 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 A second Entra test suite covers external-IdP trust mode
 (`JWT_TRUST_MODE=jwt-trust`). The module
 `tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py` reproduces
-the four inline-groups access cases:
+the four inline-groups access cases plus one app-only case:
 The tests run against a real Entra tenant. They use real tokens, the real
 issuer and JWKS, and real Microsoft Graph for group-overage resolution. The
 tests do not mock any Entra component. With `AZURE_*` credentials exported,
-all four cases run without operator input in three to four minutes. Use
-case 4 provisions 201 throwaway groups.
+all five cases run without operator input in three to four minutes. Use
+case 4 provisions 201 throwaway groups. Use case 5 self-provisions a
+throwaway v2 application (`api.requestedAccessTokenVersion = 2` plus the
+`idtyp` optional claim, Microsoft Graph manifest format), its service
+principal, a client secret, and a security group holding the service
+principal, then presents an app-only token (`idtyp == "app"`, no `groups`
+claim). The gateway resolves the service-principal groups through Graph
+and maps them to a team. Use case 5 deletes every object after the
+session and needs no extra permission.
 
 This suite is separate from the SSO role-sync suite above. It exercises token
 dispatch, group-to-team mapping, and A2A agent visibility and invocation
