@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+- **Global passthrough headers now reach MCP gateway tools** ([#6963](https://github.com/IBM/mcp-context-forge/issues/6963)) - The tool-lookup cache payload coerced an unset gateway `passthrough_headers` (NULL) to `[]`, which `compute_passthrough_headers_cached()` reads as an explicit, empty per-gateway allowlist that replaces the global one. With `ENABLE_HEADER_PASSTHROUGH=true`, tools served by an MCP gateway that had no allowlist of its own therefore forwarded none of the globally allowlisted headers; the global list only worked when duplicated onto every gateway. The payload now preserves `None`, so such gateways inherit the global allowlist as documented, while an explicit `[]` on a gateway still forwards nothing.
+
 - **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
 
 - **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.
