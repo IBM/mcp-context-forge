@@ -11,6 +11,7 @@ session management, and HTTP endpoints.
 # Standard
 import asyncio
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime, timezone
 import math
 from types import SimpleNamespace
@@ -20,21 +21,26 @@ from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 # Third-Party
 import anyio
 from anyio.lowlevel import checkpoint
+import anyio.to_thread
 import orjson
 
 # Third-Party
-from fastapi import APIRouter, HTTPException, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, status, WebSocket, WebSocketDisconnect
+from fastapi.testclient import TestClient
 import pytest
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Gateway as DbGateway, Permissions
 from mcpgateway.services.gateway_service import GatewayCatalogReconcileResult
+from mcpgateway.routers.reverse_proxy import router
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest
 from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError, ReverseProxyRelay
+from mcpgateway.services.reverse_proxy_relay_models import RelayOwner, RelaySessionEntry
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 from mcpgateway.services.reverse_proxy_sessions import ReverseProxySession as ManagedSession
+from mcpgateway.utils.verify_credentials import require_auth
 from tests.helpers.router_helpers import collect_routes
 
 # --------------------------------------------------------------------------- #
@@ -2401,6 +2407,649 @@ class TestWebSocketTokenMissingSubject:
         mock_websocket.send_denial_response.assert_awaited_once()
         assert mock_websocket.send_denial_response.call_args.args[0].status_code == status.HTTP_401_UNAUTHORIZED
         get_current_user.assert_not_awaited()
+
+
+# --------------------------------------------------------------------------- #
+# HTTP Endpoint Tests                                                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestHTTPEndpoints:
+    """Test HTTP endpoints."""
+
+    @pytest.fixture
+    def client(self):
+        """Create test client."""
+        # Third-Party
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        # Override the auth dependency
+        def mock_require_auth():
+            return "test-user"
+
+        app.dependency_overrides[require_auth] = mock_require_auth
+        app.include_router(router)
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_auth(self):
+        """Mock authentication dependency (for reference)."""
+        return "test-user"
+
+    @staticmethod
+    def typed_session(owner_email: str | None, websocket=None) -> ManagedSession:
+        """Build one typed endpoint fixture with a fixed connection ID."""
+        connected_at = datetime(2026, 8, 13, tzinfo=timezone.utc)
+        return ManagedSession(
+            connection_id=ConnectionId("test-session"),
+            local_id=LocalSessionId("local"),
+            websocket=websocket or Mock(),
+            last_heartbeat=connected_at,
+            owner_email=owner_email,
+            connected_at=connected_at,
+            last_activity=connected_at,
+        )
+
+    def test_list_sessions_empty(self, client, mock_auth):
+        """Test listing sessions when empty."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.list_sessions.return_value = ()
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.get("/reverse-proxy/sessions")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sessions"] == []
+        assert data["total"] == 0
+
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body", "permission"),
+        [
+            ("get", "/reverse-proxy/sessions", None, Permissions.GATEWAYS_READ),
+            ("get", "/reverse-proxy/sse/test-session", None, Permissions.GATEWAYS_READ),
+            ("delete", "/reverse-proxy/sessions/test-session", None, Permissions.GATEWAYS_DELETE),
+            ("post", "/reverse-proxy/sessions/test-session/request", {"jsonrpc": "2.0", "method": "tools/list", "id": 1}, Permissions.TOOLS_EXECUTE),
+        ],
+    )
+    def test_http_routes_require_method_specific_rbac(self, client, method, path, json_body, permission):
+        """Ownership never substitutes for the method-specific Layer-2 permission."""
+        checker = Mock(has_permission=AsyncMock(return_value=False))
+        manager_factory = AsyncMock()
+        with (
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker", return_value=checker),
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", manager_factory),
+        ):
+            response = getattr(client, method)(path, json=json_body) if json_body is not None else getattr(client, method)(path)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        checker.has_permission.assert_awaited_once_with(permission, team_id=None)
+        manager_factory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_http_permission_forwards_token_scopes_to_layer_two_checker(self):
+        """Restricted API-token scopes remain independent from DB RBAC grants."""
+        from mcpgateway.routers import reverse_proxy as rp
+
+        request = Mock(spec=Request)
+        request.scope = {"state": {"team_id": None, "token_teams": [], "token_scopes": [Permissions.GATEWAYS_READ]}}
+        checker = Mock(has_permission=AsyncMock(return_value=False))
+
+        with patch("mcpgateway.routers.reverse_proxy.PermissionChecker", return_value=checker) as checker_factory:
+            with pytest.raises(HTTPException) as exc_info:
+                await rp._require_http_permission(request, {"email": "owner@example.com"}, Permissions.TOOLS_EXECUTE)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert checker_factory.call_args.args[0]["token_scopes"] == [Permissions.GATEWAYS_READ]
+
+    def test_list_sessions_uses_typed_metadata_and_owner_filter(self, client):
+        """The typed manager is the only listing authority and preserves response fields."""
+        typed_manager = ReverseProxySessionManager()
+        first = asyncio.run(typed_manager.connect(Mock(), LocalSessionId("owned"), owner_email="test-user", now=datetime(2026, 8, 13, tzinfo=timezone.utc)))
+        asyncio.run(typed_manager.connect(Mock(), LocalSessionId("other"), owner_email="other-user"))
+
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.get("/reverse-proxy/sessions")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "sessions": [
+                {
+                    "session_id": str(first.connection_id),
+                    "server_info": {},
+                    "connected_at": "2026-08-13T00:00:00+00:00",
+                    "last_activity": "2026-08-13T00:00:00+00:00",
+                    "message_count": 0,
+                    "bytes_transferred": 0,
+                    "user": "test-user",
+                }
+            ],
+            "total": 1,
+        }
+
+    def test_distributed_list_uses_redis_directory_on_wrong_worker(self, client, monkeypatch):
+        """A worker with no local sockets lists owner-filtered Redis directory entries."""
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+        entry = RelaySessionEntry(
+            connection_id="remote-session",
+            stable_id="stable-remote",
+            owner=RelayOwner(worker_id="worker-a", connection_id="remote-session"),
+            owner_email="test-user",
+            connected_at="2026-08-13T00:00:00+00:00",
+            last_activity="2026-08-13T00:00:00+00:00",
+            message_count=2,
+            bytes_transferred=10,
+            server_info={"name": "remote"},
+        )
+        relay = MagicMock(list_session_entries=AsyncMock(return_value=(entry,)))
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)):
+            response = client.get("/reverse-proxy/sessions")
+
+        assert response.status_code == 200
+        assert response.json()["sessions"][0]["session_id"] == "remote-session"
+
+    def test_distributed_post_and_delete_route_remote_connection(self, client, monkeypatch):
+        """POST and DELETE resolve a remote connection instead of returning worker-local 404."""
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+        entry = RelaySessionEntry(
+            connection_id="remote-session",
+            stable_id="stable-remote",
+            owner=RelayOwner(worker_id="worker-a", connection_id="remote-session"),
+            owner_email="test-user",
+            connected_at="2026-08-13T00:00:00+00:00",
+            last_activity="2026-08-13T00:00:00+00:00",
+            message_count=0,
+            bytes_transferred=0,
+            server_info={},
+        )
+        manager = Mock(spec=ReverseProxySessionManager)
+        manager.get_session.return_value = None
+        relay = MagicMock(
+            get_session_entry=AsyncMock(return_value=entry),
+            send_request_by_connection_id_nowait=AsyncMock(),
+            disconnect_session=AsyncMock(return_value=True),
+        )
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)),
+        ):
+            post_response = client.post("/reverse-proxy/sessions/remote-session/request", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+            delete_response = client.delete("/reverse-proxy/sessions/remote-session")
+
+        assert post_response.status_code == 200
+        assert delete_response.status_code == 200
+        relay.send_request_by_connection_id_nowait.assert_awaited_once()
+        relay.disconnect_session.assert_awaited_once_with(ConnectionId("remote-session"))
+
+    def test_distributed_sse_uses_remote_session_directory(self, monkeypatch):
+        """SSE ownership and connected metadata resolve on a worker without the socket."""
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+        entry = RelaySessionEntry(
+            connection_id="remote-session",
+            stable_id="stable-remote",
+            owner=RelayOwner(worker_id="worker-a", connection_id="remote-session"),
+            owner_email="test-user",
+            connected_at="2026-08-13T00:00:00+00:00",
+            last_activity="2026-08-13T00:00:00+00:00",
+            message_count=0,
+            bytes_transferred=0,
+            server_info={"name": "remote"},
+        )
+        manager = Mock(spec=ReverseProxySessionManager)
+        manager.get_session.return_value = None
+        relay = MagicMock(get_session_entry=AsyncMock(return_value=entry))
+
+        async def read_connected_event() -> str:
+            from mcpgateway.routers.reverse_proxy import sse_endpoint
+
+            request = Mock(spec=Request)
+            request.is_disconnected = AsyncMock(return_value=True)
+            response = await sse_endpoint("remote-session", request, credentials="test-user")  # pragma: allowlist secret
+            return await anext(response.body_iterator)
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)),
+        ):
+            connected = asyncio.run(read_connected_event())
+
+        assert connected.startswith("event: connected\ndata: ")
+        assert '"sessionId":"remote-session"' in connected
+        assert '"name":"remote"' in connected
+
+    def test_request_uses_typed_json_rpc_immediate_ack_and_timeout(self, client):
+        """The HTTP request endpoint parses JSON-RPC and emits without response correlation."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        connected_at = datetime.now(tz=timezone.utc)
+        typed_manager.get_session.return_value = ManagedSession(
+            connection_id=ConnectionId("test-session"),
+            local_id=LocalSessionId("local"),
+            websocket=Mock(),
+            owner_email="test-user",
+            connected_at=connected_at,
+            last_activity=connected_at,
+            last_heartbeat=connected_at,
+            message_count=0,
+            bytes_transferred=0,
+            server_info={},
+        )
+        typed_manager.send_request_nowait.return_value = None
+
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.post("/reverse-proxy/sessions/test-session/request", json={"jsonrpc": "2.0", "method": "tools/list", "id": "http-1"})
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "sent", "session_id": "test-session"}
+        call_args = typed_manager.send_request_nowait.await_args
+        assert call_args.args[0] == ConnectionId("test-session")
+        assert call_args.args[1] == JsonRpcRequest(jsonrpc="2.0", method="tools/list", id="http-1")
+        assert call_args.kwargs["timeout_seconds"] == float(settings.tool_timeout)
+
+    def test_request_rejects_malformed_json_rpc_without_dispatch(self, client):
+        """Malformed JSON-RPC is rejected at the HTTP boundary."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = Mock(owner_email="test-user")
+
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.post("/reverse-proxy/sessions/test-session/request", json={"method": "tools/list"})
+
+        assert response.status_code == 422
+        typed_manager.send_request.assert_not_awaited()
+
+    def test_list_sessions_uuid_sub_with_nested_email_sees_email_owned_session(self):
+        """UUID-sub API-token payloads should match sessions owned by signed email."""
+        # Third-Party
+        from fastapi import FastAPI
+
+        uuid_credentials = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "owner@test.com"}}
+        app = FastAPI()
+        app.dependency_overrides[require_auth] = lambda: uuid_credentials
+        app.include_router(router)
+        client = TestClient(app)
+
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.list_sessions.return_value = (self.typed_session("owner@test.com"),)
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.get("/reverse-proxy/sessions")
+
+        assert response.status_code == 200
+        assert response.json()["total"] == 1
+
+    def test_disconnect_session_success(self, client, mock_auth, mock_websocket):
+        """Test disconnecting an existing session."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.disconnect.return_value = ()
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.delete("/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "disconnected", "session_id": "test-session"}
+        typed_manager.disconnect.assert_awaited_once_with(ConnectionId("test-session"))
+        mock_websocket.close.assert_awaited_once()
+
+    def test_disconnect_session_not_found(self, client, mock_auth):
+        """Test disconnecting a non-existent session."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = None
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.delete("/reverse-proxy/sessions/nonexistent")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"]
+
+    def test_disconnect_session_close_failure_still_clears_state(self, client, mock_auth, mock_websocket):
+        """A raising close cannot prevent typed disconnect."""
+        mock_websocket.close.side_effect = ConnectionError("socket already lost")
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.disconnect.return_value = ()
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.delete("/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        typed_manager.disconnect.assert_awaited_once_with(ConnectionId("test-session"))
+
+    def test_disconnect_session_persistence_failure_still_removes_and_closes(self, client, mock_auth, mock_websocket):
+        """Reachability persistence failure cannot strand socket close."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.disconnect.return_value = (ReverseProxyEviction(StableGatewayId("stable"), ConnectionId("test-session")),)
+        catalog_service = Mock(spec=ReverseProxyCatalogService)
+        catalog_service.mark_reverse_proxy_gateways_unreachable.side_effect = RuntimeError("db unavailable")
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)),
+            patch("mcpgateway.services.reverse_proxy_lifecycle.ReverseProxyCatalogService", return_value=catalog_service),
+        ):
+            response = client.delete("/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        mock_websocket.close.assert_called_once()
+
+    def test_disconnect_session_release_failure_still_persists_and_closes(self, client, mock_auth, mock_websocket, monkeypatch):
+        eviction = ReverseProxyEviction(StableGatewayId("stable"), ConnectionId("test-session"))
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.disconnect.return_value = (eviction,)
+        relay = MagicMock(disconnect_session=AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)),
+            patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)),
+        ):
+            response = client.delete("/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        relay.disconnect_session.assert_awaited_once_with(ConnectionId("test-session"))
+
+    @pytest.mark.asyncio
+    async def test_disconnect_session_blocked_close_is_bounded(self, client, mock_auth, mock_websocket):
+        """F1: a close stalled behind a blocked send cannot block cleanup; the endpoint returns within the bounded close timeout."""
+
+        async def blocked_close(*args, **kwargs):
+            await anyio.sleep(30)
+
+        mock_websocket.close.side_effect = blocked_close
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.disconnect.return_value = ()
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)),
+            patch("mcpgateway.routers.reverse_proxy._HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS", 0.05),
+        ):
+            with anyio.fail_after(10):
+                response = await anyio.to_thread.run_sync(client.delete, "/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        typed_manager.disconnect.assert_awaited_once_with(ConnectionId("test-session"))
+        mock_websocket.close.assert_called_once()
+
+    def test_send_request_to_session_not_found(self, client, mock_auth):
+        """Test sending request to non-existent session."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = None
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.post("/reverse-proxy/sessions/nonexistent/request", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"]
+
+    def test_send_request_to_session_websocket_error(self, client, mock_auth):
+        """Test sending request when WebSocket fails."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user")
+        typed_manager.send_request_nowait.side_effect = ConnectionError("WebSocket error")
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.post("/reverse-proxy/sessions/test-session/request", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+
+        assert response.status_code == 500
+        assert "Failed to send request" in response.json()["detail"]
+
+    def test_sse_endpoint_success(self, mock_websocket):
+        """Test SSE endpoint with existing session."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.get_session.return_value = replace(typed_manager.get_session.return_value, server_info={"name": "test-server"})
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            # This test does not use TestClient streaming; it validates the underlying
+            # async generator behavior directly to avoid hanging on keepalive sleeps.
+            from mcpgateway.routers.reverse_proxy import sse_endpoint
+
+            dummy_request = Mock(spec=Request)
+            dummy_request.is_disconnected = AsyncMock(side_effect=[False, True])
+
+            async def _run():
+                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")  # pragma: allowlist secret
+                agen = response.body_iterator
+                first = await anext(agen)
+                second = await anext(agen)
+                with pytest.raises(StopAsyncIteration):
+                    await anext(agen)
+                return first, second
+
+            with patch("mcpgateway.routers.reverse_proxy.asyncio.sleep", new=AsyncMock()):
+                connected, keepalive = asyncio.run(_run())
+
+            assert connected.startswith("event: connected\ndata: ")
+            assert connected.endswith("\n\n")
+            assert keepalive.startswith("event: keepalive\ndata: ")
+            assert keepalive.endswith("\n\n")
+
+    def test_sse_endpoint_handles_cancelled_error(self, mock_websocket):
+        """SSE generator should re-raise CancelledError after yielding connected event."""
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            from mcpgateway.routers.reverse_proxy import sse_endpoint
+
+            dummy_request = Mock(spec=Request)
+            dummy_request.is_disconnected = AsyncMock(return_value=False)
+
+            async def _run():
+                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")  # pragma: allowlist secret
+                agen = response.body_iterator
+                first = await anext(agen)
+                with pytest.raises(asyncio.CancelledError):
+                    await anext(agen)
+                return first
+
+            with patch("mcpgateway.routers.reverse_proxy.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+                connected = asyncio.run(_run())
+
+            assert connected.startswith("event: connected\ndata: ")
+
+    def test_sse_endpoint_not_found(self, client):
+        """Test SSE endpoint with non-existent session."""
+        # Don't mock the endpoint for this test since we want the real 404 behavior
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = None
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = client.get("/reverse-proxy/sse/nonexistent")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# Helper function tests                                                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestGetUserFromCredentials:
+    """Test _get_user_from_credentials function."""
+
+    def test_dict_with_sub(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "user@test.com", "is_admin": False})
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_dict_with_email_fallback(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"email": "user@test.com"})
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_dict_with_uuid_sub_prefers_nested_email(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "user@test.com"}})
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_dict_with_uuid_sub_without_email_does_not_return_uuid(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "11111111-1111-1111-1111-111111111111"})
+        assert user is None
+        assert is_admin is False
+
+    def test_dict_nested_admin(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "admin@test.com", "user": {"is_admin": True}})
+        assert user == "admin@test.com"
+        assert is_admin is True
+
+    def test_dict_top_level_admin(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "admin@test.com", "is_admin": True})
+        assert user == "admin@test.com"
+        assert is_admin is True
+
+    def test_string_credentials(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials("user@test.com")
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_anonymous_credentials(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials("anonymous")
+        assert user is None
+        assert is_admin is False
+
+    def test_none_credentials(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials(None)
+        assert user is None
+        assert is_admin is False
+
+    def test_empty_string_credentials(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials("")
+        assert user is None
+        assert is_admin is False
+
+
+class TestValidateSessionOwnership:
+    """Test _validate_session_ownership function."""
+
+    @staticmethod
+    def session(owner_email: str | None) -> ManagedSession:
+        """Build a typed ownership fixture."""
+        return ManagedSession(connection_id=ConnectionId("test-id"), local_id=LocalSessionId("local"), websocket=Mock(), last_heartbeat=datetime.now(tz=timezone.utc), owner_email=owner_email)
+
+    def test_no_session_user_allows_access(self, mock_websocket):
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
+        session = self.session(None)
+        # Should not raise
+        _validate_session_ownership(session, "any-user", "test")
+
+    def test_admin_bypasses_ownership(self, mock_websocket):
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
+        session = self.session("owner@test.com")
+        # Admin should not raise
+        _validate_session_ownership(session, {"sub": "admin@test.com", "is_admin": True}, "test")
+
+    def test_owner_match_allows_access(self, mock_websocket):
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
+        session = self.session("owner@test.com")
+        _validate_session_ownership(session, {"sub": "owner@test.com"}, "test")
+
+    def test_owner_match_allows_uuid_sub_with_nested_email_credentials(self, mock_websocket):
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
+        session = self.session("owner@test.com")
+        credentials = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "owner@test.com"}}
+        _validate_session_ownership(session, credentials, "test")
+
+    def test_non_owner_denied(self, mock_websocket):
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+        from fastapi import HTTPException
+
+        session = self.session("owner@test.com")
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_session_ownership(session, {"sub": "other@test.com"}, "disconnect")
+        assert exc_info.value.status_code == 403
+
+    def test_stale_admin_claim_does_not_bypass_canonical_request_identity(self):
+        """A demoted session user cannot retain cross-owner access through JWT claims."""
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
+        request = Mock(spec=Request)
+        session = self.session("owner@test.com")
+        credentials = {"sub": "demoted@test.com", "is_admin": True}
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_request_identity", return_value=("demoted@test.com", False)) as identity,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            _validate_session_ownership(session, credentials, "disconnect", request=request)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        identity.assert_called_once_with(request, credentials)
+
+
+class TestListSessionsFiltering:
+    """Test session filtering by user role."""
+
+    @pytest.fixture
+    def admin_client(self):
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        def mock_require_auth():
+            return {"sub": "admin@test.com", "is_admin": True}
+
+        app.dependency_overrides[require_auth] = mock_require_auth
+        app.include_router(router)
+        return TestClient(app)
+
+    @pytest.fixture
+    def user_client(self):
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        def mock_require_auth():
+            return {"sub": "user@test.com", "is_admin": False}
+
+        app.dependency_overrides[require_auth] = mock_require_auth
+        app.include_router(router)
+        return TestClient(app)
+
+    def test_admin_sees_all_sessions(self, admin_client):
+        """Admin user sees all sessions."""
+        typed_manager = ReverseProxySessionManager()
+        asyncio.run(typed_manager.connect(Mock(), LocalSessionId("s1"), owner_email="user1@test.com"))
+        asyncio.run(typed_manager.connect(Mock(), LocalSessionId("s2"), owner_email="user2@test.com"))
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = admin_client.get("/reverse-proxy/sessions")
+
+        assert response.status_code == 200
+        assert response.json()["total"] == 2
+
+    def test_user_sees_own_and_anonymous(self, user_client):
+        """Regular user sees own sessions + anonymous ones."""
+        typed_manager = ReverseProxySessionManager()
+        own = asyncio.run(typed_manager.connect(Mock(), LocalSessionId("s1"), owner_email="user@test.com"))
+        asyncio.run(typed_manager.connect(Mock(), LocalSessionId("s2"), owner_email="other@test.com"))
+        anonymous = asyncio.run(typed_manager.connect(Mock(), LocalSessionId("s3")))
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+            response = user_client.get("/reverse-proxy/sessions")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        assert {session["session_id"] for session in data["sessions"]} == {str(own.connection_id), str(anonymous.connection_id)}
 
 
 if __name__ == "__main__":

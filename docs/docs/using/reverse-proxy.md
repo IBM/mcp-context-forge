@@ -1,13 +1,13 @@
 # MCP Reverse Proxy
 
-The MCP Reverse Proxy enables local MCP servers to be accessible through remote gateways without requiring inbound network access. This is similar to SSH reverse tunneling or ngrok, but specifically designed for the MCP protocol.
+The MCP Reverse Proxy makes local MCP servers reachable through remote gateways. It needs no inbound network access. It works like SSH reverse tunneling or ngrok, but it serves the MCP protocol.
 
 ## Overview
 
-The reverse proxy establishes an outbound connection from a local environment to a remote gateway, then tunnels all MCP protocol messages through this persistent connection. This allows:
+The reverse proxy establishes an outbound connection from a local environment to a remote gateway. It then tunnels all MCP protocol messages through this persistent connection. This gives you:
 
 - **Firewall traversal**: Share MCP servers without opening inbound ports
-- **NAT bypass**: Work seamlessly behind corporate or home NATs
+- **NAT bypass**: Work behind corporate or home NATs
 - **Edge deployments**: Connect edge servers to central management
 - **Development testing**: Test local servers with cloud-hosted gateways
 
@@ -100,7 +100,7 @@ mcp-reverse-proxy --config reverse-proxy.yaml
 
 ### Single Container
 
-The published image `ghcr.io/contextforge-org/mcp-reverse-proxy:latest` covers stock deployments - pull it instead of building locally. Build a customized client image with a Dockerfile only when you need to bake in your own downstream servers or tooling:
+The published image `ghcr.io/contextforge-org/mcp-reverse-proxy:latest` covers stock deployments - pull it instead of building locally. Build a custom client image only when you must include your own downstream servers or tooling:
 
 ```dockerfile
 FROM python:3.11-slim
@@ -203,7 +203,7 @@ MCPGATEWAY_REVERSE_PROXY_ENABLED=true
 
 ### Multi-worker deployments
 
-A single gateway worker can keep reverse-proxy session ownership in process. Deployments with two or more workers must enable the Redis-backed distributed relay so an MCP call handled by a non-owner worker can reach the worker that owns the client WebSocket:
+A single gateway worker can keep reverse-proxy session ownership in process. Deployments with 2 or more workers must enable the Redis-backed distributed relay. The relay carries an MCP call from a non-owner worker to the worker that owns the client WebSocket:
 
 ```bash
 MCPGATEWAY_REVERSE_PROXY_ENABLED=true
@@ -212,9 +212,9 @@ CACHE_TYPE=redis
 REDIS_URL=redis://redis:6379/0
 ```
 
-Distributed mode fails startup unless the reverse-proxy feature and Redis cache are both enabled. Redis stores short-lived owner generations, worker heartbeats, and signed request/response envelopes; the WebSocket remains local to its owner worker. If Redis becomes unavailable, cross-worker dispatch fails closed rather than guessing at ownership.
+Distributed mode fails at startup unless you enable both the reverse-proxy feature and the Redis cache. Redis stores short-lived owner generations, worker heartbeats, and signed request/response envelopes. The WebSocket remains local to its owner worker. If Redis becomes unavailable, cross-worker dispatch fails closed. The gateway does not guess ownership.
 
-Set `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT` to the number of seconds a client may remain silent before its session is evicted and its catalog gateway becomes unreachable. The default is 90 seconds; `0` disables heartbeat eviction. Use a value appropriate for the client's keepalive interval and network jitter.
+Set `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT` to the silence limit for a client. When the limit passes, the gateway evicts the session, and the catalog gateway becomes unreachable. The default is 90 seconds. A value of `0` disables heartbeat eviction. Use a value appropriate for the client's keepalive interval and network jitter.
 
 ### 1. WebSocket Endpoint
 
@@ -241,16 +241,16 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 ### 3. Virtual Server Registration
 
-Reverse-proxied servers automatically appear in the gateway's server catalog and can be accessed like any other MCP server.
+Reverse-proxied servers appear in the gateway's server catalog automatically. Access them like any other MCP server.
 
 ## Security Considerations
 
 ### Authentication
 
 - Always use authentication tokens in production
-- Tokens should have appropriate expiration times
-- WebSocket auth accepts bearer tokens from the `Authorization` header only (`?token=` query auth is not supported)
-- Consider using mutual TLS for additional security
+- Give tokens appropriate expiration times
+- WebSocket auth accepts bearer tokens from the `Authorization` header only. The `?token=` query parameter is not supported.
+- Use mutual TLS for additional security
 
 ### Network Security
 
@@ -314,8 +314,8 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
 | `WebSocket connection failed` | Firewall blocking WSS | Check outbound port 443 |
 | `Subprocess not running` | Local server crashed | Check server command and logs |
 | `Max retries exceeded` | Persistent network issue | Check network stability |
-| `reverse-proxy relay unavailable` | Redis is unavailable in distributed mode | Restore Redis connectivity; requests fail closed until ownership is authoritative again |
-| Gateway starts on one worker but calls fail on another | Distributed relay is disabled | Enable `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED` and configure Redis |
+| `reverse-proxy relay unavailable` | Redis unavailable in distributed mode | Restore Redis connectivity. Requests fail closed until ownership is authoritative again. |
+| Gateway starts on one worker but calls fail on another | Distributed relay disabled | Enable `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED` and configure Redis |
 
 ### Performance Tuning
 
@@ -390,13 +390,13 @@ class MonitoredReverseProxy(ReverseProxyClient):
 
 ## Developer Resources
 
-Working on the gateway-side service or the wire protocol? The [Reverse Proxy developer guide](../development/reverse-proxy.md) covers the internals, the unit test surface, and the live end-to-end harness. The harness runs the real client against a containerized multi-worker gateway:
+For work on the gateway-side service or the wire protocol, see the [Reverse Proxy developer guide](../development/reverse-proxy.md). The guide covers the internals, the unit test surface, and the live end-to-end harness. The harness runs the real client against a containerized multi-worker gateway:
 
 ```bash
 RP_E2E_RUN_ID=my-run tests/live_gateway/reverse_proxy/run.sh
 ```
 
-It is manually invoked and not part of `make test` or CI; see the developer guide for prerequisites and overrides.
+Invoke the harness manually. It is not part of `make test` or CI. See the developer guide for prerequisites and overrides.
 
 ## Related Documentation
 
