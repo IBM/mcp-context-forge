@@ -638,6 +638,8 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 !!! info "CORS Configuration"
     When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
 
+    In every environment, the gateway allows only origins listed in `ALLOWED_ORIGINS`. An empty `ALLOWED_ORIGINS` blocks all cross-origin requests. Earlier releases allowed any origin in non-production environments when the list was empty.
+
 !!! info "iframe Embedding"
     The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive:
 
