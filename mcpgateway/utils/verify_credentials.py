@@ -2333,10 +2333,11 @@ async def build_trusted_external_identity(provider: SSOProvider, verified_claims
 
     Returns:
         The claims-derived trust-semantics identity payload, or None when the
-        token is missing a required claim or the overage policy rejects it.
+        token is missing a required claim or a group-resolution policy
+        (overage or app-only service-principal lookup) rejects it.
     """
     # First-Party
-    from mcpgateway.utils.trusted_claims import detect_overage_marker, extract_revocation_id, extract_trusted_principal, resolve_overage_groups  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.trusted_claims import detect_app_only_token, detect_overage_marker, extract_revocation_id, extract_trusted_principal, resolve_overage_groups, resolve_service_principal_groups  # pylint: disable=import-outside-toplevel
 
     provider_id = getattr(provider, "id", None)
     revocation_claim = settings.jwt_trust_revocation_claim
@@ -2373,6 +2374,24 @@ async def build_trusted_external_identity(provider: SSOProvider, verified_claims
         # free of markers so downstream re-extraction does not resolve twice.
         claims = {key: value for key, value in verified_claims.items() if key not in ("_claim_names", "hasgroups") and not (isinstance(key, str) and key.startswith("groups:src"))}
         claims["groups"] = resolved_groups
+    elif detect_app_only_token(verified_claims) and verified_claims.get("groups") is None and settings.jwt_trust_overage_policy == "graph_lookup":
+        # App-only tokens (idtyp="app") carry no groups claim and no overage
+        # markers. Under graph_lookup the service principal's group membership
+        # resolves through /servicePrincipals/{oid}/getMemberObjects with the
+        # provider's client-credentials token; the inbound bearer token is
+        # never used. Mirrors the bearer funnel (auth.py::get_current_user).
+        try:
+            resolved_groups = await resolve_service_principal_groups(verified_claims, settings, db)
+        except HTTPException as exc:
+            logger.warning(
+                "external-idp trust auth denied: service-principal groups unresolved (iss=%s, provider=%s): %s",
+                sanitize_for_log(verified_claims.get("iss")),
+                sanitize_for_log(provider_id),
+                sanitize_for_log(str(exc.detail)),
+            )
+            _record_external_auth_metric("denied", provider_id, reason="service_principal_groups_unresolved")
+            return None
+        claims = {**verified_claims, "groups": resolved_groups}
 
     # extract_trusted_principal raises 401 when a required mapped claim is
     # absent (fail-closed). Teams and roles come from the claims plus the
