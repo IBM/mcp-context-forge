@@ -29,6 +29,40 @@ import {
 } from "./utils.js";
 
 // ===================================================================
+// SCHEMA TYPE HELPERS
+// ===================================================================
+
+/**
+ * Returns true when a JSON Schema property describes an object type,
+ * including anyOf/oneOf unions that contain an object arm.
+ *
+ * @param {object} prop - A JSON Schema property descriptor.
+ * @returns {boolean}
+ */
+function isObjectSchemaType(prop) {
+  return (
+    prop.type === "object" ||
+    (prop.anyOf && prop.anyOf.some((s) => s.type === "object")) ||
+    (prop.oneOf && prop.oneOf.some((s) => s.type === "object"))
+  );
+}
+
+/**
+ * Returns true when a JSON Schema property allows null,
+ * either via `type: "null"` or an anyOf/oneOf arm with `type: "null"`.
+ *
+ * @param {object} prop - A JSON Schema property descriptor.
+ * @returns {boolean}
+ */
+function allowsNullSchemaType(prop) {
+  return (
+    prop.type === "null" ||
+    (prop.anyOf && prop.anyOf.some((s) => s.type === "null")) ||
+    (prop.oneOf && prop.oneOf.some((s) => s.type === "null"))
+  );
+}
+
+// ===================================================================
 // ENHANCED TOOL VIEWING with Secure Display
 // ===================================================================
 
@@ -1646,9 +1680,7 @@ export const testTool = async function (toolId) {
           // Input field with validation (with multiline support)
           let fieldInput;
           const isTextType = prop.type === "text";
-          const isObjectType = prop.type === "object" ||
-            (prop.anyOf && prop.anyOf.some(s => s.type === "object")) ||
-            (prop.oneOf && prop.oneOf.some(s => s.type === "object"));
+          const isObjectType = isObjectSchemaType(prop);
           if (isTextType || isObjectType) {
             fieldInput = document.createElement("textarea");
             fieldInput.rows = 4;
@@ -2542,7 +2574,8 @@ export const validateTool = async function (toolId) {
                   // Input field with validation (with multiline support)
                   let fieldInput;
                   const isTextType = prop.type === "text";
-                  if (isTextType) {
+                  const isObjectType = isObjectSchemaType(prop);
+                  if (isTextType || isObjectType) {
                     fieldInput = document.createElement("textarea");
                     fieldInput.rows = 4;
                   } else {
@@ -2898,11 +2931,11 @@ export const runToolValidation = async function (testIndex) {
             if (prop.enum.includes(value)) {
               params[keyValidation.value] = value;
             }
-          } else if (prop.type === "object") {
+          } else if (isObjectSchemaType(prop)) {
             try {
               const parsed = JSON.parse(value);
               if (
-                parsed === null ||
+                (!allowsNullSchemaType(prop) && parsed === null) ||
                 typeof parsed !== "object" ||
                 Array.isArray(parsed)
               ) {
@@ -2910,10 +2943,16 @@ export const runToolValidation = async function (testIndex) {
               }
               params[keyValidation.value] = parsed;
             } catch (error) {
-              showErrorMessage(
-                `Invalid JSON object for ${key}: ${error.message}`
-              );
-              throw error;
+              if (error instanceof SyntaxError && prop.type !== "object") {
+                // Mixed union (e.g. anyOf: [{type:"object"},{type:"string"}]):
+                // JSON parse failed, so treat the value as a plain scalar.
+                params[keyValidation.value] = value;
+              } else {
+                showErrorMessage(
+                  `Invalid JSON object for ${key}: ${error.message}`
+                );
+                throw error;
+              }
             }
           } else {
             params[keyValidation.value] = value;
@@ -3321,19 +3360,27 @@ export const runToolTest = async function () {
             if (prop.enum.includes(value)) {
               params[keyValidation.value] = value;
             }
-          } else if (prop.type === "object" ||
-                     (prop.anyOf && prop.anyOf.some(s => s.type === "object")) ||
-                     (prop.oneOf && prop.oneOf.some(s => s.type === "object"))) {
+          } else if (isObjectSchemaType(prop)) {
             try {
               const parsed = JSON.parse(value);
-              if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
+              if (
+                (!allowsNullSchemaType(prop) && parsed === null) ||
+                typeof parsed !== "object" ||
+                Array.isArray(parsed)
+              ) {
                 throw new Error("Value must be an object");
               }
               params[keyValidation.value] = parsed;
             } catch (error) {
-              console.error(`Error parsing object value for ${key}:`, error);
-              showErrorMessage(`Invalid JSON object format for ${key}`);
-              throw error;
+              if (error instanceof SyntaxError && prop.type !== "object") {
+                // Mixed union (e.g. anyOf: [{type:"object"},{type:"string"}]):
+                // JSON parse failed, so treat the value as a plain scalar.
+                params[keyValidation.value] = value;
+              } else {
+                console.error(`Error parsing object value for ${key}:`, error);
+                showErrorMessage(`Invalid JSON object format for ${key}`);
+                throw error;
+              }
             }
           } else {
             params[keyValidation.value] = value;
