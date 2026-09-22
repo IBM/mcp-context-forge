@@ -326,6 +326,25 @@ async def test_cors_non_production_unlisted_origin_denied():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("environment", ["development", "staging", "production"])
+async def test_cors_no_origin_header_no_cors_headers(environment):
+    """A request without an Origin header gets no CORS headers, even with an allowlist."""
+    mock, settings = _mock_settings()
+    settings.environment = environment
+    settings.allowed_origins = ["https://example.com"]
+    settings.cors_allow_credentials = True
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = _make_request(headers=[])
+        response = await middleware.dispatch(request, _call_next)
+        assert "Access-Control-Allow-Origin" not in response.headers
+        assert "Access-Control-Allow-Credentials" not in response.headers
+        assert "Access-Control-Expose-Headers" not in response.headers
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
 async def test_remove_server_headers():
     """Test remove server headers."""
 
