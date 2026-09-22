@@ -33,6 +33,25 @@ PUBLIC_TEST_IP = "93.184.216.34"
 
 
 @pytest.fixture(autouse=True)
+def clear_as_metadata_cache():
+    """Clear the module-global AS metadata cache around every test.
+
+    ``_metadata_cache`` in ``dcr_service`` lives for the process, so a cached
+    document from another test module leaks into these tests and makes them
+    order-dependent.
+
+    Yields:
+        None: The cache is empty for the test and cleared again afterwards.
+    """
+    # First-Party
+    from mcpgateway.services.dcr_service import _metadata_cache
+
+    _metadata_cache.clear()
+    yield
+    _metadata_cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def stub_dns_for_pinning(monkeypatch):
     """Resolve every hostname in this module to one public address.
 
