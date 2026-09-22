@@ -10140,16 +10140,10 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             mock_mbuf.return_value = MagicMock()
             mock_timeout_counter.labels.return_value.inc = MagicMock()
 
-            # After the MCP protocol fix, timeouts return structured error responses
-            # instead of raising exceptions
-            result = await tool_service.invoke_tool(db, "test_tool", {}, plugin_context_table=context_table)
-
-            # Verify the result is a proper MCP error response
-            assert result is not None
-            assert result.is_error is True
-            assert hasattr(result, "content")
-            assert len(result.content) > 0
-            assert "timed out" in str(result.content[0])
+            # Timeout must raise ToolTimeoutError so TOOL_POST_INVOKE fires exactly once
+            # (the post-process block must not fire a second time on the same failure).
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {}, plugin_context_table=context_table)
 
         ctx.set_state.assert_called_with("cb_timeout_failure", True)
         plugin_manager.invoke_hook.assert_awaited()
@@ -10352,6 +10346,231 @@ class TestInvokeToolMcpStreamableHttpRetryOnStatus:
 
 
 # ---------------------------------------------------------------------------
+# invoke_tool — MCP timeout fires TOOL_POST_INVOKE exactly once (Finding #1)
+# ---------------------------------------------------------------------------
+
+
+class TestMcpSseTimeoutPostInvokeFiresOnce:
+    """TOOL_POST_INVOKE must fire exactly once when an SSE transport times out.
+
+    Before the fix the timeout handler called ``_run_timeout_post_invoke``
+    (post-invoke #1) and then returned an error value instead of raising.
+    That return fell through into the post-process block, which fired
+    TOOL_POST_INVOKE a second time.  Any post-invoke plugin (audit log,
+    circuit breaker, retry) double-counted the failure and the second hook's
+    ``retry_delay_ms`` could trigger an unintended retry — the exact behaviour
+    the ``ToolTimeoutError`` handler's comment at line 7175 exists to prevent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sse_timeout_post_invoke_fires_exactly_once(self, tool_service):
+        """TOOL_POST_INVOKE fires exactly once on an unretried SSE timeout."""
+        # Third-Party
+        from cpex.framework import ToolHookType  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        # Plugin manager: no TOOL_PRE_INVOKE hooks, only TOOL_POST_INVOKE.
+        # This makes invoke_hook.await_count a direct measure of TOOL_POST_INVOKE
+        # calls, with no pre-invoke noise.
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            return hook_type == ToolHookType.TOOL_POST_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        # Return retry_delay_ms=0 so no retry is attempted.
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {})
+        )
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+        # Exactly one TOOL_POST_INVOKE call — from _run_timeout_post_invoke.
+        # Before the fix a second call fired from the post-process block.
+        assert plugin_manager.invoke_hook.await_count == 1, (
+            f"TOOL_POST_INVOKE fired {plugin_manager.invoke_hook.await_count} time(s); expected exactly 1. "
+            "A second fire means the timeout handler's return value fell through into the "
+            "post-process block and double-counted the failure."
+        )
+        fired_hook = plugin_manager.invoke_hook.await_args_list[0].args[0]
+        assert fired_hook == ToolHookType.TOOL_POST_INVOKE
+
+
+class TestMcpStreamableHttpTimeoutPostInvokeFiresOnce:
+    """TOOL_POST_INVOKE must fire exactly once when a StreamableHTTP transport times out."""
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_timeout_post_invoke_fires_exactly_once(self, tool_service):
+        """TOOL_POST_INVOKE fires exactly once on an unretried StreamableHTTP timeout."""
+        # Third-Party
+        from cpex.framework import ToolHookType  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            return hook_type == ToolHookType.TOOL_POST_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {})
+        )
+
+        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert plugin_manager.invoke_hook.await_count == 1, (
+            f"TOOL_POST_INVOKE fired {plugin_manager.invoke_hook.await_count} time(s); expected exactly 1. "
+            "A second fire means the timeout handler's return value fell through into the "
+            "post-process block and double-counted the failure."
+        )
+        fired_hook = plugin_manager.invoke_hook.await_args_list[0].args[0]
+        assert fired_hook == ToolHookType.TOOL_POST_INVOKE
+
+
+# ---------------------------------------------------------------------------
+# _make_mcp_tool_error — structured_content survives _coerce_to_tool_result
+# ---------------------------------------------------------------------------
+
+
+class TestMakeToolErrorStructuredContentSurvivesCoercion:
+    """structuredContent set via _make_mcp_tool_error must survive _coerce_to_tool_result.
+
+    Finding #2 (direct-proxy path): ``_make_mcp_tool_error`` built
+    ``types.CallToolResult(..., structured_content=...)`` using the snake-case
+    kwarg.  The MCP SDK's ``CallToolResult`` declares the field as
+    ``structuredContent`` with no snake-case alias and ``extra="allow"``, so
+    the value landed as an unrecognised extra attribute rather than the real
+    field.  When ``_coerce_to_tool_result`` later round-tripped the result
+    via ``model_dump(by_alias=True)`` the extra key was dropped and
+    ``structured_content`` was ``None`` on the returned ``ToolResult``.
+
+    The direct-proxy SSE/StreamableHTTP branch uses ``_coerce_to_tool_result``
+    (line 6854), so this regression silently broke ``retry_on_status`` for
+    direct-proxy invocations while the non-direct-proxy branch happened to
+    survive via a fallback in ``dump.get("structuredContent") or
+    dump.get("structured_content")`` (line 6862).
+    """
+
+    def test_make_mcp_tool_error_with_structured_content_survives_coercion(self, tool_service):
+        """structured_content from _make_mcp_tool_error survives _coerce_to_tool_result."""
+        structured = {"status_code": 429}
+        raw = tool_service._make_mcp_tool_error("Too Many Requests", structured_content=structured)
+
+        # The SDK field must be populated (regression guard for the snake-case kwarg bug).
+        assert raw.structuredContent == structured, (
+            f"_make_mcp_tool_error set structured_content via snake-case kwarg; "
+            f"expected structuredContent={structured!r}, got {raw.structuredContent!r}. "
+            "The MCP SDK field is camelCase — use structuredContent= to set it."
+        )
+
+        coerced = tool_service._coerce_to_tool_result(raw)
+        assert coerced.structured_content == structured, (
+            f"structured_content was lost after _coerce_to_tool_result; "
+            f"expected {structured!r}, got {coerced.structured_content!r}. "
+            "This breaks retry_on_status for direct-proxy SSE/StreamableHTTP invocations."
+        )
+        assert coerced.is_error is True
+
+    def test_make_mcp_tool_error_without_structured_content_returns_none(self, tool_service):
+        """_make_mcp_tool_error without structured_content leaves structuredContent as None."""
+        raw = tool_service._make_mcp_tool_error("some error")
+        assert raw.structuredContent is None
+        coerced = tool_service._coerce_to_tool_result(raw)
+        assert coerced.structured_content is None
+        assert coerced.is_error is True
+
+
+# ---------------------------------------------------------------------------
 # invoke_tool — MCP StreamableHTTP coverage (lines 3355-3459, 3464-3483)
 # ---------------------------------------------------------------------------
 
@@ -10521,16 +10740,9 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             mock_mbuf.return_value = MagicMock()
             mock_timeout_counter.labels.return_value.inc = MagicMock()
 
-            # After the MCP protocol fix, timeouts return structured error responses
-            # instead of raising exceptions
-            result = await tool_service.invoke_tool(db, "test_tool", {})
-
-            # Verify the result is a proper MCP error response
-            assert result is not None
-            assert result.is_error is True
-            assert hasattr(result, "content")
-            assert len(result.content) > 0
-            assert "timed out" in str(result.content[0])
+            # Timeout must raise ToolTimeoutError so TOOL_POST_INVOKE fires exactly once.
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {})
 
         plugin_manager.invoke_hook.assert_awaited()
 

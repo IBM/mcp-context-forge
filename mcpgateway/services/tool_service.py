@@ -3851,7 +3851,7 @@ class ToolService(BaseService):
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=f"MCP server error: {sanitized_message}")],
             isError=True,
-            structured_content=structured_content,
+            structuredContent=structured_content,
         )
 
     async def invoke_tool_direct(
@@ -5033,8 +5033,9 @@ class ToolService(BaseService):
         Called from each transport-specific timeout handler so the retry plugin
         can record the failure and (optionally) request a retry.  If the plugin
         sets ``retry_delay_ms > 0``, a ``ToolTimeoutError`` carrying the delay
-        is raised immediately; otherwise control returns to the caller which
-        raises a plain ``ToolTimeoutError``.
+        is raised immediately; otherwise this method returns normally and the
+        caller must raise a plain ``ToolTimeoutError`` to reach the outer
+        ``invoke_tool`` handler.
 
         Args:
             name: Tool name.
@@ -6620,10 +6621,12 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
-                            # Return a properly structured MCP error response for timeouts.
-                            # Timeouts are runtime failures and should be returned as MCP ToolResult
-                            # with isError=True, not raised as exceptions.
-                            return self._make_mcp_tool_error(f"Tool invocation timed out after {effective_timeout}s")
+                            # Raise ToolTimeoutError so the outer handler at the invoke_tool level
+                            # fires TOOL_POST_INVOKE exactly once.  Using return here would fall
+                            # through into the post-process block and fire it a second time.
+                            # _run_timeout_post_invoke already raised if retry_delay_ms > 0, so
+                            # this raise carries no retry signal (retry_delay_ms=0).
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
@@ -6851,10 +6854,12 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
-                            # Return a properly structured MCP error response for timeouts.
-                            # Timeouts are runtime failures and should be returned as MCP ToolResult
-                            # with isError=True, not raised as exceptions.
-                            return self._make_mcp_tool_error(f"Tool invocation timed out after {effective_timeout}s")
+                            # Raise ToolTimeoutError so the outer handler at the invoke_tool level
+                            # fires TOOL_POST_INVOKE exactly once.  Using return here would fall
+                            # through into the post-process block and fire it a second time.
+                            # _run_timeout_post_invoke already raised if retry_delay_ms > 0, so
+                            # this raise carries no retry signal (retry_delay_ms=0).
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
