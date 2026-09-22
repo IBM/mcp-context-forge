@@ -24,7 +24,7 @@ from typing import Any, List, Optional, Sequence
 
 # Third-Party
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
 from mcpgateway.cache.auth_cache import auth_cache
@@ -52,6 +52,18 @@ class InvitationDeliveryResult:
     invitation_url: str
     status: EmailDeliveryStatus
     warning: Optional[str] = None
+
+
+class TeamInvitationError(Exception):
+    """Base exception for invitation operations."""
+
+
+class InvitationNotFoundError(TeamInvitationError):
+    """Raised when an active invitation cannot be found."""
+
+
+class InvitationEmailMismatchError(TeamInvitationError):
+    """Raised when an invitation does not belong to the authenticated user."""
 
 
 def failed_invitation_delivery_result(invitation_url: str = "") -> InvitationDeliveryResult:
@@ -373,14 +385,7 @@ class TeamInvitationService:
         Examples:
             Used for invitation acceptance and validation.
         """
-        try:
-            invitation = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.token == token).first()
-
-            return invitation
-
-        except Exception as e:
-            logger.error("Failed to get invitation by token: %s", e)
-            return None
+        return self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.token == token).first()
 
     async def accept_invitation(self, token: str, accepting_user_email: Optional[str] = None) -> EmailTeamMember:
         """Accept a team invitation.
@@ -531,30 +536,37 @@ class TeamInvitationService:
             logger.error("Failed to accept invitation: %s", e)
             raise
 
-    async def decline_invitation(self, token: str, declining_user_email: Optional[str] = None) -> bool:
+    async def decline_invitation(self, token: str, declining_user_email: str) -> bool:
         """Decline a team invitation.
 
         Args:
             token: The invitation token
-            declining_user_email: Email of user declining (for validation)
+            declining_user_email: Authenticated email of user declining
 
         Returns:
-            bool: True if invitation was declined successfully, False otherwise
+            bool: True if invitation was declined successfully
+
+        Raises:
+            InvitationNotFoundError: If no active invitation exists for the token
+            InvitationEmailMismatchError: If the invitation belongs to another user
+            Exception: If the database operation fails
 
         Examples:
             Users can decline invitations they don't want to accept.
         """
         try:
-            # Get the invitation
-            invitation = await self.get_invitation_by_token(token)
+            invitation = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.token == token, EmailTeamInvitation.is_active.is_(True)).first()
             if not invitation:
                 logger.warning("Invitation not found for token")
-                return False
+                raise InvitationNotFoundError("Invitation not found")
 
-            # Validate declining user email if provided
-            if declining_user_email and declining_user_email != invitation.email:
-                logger.warning("Email mismatch: invitation for %s, declining as %s", invitation.email, SecurityValidator.sanitize_log_message(declining_user_email))
-                return False
+            if declining_user_email != invitation.email:
+                logger.warning(
+                    "Invitation email mismatch for invited user %s and declining user %s",
+                    SecurityValidator.sanitize_log_message(invitation.email),
+                    SecurityValidator.sanitize_log_message(declining_user_email),
+                )
+                raise InvitationEmailMismatchError("Invitation does not belong to the authenticated user")
 
             # Deactivate the invitation
             invitation.is_active = False
@@ -563,10 +575,13 @@ class TeamInvitationService:
             logger.info("User %s declined invitation to team %s", invitation.email, invitation.team_id)
             return True
 
+        except (InvitationNotFoundError, InvitationEmailMismatchError):
+            self.db.rollback()
+            raise
         except Exception as e:
             self.db.rollback()
-            logger.error("Failed to decline invitation: %s", e)
-            return False
+            logger.error("Failed to decline invitation for %s: %s", SecurityValidator.sanitize_log_message(declining_user_email), e)
+            raise
 
     async def revoke_invitation(self, invitation_id: str, revoked_by: str) -> bool:
         """Revoke a team invitation.
@@ -607,8 +622,8 @@ class TeamInvitationService:
 
         except Exception as e:
             self.db.rollback()
-            logger.error("Failed to revoke invitation %s: %s", invitation_id, e)
-            return False
+            logger.error("Failed to revoke invitation %s: %s", SecurityValidator.sanitize_log_message(invitation_id), e)
+            raise
 
     async def get_team_invitations(self, team_id: str, active_only: bool = True) -> List[EmailTeamInvitation]:
         """Get all invitations for a team.
@@ -634,7 +649,7 @@ class TeamInvitationService:
 
         except Exception as e:
             logger.error("Failed to get invitations for team %s: %s", SecurityValidator.sanitize_log_message(team_id), e)
-            return []
+            raise
 
     async def get_user_invitations(self, email: str, active_only: bool = True) -> List[EmailTeamInvitation]:
         """Get all invitations for a user.
@@ -650,17 +665,17 @@ class TeamInvitationService:
             User dashboard showing pending team invitations.
         """
         try:
-            query = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.email == email)
+            query = self.db.query(EmailTeamInvitation).options(joinedload(EmailTeamInvitation.team)).filter(EmailTeamInvitation.email == email)
 
             if active_only:
-                query = query.filter(EmailTeamInvitation.is_active.is_(True))
+                query = query.filter(EmailTeamInvitation.is_active.is_(True), EmailTeamInvitation.expires_at > utc_now())
 
             invitations = query.order_by(EmailTeamInvitation.invited_at.desc()).all()
             return invitations
 
         except Exception as e:
             logger.error("Failed to get invitations for user %s: %s", SecurityValidator.sanitize_log_message(email), e)
-            return []
+            raise
 
     async def cleanup_expired_invitations(self) -> int:
         """Clean up expired invitations.
