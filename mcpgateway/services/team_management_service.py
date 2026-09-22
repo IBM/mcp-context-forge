@@ -1217,7 +1217,9 @@ class TeamManagementService:
 
         Args:
             team_id: ID of the team
-            user_email: Email of the user to add
+            user_email: Canonical user_id of the user to add. Phase-1 value =
+                e-mail, so the ``EmailTeamMember.user_email`` queries are
+                unchanged.
             role: Role to assign (owner, member)
             invited_by: Email of user who added this member
             grant_source: Origin of grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
@@ -1300,7 +1302,9 @@ class TeamManagementService:
 
         Args:
             team_id: ID of the team
-            user_email: Email of the user to remove
+            user_email: Canonical user_id of the user to remove. Phase-1
+                value = e-mail, so the ``EmailTeamMember.user_email`` query
+                is unchanged.
             removed_by: Email of user performing the removal
 
         Returns:
@@ -1486,7 +1490,9 @@ class TeamManagementService:
 
         Args:
             team_id: ID of the team
-            user_email: Email of the user
+            user_email: Canonical user_id of the user. Phase-1 value =
+                e-mail, so the ``EmailTeamMember.user_email`` query is
+                unchanged.
 
         Returns:
             EmailTeamMember if found and active, None otherwise
