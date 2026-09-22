@@ -288,18 +288,29 @@ class DcrService:
             "scope": " ".join(scopes),
         }
 
+        pinned_target = await self._prepare_pinned_request(registration_endpoint, normalized_issuer, "DCR registration_endpoint")
+
         # Send registration request
         try:
-            client = await self._get_client()
-            response = await client.post(registration_endpoint, json=registration_request, timeout=self._get_timeout())
-            # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
-            if response.status_code in (200, 201):
-                registration_response = response.json()
-            else:
-                error_data = response.json()
-                error_msg = error_data.get("error", "unknown_error")
-                error_desc = error_data.get("error_description", str(error_data))
-                raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.post(
+                    pinned_target.url,
+                    json=registration_request,
+                    headers=pinned_target.headers,
+                    extensions=pinned_target.extensions,
+                    timeout=self._get_timeout(),
+                )
+                # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
+                if response.status_code in (200, 201):
+                    registration_response = response.json()
+                else:
+                    try:
+                        error_data = response.json()
+                    except ValueError:
+                        raise DcrError(f"Client registration failed: upstream returned status {response.status_code} with a non-JSON body")
+                    error_msg = error_data.get("error", "unknown_error")
+                    error_desc = error_data.get("error_description", str(error_data))
+                    raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to register client with {normalized_issuer}: {e}")
 

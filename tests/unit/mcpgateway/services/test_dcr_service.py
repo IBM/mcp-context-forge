@@ -1520,3 +1520,107 @@ class TestDiscoverAsMetadataSsrfDenyPath:
         assert call_kwargs["headers"]["Host"] == "as.example.com"
         assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
         assert call_kwargs["follow_redirects"] is False
+
+
+class TestRegisterClientSsrfDenyPath:
+    """Test that a hostile registration_endpoint cannot drive an outbound request."""
+
+    @pytest.mark.asyncio
+    async def test_register_client_refuses_cross_origin_registration_endpoint(self, test_db):
+        """A registration_endpoint on another origin is refused before any request."""
+        dcr_service = DcrService()
+
+        hostile_metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "http://169.254.169.254/internal/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=hostile_metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service.register_client(
+                    gateway_id="gw-ssrf",
+                    gateway_name="SSRF Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+        assert "origin" in str(exc_info.value).lower()
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_client_refuses_endpoint_resolving_to_link_local(self, test_db, monkeypatch):
+        """A same-origin endpoint that resolves into a blocked range is refused."""
+
+        def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _link_local_getaddrinfo)
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError):
+                await dcr_service.register_client(
+                    gateway_id="gw-rebind",
+                    gateway_name="Rebind Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_client_posts_to_pinned_address(self, test_db):
+        """A valid registration goes to the pinned address with the original authority."""
+        # First-Party
+        from mcpgateway.db import Gateway
+
+        gateway = Gateway(id="gw-pinned", name="Pinned", slug="gw-pinned", url="http://pinned.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "pinned-client", "redirect_uris": ["http://localhost:4444/callback"]})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            await dcr_service.register_client(
+                gateway_id="gw-pinned",
+                gateway_name="Pinned Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+        call_args, call_kwargs = mock_client.post.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
