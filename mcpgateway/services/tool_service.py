@@ -5342,7 +5342,12 @@ class ToolService(BaseService):
         # Input-schema validation (#5629): shared by invoke_tool and preview_tool_invocation
         # so the two can never disagree about whether a given set of arguments is acceptable.
         # Reported, not raised -- see ResolvedTool.schema_validation_error.
-        schema_validation_error = _validate_tool_input_arguments(arguments, tool_payload.get("input_schema")) if arguments is not None else None
+        #
+        # Offloaded to a thread because a regex-bearing schema blocks on
+        # SandboxPool.submit().result(), which is a synchronous wait on the worker
+        # process. Without this, a hostile request holds the event loop for the
+        # sandbox's timeout budget instead of returning to it immediately.
+        schema_validation_error = await asyncio.to_thread(_validate_tool_input_arguments, arguments, tool_payload.get("input_schema")) if arguments is not None else None
 
         return ResolvedTool(
             is_direct_proxy=is_direct_proxy,
@@ -6141,8 +6146,14 @@ class ToolService(BaseService):
                             # The validator skips for isError=true (per #4202) and, on validation
                             # failure, mutates tool_result in place with is_error=True, so the
                             # single post-validation read below covers all cases uniformly.
+                            #
+                            # Offloaded to a thread: _extract_and_validate_structured_content is
+                            # entirely synchronous, and a regex-bearing output_schema blocks on
+                            # SandboxPool.submit().result() inside it. Running it directly here
+                            # would hold the event loop for the sandbox's timeout budget instead
+                            # of returning to it immediately -- the method itself is unchanged.
                             if tool_output_schema:
-                                self._extract_and_validate_structured_content(tool_for_validation, tool_result)
+                                await asyncio.to_thread(self._extract_and_validate_structured_content, tool_for_validation, tool_result)
                             # ``success`` must reflect both upstream ``isError`` *and* any
                             # validator-imposed error state. Previously this path set
                             # ``success = bool(valid)``, which clobbered an upstream

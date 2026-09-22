@@ -2226,6 +2226,80 @@ class TestToolService:
         with pytest.raises(ToolInvocationError):
             await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
+    @pytest.mark.timeout(30)
+    @pytest.mark.asyncio
+    async def test_preview_tool_invocation_offloads_hostile_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A catastrophic input_schema must not stall the loop through the real entry point.
+
+        tests/security/test_schema_regex_redos.py proves the sandbox mechanism itself stays
+        bounded, but it wraps its own call in ``asyncio.to_thread`` and so never exercises
+        whether production actually offloads it. ``_resolve_tool_for_invocation`` -- shared by
+        ``invoke_tool`` and ``preview_tool_invocation`` -- calls the schema validator directly
+        from async code; without ``asyncio.to_thread`` there, this test stalls for the sandbox's
+        timeout budget instead of returning to the loop immediately. ``preview_tool_invocation``
+        is the entry point here because it resolves and validates without dispatching (#5629),
+        so no HTTP/MCP/jq mocking is needed to isolate the validation offload.
+        """
+        # First-Party
+        from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+
+        # The subject length and the timeout phrase mirror tests/security/test_schema_regex_redos.py,
+        # which documents that reasoning.
+        #
+        # The loop-stall budget here is deliberately tighter than that sibling test's, because
+        # this test targets a different bug shape. That sibling test proves the sandbox worker
+        # itself is bounded; a thread-only non-fix there still stalls the loop for close to the
+        # sandbox's own timeout (~1s), so its budget only needs to rule out an *unbounded* stall
+        # (multiple seconds). This test proves the offload at the call site is actually present;
+        # a MISSING offload here also stalls for close to the sandbox timeout, not forever,
+        # because the sandbox still kills the runaway worker -- so a loose budget would pass on
+        # a genuinely broken call site. Measured directly: with the offload removed, the call
+        # blocks the loop for 1.01s (the sandbox's own regex_timeout_seconds); with it in place,
+        # 0.006s. Half of the timeout setting sits with wide margin on both sides of that gap.
+        bounded_phrase = "exceeded the execution time limit"
+        max_supported_regex_timeout_seconds = 1.0
+        min_heartbeats = 15
+
+        mock_tool.input_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+        }
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        start_validation_pool()
+        try:
+            lateness: list[float] = []
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                """Wake every 10 ms and record how late each wake-up was."""
+                while not stop.is_set():
+                    start = time.perf_counter()
+                    await asyncio.sleep(0.01)
+                    lateness.append(time.perf_counter() - start - 0.01)
+
+            beat = asyncio.create_task(heartbeat())
+            await asyncio.sleep(0.2)
+            preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {"q": "a" * 28 + "b"})
+            stop.set()
+            await beat
+        finally:
+            shutdown_validation_pool()
+
+        assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
+            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
+        )
+        budget = 0.5 * settings.regex_timeout_seconds
+        assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s -- a missing offload stalls near the sandbox's own timeout, not forever, so this must stay tight"
+
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" and bounded_phrase in w.message for w in preview_result.warnings), f"validation must be stopped by the budget, not by an unrelated refusal; got {preview_result.warnings!r}"
+
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         # ----------------  DB  -----------------
