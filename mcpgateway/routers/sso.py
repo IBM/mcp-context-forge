@@ -382,6 +382,13 @@ async def handle_sso_callback(
     if not settings.sso_enabled:
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
+    if settings.jwt_trust_mode == "jwt-trust":
+        # B.2 matrix: SSO browser login is disabled in trust mode (#5906). The
+        # guard sits at the browser entry, not in authenticate_or_create_user,
+        # because that service function also serves the default-funnel
+        # provisioning path, which stays alive in trust mode.
+        raise HTTPException(status_code=401, detail="SSO browser login disabled in trust mode")
+
     # Get root path for URL construction
     root_path = resolve_root_path(request) if request else ""
 
