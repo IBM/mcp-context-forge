@@ -85,7 +85,8 @@ class PermissionService:
         and returns True if any role grants the required permission.
 
         Args:
-            user_email: Email of the user to check
+            user_email: Canonical user_id of the user to check. The phase-1
+                       value is the e-mail. The role queries are unchanged.
             permission: Permission to check (e.g., 'tools.create')
             resource_type: Type of resource being accessed
             resource_id: Specific resource ID if applicable
@@ -229,7 +230,8 @@ class PermissionService:
         Includes role inheritance and handles permission caching.
 
         Args:
-            user_email: Email of the user
+            user_email: Canonical user_id of the user. The phase-1 value is
+                       the e-mail. The role queries are unchanged.
             team_id: Optional team context
             include_all_teams: If True, include ALL team-scoped roles (for list/read endpoints)
             token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True
@@ -522,7 +524,8 @@ class PermissionService:
           with scope_id=NULL (roles that apply to all teams, e.g. during login)
 
         Args:
-            user_email: Email address of the user
+            user_email: Canonical user_id of the user. The phase-1 value is
+                       the e-mail. The UserRole.user_email query is unchanged.
             team_id: Optional team ID to filter to a specific team's roles
             include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
             token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True
