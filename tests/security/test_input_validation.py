@@ -42,10 +42,29 @@ from mcpgateway.schemas import AdminToolCreate, encode_datetime, GatewayCreate, 
 from mcpgateway.services.tool_service import _validate_tool_input_arguments
 from mcpgateway.utils.base_models import to_camel_case
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 
 # Configure logging for better test debugging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def _pool():
+    """Start and stop the validation pool around one test.
+
+    Scoped to the single test that needs it, not module-autouse: this file carries
+    hundreds of unrelated security tests, and starting a worker pool for each of them
+    would be pure overhead. Without this, the ReDoS test relied on lazy ``_ensure()`` and
+    on no other module having left ``_SANDBOX_DOWN`` true, which is order-dependent luck,
+    not a guarantee.
+
+    Yields:
+        None.
+    """
+    start_validation_pool()
+    yield
+    shutdown_validation_pool()
 
 
 class TestSecurityValidation:
@@ -1230,11 +1249,14 @@ class TestSecurityValidation:
             must_fail(payload, f"SSTI #{i + 1} ({payload[:20]}...)")
 
     @pytest.mark.timeout(30)
-    def test_regex_dos_prevention(self):
+    def test_regex_dos_prevention(self, _pool):
         """Test prevention of ReDoS attacks.
 
         Uses pytest-timeout for deterministic timeout instead of wall-clock assertions.
         If this test times out, it indicates a ReDoS vulnerability in the regex patterns.
+
+        Args:
+            _pool: Starts and stops the validation worker pool for this test.
         """
         logger.debug("Testing ReDoS prevention")
 

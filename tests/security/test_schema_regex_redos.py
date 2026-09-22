@@ -45,14 +45,31 @@ CATASTROPHIC_SCHEMA = {
 # regression would report and then block the run behind that join.
 HOSTILE = {"q": "a" * 28 + "b"}
 
-# The wording the timeout path alone produces. A pattern that merely fails to match gives a
-# jsonschema mismatch message, and any other sandbox fault gives the broader "could not be
-# completed safely" text. Matching this phrase proves the budget stopped the match.
+# The phrase the timeout path alone contributes. ``validate_safely`` wraps every sandbox
+# fault, this one included, in "schema validation could not be completed safely", so that
+# outer text does not discriminate. This inner phrase comes from ``SandboxTimeout`` only, so
+# it separates "the budget stopped the match" from a mismatch and from a broken pool.
 BOUNDED = "exceeded the execution time limit"
 
 # The heartbeat wakes every 10 ms, and the test lets it run for 200 ms before validating.
 # Requiring this many samples stops the loop assertion passing vacuously on an empty list.
 MIN_HEARTBEATS = 15
+
+# The loop budget must never be derived solely from the control it measures.
+# ``regex_timeout_seconds`` is the sandbox's own budget: an unpinned environment value that
+# config.py allows up to 60, and nothing else in the test suite pins it. Deriving the budget
+# from it alone lets a deployment raise it and silently disarm this assertion, which is the
+# one check that separates a real fix from a thread-only one. Proven: with a thread-only
+# sandbox, the default setting fails at "stalled 7.86s; budget is 2.00s" while a setting of
+# 5 passes. An inline or thread-only regression stalls the loop for about 8 seconds, so the
+# budget is capped here as well and a setting that moves makes the test red, never blind.
+MAX_LOOP_STALL_SECONDS = 2.0
+MAX_SUPPORTED_REGEX_TIMEOUT_SECONDS = 1.0
+
+# A legitimate subject measured 0.8 ms mean and 3.4 ms worst over ten runs, so this bound
+# still leaves about 150x of headroom for a loaded machine. It is half the sandbox budget,
+# which is the property worth asserting: valid traffic must not approach the kill budget.
+MAX_VALID_SUBJECT_SECONDS = 0.5
 
 _HEARTBEAT_INTERVAL = 0.01
 
@@ -96,7 +113,10 @@ async def test_event_loop_stays_responsive_during_hostile_validation():
 
     assert len(lateness) >= MIN_HEARTBEATS, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
 
-    budget = 2 * settings.regex_timeout_seconds
+    assert settings.regex_timeout_seconds <= MAX_SUPPORTED_REGEX_TIMEOUT_SECONDS, (
+        f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {MAX_SUPPORTED_REGEX_TIMEOUT_SECONDS}s; the loop budget below is derived from this setting and must not silently widen with it"
+    )
+    budget = min(2 * settings.regex_timeout_seconds, MAX_LOOP_STALL_SECONDS)
     assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
 
     # Without this the loop assertion passes for the wrong reason: a pool that refuses every
@@ -121,4 +141,5 @@ def test_valid_subject_is_unaffected():
     """
     start = time.perf_counter()
     assert _validate_tool_input_arguments({"q": "a" * 5000}, CATASTROPHIC_SCHEMA) is None
-    assert time.perf_counter() - start < 5.0
+    elapsed = time.perf_counter() - start
+    assert elapsed < MAX_VALID_SUBJECT_SECONDS, f"valid subject took {elapsed:.3f}s; budget is {MAX_VALID_SUBJECT_SECONDS}s"

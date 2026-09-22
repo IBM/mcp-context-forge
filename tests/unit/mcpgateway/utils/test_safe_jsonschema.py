@@ -43,10 +43,11 @@ HOSTILE = [
     ("dot polynomial", r"^.*a.*a.*a$", "a" * 3000 + "!"),
 ]
 
-# The wording produced on the timeout path alone. A pattern that merely fails to match
-# produces a jsonschema mismatch message, and any other sandbox fault produces the broader
-# "could not be completed safely" text. Matching the timeout phrase tells "the budget
-# stopped it" apart from both "it rejected quickly" and "the pool was broken".
+# The phrase the timeout path alone contributes. validate_safely wraps every sandbox fault,
+# this one included, in "schema validation could not be completed safely", so that outer
+# text does not discriminate. This inner phrase comes from SandboxTimeout only, so it
+# separates "the budget stopped it" from both "it rejected quickly" and "the pool was
+# broken".
 BOUNDED = "exceeded the execution time limit"
 
 
