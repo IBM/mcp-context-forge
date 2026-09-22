@@ -1,3 +1,15 @@
+{"id":"21f97ec6-273d-4151-80b9-065ba6752222","ts":"2026-06-09T12:32:21.053Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_schemas.py","version":"1.0.0","taskID":"747cc1ff-9ab2-4dc2-ab6c-92623003a611"}
+
+{"id":"2f03840d-b51c-42c0-8a98-b6235b047b7a","ts":"2026-06-09T12:15:01.354Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_schemas_auth_validation.py","version":"1.0.0","taskID":"747cc1ff-9ab2-4dc2-ab6c-92623003a611"}
+
+{"id":"0e48089c-27cd-440e-9127-3f3f3d05dfc3","ts":"2026-06-09T11:46:19.641Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/schemas.py","version":"1.0.0","taskID":"9f5d6116-c78e-41a7-a124-e74326f2e3b7"}
+{"id":"fffbf227-a094-45fd-bbaa-275d4c4c17f6","ts":"2026-06-09T11:58:41.247Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/schemas.py","version":"1.0.0","taskID":"747cc1ff-9ab2-4dc2-ab6c-92623003a611"}
+{"id":"a6baf7c1-4b32-4554-bb03-dd4f041f6ed4","ts":"2026-06-09T11:59:08.566Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/schemas.py","version":"1.0.0","taskID":"747cc1ff-9ab2-4dc2-ab6c-92623003a611"}
+
+{"id":"4d956dcc-acbe-4e1f-8e08-e610999ecf72","ts":"2026-06-08T09:05:01.429Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/schemas.py","version":"1.0.0","taskID":"08a93456-a515-4e66-8a3e-c34737b4d2c0"}
+{"id":"5a49fe46-5f11-45db-bdf8-638b6aa809f5","ts":"2026-06-08T09:07:35.225Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/schemas.py","version":"1.0.0","taskID":"08a93456-a515-4e66-8a3e-c34737b4d2c0"}
+{"id":"4cf78320-4b6f-4305-b241-1240cc0494e3","ts":"2026-06-08T09:10:44.625Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/schemas.py","version":"1.0.0","taskID":"08a93456-a515-4e66-8a3e-c34737b4d2c0"}
+
 {"id":"0dbfa668-a0bf-4b2f-8b98-c2fc7610c2b2","ts":"2026-06-05T14:35:52.735Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_schemas.py","version":"1.0.0","taskID":"abc08e78-3302-469e-a520-0787d43d1901"}
 
 {"id":"dd0d42af-2ee8-4501-899e-8d2853613da9","ts":"2026-06-05T14:06:08.392Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_schemas.py","version":"1.0.0","taskID":"abc08e78-3302-469e-a520-0787d43d1901"}
