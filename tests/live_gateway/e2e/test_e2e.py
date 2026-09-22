@@ -38,10 +38,12 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import base64
 from collections.abc import AsyncIterator, Callable
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import version
 import json
 import logging
 import os
@@ -51,6 +53,7 @@ import sys
 import threading
 import time
 from typing import Any, Generator
+from urllib.parse import unquote
 import uuid
 
 # Third-Party
@@ -64,14 +67,16 @@ import pytest
 import uvicorn
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, expect, Playwright
+# Third-Party
+from playwright.sync_api import APIRequestContext, APIResponse
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import expect, Playwright
 
-# Local
+# First-Party
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 
 # Local
-from tests.helpers.api_helpers import ApiTestHelper
-from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+from ..fixtures.resource_templates import template_upstreams, TemplatePeer
 from ..helpers.mcp_test_helpers import (
     ADMIN_EMAIL,
     BASE_URL,
@@ -82,6 +87,8 @@ from ..helpers.mcp_test_helpers import (
     TEST_PASSWORD,
     TOKEN_EXPIRY,
 )
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -560,13 +567,9 @@ class TestToolCalls:
         """Require a synced tool with a declared output schema."""
         tools = (await client.list_tools()).tools
         match = next((tool for tool in tools if tool.name == tool_name), None)
-        assert match is not None, (
-            f"Tool {tool_name!r} is not registered in the gateway. "
-            "Check that register_fast_time completed and gateway synchronization finished."
-        )
+        assert match is not None, f"Tool {tool_name!r} is not registered in the gateway. " "Check that register_fast_time completed and gateway synchronization finished."
         assert match.outputSchema, (
-            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. "
-            "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
+            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. " "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
         )
         return match
 
@@ -1406,13 +1409,13 @@ def _assert_denied_for_rbac(call: Callable[[], Any], context: str) -> None:
 
 
 @asynccontextmanager
-async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[ClientSession]:
+async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[GatewayClientSession]:
     """Open an initialized MCP client session over Streamable HTTP."""
     url = _mcp_client_url(server_url)
     headers = {"Authorization": f"Bearer {access_token}"} if access_token else None
     timeout = timedelta(seconds=_CLIENT_TIMEOUT)
     async with streamablehttp_client(url, headers=headers, timeout=timeout, sse_read_timeout=timeout) as (read_stream, write_stream, _):
-        async with ClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
+        async with GatewayClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
             await session.initialize()
             yield session
 
@@ -1425,6 +1428,338 @@ async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -
 async def _async_mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
     async with _mcp_session(server_url, access_token) as session:
         return (await session.list_resources()).resources
+
+
+async def _template_catalog(session: ClientSession, *, templates: bool) -> list[Any]:
+    """Read every catalog page and reject repeated cursors.
+
+    Args:
+        session: Initialized MCP session.
+        templates: Select templates instead of concrete resources.
+    """
+    items = []
+    cursor = None
+    seen = set()
+    while True:
+        page = await (session.list_resource_templates(cursor=cursor) if templates else session.list_resources(cursor=cursor))
+        items.extend(page.resourceTemplates if templates else page.resources)
+        cursor = page.nextCursor
+        if not cursor:
+            return items
+        assert cursor not in seen, f"Repeated catalog cursor: {cursor}"
+        seen.add(cursor)
+
+
+@asynccontextmanager
+async def _federated_templates(peers: list[TemplatePeer], token: str, *, standard: bool = True) -> AsyncIterator[dict[str, Any]]:
+    """Discover upstream records through public APIs and create scoped servers.
+
+    Args:
+        peers: Live upstream fixtures.
+        token: Administrative setup token.
+        standard: Require template discovery for standard upstreams.
+
+    Yields:
+        HTTP client, discovered rows, and created virtual servers.
+    """
+    gateways: list[str] = []
+    servers: list[str] = []
+    resources: set[str] = set()
+    rows: dict[str, dict[str, Any]] = {}
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60, follow_redirects=True) as http:
+        try:
+            health = await http.get("/health")
+            health.raise_for_status()
+            runtime = health.headers.get("x-contextforge-mcp-transport-mounted", "python")
+            assert runtime != "rust", "Issue #6625 coverage requires the Python runtime"
+            print(json.dumps({"issue": 6625, "gateway_commit": os.getenv("MCP_TEMPLATE_GATEWAY_COMMIT", "unverified"), "runtime": runtime, "client_mcp_sdk": version("mcp")}))
+            for peer in peers:
+                response = await http.post("/gateways", json={"name": peer.label, "url": peer.url, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateways.append(response.json()["id"])
+            deadline = time.monotonic() + float(os.getenv("MCP_E2E_GATEWAY_SYNC_DEADLINE", "30"))
+            while True:
+                for gateway_id in gateways:
+                    response = await http.get("/resources", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    for row in response.json():
+                        rows[row["uri"]] = row
+                        resources.add(row["id"])
+                response = await http.get("/resources/templates/list")
+                assert response.status_code == 200, response.text
+                for row in response.json()["resource_templates"]:
+                    if row["uriTemplate"] in {peer.template for peer in peers}:
+                        rows[row["uriTemplate"]] = row
+                        resources.add(row["id"])
+                required = {peer.concrete for peer in peers}
+                if standard:
+                    required.update(peer.template for peer in peers)
+                if required <= rows.keys():
+                    break
+                assert time.monotonic() < deadline, f"Discovery missing {required - rows.keys()}; check MCP_TEMPLATE_UPSTREAM_HOST"
+                await asyncio.sleep(0.25)
+            for index, association in enumerate(([row["id"] for row in rows.values()], [rows[peers[0].concrete]["id"]])):
+                response = await http.post("/servers", json={"server": {"name": f"{peers[0].label}server{index}", "associated_resources": association}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                servers.append(response.json()["id"])
+            yield {"http": http, "rows": rows, "server": f"{BASE_URL}/servers/{servers[0]}", "empty_server": f"{BASE_URL}/servers/{servers[1]}"}
+        finally:
+            failures = []
+            for path in [*(f"/servers/{value}" for value in servers), *(f"/resources/{value}" for value in resources), *(f"/gateways/{value}" for value in gateways)]:
+                try:
+                    response = await http.delete(path)
+                    if response.status_code not in (200, 204, 404):
+                        failures.append(f"{path}: {response.status_code}")
+                except httpx.HTTPError as exc:
+                    failures.append(f"{path}: {exc}")
+            assert not failures, f"Template fixture cleanup failed: {failures}"
+
+
+async def _assert_template_read(session: ClientSession, peer: TemplatePeer, other: TemplatePeer, item_id: str) -> None:
+    """Verify response content and correlated upstream routing.
+
+    Args:
+        session: Initialized MCP session.
+        peer: Expected upstream owner.
+        other: Upstream that must receive no request.
+        item_id: Unique path parameter for this request.
+    """
+    uri = peer.expanded(item_id)
+    previous = len(peer.reads)
+    other_previous = len(other.reads)
+    result = await session.read_resource(uri)
+    assert len(result.contents) == 1, result
+    assert result.contents[0].text == peer.content(item_id), result
+    assert str(result.contents[0].uri) == uri, result
+    assert peer.reads[previous:] == [uri], peer.reads
+    assert len(other.reads) == other_previous, other.reads
+    print(json.dumps({"method": "resources/read", "uri": uri, "result": result.model_dump(mode="json"), "upstream": peer.label}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["global", "server"])
+async def test_resource_template_federation(admin_token: str, endpoint: str) -> None:
+    """Verify #6625 discovery, list separation, reads, and #6621 template naming.
+
+    Args:
+        admin_token: Administrative token with unrestricted team scope.
+        endpoint: Global or virtual-server MCP endpoint.
+    """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    with template_upstreams() as peers:
+        for index, peer in enumerate(peers):
+            async with _mcp_session(peer.local_url) as session:
+                templates = await _template_catalog(session, templates=True)
+                assert [(item.uriTemplate, item.name) for item in templates] == [(peer.template, "Shared Template")]
+                assert {str(item.uri) for item in await _template_catalog(session, templates=False)} == {peer.concrete}
+                await _assert_template_read(session, peer, peers[1 - index], "baseline")
+        async with _federated_templates(peers, admin_token) as fixture:
+            url = BASE_URL if endpoint == "global" else fixture["server"]
+            async with _mcp_session(url, admin_token) as session:
+                print(json.dumps({"endpoint": endpoint, "protocol": session.initialize_result.protocolVersion}))
+                templates = {item.uriTemplate: item for item in await _template_catalog(session, templates=True)}
+                expected = {peer.template for peer in peers}
+                assert expected <= templates.keys(), templates
+                expected_names = {f"{peer.label}{separator}shared{separator}template" for peer in peers}
+                assert {templates[uri].name for uri in expected} == expected_names, "#6621 baseline and configured separator must match the gateway"
+                resources = await _template_catalog(session, templates=False)
+                concrete_uris = {unquote(str(item.uri)) for item in resources}
+                assert {peer.concrete for peer in peers} <= concrete_uris, resources
+                assert not expected & concrete_uris, f"Templates leaked into resources/list: {expected & concrete_uris}"
+                print(
+                    json.dumps(
+                        {"endpoint": endpoint, "templates": [templates[uri].model_dump(mode="json") for uri in sorted(expected)], "resources": sorted(concrete_uris), "naming_baseline": "post-6621"}
+                    )
+                )
+                for repeat in range(2):
+                    for index, peer in enumerate(peers):
+                        await _assert_template_read(session, peer, peers[1 - index], f"{endpoint}-{repeat}-{uuid.uuid4().hex[:8]}")
+
+
+async def _assert_template_hidden(url: str, token: str, hidden: TemplatePeer, visible: TemplatePeer, case: str) -> None:
+    """Check template filtering and reject reads without upstream traffic.
+
+    Args:
+        url: Gateway MCP base URL.
+        token: Token whose visibility is under test.
+        hidden: Template that must remain inaccessible.
+        visible: Public template that provides a positive control.
+        case: Visibility boundary recorded in the evidence.
+    """
+    async with _mcp_session(url, token) as session:
+        templates = {item.uriTemplate for item in await _template_catalog(session, templates=True)}
+        assert visible.template in templates, templates
+        assert hidden.template not in templates, templates
+        before = len(hidden.reads)
+        try:
+            await session.read_resource(hidden.expanded(f"denied-{uuid.uuid4().hex[:8]}"))
+        except McpError as exc:
+            assert "not found" in str(exc).lower() or "access denied" in str(exc).lower(), exc
+            print(json.dumps({"case": case, "endpoint": url, "denied_uri": hidden.template, "error": exc.error.model_dump(mode="json")}))
+        else:
+            pytest.fail(f"Hidden template was readable: {hidden.template}")
+        assert len(hidden.reads) == before, hidden.reads
+
+
+@pytest.mark.asyncio
+async def test_resource_template_visibility(admin_token: str) -> None:
+    """Exercise team, private, public-only, disabled, and wrong-server boundaries.
+
+    Args:
+        admin_token: Administrative token used for fixture setup and restoration.
+    """
+    with template_upstreams() as peers:
+        async with _federated_templates(peers, admin_token) as fixture:
+            http = fixture["http"]
+            resource_id = fixture["rows"][peers[0].template]["id"]
+            email = f"{peers[0].label}@example.com"
+            teams = []
+            created_users = []
+            assigned_roles = []
+            try:
+                for index in range(2):
+                    response = await http.post("/teams", json={"name": f"{peers[0].label}team{index}", "visibility": "private"})
+                    assert response.status_code in (200, 201), response.text
+                    teams.append(response.json()["id"])
+                for user_email, is_admin in ((email, False), (f"admin-{email}", True)):
+                    response = await http.post(
+                        "/auth/email/admin/users",
+                        json={"email": user_email, "password": TEST_PASSWORD, "full_name": "Template Reader", "is_active": True, "is_admin": is_admin, "password_change_required": False},
+                    )
+                    assert response.status_code in (200, 201), response.text
+                    created_users.append(user_email)
+                roles = await http.get("/rbac/roles")
+                assert roles.status_code == 200, roles.text
+                viewer_id = next(role["id"] for role in roles.json() if role["name"] == "viewer")
+                for team_id in teams:
+                    response = await http.post(f"/teams/{team_id}/members", json={"email": email, "role": "member"})
+                    assert response.status_code in (200, 201), response.text
+                    response = await http.post(f"/rbac/users/{email}/roles", json={"role_id": viewer_id, "scope": "team", "scope_id": team_id})
+                    if response.status_code in (400, 409):
+                        assigned = await http.get(f"/rbac/users/{email}/roles")
+                        assert assigned.status_code == 200, assigned.text
+                        assert any(role["role_id"] == viewer_id and role["scope_id"] == team_id for role in assigned.json()), response.text
+                    else:
+                        assert response.status_code in (200, 201), response.text
+                    assigned_roles.append((team_id, viewer_id))
+                token = make_test_jwt(email, teams=[teams[0]], secret=JWT_SECRET)
+                wrong_team = make_test_jwt(email, teams=[teams[1]], secret=JWT_SECRET)
+                public_only = make_test_jwt(email, teams=[], secret=JWT_SECRET)
+                other_admin = make_test_jwt(f"admin-{email}", is_admin=True, teams=None, secret=JWT_SECRET)
+                response = await http.put(f"/resources/{resource_id}", json={"visibility": "team", "team_id": teams[0]})
+                assert response.status_code == 200, response.text
+                for url in (BASE_URL, fixture["server"]):
+                    async with _mcp_session(url, token) as session:
+                        await _assert_template_read(session, peers[0], peers[1], f"member-{uuid.uuid4().hex[:8]}")
+                    await _assert_template_hidden(url, wrong_team, peers[0], peers[1], "wrong-team")
+                    await _assert_template_hidden(url, public_only, peers[0], peers[1], "public-only")
+                response = await http.put(f"/resources/{resource_id}", json={"visibility": "private"})
+                assert response.status_code == 200, response.text
+                for url in (BASE_URL, fixture["server"]):
+                    await _assert_template_hidden(url, token, peers[0], peers[1], "private-other-user")
+                    await _assert_template_hidden(url, other_admin, peers[0], peers[1], "private-other-admin")
+                    async with _mcp_session(url, admin_token) as session:
+                        await _assert_template_read(session, peers[0], peers[1], f"owner-{uuid.uuid4().hex[:8]}")
+                response = await http.post(f"/resources/{resource_id}/state", params={"activate": "false"})
+                assert response.status_code == 200, response.text
+                for url in (BASE_URL, fixture["server"]):
+                    await _assert_template_hidden(url, admin_token, peers[0], peers[1], "disabled")
+                async with _mcp_session(fixture["empty_server"], admin_token) as session:
+                    assert await _template_catalog(session, templates=True) == []
+                    before = len(peers[1].reads)
+                    with pytest.raises(McpError, match="(?i)not found"):
+                        await session.read_resource(peers[1].expanded("wrong-server"))
+                    assert len(peers[1].reads) == before
+            finally:
+                response = await http.post(f"/resources/{resource_id}/state", params={"activate": "true"})
+                assert response.status_code == 200, response.text
+                for team_id, role_id in assigned_roles:
+                    await http.delete(f"/rbac/users/{email}/roles/{role_id}", params={"scope": "team", "scope_id": team_id})
+                for team_id in teams:
+                    await http.delete(f"/teams/{team_id}/members/{email}")
+                for user_email in created_users:
+                    response = await http.delete(f"/auth/email/admin/users/{user_email}")
+                    assert response.status_code in (200, 204), response.text
+                for team_id in teams:
+                    response = await http.delete(f"/teams/{team_id}")
+                    assert response.status_code in (200, 204), response.text
+
+
+@pytest.mark.asyncio
+async def test_resource_template_permission_denials(admin_token: str) -> None:
+    """Require authentication and resources.read before template actions.
+
+    Args:
+        admin_token: Administrative token for fixture setup.
+    """
+    restricted = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, scopes={"permissions": ["servers.use", "tools.read"]}, secret=JWT_SECRET)
+    with template_upstreams() as peers:
+        async with _federated_templates(peers, admin_token) as fixture:
+            for url in (BASE_URL, fixture["server"]):
+                async with _mcp_session(url, restricted) as session:
+                    for method, params in (("resources/templates/list", {}), ("resources/read", {"uri": peers[0].expanded("forbidden")})):
+                        try:
+                            if method == "resources/templates/list":
+                                await session.list_resource_templates()
+                            else:
+                                await session.read_resource(params["uri"])
+                        except McpError as exc:
+                            assert "access denied" in str(exc).lower() or "permission" in str(exc).lower(), exc
+                        else:
+                            pytest.fail(f"Token without resources.read could call {method}")
+                async with httpx.AsyncClient() as http:
+                    response = await http.post(_mcp_client_url(url), json=build_initialize(), headers={"Accept": "application/json, text/event-stream"})
+                    assert response.status_code == 401, "This denial case requires MCP_REQUIRE_AUTH=true on the gateway"
+            assert all(not peer.reads for peer in peers), "Denied calls reached an upstream"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["list-extension", "list-missing-template", "list-invalid-template", "no-mime", "binary"])
+async def test_resource_template_edge_probe(admin_token: str, variant: str, record_property: Any) -> None:
+    """Record nonstandard discovery and MIME limitations without asserting support.
+
+    Args:
+        admin_token: Administrative setup token.
+        variant: Nonstandard advertisement or unsupported MIME variant.
+        record_property: Pytest evidence recorder for the JUnit report.
+    """
+    with template_upstreams(variant) as peers:
+        upstream = []
+        for peer in peers:
+            async with _mcp_session(peer.local_url) as session:
+                upstream.append(
+                    {
+                        "resources": [item.model_dump(mode="json", by_alias=True) for item in await _template_catalog(session, templates=False)],
+                        "templates": [item.model_dump(mode="json", by_alias=True) for item in await _template_catalog(session, templates=True)],
+                        "read": (await session.read_resource(peer.expanded("baseline"))).model_dump(mode="json", by_alias=True),
+                    }
+                )
+        async with _federated_templates(peers, admin_token, standard=not variant.startswith("list-")) as fixture:
+            async with _mcp_session(fixture["server"], admin_token) as session:
+                templates = {item.uriTemplate for item in await _template_catalog(session, templates=True)}
+                concrete = {unquote(str(item.uri)) for item in await _template_catalog(session, templates=False)}
+                evidence: dict[str, Any] = {"variant": variant, "upstream": upstream, "templates": sorted(templates), "concrete": sorted(concrete), "reads": []}
+                evidence["classification"] = {peer.template: "concrete" if peer.template in concrete else "template" if peer.template in templates else "rejected" for peer in peers}
+                for peer in peers:
+                    before = len(peer.reads)
+                    uri = peer.expanded("edge-probe")
+                    observation: dict[str, Any] = {"uri": uri}
+                    try:
+                        result = await session.read_resource(uri)
+                    except McpError as exc:
+                        observation["error"] = exc.error.model_dump(mode="json")
+                    else:
+                        content = result.contents[0]
+                        actual = content.text if hasattr(content, "text") else base64.b64decode(content.blob).decode()
+                        assert actual == peer.content("edge-probe"), result
+                        assert str(content.uri) == uri, result
+                        assert peer.reads[before:] == [uri], peer.reads
+                        observation["result"] = result.model_dump(mode="json")
+                    observation["upstream_requests"] = peer.reads[before:]
+                    evidence["reads"].append(observation)
+                record_property("resource_template_probe", json.dumps(evidence))
+                print(json.dumps(evidence))
 
 
 async def _async_mcp_prompts_list(access_token: str, server_url: str = BASE_URL) -> list:
@@ -2656,7 +2991,9 @@ class TestVirtualServerLifecycle:
                     json=build_initialize(1),
                 )
 
-            assert probe.status_code == 403, f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
+            assert (
+                probe.status_code == 403
+            ), f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
         finally:
             _cleanup_user(admin_api, user)
 
