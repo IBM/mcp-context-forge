@@ -70,6 +70,8 @@ def inspect_token(token: str) -> dict[str, Any]:
         "audience": audience,
         "tenant_id": claims.get("tid"),
         "oid": claims.get("oid"),
+        "sub": claims.get("sub"),
+        "idtyp": claims.get("idtyp"),
         "uti": claims.get("uti"),
         "groups": [str(group) for group in groups] if isinstance(groups, list) else [],
         "has_overage_marker": bool(claims.get("hasgroups") or claims.get("_claim_names")),
@@ -189,7 +191,12 @@ def _ensure_group_claims(headers: dict[str, str], client_id: str) -> None:
 
 
 def _cleanup_entra_test_identity(cleanup: dict) -> None:
-    """Delete the provisioned user and groups. Best effort; errors are logged only."""
+    """Delete provisioned users, groups, service principals, and applications.
+
+    Best effort; errors are logged only. Fresh service principals and
+    applications can 404 on delete until directory replication lands, so
+    those deletions retry.
+    """
     if not cleanup:
         return
     group_ids = list(cleanup.get("group_ids") or [])
@@ -202,8 +209,20 @@ def _cleanup_entra_test_identity(cleanup: dict) -> None:
             httpx.delete(f"https://graph.microsoft.com/v1.0/users/{cleanup['user_id']}", headers=headers, timeout=30)
         for group_id in group_ids:
             httpx.delete(f"https://graph.microsoft.com/v1.0/groups/{group_id}", headers=headers, timeout=30)
+
+        def _delete_with_retry(kind: str, object_id: str) -> None:
+            for attempt in range(3):
+                response = httpx.delete(f"https://graph.microsoft.com/v1.0/{kind}/{object_id}", headers=headers, timeout=30)
+                if response.status_code in (204, 404):
+                    return
+                time.sleep(10)
+
+        if cleanup.get("sp_id"):
+            _delete_with_retry("servicePrincipals", cleanup["sp_id"])
+        if cleanup.get("app_object_id"):
+            _delete_with_retry("applications", cleanup["app_object_id"])
     except Exception as exc:  # noqa: BLE001 — cleanup failures never fail the session
-        print(f"WARNING: Entra cleanup incomplete ({exc}); delete these objects manually: {cleanup.get('user_id')} {group_ids}")
+        print(f"WARNING: Entra cleanup incomplete ({exc}); delete these objects manually: {cleanup.get('user_id')} {cleanup.get('sp_id')} {cleanup.get('app_object_id')} {group_ids}")
 
 
 def _resolve_default_domain(headers: dict[str, str]) -> str:
@@ -434,6 +453,172 @@ def provision_entra_overage_identity() -> tuple[str, dict]:
     except _ProvisioningError:
         _cleanup_entra_test_identity(cleanup)
         raise
+
+
+def load_entra_app_only_token() -> Optional[str]:
+    """Load a pre-acquired app-only token from ENTRA_APPONLY_TOKEN_FILE."""
+    path = os.getenv("ENTRA_APPONLY_TOKEN_FILE")
+    if not path or not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as handle:
+        return handle.read().strip()
+
+
+def acquire_entra_app_only_token(client_id: str, client_secret: str, tenant_id: str) -> str:
+    """Acquire an app-only (client-credentials) token for the app's own audience.
+
+    The token carries idtyp=app only when the app registration requests
+    v2.0 access tokens (api.requestedAccessTokenVersion=2) and lists
+    idtyp as an optional claim. Raises ``_ProvisioningError`` on failure;
+    the response body is never logged.
+    """
+    response = None
+    for _attempt in range(6):
+        response = httpx.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": f"{client_id}/.default",
+            },
+            timeout=30,
+        )
+        if response.status_code == 200:
+            return response.json()["access_token"]
+        time.sleep(10)  # a fresh client secret can 401 at the token endpoint until it propagates
+    raise _ProvisioningError(f"app-only token acquisition failed with HTTP {response.status_code if response else 'n/a'}; the body carried no logged secrets")
+
+
+def validate_for_app_only(info: dict[str, Any]) -> list[str]:
+    """Return unmet requirements for the app-only use case."""
+    problems: list[str] = []
+    if info.get("idtyp") != "app":
+        problems.append(
+            "idtyp claim is not 'app': v1 access tokens omit idtyp. Register the app with "
+            "api.requestedAccessTokenVersion=2 (Microsoft Graph manifest) and the idtyp "
+            "optional claim, or point ENTRA_APPONLY_TOKEN_FILE at a v2 app-only token"
+        )
+    if info.get("groups"):
+        problems.append("groups claim is present; expected none on an app-only token")
+    if info.get("has_overage_marker"):
+        problems.append("token carries a group-overage marker (unexpected for app-only)")
+    if not isinstance(info.get("exp"), int) or info["exp"] <= int(time.time()):
+        problems.append("token is expired")
+    if not info.get("oid"):
+        problems.append("token lacks oid (the Graph service-principal lookup key)")
+    if not info.get("uti"):
+        problems.append("token lacks uti (JWT_TRUST_REVOCATION_CLAIM target)")
+    return problems
+
+
+def provision_entra_app_only_identity() -> tuple[str, dict[str, str]]:
+    """Provision a throwaway v2 app and a group holding its service principal.
+
+    Creates an application with api.requestedAccessTokenVersion=2 and the
+    idtyp optional claim (Microsoft Graph manifest format), its service
+    principal, a client secret, and one security group holding the service
+    principal. The client-credentials token for the app's own audience
+    then carries idtyp=app, no groups claim, and a v2 issuer. Raises
+    ``_ProvisioningError`` when a step fails; partial state is cleaned up
+    before re-raising. The caller MUST pass the cleanup dict to
+    ``_cleanup_entra_test_identity`` afterwards.
+    """
+    client_id, client_secret, tenant_id, _token_url = _azure_credentials()
+    cleanup: dict[str, str] = {"client_id": client_id, "client_secret": client_secret, "tenant_id": tenant_id}
+    try:
+        unique = f"cf-live-e2e-apponly-{int(time.time())}"
+        app = httpx.post(
+            "https://graph.microsoft.com/v1.0/applications",
+            headers={"Authorization": f"Bearer {_azure_graph_token(client_id, client_secret, tenant_id)}", "Content-Type": "application/json"},
+            json={"displayName": f"ContextForge-LiveE2E-AppOnly-{int(time.time())}", "api": {"requestedAccessTokenVersion": 2}, "optionalClaims": {"accessToken": [{"name": "idtyp"}]}},
+            timeout=30,
+        )
+        if app.status_code not in (200, 201):
+            raise _ProvisioningError(f"throwaway application creation failed with HTTP {app.status_code}; the Graph application permissions may be missing")
+        app_id = app.json()["appId"]
+        cleanup["app_object_id"] = app.json()["id"]
+        sp = None
+        for _attempt in range(6):
+            sp = httpx.post("https://graph.microsoft.com/v1.0/servicePrincipals", headers={"Authorization": f"Bearer {_azure_graph_token(client_id, client_secret, tenant_id)}", "Content-Type": "application/json"}, json={"appId": app_id}, timeout=30)
+            if sp.status_code in (200, 201):
+                break
+            time.sleep(10)  # a fresh application can 400 on service-principal creation until directory replication lands
+        if sp is None or sp.status_code not in (200, 201):
+            raise _ProvisioningError(f"service-principal creation failed with HTTP {sp.status_code if sp else 'n/a'}")
+        sp_id = sp.json()["id"]
+        cleanup["sp_id"] = sp_id
+        password = httpx.post(f"https://graph.microsoft.com/v1.0/applications/{cleanup['app_object_id']}/addPassword", headers={"Authorization": f"Bearer {_azure_graph_token(client_id, client_secret, tenant_id)}", "Content-Type": "application/json"}, json={"passwordCredential": {"displayName": "e2e"}}, timeout=30)
+        if password.status_code not in (200, 201):
+            raise _ProvisioningError(f"client-secret creation failed with HTTP {password.status_code}")
+        app_secret = password.json()["secretText"]
+        token = acquire_entra_app_only_token(app_id, app_secret, tenant_id)
+        problems = validate_for_app_only(inspect_token(token))
+        if problems:
+            raise _ProvisioningError(f"the app-only token did not satisfy trust-mode prerequisites: {'; '.join(problems)}")
+        headers = {"Authorization": f"Bearer {_azure_graph_token(client_id, client_secret, tenant_id)}", "Content-Type": "application/json"}
+        group = httpx.post(
+            "https://graph.microsoft.com/v1.0/groups",
+            headers=headers,
+            json={"displayName": f"ContextForge-LiveE2E-AppOnly-Group-{int(time.time())}", "mailNickname": unique, "mailEnabled": False, "securityEnabled": True},
+            timeout=30,
+        )
+        if group.status_code not in (200, 201):
+            raise _ProvisioningError(f"group creation failed with HTTP {group.status_code}; the Graph application permissions may be missing")
+        cleanup["group_id"] = group.json()["id"]
+        member = None
+        for _attempt in range(3):
+            member = httpx.post(
+                f"https://graph.microsoft.com/v1.0/groups/{cleanup['group_id']}/members/$ref",
+                headers=headers,
+                json={"@odata.id": f"https://graph.microsoft.com/v1.0/directoryObjects/{sp_id}"},
+                timeout=30,
+            )
+            if member.status_code in (200, 201, 204) or member.status_code != 404:
+                break
+            time.sleep(10)  # a fresh group can 404 on members/$ref until directory replication lands
+        if member is None or member.status_code not in (200, 201, 204):
+            raise _ProvisioningError(f"service-principal membership failed with HTTP {member.status_code if member else 'n/a'}: {member.text[:200] if member else ''} (group={cleanup['group_id']} sp={sp_id})")
+        for _attempt in range(9):
+            visible = httpx.post(
+                f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_id}/getMemberObjects",
+                headers=headers,
+                json={"securityEnabledOnly": False},
+                timeout=30,
+            )
+            if visible.status_code == 200 and cleanup["group_id"] in visible.json().get("value", []):
+                break
+            time.sleep(10)  # getMemberObjects can lag the members/$ref write; the gateway reads it at request time
+
+        return token, cleanup
+    except _ProvisioningError:
+        _cleanup_entra_test_identity(cleanup)
+        raise
+
+
+def resolve_entra_sp_first_group(token: str) -> Optional[str]:
+    """Return the service principal's first current group ID via Graph.
+
+    Operator mode for the app-only use case: the token's own SP
+    membership supplies the group to map. Returns None when Graph cannot
+    resolve the SP or it holds no membership.
+    """
+    try:
+        client_id, client_secret, tenant_id, _token_url = _azure_credentials()
+    except _ProvisioningError:
+        return None
+    try:
+        graph_token = _azure_graph_token(client_id, client_secret, tenant_id)
+        headers = {"Authorization": f"Bearer {graph_token}"}
+        oid = inspect_token(token).get("oid")
+        if not oid:
+            return None
+        member = httpx.get(f"https://graph.microsoft.com/v1.0/servicePrincipals/{oid}/memberOf", headers=headers, params={"$select": "id"}, timeout=30)
+        if member.status_code != 200 or not member.json().get("value"):
+            return None
+        return member.json()["value"][0]["id"]
+    except (httpx.HTTPError, _ProvisioningError):
+        return None
 
 
 @pytest.fixture(scope="session")
