@@ -25,6 +25,25 @@ PUBLIC_TEST_IP = "93.184.216.34"
 
 
 @pytest.fixture(autouse=True)
+def clear_as_metadata_cache():
+    """Clear the module-global AS metadata cache around every test.
+
+    ``_metadata_cache`` in ``dcr_service`` lives for the process, so a cached
+    document from another test module leaks into these tests and makes them
+    order-dependent.
+
+    Yields:
+        None: The cache is empty for the test and cleared again afterwards.
+    """
+    # First-Party
+    from mcpgateway.services.dcr_service import _metadata_cache
+
+    _metadata_cache.clear()
+    yield
+    _metadata_cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def stub_dns_for_pinning(monkeypatch):
     """Resolve every hostname in this module to one public address.
 
@@ -96,11 +115,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_tries_rfc8414_first(self):
         """Test that RFC 8414 path is tried first."""
-        # Clear cache to ensure test isolation
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -126,11 +140,6 @@ class TestDiscoverASMetadata:
         This tests the fix for MCP Python SDK issue #1919 where Pydantic's AnyHttpUrl
         adds trailing slashes to bare hostnames, causing issuer mismatch errors.
         """
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -159,10 +168,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_cache_uses_normalized_issuer(self):
         """Test that cache lookup uses normalized issuer to avoid cache misses."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -188,11 +193,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_falls_back_to_oidc(self):
         """Test fallback to OIDC discovery if RFC 8414 fails."""
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -227,11 +227,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_not_found(self):
         """Test when metadata endpoints return 404."""
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -249,11 +244,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_caches_result(self):
         """Test that metadata is cached to avoid repeated requests."""
-        # Clear cache first
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -280,11 +270,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_validates_issuer(self):
         """Test that discovered metadata validates issuer matches."""
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -311,11 +296,6 @@ class TestDiscoverASMetadata:
         Per RFC 8414 Section 3.1, the well-known suffix MUST be inserted between
         the host and the path.
         """
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -340,10 +320,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_rfc8414_multi_level_path(self):
         """Test RFC 8414 URL construction for issuers with multi-level paths."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
         issuer = "https://as.example.com/tenant1/realm1"
@@ -369,10 +345,6 @@ class TestDiscoverASMetadata:
         urlparse() strips ;params from the last path segment into a separate
         attribute, losing data. urlsplit() preserves the full path.
         """
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
         issuer = "https://as.example.com/tenant;v=1"
@@ -399,10 +371,6 @@ class TestDiscoverASMetadata:
         appends to the issuer. Verify both URLs are constructed correctly when the
         RFC 8414 attempt fails and falls back to OIDC.
         """
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
         issuer = "https://as.example.com/tenant1"
@@ -439,10 +407,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_does_not_follow_redirects_rfc8414(self):
         """RFC 8414 discovery must not follow redirects (SSRF protection)."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -464,10 +428,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_does_not_follow_redirects_oidc(self):
         """OIDC fallback discovery must not follow redirects (SSRF protection)."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -1583,20 +1543,12 @@ class TestRegistrationClientUriSsrfDenyPath:
         assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 class TestDiscoverAsMetadataSsrfDenyPath:
     """Test that metadata discovery refuses an issuer host in a blocked range."""
 
     @pytest.mark.asyncio
     async def test_discovery_refuses_issuer_resolving_to_link_local(self, monkeypatch):
         """An issuer that resolves into a blocked range sends no request."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
@@ -1617,10 +1569,6 @@ class TestDiscoverAsMetadataSsrfDenyPath:
     @pytest.mark.asyncio
     async def test_discovery_gets_pinned_address_with_original_authority(self):
         """Discovery dials the resolved address and keeps the original authority."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
         dcr_service = DcrService()
 
         mock_response = MagicMock()
@@ -1742,3 +1690,7 @@ class TestRegisterClientSsrfDenyPath:
         assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register"
         assert call_kwargs["headers"]["Host"] == "as.example.com"
         assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

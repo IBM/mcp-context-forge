@@ -172,7 +172,10 @@ class DcrService:
                 if 300 <= response.status_code < 400:
                     raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
                 if response.status_code == 200:
-                    metadata = response.json()
+                    try:
+                        metadata = response.json()
+                    except ValueError:
+                        raise DcrError(f"AS metadata discovery returned a non-JSON body for {normalized_issuer} (status: {response.status_code})")
 
                     # Validate issuer matches (normalize metadata issuer for comparison)
                     metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
@@ -204,7 +207,10 @@ class DcrService:
                 if 300 <= response.status_code < 400:
                     raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
                 if response.status_code == 200:
-                    metadata = response.json()
+                    try:
+                        metadata = response.json()
+                    except ValueError:
+                        raise DcrError(f"AS metadata discovery returned a non-JSON body for {normalized_issuer} (status: {response.status_code})")
 
                     # Validate issuer matches (normalize metadata issuer for comparison)
                     metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
@@ -294,7 +300,10 @@ class DcrService:
                 )
                 # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
                 if response.status_code in (200, 201):
-                    registration_response = response.json()
+                    try:
+                        registration_response = response.json()
+                    except ValueError:
+                        raise DcrError(f"Client registration succeeded but the response body is not valid JSON (status: {response.status_code})")
                 else:
                     try:
                         error_data = response.json()
@@ -438,7 +447,10 @@ class DcrService:
                     timeout=self._get_timeout(),
                 )
                 if response.status_code == 200:
-                    updated_response = response.json()
+                    try:
+                        updated_response = response.json()
+                    except ValueError:
+                        raise DcrError(f"Client registration update succeeded but the response body is not valid JSON (status: {response.status_code})")
 
                     # Update encrypted secret if changed
                     if "client_secret" in updated_response:
@@ -450,7 +462,10 @@ class DcrService:
                     logger.info("Successfully updated client registration for %s", client_record.client_id)
                     return client_record
 
-                error_data = response.json()
+                try:
+                    error_data = response.json()
+                except ValueError:
+                    raise DcrError(f"Failed to update client: upstream returned status {response.status_code} with a non-JSON body")
                 raise DcrError(f"Failed to update client: {error_data}")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to update client registration: {e}")

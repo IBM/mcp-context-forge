@@ -58,6 +58,10 @@ def stub_dns_for_pinning(monkeypatch):
     Connection pinning resolves DNS for real. The test hostnames do not exist,
     so without this stub every pinned request fails to resolve.
 
+    This patches the global ``socket`` module, because ``validators.py`` uses a
+    plain ``import socket``. Every consumer of ``getaddrinfo`` in the process is
+    redirected while a test runs.
+
     Args:
         monkeypatch: Pytest monkeypatch fixture.
     """
