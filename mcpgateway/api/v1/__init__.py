@@ -225,6 +225,15 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
         try:
             # First-Party
+            from mcpgateway.routers.users import users_router  # pylint: disable=import-outside-toplevel
+
+            target_router.include_router(users_router, prefix="/users", tags=["Users"])
+            logger.info("User-scoped router included - Users enabled with email auth")
+        except ImportError as e:
+            logger.error(f"User-scoped router not available: {e}")
+
+        try:
+            # First-Party
             from mcpgateway.routers.tokens import router as tokens_router  # pylint: disable=import-outside-toplevel
 
             target_router.include_router(tokens_router, tags=["JWT Token Catalog"])

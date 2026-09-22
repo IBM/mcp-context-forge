@@ -367,6 +367,9 @@ class TestBuildV1RouterGroupD:
         teams_mod = ModuleType("_mock_teams")
         teams_mod.teams_router = _sentinel_router("/sentinel-teams")
 
+        users_mod = ModuleType("_mock_users")
+        users_mod.users_router = _sentinel_router("/sentinel-users")
+
         tokens_mod = ModuleType("_mock_tokens")
         tokens_mod.router = _sentinel_router("/sentinel-tokens")
 
@@ -378,6 +381,7 @@ class TestBuildV1RouterGroupD:
             "mcpgateway.routers.email_auth": email_auth_mod,
             "mcpgateway.routers.sso": sso_mod,
             "mcpgateway.routers.teams": teams_mod,
+            "mcpgateway.routers.users": users_mod,
             "mcpgateway.routers.tokens": tokens_mod,
             "mcpgateway.routers.rbac": rbac_mod,
         }
@@ -401,6 +405,12 @@ class TestBuildV1RouterGroupD:
         with patch.dict(sys.modules, self._auth_modules()):
             v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/teams/sentinel-teams" in _route_paths(v1)
+
+    def test_users_router_included_when_email_auth_enabled(self):
+        settings = _settings(email_auth_enabled=True)
+        with patch.dict(sys.modules, self._auth_modules()):
+            v1 = build_v1_router(settings, **_required_kwargs())
+        assert "/v1/users/sentinel-users" in _route_paths(v1)
 
     def test_tokens_router_included_when_email_auth_enabled(self):
         settings = _settings(email_auth_enabled=True)
