@@ -10989,3 +10989,346 @@ class TestInvokeToolLookupLogic:
             # Even though user_email matches owner, public-only token should deny access
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool_direct — decode_auth exception silenced (lines 3920-3921)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolDirectDecodeAuthException:
+    """Covers the except-Exception guard that silences decode_auth failures.
+
+    When auth_type is ``query_param`` and a non-empty encrypted value cannot be
+    decrypted, ``decode_auth`` raises.  The guard at line 3920 must catch the
+    exception, log a debug message, and continue so the outer call proceeds
+    (rather than surfacing a raw crypto error to the caller).
+    """
+
+    @staticmethod
+    def _make_direct_session(gateway):
+        """Return a fresh_db_session replacement that serves gateway + no tool row."""
+
+        @contextmanager
+        def _ctx():
+            mock_db = MagicMock()
+            gw_result = MagicMock()
+            gw_result.scalar_one_or_none.return_value = gateway
+            tool_result = MagicMock()
+            tool_result.scalar_one_or_none.return_value = None
+            mock_db.execute.side_effect = [gw_result, tool_result]
+            yield mock_db
+
+        return _ctx
+
+    @pytest.mark.asyncio
+    async def test_decode_auth_exception_is_silenced_and_call_proceeds(self, tool_service):
+        """decode_auth failure must be swallowed and the invocation must still complete."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        gw = MagicMock()
+        gw.id = "gw-direct-decode-err"
+        gw.name = "direct_decode_err_gw"
+        gw.slug = "direct-decode-err-gw"
+        gw.url = "http://remote-mcp:8080/mcp"
+        gw.gateway_mode = "direct_proxy"
+        gw.auth_type = "query_param"
+        # Non-empty value so the decode_auth branch is entered.
+        gw.auth_query_params = {"api_key": "corrupted_encrypted_value"}  # pragma: allowlist secret
+        gw.passthrough_headers = None
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.owner_email = None
+
+        expected_result = MagicMock()
+        expected_result.content = [MagicMock(text="ok")]
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            read_stream = MagicMock()
+            write_stream = MagicMock()
+            get_session_id = AsyncMock()
+            yield read_stream, write_stream, get_session_id
+
+        @asynccontextmanager
+        async def mock_client_session(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_direct_session(gw)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            # decode_auth raises so the except block at line 3920 fires.
+            patch("mcpgateway.services.tool_service.decode_auth", side_effect=ValueError("bad cipher")),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", mock_client_session),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.gateway_tool_name_separator = "--"
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-decode-err",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # The call must succeed despite the decode_auth failure.
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# connect_to_sse_server — process-control signals propagate (line 6564)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpSseProcessSignalPropagates:
+    """SystemExit/GeneratorExit/KeyboardInterrupt must propagate unchanged.
+
+    The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` guard
+    at line 6564 prevents these signals from being swallowed by the outer
+    ``except BaseException`` handler, which would convert them into a
+    ``CallToolResult`` error response.
+    """
+
+    @pytest.mark.asyncio
+    async def test_system_exit_propagates_from_sse_transport(self, tool_service):
+        """SystemExit must escape the inner guard at line 6564 and reach the outer handler.
+
+        The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` block inside
+        ``connect_to_sse_server`` re-raises the signal before the ``except BaseException``
+        handler can swallow it as a tool error.  The outer ``invoke_tool`` handler wraps
+        it as a ``ToolInvocationError``; verifying that wrap confirms line 6564 fired.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        # SystemExit(42) — str(SystemExit(42)) == "42", so the outer handler sets
+        # error_message="42" and raises ToolInvocationError("Tool invocation failed: 42").
+        mock_session.call_tool = AsyncMock(side_effect=SystemExit(42))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # The signal escapes connect_to_sse_server (line 6564 fired) and is then
+            # wrapped by the outer invoke_tool BaseException handler into a ToolInvocationError.
+            with pytest.raises(ToolInvocationError, match="42"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_keyboard_interrupt_propagates_from_sse_transport(self, tool_service):
+        """KeyboardInterrupt must escape the inner guard at line 6564 and reach the outer handler."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=KeyboardInterrupt())
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # KeyboardInterrupt escapes connect_to_sse_server (line 6564 fired) and is then
+            # wrapped by the outer invoke_tool BaseException handler into a ToolInvocationError.
+            with pytest.raises(ToolInvocationError):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+
+# ---------------------------------------------------------------------------
+# connect_to_streamablehttp_server — process-control signals propagate (line 6767)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
+    """SystemExit/GeneratorExit/KeyboardInterrupt must propagate unchanged.
+
+    The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` guard
+    at line 6767 prevents these signals from being swallowed by the outer
+    ``except BaseException`` handler inside ``connect_to_streamablehttp_server``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_system_exit_propagates_from_streamablehttp_transport(self, tool_service):
+        """SystemExit must escape the inner guard at line 6767 and reach the outer handler.
+
+        The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` block inside
+        ``connect_to_streamablehttp_server`` re-raises the signal before the
+        ``except BaseException`` handler can swallow it as a tool error.  The outer
+        ``invoke_tool`` handler wraps it as a ``ToolInvocationError``.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=SystemExit(42))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # The signal escapes connect_to_streamablehttp_server (line 6767 fired) and is
+            # then wrapped by the outer invoke_tool BaseException handler.
+            with pytest.raises(ToolInvocationError, match="42"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_keyboard_interrupt_propagates_from_streamablehttp_transport(self, tool_service):
+        """KeyboardInterrupt must escape the inner guard at line 6767 and reach the outer handler."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=KeyboardInterrupt())
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # KeyboardInterrupt escapes connect_to_streamablehttp_server (line 6767 fired)
+            # and is then wrapped by the outer invoke_tool BaseException handler.
+            with pytest.raises(ToolInvocationError):
+                await tool_service.invoke_tool(db, "test_tool", {})
