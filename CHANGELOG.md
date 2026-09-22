@@ -64,6 +64,14 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 - **`invoke_tool` now enforces input-schema validation** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Live tool invocation (`tools/call`) now validates `arguments` against the tool's `input_schema` before dispatch, raising `ToolInvocationError` on a mismatch, via the same `_validate_tool_input_arguments` check `POST /tools/preview/{name}` uses (#5629). Previously `invoke_tool` never checked `arguments` against `input_schema` at all, so a tool whose callers relied on that gap will now reject calls it previously accepted. To find affected callers before enabling, preview the same arguments against `POST /tools/preview/{name}`: a `validated: false` response with an `invalid_arguments` warning is exactly what live invocation will now reject. Remediate by correcting the caller's arguments or by relaxing the tool's published `input_schema` to match what it actually accepts.
 - **Tool execution failures return MCP-compliant errors** ([#6181](https://github.com/IBM/mcp-context-forge/pull/6181)) - A failed tool execution returns a protocol-conformant error result instead of the previous ad-hoc shape. Clients that parsed the old payload must read the MCP error fields.
 - **MCP Python SDK 2.x** ([#6868](https://github.com/IBM/mcp-context-forge/pull/6868)) - The gateway now requires `mcp>=2.0.0`, `mcp-types>=2.0.0`, and `cpex>=0.1.4`, the first CPEX release built for `mcp` 2.x. Python consumers that import the gateway next to `mcp` 1.x must upgrade. Protocol behaviour is unchanged by default: `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` both default to `legacy`, and `GATEWAY_MODERN_LISTENERS_ENABLED` defaults to `false`. Set them to `auto` and `true` to negotiate the 2026-07-28 revision.
+- **A tool's `outputSchema` is withheld when it carries a regex keyword** - The MCP SDK validates an advertised `outputSchema` outside the gateway's bounded path, so a schema with a `pattern` or `patternProperties` keyword is no longer advertised on the tool. This is a visible protocol change: such a tool now presents without an `outputSchema` to MCP clients.
+
+### Security
+
+- JSON Schema validation now runs in a killable worker process whenever the schema carries a
+  `pattern` or `patternProperties` keyword. A catastrophic regex in a tool or prompt schema
+  can no longer stall a gateway worker. Registration is unchanged: a schema carrying such a
+  pattern is still accepted, and an operator warning names it.
 
 ### Fixed
 
