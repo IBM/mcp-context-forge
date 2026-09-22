@@ -2016,7 +2016,7 @@ async def call_tool(
                 # Success path: return the list/tuple shape so the MCP SDK's
                 # server-side validator runs and enforces the tool's
                 # outputSchema against the structured payload.
-                if structured:
+                if structured is not None:
                     return (unstructured, structured)
                 return unstructured
         except RuntimeError:
@@ -2181,7 +2181,7 @@ async def call_tool(
             # Success path: return the list/tuple shape so the MCP SDK's
             # server-side validator runs and enforces the tool's
             # outputSchema against the structured payload.
-            if structured:
+            if structured is not None:
                 return (unstructured, structured)
             return unstructured
     except ToolInputRequired as e:
