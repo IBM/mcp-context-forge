@@ -2215,7 +2215,9 @@ describe("runToolTest - scalar parameter types", () => {
     form.appendChild(input);
     const { runToolTest } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolTest();
-    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Invalid JSON object format"));
+    expect(showErrorMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/Invalid JSON object for "config":|Value must be an object/)
+    );
     expect(result.querySelector(".text-red-600")).not.toBeNull();
     consoleSpy.mockRestore();
   });
@@ -3659,7 +3661,7 @@ describe("runToolTest - anyOf/oneOf object parameter handling", () => {
     form.appendChild(input);
     const { runToolTest } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolTest();
-    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Invalid JSON object format"));
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Invalid JSON object for "cfg":'));
     consoleSpy.mockRestore();
   });
 });
@@ -3781,7 +3783,7 @@ describe("runToolValidation - anyOf/oneOf object parameter handling", () => {
     form.appendChild(input);
     const { runToolValidation } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolValidation(0);
-    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Invalid JSON object for cfg:"));
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Invalid JSON object for "cfg":'));
     consoleSpy.mockRestore();
   });
 });
