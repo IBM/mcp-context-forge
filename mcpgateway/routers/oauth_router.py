@@ -1762,7 +1762,7 @@ async def get_gateway_oauth_token(
     return {
         "gateway_id": gateway_id,
         "access_token": access_token,
-        "token_type": "Bearer",
+        "token_type": "Bearer",  # nosec B105 - OAuth token_type constant, not a credential
         "expires_at": token_info.get("expires_at"),
         "scopes": token_info.get("scopes"),
     }
