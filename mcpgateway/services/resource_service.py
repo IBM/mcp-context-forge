@@ -1976,7 +1976,7 @@ class ResourceService(BaseService):
                                 # For Authorization Code flow, try to get stored tokens
                                 try:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
                                     access_token = None

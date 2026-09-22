@@ -16,8 +16,13 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Root
+from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.config import settings
+from mcpgateway.db import Resource
 from mcpgateway.schemas import GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
-from mcpgateway.services.export_service import ExportError, ExportService, ExportValidationError
+from mcpgateway.services.export_service import _exportable_resource_base, ExportError, ExportService, ExportValidationError
+from mcpgateway.services.import_service import ImportService
+from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.utils.services_auth import encode_auth
 
 
@@ -850,10 +855,6 @@ async def test_export_resources_with_data(export_service, mock_db):
 @pytest.mark.asyncio
 async def test_resource_namespacing_export_paths_and_import(export_service, mock_db, base, original, expected):
     """Both export paths select the same base and literal import ignores provenance."""
-    # First-Party
-    from mcpgateway.db import Resource
-    from mcpgateway.services.import_service import ImportService
-
     resource = Resource(
         id="namespaced",
         gateway_id="gateway",
@@ -870,9 +871,6 @@ async def test_resource_namespacing_export_paths_and_import(export_service, mock
         size=0,
     )
     # Use the actual response conversion: bulk export receives ResourceRead, not ORM rows.
-    # First-Party
-    from mcpgateway.services.resource_service import ResourceService
-
     response = ResourceService().convert_resource_to_read(resource, include_metrics=False)
     export_service._fetch_all_resources = AsyncMock(return_value=[response])
     mock_db.execute.return_value.scalars.return_value.all.return_value = [resource]
@@ -889,12 +887,6 @@ async def test_resource_namespacing_export_paths_and_import(export_service, mock
 
 def test_resource_namespacing_export_validation_policy(monkeypatch, caplog):
     """Local names stay verbatim; invalid federated candidates fall through."""
-    # First-Party
-    from mcpgateway.common.validators import SecurityValidator
-    from mcpgateway.config import settings
-    from mcpgateway.db import Resource
-    from mcpgateway.services.export_service import _exportable_resource_base
-
     monkeypatch.setattr(settings, "validation_max_name_length", 5)
     monkeypatch.setattr(SecurityValidator, "MAX_NAME_LENGTH", 5)
     local = Resource(id="local", name="My Report", uri="test://local")
