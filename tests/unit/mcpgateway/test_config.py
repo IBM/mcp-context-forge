@@ -106,7 +106,7 @@ def test_ui_base_url_treats_blank_string_as_unset():
     ("admin_api_enabled", "expected_password_route"),
     [
         (True, "legacy /admin routes"),
-        (False, "frontend /forgot-password and /reset-password/{token} routes"),
+        (False, "frontend /app/forgot-password and /app/reset-password/{token} routes"),
     ],
 )
 def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_enabled, expected_password_route):
@@ -117,7 +117,7 @@ def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_
 
     warnings = [record.getMessage() for record in caplog.records]
     assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
-    assert any("/accept-invitation/{token}" in message for message in warnings)
+    assert any("/app/accept-invitation/{token}" in message for message in warnings)
     assert any(expected_password_route in message for message in warnings)
 
 

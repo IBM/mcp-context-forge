@@ -35,7 +35,7 @@ def build_frontend_url(path: str, token: Optional[str] = None) -> str:
     """Build a trusted browser-facing URL for email notifications.
 
     Args:
-        path: Frontend route beginning with ``/``.
+        path: Frontend route beginning with ``/``, without the UI mount prefix.
         token: Optional secret token appended as one URL-encoded path segment.
 
     Returns:
@@ -54,9 +54,9 @@ def build_frontend_url(path: str, token: Optional[str] = None) -> str:
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "") or "").strip("/")
         base_url = f"{app_domain}/{root_path}" if root_path else app_domain
-        # Preserve bundled Admin UI password recovery only when those routes are mounted.
-        if path in {"/forgot-password", "/reset-password"} and settings.mcpgateway_admin_api_enabled:
-            path = f"/admin{path}"
+
+    use_admin = not configured_ui_base and path in {"/forgot-password", "/reset-password"} and settings.mcpgateway_admin_api_enabled
+    path = f"/admin{path}" if use_admin else f"/app{path}"
 
     url = f"{base_url}{path}"
     if token is not None:
