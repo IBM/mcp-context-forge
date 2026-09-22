@@ -12,9 +12,10 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 """
 
 # Standard
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
 # Third-Party
@@ -23,17 +24,33 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.utils.origin import is_same_origin, origin_from_url
 
 logger = logging.getLogger(__name__)
 
 # In-memory cache for AS metadata
 # Format: {issuer: {"metadata": dict, "cached_at": datetime}}
 _metadata_cache: Dict[str, Dict[str, Any]] = {}
+
+
+@dataclass(frozen=True)
+class _PinnedDcrTarget:
+    """An outbound DCR request target that is validated and pinned to one address.
+
+    Attributes:
+        url: Request URL whose host is the address resolved at validation time.
+        headers: Headers that restore the original authority.
+        extensions: httpx extensions that bind TLS verification to the original hostname.
+    """
+
+    url: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    extensions: Dict[str, str] = field(default_factory=dict)
 
 
 class DcrService:
@@ -58,6 +75,52 @@ class DcrService:
             Timeout in seconds for OAuth/DCR requests
         """
         return float(self.settings.oauth_request_timeout)
+
+    async def _prepare_pinned_request(self, url: Optional[str], issuer: Optional[str], field_name: str) -> _PinnedDcrTarget:
+        """Validate an outbound DCR URL and pin its connection to one address.
+
+        The authorization server controls its own metadata document, so a URL
+        read from that document is untrusted input. Two gates apply. The URL
+        must share the issuer origin, which the request schema already
+        validated. The URL must then pass the outbound URL policy, and the
+        connection dials the address resolved during that check. Pinning closes
+        the DNS rebinding window that GHSA-9hgc-g3w5-67cm describes.
+
+        Args:
+            url: URL read from the AS metadata, the registration response, or the issuer.
+            issuer: Normalized issuer URL for this authorization server.
+            field_name: Field name, used in error messages.
+
+        Returns:
+            _PinnedDcrTarget: The pinned URL with its authority headers and TLS extensions.
+
+        Raises:
+            DcrError: If the URL leaves the issuer origin or the URL policy blocks it.
+        """
+        if not url or not issuer or not is_same_origin(url, origin_from_url(issuer)):
+            raise DcrError(f"{field_name} must share the issuer origin")
+
+        try:
+            validated_target = await SecurityValidator.validate_url_for_connection_pinning(url, field_name)
+        except ValueError as validation_error:
+            raise DcrError(f"{field_name} blocked by URL policy") from validation_error
+
+        resolved_ip = validated_target.get("resolved_ip")
+        original_hostname = validated_target.get("hostname")
+        original_authority = validated_target.get("original_authority")
+        pinning_available = bool(resolved_ip and original_hostname and original_authority)
+
+        if self.settings.ssrf_protection_enabled and not pinning_available:
+            raise DcrError(f"{field_name} blocked by URL policy")
+
+        if not pinning_available:
+            return _PinnedDcrTarget(url=url)
+
+        return _PinnedDcrTarget(
+            url=pin_url_to_resolved_ip(url, resolved_ip),
+            headers={"Host": original_authority},
+            extensions={"sni_hostname": original_hostname},
+        )
 
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
         """Discover AS metadata via RFC 8414.

@@ -10,6 +10,9 @@ Tests will FAIL until implementation is complete.
 """
 
 # Standard
+from contextlib import contextmanager
+import socket
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -17,6 +20,46 @@ import pytest
 
 # First-Party
 from mcpgateway.services.dcr_service import DcrError, DcrService
+
+PUBLIC_TEST_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def stub_dns_for_pinning(monkeypatch):
+    """Resolve every hostname in this module to one public address.
+
+    Connection pinning resolves DNS for real. The test hostnames do not exist,
+    so without this stub every pinned request fails to resolve.
+
+    This patches the global ``socket`` module, because ``validators.py`` uses a
+    plain ``import socket``. Every consumer of ``getaddrinfo`` in the process is
+    redirected while a test runs.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    def _fake_getaddrinfo(_host, port, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_TEST_IP, port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _fake_getaddrinfo)
+
+
+@contextmanager
+def patch_isolated_client(mock_client):
+    """Patch the isolated HTTP client factory so it yields ``mock_client``.
+
+    Args:
+        mock_client: Mock standing in for ``httpx.AsyncClient``.
+
+    Yields:
+        None: The patch stays active for the duration of the block.
+    """
+    context_manager = MagicMock()
+    context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+    context_manager.__aexit__ = AsyncMock(return_value=False)
+    with patch("mcpgateway.services.dcr_service.get_isolated_http_client", return_value=context_manager):
+        yield
 
 
 class TestDiscoverASMetadata:
@@ -1277,6 +1320,148 @@ class TestDcrError:
             raise DcrError("Custom error message")
         except DcrError as e:
             assert str(e) == "Custom error message"
+
+
+class TestPreparePinnedRequest:
+    """Test the same-origin and connection-pinning gate for AS metadata URLs."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_cross_origin_endpoint(self):
+        """A metadata URL on another origin is refused."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError) as exc_info:
+            await dcr_service._prepare_pinned_request(
+                "http://169.254.169.254/latest/meta-data/",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+        assert "origin" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_scheme_downgrade_on_same_host(self):
+        """A metadata URL that drops TLS is a different origin and is refused."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError):
+            await dcr_service._prepare_pinned_request(
+                "http://as.example.com/register",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_issuer(self):
+        """An empty issuer is refused instead of raising TypeError."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError):
+            await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                "",
+                "DCR registration_endpoint",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_none_issuer(self):
+        """A None issuer is refused instead of raising TypeError."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError):
+            await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                None,
+                "DCR registration_endpoint",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_same_origin_host_resolving_to_link_local(self, monkeypatch):
+        """Same-origin does not exempt a host that resolves into a blocked range."""
+
+        def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _link_local_getaddrinfo)
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError) as exc_info:
+            await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+        assert "url policy" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_pins_same_origin_endpoint(self):
+        """A valid metadata URL is dialled at the resolved address."""
+        dcr_service = DcrService()
+
+        target = await dcr_service._prepare_pinned_request(
+            "https://as.example.com/register",
+            "https://as.example.com",
+            "DCR registration_endpoint",
+        )
+
+        assert target.url == f"https://{PUBLIC_TEST_IP}/register"
+        assert target.headers == {"Host": "as.example.com"}
+        assert target.extensions == {"sni_hostname": "as.example.com"}
+
+    @pytest.mark.asyncio
+    async def test_accepts_default_port_against_explicit_port(self):
+        """An explicit default port matches the issuer's implicit one."""
+        dcr_service = DcrService()
+
+        target = await dcr_service._prepare_pinned_request(
+            "https://as.example.com:443/register",
+            "https://as.example.com",
+            "DCR registration_endpoint",
+        )
+
+        assert target.url == f"https://{PUBLIC_TEST_IP}:443/register"
+
+    @pytest.mark.asyncio
+    async def test_preserves_port_and_path_when_pinning(self):
+        """Pinning replaces only the host, never the port, path, or query."""
+        dcr_service = DcrService()
+
+        target = await dcr_service._prepare_pinned_request(
+            "https://as.example.com:8443/oauth/register?v=2",
+            "https://as.example.com:8443",
+            "DCR registration_endpoint",
+        )
+
+        assert target.url == f"https://{PUBLIC_TEST_IP}:8443/oauth/register?v=2"
+        assert target.headers == {"Host": "as.example.com:8443"}
+
+    @pytest.mark.asyncio
+    async def test_passes_through_when_ssrf_protection_disabled(self, monkeypatch):
+        """With SSRF protection off and DNS failing, the URL is used unchanged."""
+
+        def _failing_getaddrinfo(*_args, **_kwargs):
+            raise socket.gaierror("stubbed resolution failure")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _failing_getaddrinfo)
+
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(ssrf_protection_enabled=False)
+
+        permissive = MagicMock()
+        permissive.ssrf_protection_enabled = False
+        permissive.gateway_test_dns_timeout = 5.0
+
+        with patch("mcpgateway.common.validators.settings", permissive):
+            target = await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+        assert target.url == "https://as.example.com/register"
+        assert target.headers == {}
+        assert target.extensions == {}
 
 
 if __name__ == "__main__":
