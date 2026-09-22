@@ -19,6 +19,7 @@ import orjson
 import pytest
 
 # First-Party
+from mcpgateway.services import openapi_service as openapi_service_module
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
     _OPENAPI_SPEC_CACHE_TTL,
@@ -284,9 +285,11 @@ _PATCH_VALIDATE = "mcpgateway.services.openapi_service.SecurityValidator.validat
 def clear_openapi_cache():
     """Keep cache state isolated between tests."""
     _openapi_spec_cache.clear()
+    openapi_service_module._openapi_spec_cache_bytes = 0
     _openapi_spec_inflight.clear()
     yield
     _openapi_spec_cache.clear()
+    openapi_service_module._openapi_spec_cache_bytes = 0
     _openapi_spec_inflight.clear()
 
 
@@ -344,8 +347,10 @@ class TestFetchOpenAPISpec:
             with patch(_PATCH_VALIDATE):
                 with patch("mcpgateway.services.openapi_service.monotonic", side_effect=lambda: clock[0]):
                     await fetch_openapi_spec("http://example.com/openapi.json")
+                    assert openapi_service_module._openapi_spec_cache_bytes > 0
                     clock[0] += _OPENAPI_SPEC_CACHE_TTL
                     await fetch_openapi_spec("http://example.com/openapi.json")
+                    assert openapi_service_module._openapi_spec_cache_bytes > 0
 
         assert mock_client.stream.call_count == 2
 
@@ -426,6 +431,7 @@ class TestFetchOpenAPISpec:
         assert first_url not in _openapi_spec_cache
         assert second_url in _openapi_spec_cache
         assert sum(entry[2] for entry in _openapi_spec_cache.values()) <= budget
+        assert openapi_service_module._openapi_spec_cache_bytes == second_size
 
     @pytest.mark.asyncio
     async def test_spec_larger_than_cache_budget_is_returned_but_not_cached(self):
@@ -440,6 +446,7 @@ class TestFetchOpenAPISpec:
 
         assert result == spec
         assert not _openapi_spec_cache
+        assert openapi_service_module._openapi_spec_cache_bytes == 0
 
     @pytest.mark.asyncio
     async def test_cache_entry_limit_remains_in_effect(self):

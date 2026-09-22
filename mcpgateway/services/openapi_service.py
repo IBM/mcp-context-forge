@@ -10,8 +10,7 @@ This module provides services for fetching and extracting schemas from OpenAPI s
 # Standard
 import asyncio
 import logging
-from collections.abc import Iterator
-from itertools import chain
+from collections import OrderedDict
 from sys import getsizeof
 from time import monotonic
 from typing import Any, Optional, Tuple
@@ -64,7 +63,8 @@ _OPENAPI_SPEC_CACHE_MAX_ENTRIES = 128
 _OPENAPI_SPEC_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _OPENAPI_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
 
-_openapi_spec_cache: dict[str, tuple[float, dict[str, Any], int]] = {}
+_openapi_spec_cache: OrderedDict[str, tuple[float, dict[str, Any], int]] = OrderedDict()
+_openapi_spec_cache_bytes = 0
 _openapi_spec_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 _openapi_spec_cache_lock = asyncio.Lock()
 
@@ -109,39 +109,43 @@ def _estimate_openapi_spec_cache_size(spec_url: str, spec: dict[str, Any], max_b
     if total > max_bytes:
         return total
 
-    pending: list[Iterator[Any]] = [iter((spec,))]
+    seen: set[int] = set()
+    pending: list[Any] = [spec]
     while pending:
-        try:
-            value = next(pending[-1])
-        except StopIteration:
-            pending.pop()
+        value = pending.pop()
+        value_id = id(value)
+        if value_id in seen:
             continue
+        seen.add(value_id)
         total += getsizeof(value)
         if total > max_bytes:
             return total
         if isinstance(value, dict):
-            pending.append(chain(value.keys(), value.values()))
-        elif isinstance(value, (list, tuple)):
-            pending.append(iter(value))
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            pending.extend(value)
 
     return total
 
 
 async def _fetch_and_cache_openapi_spec(spec_url: str, timeout: float) -> dict[str, Any]:
     """Fetch a specification and cache it only after a successful response."""
+    global _openapi_spec_cache_bytes
+
     spec = await _fetch_openapi_spec_uncached(spec_url, timeout)
     entry_size = _estimate_openapi_spec_cache_size(spec_url, spec, _OPENAPI_SPEC_CACHE_MAX_BYTES)
 
     async with _openapi_spec_cache_lock:
-        _openapi_spec_cache.pop(spec_url, None)
-        total_size = sum(entry[2] for entry in _openapi_spec_cache.values())
+        previous = _openapi_spec_cache.pop(spec_url, None)
+        if previous is not None:
+            _openapi_spec_cache_bytes -= previous[2]
         if entry_size <= _OPENAPI_SPEC_CACHE_MAX_BYTES:
             _openapi_spec_cache[spec_url] = (monotonic(), spec, entry_size)
-            total_size += entry_size
-        while len(_openapi_spec_cache) > _OPENAPI_SPEC_CACHE_MAX_ENTRIES or total_size > _OPENAPI_SPEC_CACHE_MAX_BYTES:
-            oldest_url = min(_openapi_spec_cache, key=lambda url: _openapi_spec_cache[url][0])
-            _, _, oldest_size = _openapi_spec_cache.pop(oldest_url)
-            total_size -= oldest_size
+            _openapi_spec_cache_bytes += entry_size
+        while len(_openapi_spec_cache) > _OPENAPI_SPEC_CACHE_MAX_ENTRIES or _openapi_spec_cache_bytes > _OPENAPI_SPEC_CACHE_MAX_BYTES:
+            _, (_, _, oldest_size) = _openapi_spec_cache.popitem(last=False)
+            _openapi_spec_cache_bytes -= oldest_size
 
     return spec
 
@@ -173,6 +177,8 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict[str, 
             response body is not valid JSON
         httpx.HTTPError: If the request fails
     """
+    global _openapi_spec_cache_bytes
+
     # SSRF Protection: validate every call, including cache hits.
     SecurityValidator.validate_url(spec_url, "OpenAPI spec URL")
 
@@ -182,7 +188,8 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict[str, 
             cached_at, spec, _ = cached
             if monotonic() - cached_at < _OPENAPI_SPEC_CACHE_TTL:
                 return spec
-            del _openapi_spec_cache[spec_url]
+            _, _, cached_size = _openapi_spec_cache.pop(spec_url)
+            _openapi_spec_cache_bytes -= cached_size
 
         task = _openapi_spec_inflight.get(spec_url)
         if task is None:
