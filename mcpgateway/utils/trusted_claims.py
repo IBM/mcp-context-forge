@@ -3,18 +3,165 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Trusted claims extraction and group-to-team resolution. This module will also
-host extract_trusted_principal (added by #5899).
+Trusted claims extraction and group-to-team resolution (issues #5899, #5976).
+
+This module maps a verified external-IdP JWT payload to a virtual principal
+per the pinned trust-mode contract. It also hosts the group-mapping resolver
+and the group-overage marker detector shared with the SSO enrichment path.
+
+Claim readers support dotted paths one or more levels deep (for example the
+Keycloak ``realm_access.roles`` shape). Each path segment must name a JSON
+object member; traversal through arrays or scalar values is not supported and
+resolves to "claim absent". A missing optional claim yields the field
+default; a missing required claim is an extraction error.
+
+PRINCIPAL CONTRACT (VirtualPrincipal):
+
+- ``user_id``: required, opaque string. Read from the claim named by
+  ``jwt_claim_user_id``. No UUID heuristic applies in trust mode. A missing
+  mapped claim raises an extraction error with 401 semantics; the value never
+  defaults to the email claim.
+- ``email``: optional, None allowed. Read from the claim named by
+  ``jwt_claim_email``. Audit-path writes degrade to the ``"unknown"``
+  sentinel string (never None) because ``AuditTrail.user_id`` is
+  ``nullable=False``; ``ObservabilityTrace.user_email`` is nullable and
+  accepts None. See :attr:`VirtualPrincipal.audit_identity`.
+- ``full_name``: optional, default None. Read from the ``name`` claim.
+- ``teams``: normalized list of team ID strings. The claim named by
+  ``jwt_claim_teams`` accepts a list of strings or a list of ``{id, name}``
+  mappings, mirroring ``normalize_token_teams`` in ``auth_context.py``.
+  Mapped team IDs from the external-group resolver are appended. External
+  group IDs never enter ``teams`` directly. When every external group is
+  unmapped and the token carries no teams claim, ``teams`` is ``[]``
+  (public-only access; the principal still authenticates).
+- ``roles``: list of role names. The claim named by ``jwt_claim_roles``
+  merges with role names returned by the group-mapping resolver before
+  resolution. Each name resolves scope-exactly to exactly one active row
+  in the server-side ``roles`` table via
+  ``mcpgateway.services.role_resolution.resolve_mapping_role`` (team scope
+  preferred, global fallback, lowest id, rows never unioned); permissions
+  are never embedded in or read from the token. Names with no active row
+  are ignored with a WARNING log (fail-closed).
+- ``is_admin``: bool, default False. Read from the claim named by
+  ``jwt_claim_admin`` and parsed strictly: only ``True``, ``1``, and the
+  case-insensitive strings ``"true"``/``"1"``/``"yes"`` grant admin; every
+  other value (including the truthy-coercing strings ``"false"``/``"0"``/
+  ``"no"``) is non-admin. A present but non-canonical value logs one
+  structured warning naming the claim and its JSON type, never the value.
+  A missing claim is silently non-admin (fail-closed).
+- ``auth_provider``: the token issuer (``iss``) when present, else the
+  string ``"jwt-trust"``.
+- ``token_use``: the constant string ``"trusted"``.
+
+Revocation: the claim named by ``jwt_trust_revocation_claim`` (default
+``jti``; ``uti`` supported for Entra trust roots) is the revocation
+identifier. A trust-eligible token missing the configured claim is rejected
+with 401 semantics.
 """
 
 # Standard
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import ExternalGroupMapping
+from mcpgateway.services.role_resolution import resolve_mapping_role
+
+logger = logging.getLogger(__name__)
+
+#: Sentinel written on the AuditTrail path when the token carries no email.
+AUDIT_UNKNOWN_SENTINEL = "unknown"
+
+#: Case-insensitive string values of the admin claim that mean True.
+_ADMIN_CLAIM_TRUE_STRINGS = frozenset({"true", "1", "yes"})
+
+#: Case-insensitive string values of the admin claim that are recognized
+#: explicit denials; they coerce False without a warning.
+_ADMIN_CLAIM_FALSE_STRINGS = frozenset({"false", "0", "no"})
+
+
+def _json_type_name(value: Any) -> str:
+    """Return the JSON type name for a claim value (for logs, never the value).
+
+    Args:
+        value: Claim value to classify.
+
+    Returns:
+        str: One of "boolean", "string", "number", "array", "object", or
+            the Python type name for exotica.
+
+    Examples:
+        >>> _json_type_name(True)
+        'boolean'
+        >>> _json_type_name([1])
+        'array'
+    """
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def _parse_admin_flag(value: Any, claim_name: str) -> bool:
+    """Strictly parse the admin claim to a boolean (finding NB1).
+
+    ``bool()`` coercion is unsafe here: the strings ``"false"``, ``"0"``,
+    and ``"no"`` are all truthy, so an issuer emitting string claims would
+    silently grant admin. The only values accepted as True are ``True``,
+    ``1``, and the case-insensitive strings ``"true"``/``"1"``/``"yes"``.
+    Every other present value — including ``False``, ``0``, the recognized
+    denial strings, empty strings, floats, arrays, and objects — coerces
+    False. A present value that is neither a boolean, nor integer 0/1, nor
+    a recognized string logs one structured warning naming the claim and
+    the observed JSON type (never the value). A missing claim (None) is
+    silently non-admin: fail-closed.
+
+    Args:
+        value: Raw claim value (None when the claim is absent).
+        claim_name: Configured claim name, used in the warning log.
+
+    Returns:
+        bool: True only for canonical true values; False otherwise.
+
+    Examples:
+        >>> _parse_admin_flag("true", "is_admin")
+        True
+        >>> _parse_admin_flag("false", "is_admin")
+        False
+        >>> _parse_admin_flag(None, "is_admin")
+        False
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in (0, 1):
+            return value == 1
+    elif isinstance(value, str):
+        lowered = value.lower()
+        if lowered in _ADMIN_CLAIM_TRUE_STRINGS:
+            return True
+        if lowered in _ADMIN_CLAIM_FALSE_STRINGS:
+            return False
+    logger.warning(
+        "Admin claim %r is present with a non-canonical %s value; treating the principal as non-admin.",
+        claim_name,
+        _json_type_name(value),
+    )
+    return False
 
 
 def resolve_external_groups_to_teams(issuer: str, tenant: Optional[str], groups: List[str], db: Session) -> Tuple[List[str], List[str]]:
@@ -60,3 +207,243 @@ def resolve_external_groups_to_teams(issuer: str, tenant: Optional[str], groups:
         if row.cf_role and row.cf_role not in role_names:
             role_names.append(row.cf_role)
     return team_ids, role_names
+
+
+@dataclass
+class VirtualPrincipal:
+    """Virtual principal extracted from a trusted external-IdP token.
+
+    Exposes the attributes downstream consumers read (``.email``,
+    ``.is_admin``, ``.full_name``) per the pinned contract in the module
+    docstring. Instances are synthetic: they are never persisted and never
+    cached as ORM rows.
+    """
+
+    user_id: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    teams: List[str] = field(default_factory=list)
+    roles: List[str] = field(default_factory=list)
+    is_admin: bool = False
+    auth_provider: str = "jwt-trust"
+    token_use: str = "trusted"
+
+    @property
+    def audit_identity(self) -> str:
+        """Identity string for the AuditTrail path.
+
+        ``AuditTrail.user_id`` is ``nullable=False``, so an absent email
+        degrades to the ``"unknown"`` sentinel string; a None write never
+        occurs on this path.
+
+        Returns:
+            The principal email, or the ``"unknown"`` sentinel.
+        """
+        return self.email or AUDIT_UNKNOWN_SENTINEL
+
+
+def _get_claim(payload: Dict[str, Any], claim_path: str) -> Any:
+    """Read a claim by dotted path.
+
+    Each segment must name a JSON object member. Traversal through arrays or
+    scalar values is not supported and resolves to None (claim absent).
+
+    Args:
+        payload: Verified JWT payload.
+        claim_path: Claim name, optionally dotted (``realm_access.roles``).
+
+    Returns:
+        The claim value, or None when the path does not resolve.
+    """
+    node: Any = payload
+    for segment in claim_path.split("."):
+        if not isinstance(node, dict) or segment not in node:
+            return None
+        node = node[segment]
+    return node
+
+
+def _normalize_teams_claim(value: Any) -> List[str]:
+    """Normalize a teams claim to a list of team ID strings.
+
+    Mirrors ``normalize_token_teams`` in ``auth_context.py``: a list of
+    strings passes through; a list of ``{id, name}`` mappings contributes
+    each ``id``; other entries are dropped.
+
+    Args:
+        value: Raw teams claim value.
+
+    Returns:
+        List of team ID strings.
+    """
+    if not isinstance(value, list):
+        return []
+    normalized: List[str] = []
+    for team in value:
+        if isinstance(team, dict):
+            team_id = team.get("id")
+            if team_id:
+                normalized.append(str(team_id))
+        elif isinstance(team, str):
+            normalized.append(team)
+    return normalized
+
+
+def detect_overage_marker(payload: Dict[str, Any]) -> bool:
+    """Detect the Entra group-overage marker shapes in a token payload.
+
+    When a user exceeds the group-claim limit, Entra emits overage markers
+    instead of an inline groups array: ``_claim_names`` containing
+    ``groups``, a ``hasgroups`` key, a ``groups:srcN`` key, or a string-typed
+    ``groups`` claim. Shared with the SSO enrichment path; detection only —
+    resolution behavior follows ``jwt_trust_overage_policy``.
+
+    Args:
+        payload: Token claims dict.
+
+    Returns:
+        True when any overage marker is present.
+    """
+    claim_names = payload.get("_claim_names", {})
+    if isinstance(claim_names, dict) and "groups" in claim_names:
+        return True
+    if payload.get("hasgroups"):
+        return True
+    if any(isinstance(key, str) and key.startswith("groups:src") for key in payload):
+        return True
+    return isinstance(payload.get("groups"), str)
+
+
+def extract_revocation_id(payload: Dict[str, Any], settings: Any) -> str:
+    """Extract the revocation identifier honoring the configured claim.
+
+    The claim named by ``jwt_trust_revocation_claim`` (default ``jti``;
+    ``uti`` supported for Entra trust roots) carries the revocation
+    identifier. A trust-eligible token missing the configured claim is
+    rejected with 401 semantics.
+
+    Args:
+        payload: Verified JWT payload.
+        settings: Settings object carrying ``jwt_trust_revocation_claim``.
+
+    Returns:
+        The revocation identifier string.
+
+    Raises:
+        HTTPException: 401 when the configured claim is absent or empty.
+    """
+    claim = settings.jwt_trust_revocation_claim
+    value = _get_claim(payload, claim)
+    if not value or not isinstance(value, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Trust-eligible token is missing the revocation claim {claim!r}.",
+        )
+    return value
+
+
+def extract_trusted_principal(payload: Dict[str, Any], settings: Any, db: Session) -> VirtualPrincipal:
+    """Extract a virtual principal from a verified trusted-IdP JWT payload.
+
+    Implements the pinned contract documented in the module docstring:
+
+    - ``user_id`` (required, opaque): read from the claim named by
+      ``jwt_claim_user_id``; a missing mapped claim raises 401 and never
+      defaults to email.
+    - ``email`` (optional, None allowed): read from ``jwt_claim_email``.
+    - ``full_name`` (optional, default None): read from the ``name`` claim.
+    - ``teams`` (list of strings): the ``jwt_claim_teams`` claim normalized
+      (list of strings or list of ``{id, name}``, mirroring
+      ``normalize_token_teams``), plus team IDs returned by the
+      external-group resolver. External group IDs never enter ``teams``
+      directly. All groups unmapped and no teams claim yields ``[]``
+      (public-only access; the principal still authenticates).
+    - ``roles`` (list of strings): the ``jwt_claim_roles`` claim merged with
+      resolver-supplied role names, each name resolved scope-exactly to
+      exactly one active row in the server-side ``roles`` table (team scope
+      preferred, global fallback, never unioned); names with no active row
+      are skipped with a WARNING log (fail-closed). Permissions are never
+      read from the token.
+    - ``is_admin`` (bool, default False): read from ``jwt_claim_admin`` and
+      parsed strictly (``_parse_admin_flag``); a present but non-canonical
+      value coerces False with one structured warning.
+    - ``auth_provider``: the token issuer (``iss``) when present, else
+      ``"jwt-trust"``.
+    - ``token_use``: the constant ``"trusted"``.
+
+    The token must carry the revocation claim named by
+    ``jwt_trust_revocation_claim``; a missing claim raises 401.
+
+    Args:
+        payload: Verified JWT payload from a trusted external IdP.
+        settings: Settings object carrying the ``jwt_claim_*`` and
+            ``jwt_trust_revocation_claim`` mappings.
+        db: Database session for the group-mapping resolver and the
+            server-side roles table.
+
+    Returns:
+        VirtualPrincipal matching the pinned contract.
+
+    Raises:
+        HTTPException: 401 when the mapped user_id claim or the configured
+            revocation claim is absent.
+    """
+    extract_revocation_id(payload, settings)
+
+    user_id = _get_claim(payload, settings.jwt_claim_user_id)
+    if not user_id or not isinstance(user_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Trust-eligible token is missing the user_id claim {settings.jwt_claim_user_id!r}.",
+        )
+
+    issuer = payload.get("iss") or "jwt-trust"
+    tenant = payload.get("tid")
+
+    teams = _normalize_teams_claim(_get_claim(payload, settings.jwt_claim_teams))
+    role_names: List[str] = []
+    raw_roles = _get_claim(payload, settings.jwt_claim_roles)
+    if isinstance(raw_roles, list):
+        role_names.extend(str(role) for role in raw_roles)
+
+    # External groups are NOT teams: group-claim values are external group
+    # IDs that feed the mapping resolver. Resolver team IDs and role names
+    # merge here, before server-side roles-table resolution.
+    external_groups = payload.get("groups")
+    if isinstance(external_groups, list) and external_groups:
+        mapped_team_ids, mapped_role_names = resolve_external_groups_to_teams(issuer, tenant, [str(group) for group in external_groups], db)
+        for team_id in mapped_team_ids:
+            if team_id not in teams:
+                teams.append(team_id)
+        for role_name in mapped_role_names:
+            if role_name not in role_names:
+                role_names.append(role_name)
+
+    # Names resolve scope-exactly to exactly one active Role row each via
+    # the shared mapping resolver (team scope preferred, global fallback,
+    # lowest id, never union). A name-only lookup could match several
+    # active rows across scopes and union more permissions than intended.
+    # cf_team_id is not threaded here: Role.scope is a scope type, not a
+    # per-team id, so the team context does not change the resolution.
+    roles: List[str] = []
+    for role_name in role_names:
+        if resolve_mapping_role(db, role_name) is not None:
+            if role_name not in roles:
+                roles.append(role_name)
+        else:
+            logger.warning("Ignoring unknown role name %r from trusted token for user %s (fail-closed).", role_name, user_id)
+
+    full_name = payload.get("name")
+
+    email = _get_claim(payload, settings.jwt_claim_email)
+
+    return VirtualPrincipal(
+        user_id=user_id,
+        email=email if isinstance(email, str) else None,
+        full_name=full_name if isinstance(full_name, str) else None,
+        teams=teams,
+        roles=roles,
+        is_admin=_parse_admin_flag(_get_claim(payload, settings.jwt_claim_admin), settings.jwt_claim_admin),
+        auth_provider=issuer,
+        token_use="trusted",
+    )
