@@ -112,6 +112,18 @@ external JWKS path was unreachable even for a seeded trust root. The
 seeded-trust-root denial paths (`403` unmapped, `404` nonexistent agent)
 are proven by the ingress matrix above.
 
+The real-Entra suite is
+`tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py`. It
+reproduces the four inline-groups access cases plus one app-only case
+against a live tenant:
+| Case | Result |
+|-------|--------|
+| A mapped developer invokes the agent | `200`. The echo round-trip proves the downstream call. |
+| The mapping changes to a team that does not own the agent | `404`. The gateway makes no downstream call. |
+| The viewer role lists and reads the agent, then invokes it | List and read return `200`. Invoke returns `403`. The gateway makes no downstream call. |
+| Group overage with `JWT_TRUST_OVERAGE_POLICY=graph_lookup` | Microsoft Graph resolves the groups. Invoke returns `200`. |
+| App-only token (`idtyp == "app"`, no `groups` claim) under `graph_lookup` | Microsoft Graph resolves the service-principal groups. Invoke returns `200`. |
+
 App-only tokens (`idtyp == "app"`) carry no `groups` claim. Entra emits no
 overage markers for them. Under `JWT_TRUST_OVERAGE_POLICY=graph_lookup`,
 both trust funnels resolve the service principal's groups through
@@ -121,3 +133,9 @@ both trust funnels resolve the service principal's groups through
 the inbound bearer token is never used. Under `fail_closed` (default) and
 `proceed_without_groups`, app-only tokens authenticate with no team
 visibility.
+
+A missing Entra prerequisite causes a skip, not a failure. The skip message
+names the exact missing environment variables. Start the stack with
+`make testing-up-entra`. The `docker-compose.entra.yml` override puts the
+gateway in trust mode. The base compose file does not change. The module
+docstring is the authoritative runbook.

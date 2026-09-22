@@ -1806,6 +1806,24 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
 
+.PHONY: testing-up-entra
+testing-up-entra:                          ## Start testing stack with the gateway in Entra trust mode
+	@echo "🧪 Starting Entra trust-mode testing stack..."
+	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up-entra)"
+	@# Fail early if port 8080 is already bound (nginx needs it)
+	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
+		echo "❌ Port 8080 is already in use. Cannot start nginx proxy."; \
+		echo "   Run: lsof -i :8080   to find the process, then stop it."; \
+		exit 1; \
+	fi
+	@mkdir -p reports
+	@echo "   Using image $(IMAGE_LOCAL)"
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.entra.yml --profile testing --profile inspector up -d --scale gateway=1 --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	@echo ""
+	@echo "✅ Entra trust-mode testing stack started! Gateway: http://localhost:8080"
+
 .PHONY: testing-up-rust
 testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
 	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
