@@ -16,7 +16,9 @@ Tests will FAIL until implementation is complete (TDD Red Phase).
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -26,6 +28,42 @@ import pytest
 from mcpgateway.db import Gateway, OAuthState, RegisteredOAuthClient
 from mcpgateway.services.dcr_service import DcrService
 from mcpgateway.services.oauth_manager import OAuthManager
+
+PUBLIC_TEST_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def stub_dns_for_pinning(monkeypatch):
+    """Resolve every hostname in this module to one public address.
+
+    Connection pinning resolves DNS for real. The test hostnames do not exist,
+    so without this stub every pinned request fails to resolve.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    def _fake_getaddrinfo(_host, port, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_TEST_IP, port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _fake_getaddrinfo)
+
+
+@contextmanager
+def patch_isolated_client(mock_client):
+    """Patch the isolated HTTP client factory so it yields ``mock_client``.
+
+    Args:
+        mock_client: Mock standing in for ``httpx.AsyncClient``.
+
+    Yields:
+        None: The patch stays active for the duration of the block.
+    """
+    context_manager = MagicMock()
+    context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+    context_manager.__aexit__ = AsyncMock(return_value=False)
+    with patch("mcpgateway.services.dcr_service.get_isolated_http_client", return_value=context_manager):
+        yield
 
 
 @pytest.mark.integration
@@ -168,7 +206,7 @@ class TestDCRFlowIntegration:
         mock_client.get = AsyncMock(return_value=mock_get_response)
         mock_client.post = AsyncMock(return_value=mock_post_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # Step 1: Register client via DCR
             registered_client = await dcr_service.register_client(
                 gateway_id="test-gw-456",
@@ -360,7 +398,7 @@ class TestDCRErrorHandling:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First-Party
             from mcpgateway.services.dcr_service import DcrError
 
@@ -395,7 +433,7 @@ class TestDCRErrorHandling:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First-Party
             from mcpgateway.services.dcr_service import DcrError
 

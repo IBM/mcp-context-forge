@@ -86,7 +86,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.discover_as_metadata("https://as.example.com")
 
             assert result["issuer"] == "https://as.example.com"
@@ -111,12 +111,13 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata("https://as.example.com")
 
             # First call should be RFC 8414 path
             first_call_url = mock_client.get.call_args_list[0][0][0]
             assert "/.well-known/oauth-authorization-server" in first_call_url
+            assert first_call_url.startswith(f"https://{PUBLIC_TEST_IP}")
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_normalizes_trailing_slash(self):
@@ -143,7 +144,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # Call with trailing slash (simulating MCP SDK behavior)
             result = await dcr_service.discover_as_metadata("https://as.example.com/")
 
@@ -152,7 +153,7 @@ class TestDiscoverASMetadata:
 
             # Verify the discovery URL was constructed correctly (no double slashes)
             call_url = mock_client.get.call_args_list[0][0][0]
-            assert call_url == "https://as.example.com/.well-known/oauth-authorization-server"
+            assert call_url == f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server"
             assert "//.well-known" not in call_url
 
     @pytest.mark.asyncio
@@ -174,7 +175,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First call with trailing slash
             await dcr_service.discover_as_metadata("https://as.example.com/")
 
@@ -217,7 +218,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=get_side_effect)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.discover_as_metadata("https://as.example.com")
 
             # Should have tried both paths
@@ -241,7 +242,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response_404)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError, match="not found|Failed to discover"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -265,7 +266,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First call
             result1 = await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -299,7 +300,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError, match="issuer mismatch"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -328,12 +329,12 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             # Verify the discovery URL was constructed correctly (suffix between host and path)
             call_url = mock_client.get.call_args_list[0][0][0]
-            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            expected_url = f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant1"
             assert call_url == expected_url
 
     @pytest.mark.asyncio
@@ -354,11 +355,11 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             call_url = mock_client.get.call_args_list[0][0][0]
-            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1/realm1"
+            expected_url = f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant1/realm1"
             assert call_url == expected_url
 
     @pytest.mark.asyncio
@@ -383,11 +384,11 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             call_url = mock_client.get.call_args_list[0][0][0]
-            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant;v=1"
+            expected_url = f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant;v=1"
             assert call_url == expected_url
 
     @pytest.mark.asyncio
@@ -424,16 +425,16 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=get_side_effect)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             calls = mock_client.get.call_args_list
             assert len(calls) == 2
 
             # RFC 8414: inserted between host and path
-            assert calls[0][0][0] == "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            assert calls[0][0][0] == f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant1"
             # OIDC: appended to issuer
-            assert calls[1][0][0] == "https://as.example.com/tenant1/.well-known/openid-configuration"
+            assert calls[1][0][0] == f"https://{PUBLIC_TEST_IP}/tenant1/.well-known/openid-configuration"
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_does_not_follow_redirects_rfc8414(self):
@@ -452,7 +453,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -482,7 +483,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[not_found, redirect])
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -519,7 +520,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
@@ -554,7 +555,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             await dcr_service.register_client(
@@ -590,7 +591,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             await dcr_service.register_client(
@@ -621,7 +622,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
@@ -657,7 +658,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             # Should not raise TypeError
@@ -692,7 +693,7 @@ class TestRegisterClient:
         with (
             patch.object(dcr_service.settings, "dcr_request_refresh_token_when_unsupported", True),
             patch.object(dcr_service, "discover_as_metadata") as mock_discover,
-            patch.object(dcr_service, "_get_client", return_value=mock_client),
+            patch_isolated_client(mock_client),
         ):
             mock_discover.return_value = mock_metadata
 
@@ -737,7 +738,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             with pytest.raises(DcrError, match="invalid_redirect_uri"):
@@ -758,7 +759,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
@@ -897,7 +898,7 @@ class TestUpdateClientRegistration:
         mock_client = AsyncMock()
         mock_client.put = AsyncMock(return_value=mock_response_obj)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.update_client_registration(client_record, test_db)
 
             assert result.client_id == "test-client-update"
@@ -944,7 +945,7 @@ class TestUpdateClientRegistration:
         mock_client = AsyncMock()
         mock_client.put = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.update_client_registration(client_record, test_db)
 
             # Verify Bearer token was used
@@ -1018,7 +1019,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
 
             assert result is True
@@ -1049,7 +1050,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # Should still return True (client is gone)
             result = await dcr_service.delete_client_registration(client_record, test_db)
 
@@ -1153,7 +1154,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
             assert result is False
 
@@ -1183,7 +1184,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(side_effect=httpx.HTTPError("Network error"))
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
             assert result is False
 
@@ -1249,7 +1250,7 @@ class TestIssuerValidation:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
 
-            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with patch_isolated_client(mock_client):
                 # Should not raise error
                 result = await dcr_service.register_client(
                     gateway_id="test-gw-issuer-auth",
@@ -1291,7 +1292,7 @@ class TestIssuerValidation:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
 
-            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with patch_isolated_client(mock_client):
                 # Should not raise error - trailing slash should be normalized
                 result = await dcr_service.register_client(
                     gateway_id="test-gw-issuer-slash",
