@@ -219,6 +219,8 @@ Discoverable; membership by invite/request"]
 
 #### Team Membership Levels (Design)
 
+Team membership keys on the canonical `user_id`, returned by `get_user_id()` in `mcpgateway/auth_context.py`. The e-mail address is a mutable attribute of the user account, not the identity. Phase 1 populates the canonical `user_id` with the e-mail value, so the `user_email` foreign keys in the diagrams below hold the canonical identity. The token-type-to-identity mapping contract is in [Identifier Domains](identity-domains.md).
+
 **Note**: These are team membership levels, separate from RBAC roles. A user can have both a membership level and RBAC role assignments within the same team.
 
 - **Owner** (Team Membership Level):
