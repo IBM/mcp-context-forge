@@ -3,8 +3,8 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Live-gateway evidence for the external-token ingress barrier on the A2A
-invocation route (issues #5884 / #5885, acceptance intent of #5976 / #6272).
+Live-gateway evidence for the external-issuer A2A ingress contract (issues
+#5884 / #5885, acceptance intent of #5976 / #6272; ingress fix #5903).
 
 What this module pins:
 
@@ -12,17 +12,20 @@ What this module pins:
       -> POST /a2a/<deliberately-nonexistent-agent>/invoke
       -> 401 "Invalid authentication credentials"
 
-The agent name is intentionally nonexistent: with a correctly wired
-ingress, an authenticated and authorized caller reaches agent lookup and
-receives 404. The current stack instead rejects the request at
-authentication because the A2A dependency chain
-(``require_permission`` -> ``get_current_user_with_permissions`` ->
-``get_current_user``) calls ContextForge's internal verifier
-(``verify_jwt_token_cached``), which accepts gateway-signed JWTs only.
-The external issuer/JWKS path lives in
-``mcpgateway/utils/verify_credentials.py`` but is never dispatched to on
-this route, so a genuine Entra-signed token is indistinguishable from a
-forged one at this choke point.
+The barrier scenario seeds no SSO providers, so the Entra issuer is NOT a
+configured trust root. Under the post-fix dispatch semantics
+(``get_current_user()`` -> ``_try_external_verification``), an issuer that
+is not a configured trust root falls through to the internal JWT verifier
+exactly as before, and the internal verifier rejects the externally-signed
+token with 401. This 401 is now the correct, by-design fall-through — NOT
+the pre-fix wiring failure, where the external JWKS path was unreachable
+even for a seeded trust root.
+
+The seeded-trust-root denial paths are proven by the ingress matrix
+(tests/live_gateway/test_trust_mode_external_ingress_e2e.py):
+authenticated-without-mapping -> 403 (``unmapped_user_invoke``) and
+authenticated-with-role + deliberately nonexistent agent -> 404
+(``nonexistent_agent_with_role``).
 
 Both tests read the bearer material from untracked files and never log
 their contents:
@@ -34,10 +37,10 @@ Set ``ENTRA_BARRIER_TOKEN_DIR`` if the files live outside the repository
 root. Point ``MCP_CLI_BASE_URL`` at the gateway under test (default
 ``http://127.0.0.1:8080``).
 
-Expected result while the ingress is unfixed: both requests return 401.
-When the external-aware verifier is wired into the authentication choke
-points, the valid-token expectation flips to 404 (agent not found) and
-the fake-token expectation stays 401.
+Expected result: both requests return 401 — the fake token because it is
+forged, the valid token because its issuer is untrusted in this scenario
+(fall-through). A fresh (unexpired) valid token is not required for these
+assertions; expiry does not change the untrusted-issuer outcome.
 """
 
 # Future
@@ -104,21 +107,24 @@ def test_fake_entra_token_is_rejected() -> None:
 
 @skip_unless_trust_mode
 @skip_no_entra_tokens
-def test_valid_entra_user_token_is_blocked_before_external_verification() -> None:
-    """PINNED NON-COMPLIANCE: a genuine Entra user token gets 401 at ingress.
+def test_valid_entra_user_token_untrusted_issuer_falls_to_internal_verifier() -> None:
+    """Unseeded Entra issuer -> fall-through to the internal verifier -> 401.
 
-    With ``JWT_TRUST_MODE=jwt-trust`` and
-    ``SSO_API_TOKEN_AUTH_ENABLED=true`` on the gateway, a real Entra-signed
-    end-user access token still fails the internal verifier before the
-    trust-mode branch, group mapping, RBAC, visibility, or agent lookup can
-    run: the request is rejected exactly like the forged-token control.
+    Post-fix dispatch semantics (#5903): the ingress dispatch in
+    ``get_current_user()`` routes a bearer to the external JWKS verifier
+    only when its issuer IS a configured trust root. The barrier scenario
+    seeds no providers, so the Entra issuer is NOT a configured trust root
+    here and the token falls through to the internal verifier, which
+    rejects it with 401 — the correct, by-design outcome for an untrusted
+    issuer, NOT the pre-fix wiring failure (where even a seeded trust-root
+    token could not authenticate).
 
-    Flipping expectation: once ``get_current_user()`` dispatches external
-    issuers to the JWKS verifier (``verify_credentials_cached``), this
-    caller authenticates, ``a2a.invoke`` authorization proceeds, and the
-    deliberately nonexistent agent yields 404. Update this assertion to
-    404 as part of that change; the fake-token control above must stay 401.
+    The seeded-issuer paths are proven by the ingress matrix
+    (tests/live_gateway/test_trust_mode_external_ingress_e2e.py):
+    authenticated-without-mapping -> 403 (``unmapped_user_invoke``) and
+    authenticated-with-role + nonexistent agent -> 404
+    (``nonexistent_agent_with_role``).
     """
     response = _invoke_agent(_bearer(_VALID_TOKEN_FILE))
-    assert response.status_code == 401, f"Ingress no longer blocked: valid Entra token got {response.status_code} (expected 401 pre-fix, 404 post-fix) {response.text[:200]}"
+    assert response.status_code == 401, f"untrusted-issuer fall-through no longer yields 401: {response.status_code} {response.text[:200]}"
     assert "Invalid authentication credentials" in response.text

@@ -223,7 +223,7 @@ async def test_verify_external_idp_token_valid(monkeypatch):
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
         assert authorization_servers == ["https://kc/realms/m"]
         assert expected_audience == "api://my-app"
         return {"iss": "https://kc/realms/m", "sub": "agent"}
@@ -334,7 +334,7 @@ async def test_verify_external_idp_token_verification_fails(monkeypatch):
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
@@ -973,7 +973,7 @@ async def test_deny_id_token_rejected(monkeypatch):
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
     # verify_oauth_access_token rejects nonce/at_hash -> returns None
-    async def fake_oauth(tok, authorization_servers, *, expected_audience=None):
+    async def fake_oauth(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_oauth)
