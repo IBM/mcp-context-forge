@@ -114,14 +114,15 @@ are proven by the ingress matrix above.
 
 The real-Entra suite is
 `tests/live_gateway/test_trust_mode_entra_inline_groups_e2e.py`. It
-reproduces the four inline-groups access cases against a live tenant:
-
+reproduces the four inline-groups access cases plus one app-only case
+against a live tenant:
 | Case | Result |
 |-------|--------|
 | A mapped developer invokes the agent | `200`. The echo round-trip proves the downstream call. |
 | The mapping changes to a team that does not own the agent | `404`. The gateway makes no downstream call. |
 | The viewer role lists and reads the agent, then invokes it | List and read return `200`. Invoke returns `403`. The gateway makes no downstream call. |
 | Group overage with `JWT_TRUST_OVERAGE_POLICY=graph_lookup` | Microsoft Graph resolves the groups. Invoke returns `200`. |
+| App-only token (`idtyp == "app"`, no `groups` claim) under `graph_lookup` | Microsoft Graph resolves the service-principal groups. Invoke returns `200`. |
 
 App-only tokens (`idtyp == "app"`) carry no `groups` claim. Entra emits no
 overage markers for them. Under `JWT_TRUST_OVERAGE_POLICY=graph_lookup`,
