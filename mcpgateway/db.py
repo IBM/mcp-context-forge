@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, case, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Connection, Engine
@@ -4923,9 +4923,6 @@ def update_resource_names_on_gateway_update(_mapper: Mapper[Any], connection: Co
         connection: Connection for the current transaction.
         target: Updated gateway.
     """
-    # Third-Party
-    from sqlalchemy import case  # pylint: disable=import-outside-toplevel
-
     if not get_history(target, "name").has_changes():
         return
     gateway_slug = slugify(target.name)

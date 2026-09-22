@@ -5783,9 +5783,7 @@ class TestUpdateOrCreateResources:
 
     def test_new_resource_created(self, gateway_service):
         """New resources carry a real gateway relationship before persistence."""
-        from mcpgateway.db import Gateway
-
-        mock_gateway = Gateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
+        mock_gateway = DbGateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
@@ -5857,9 +5855,7 @@ class TestUpdateOrCreateResources:
 
     def test_none_resource_skipped(self, gateway_service):
         """An invalid catalog entry does not discard valid resource entries."""
-        from mcpgateway.db import Gateway
-
-        mock_gateway = Gateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
+        mock_gateway = DbGateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
