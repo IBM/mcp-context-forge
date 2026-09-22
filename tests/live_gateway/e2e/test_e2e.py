@@ -3476,27 +3476,41 @@ class TestSchemaRegexReDoS:
             observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, {tool_name})
             assert tool_name in observed, f"probe tool never appeared in the scoped MCP catalog; observed={sorted(observed)}"
 
-            # _mcp_tool_call rides a ClientSession capped at _CLIENT_TIMEOUT (default 5s,
-            # mcp/shared/session.py's anyio.fail_after). A genuine regression -- the sandbox
-            # no longer bounding the match -- surfaces as an uncaught McpError there, not as
-            # a slow "took Xs" assertion below: catastrophic backtracking on this input would
-            # run far longer than any client timeout, so the client gives up first. Catching
-            # it here turns that opaque timeout into a diagnostic that also names the other
-            # explanation -- an overloaded CI box exceeding MCP_E2E_CLIENT_TIMEOUT -- rather
-            # than leaving a bare traceback to interpret.
+            # _mcp_tool_call opens a session and does initialize() then call_tool() on it,
+            # each a separately-bounded send_request round trip capped at _CLIENT_TIMEOUT
+            # (mcp/shared/session.py's anyio.fail_after) -- see _unwrap_exception_group's
+            # docstring above: "initialize() followed by call_tool() on the same session
+            # wraps twice". A genuine regression -- the sandbox no longer bounding the
+            # match -- surfaces as an McpError from one of those round trips, wrapped in
+            # (possibly nested) ExceptionGroup by the SDK's anyio TaskGroups on the way out,
+            # not as a slow "took Xs" assertion below: catastrophic backtracking on this
+            # input would run far longer than any client timeout, so the client gives up
+            # first. Catching it here turns that opaque nested traceback into a diagnostic
+            # that also names the other explanation -- an overloaded CI box exceeding
+            # MCP_E2E_CLIENT_TIMEOUT -- rather than leaving raw exception-group nesting to
+            # interpret. Matches the except/_unwrap_exception_group pattern used above at
+            # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
             start = time.perf_counter()
             try:
                 result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
-            except McpError as exc:
+            except (McpError, ExceptionGroup) as exc:
                 elapsed = time.perf_counter() - start
+                leaf = _unwrap_exception_group(exc)[0]
                 pytest.fail(
                     f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
-                    f"(waited {elapsed:.1f}s): {exc}. Either the sandbox stopped bounding the catastrophic "
+                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
                     "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
                     "env var to rule out the latter before treating this as a regression."
                 )
             elapsed = time.perf_counter() - start
-            print(f"    -> hostile call rejected in {elapsed:.2f}s (client timeout is {_CLIENT_TIMEOUT:.1f}s)")
+            # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
+            # session opens, then initialize() and call_tool() each make their own bounded
+            # round trip on it. The honest ceiling past this point is a small multiple of
+            # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
+            # round trips without being so loose it stops guarding a future regression that
+            # adds more round trips to this path.
+            assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
+            print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
             assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
             text = result.content[0].text if result.content else ""
             assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
