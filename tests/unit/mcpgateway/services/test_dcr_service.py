@@ -1467,3 +1467,56 @@ class TestPreparePinnedRequest:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDiscoverAsMetadataSsrfDenyPath:
+    """Test that metadata discovery refuses an issuer host in a blocked range."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_refuses_issuer_resolving_to_link_local(self, monkeypatch):
+        """An issuer that resolves into a blocked range sends no request."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _link_local_getaddrinfo)
+        dcr_service = DcrService()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock()
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+        assert "url policy" in str(exc_info.value).lower()
+        mock_client.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discovery_gets_pinned_address_with_original_authority(self):
+        """Discovery dials the resolved address and keeps the original authority."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": "https://as.example.com"})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            await dcr_service.discover_as_metadata("https://as.example.com")
+
+        call_args, call_kwargs = mock_client.get.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+        assert call_kwargs["follow_redirects"] is False

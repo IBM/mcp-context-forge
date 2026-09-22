@@ -28,7 +28,7 @@ from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidat
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.utils.origin import is_same_origin, origin_from_url
 
 logger = logging.getLogger(__name__)
@@ -166,50 +166,66 @@ class DcrService:
         if parsed.path:
             rfc8414_url += parsed.path
 
+        rfc8414_target = await self._prepare_pinned_request(rfc8414_url, normalized_issuer, "AS metadata discovery URL")
+
         try:
-            client = await self._get_client()
-            response = await client.get(rfc8414_url, timeout=self._get_timeout(), follow_redirects=False)
-            if 300 <= response.status_code < 400:
-                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
-            if response.status_code == 200:
-                metadata = response.json()
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.get(
+                    rfc8414_target.url,
+                    timeout=self._get_timeout(),
+                    follow_redirects=False,
+                    headers=rfc8414_target.headers,
+                    extensions=rfc8414_target.extensions,
+                )
+                if 300 <= response.status_code < 400:
+                    raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
+                if response.status_code == 200:
+                    metadata = response.json()
 
-                # Validate issuer matches (normalize metadata issuer for comparison)
-                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
-                if metadata_issuer != normalized_issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                    # Validate issuer matches (normalize metadata issuer for comparison)
+                    metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                    if metadata_issuer != normalized_issuer:
+                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
-                # Cache the metadata
-                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                    # Cache the metadata
+                    _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info("Discovered AS metadata for %s via RFC 8414", normalized_issuer)
-                return metadata
+                    logger.info("Discovered AS metadata for %s via RFC 8414", normalized_issuer)
+                    return metadata
         except httpx.HTTPError as e:
             logger.debug("RFC 8414 discovery failed for %s: %s, trying OIDC fallback", normalized_issuer, e)
 
         # Try OIDC discovery fallback
         oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
 
+        oidc_target = await self._prepare_pinned_request(oidc_url, normalized_issuer, "AS metadata discovery URL")
+
         try:
-            client = await self._get_client()
-            response = await client.get(oidc_url, timeout=self._get_timeout(), follow_redirects=False)
-            if 300 <= response.status_code < 400:
-                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
-            if response.status_code == 200:
-                metadata = response.json()
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.get(
+                    oidc_target.url,
+                    timeout=self._get_timeout(),
+                    follow_redirects=False,
+                    headers=oidc_target.headers,
+                    extensions=oidc_target.extensions,
+                )
+                if 300 <= response.status_code < 400:
+                    raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
+                if response.status_code == 200:
+                    metadata = response.json()
 
-                # Validate issuer matches (normalize metadata issuer for comparison)
-                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
-                if metadata_issuer != normalized_issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                    # Validate issuer matches (normalize metadata issuer for comparison)
+                    metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                    if metadata_issuer != normalized_issuer:
+                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
-                # Cache the metadata
-                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                    # Cache the metadata
+                    _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info("Discovered AS metadata for %s via OIDC discovery", normalized_issuer)
-                return metadata
+                    logger.info("Discovered AS metadata for %s via OIDC discovery", normalized_issuer)
+                    return metadata
 
-            raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
+                raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
 
