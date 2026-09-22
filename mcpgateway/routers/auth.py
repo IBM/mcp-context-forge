@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user, TokenValidationError, validate_token_user
+from mcpgateway.auth_context import get_user_id
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
@@ -320,12 +321,17 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
 
             # Revoke token using blocklist service
             blocklist_service = get_token_blocklist_service(db=db)
-            success = blocklist_service.revoke_token(jti=jti, revoked_by=user.email, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
+            # Store the canonical user_id; fall back to the system sentinel
+            # when the principal carries no resolvable identity.
+            revoked_by = get_user_id(user)
+            if revoked_by == "unknown":
+                revoked_by = "system:logout"
+            success = blocklist_service.revoke_token(jti=jti, revoked_by=revoked_by, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
 
             if not success:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token")
 
-            logger.info("User %s logged out successfully", SecurityValidator.sanitize_log_message(user.email), extra={"security_event": "logout", "user_email": user.email, "jti": jti})
+            logger.info("User %s logged out successfully", SecurityValidator.sanitize_log_message(revoked_by), extra={"security_event": "logout", "user_id": revoked_by, "jti": jti})
 
             return {"message": "Logged out successfully", "revoked_token": jti}
 
