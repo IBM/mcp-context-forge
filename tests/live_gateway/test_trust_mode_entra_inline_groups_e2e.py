@@ -15,6 +15,11 @@ Runbook (from the repo root):
     #       token through ROPC, and deletes both objects after the session.
     #       Use case 4 provisions a user in 201 groups. This adds three
     #       minutes and prints [entra-overage] progress lines.
+    #       Use case 5 self-provisions a throwaway v2 application
+    #       (api.requestedAccessTokenVersion=2 plus the idtyp optional
+    #       claim), its service principal, a client secret, and a security
+    #       group holding the service principal, then presents an app-only
+    #       token. It deletes every object after the session.
     #    b) Or set ENTRA_LIVE_TOKEN_FILE to a pre-acquired non-overage
     #       end-user token saved in an untracked file.
 
@@ -45,9 +50,10 @@ import uuid
 # Third-Party
 import httpx
 import pytest
+from .helpers.entra_live import _ProvisioningError, _cleanup_entra_test_identity, entra_inline_token, inspect_token, load_entra_app_only_token, provision_entra_app_only_identity, provision_entra_overage_identity, resolve_entra_sp_first_group, validate_for_app_only  # noqa: F401  # fixture re-export
 
 # Local
-from .helpers.entra_live import _ProvisioningError, _cleanup_entra_test_identity, entra_inline_token, inspect_token, provision_entra_overage_identity  # noqa: F401  # fixture re-export
+from .helpers.entra_live import _ProvisioningError, _cleanup_entra_test_identity, entra_inline_token, inspect_token, provision_entra_app_only_identity, provision_entra_overage_identity  # noqa: F401  # fixture re-export
 from .helpers.local_oidc_issuer import local_oidc_issuer  # noqa: F401  # fixture re-export
 from .helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 from .helpers.trust_mode_seed import admin_headers, seed_agent, seed_mapping, seed_provider, seed_team, update_mapping
@@ -250,6 +256,94 @@ def test_uc4_overage_resolved_via_graph_allows_invoke(entra_overage_token, local
         artifacts = response.json()["result"]["artifacts"]
         echoed = artifacts[0]["parts"][0]["text"] if artifacts and artifacts[0].get("parts") else ""
         assert message in echoed, f"UC4 echo round-trip failed: {echoed[:200]}"
+    finally:
+        with httpx.Client(headers=admin_headers(), timeout=30) as client:
+            client.delete(f"{BASE_URL}/admin/external-group-mappings/{mapping_id}")
+
+
+@pytest.fixture(scope="module")
+def entra_app_only_token():
+    """Yield (token, info, mapped_group) from a REAL app-only Entra token.
+    Operator mode reads ENTRA_APPONLY_TOKEN_FILE. Self-provisioning mode
+    (AZURE_*) registers a throwaway v2 application, creates its service
+    principal and client secret, provisions one security group holding the
+    service principal, and acquires the app-only token. It deletes every
+    object after the session.
+    """
+    cleanup: dict[str, str] = {}
+    token = load_entra_app_only_token()
+    if not token:
+        if os.getenv("AZURE_CLIENT_ID") and os.getenv("AZURE_CLIENT_SECRET") and os.getenv("AZURE_TENANT_ID"):
+            try:
+                token, cleanup = provision_entra_app_only_identity()
+            except _ProvisioningError as exc:
+                pytest.skip(f"app-only self-provisioning failed: {exc}")
+            except httpx.HTTPError as exc:
+                pytest.skip(
+                    f"app-only self-provisioning cannot reach Entra endpoints ({type(exc).__name__}); "
+                    'set TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com"'
+                )
+        else:
+            pytest.skip("app-only case requires ENTRA_APPONLY_TOKEN_FILE or AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_TENANT_ID")
+    if not token:
+        pytest.skip("ENTRA_APPONLY_TOKEN_FILE pointed at no readable token")
+    problems = validate_for_app_only(inspect_token(token))
+    if problems:
+        pytest.skip(f"app-only token unusable: {'; '.join(problems)}")
+    if not cleanup:
+        operator_group = resolve_entra_sp_first_group(token)
+        if not operator_group:
+            pytest.skip("operator app-only token resolved no service-principal group membership through Graph")
+    else:
+        operator_group = None
+    info = inspect_token(token)
+    yield token, info, cleanup.get("group_id") or operator_group
+    _cleanup_entra_test_identity(cleanup)
+
+
+def test_uc5_app_only_group_resolved_via_graph_allows_invoke(entra_app_only_token, local_oidc_issuer):
+    """UC5: app-only token with no groups claim -> Graph resolves the service-principal groups -> 200.
+
+    The token carries idtyp=app and no groups claim. The gateway resolves
+    the service principal's group membership through
+    /servicePrincipals/{oid}/getMemberObjects and maps it to the agent
+    team. The echo round-trip proves the invocation reached the stub
+    agent under the mapped developer role.
+    """
+    if os.getenv("JWT_TRUST_OVERAGE_POLICY", "fail_closed") != "graph_lookup":
+        pytest.skip("UC5 requires the gateway started with JWT_TRUST_OVERAGE_POLICY=graph_lookup (make testing-up-entra)")
+    graph_client_id = os.getenv("ENTRA_GRAPH_CLIENT_ID") or os.getenv("AZURE_CLIENT_ID") or os.getenv("ENTRA_CLIENT_ID")
+    graph_client_secret = os.getenv("ENTRA_GRAPH_CLIENT_SECRET") or os.getenv("AZURE_CLIENT_SECRET") or os.getenv("ENTRA_CLIENT_SECRET")
+    if not (graph_client_id and graph_client_secret):
+        pytest.skip(
+            "UC5 needs Graph-capable app credentials (admin-consented GroupMember.Read.All): "
+            "set ENTRA_GRAPH_CLIENT_ID + ENTRA_GRAPH_CLIENT_SECRET (or AZURE_CLIENT_ID + AZURE_CLIENT_SECRET)"
+        )
+    token, info, mapped_group = entra_app_only_token
+    v1_jwks = info["issuer"].rstrip("/") + "/discovery/keys" if "sts.windows.net" in info["issuer"] else None
+    with httpx.Client(headers=admin_headers(), timeout=30) as client:
+        team_id = seed_team(client, "Entra Live App-Only Team", "Live Entra app-only e2e")
+        # Re-seed the SINGLE trust-root provider with Graph credentials, for
+        # the same issuer-determinism reason as UC4.
+        seed_provider(
+            client,
+            PROVIDER_ID,
+            info["issuer"],
+            info["audience"],
+            token_url=f"https://login.microsoftonline.com/{info['tenant_id']}/oauth2/v2.0/token",
+            jwks_uri=v1_jwks,
+            client_id=graph_client_id,
+            client_secret=graph_client_secret,
+        )
+        seed_agent(client, "Entra-Live-AppOnly-Agent", team_id, local_oidc_issuer.stub_agent_url_for_gateway, "Live Entra app-only agent")
+        mapping_id = seed_mapping(client, info["issuer"], info["tenant_id"], mapped_group, team_id, "developer")
+    try:
+        message = f"Hello from live Entra app-only e2e {uuid.uuid4().hex[:8]}"
+        response = _invoke("Entra-Live-AppOnly-Agent", token, message)
+        assert response.status_code == 200, f"UC5 expected 200, got {response.status_code}: {response.text[:200]}"
+        artifacts = response.json()["result"]["artifacts"]
+        echoed = artifacts[0]["parts"][0]["text"] if artifacts and artifacts[0].get("parts") else ""
+        assert message in echoed, f"UC5 echo round-trip failed: {echoed[:200]}"
     finally:
         with httpx.Client(headers=admin_headers(), timeout=30) as client:
             client.delete(f"{BASE_URL}/admin/external-group-mappings/{mapping_id}")
