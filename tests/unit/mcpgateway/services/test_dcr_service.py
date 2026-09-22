@@ -1465,6 +1465,124 @@ class TestPreparePinnedRequest:
         assert target.extensions == {}
 
 
+class TestRegistrationClientUriSsrfDenyPath:
+    """Test that a hostile registration_client_uri cannot receive the bearer token."""
+
+    @staticmethod
+    def _make_record(test_db, suffix, registration_client_uri, issuer):
+        """Create a gateway and a registered client row for these tests.
+
+        Args:
+            test_db: Database session fixture.
+            suffix: Unique suffix for the generated identifiers.
+            registration_client_uri: Value to store for the management URL.
+            issuer: Value to store for the issuer.
+
+        Returns:
+            RegisteredOAuthClient: The persisted client row.
+        """
+        # First-Party
+        from mcpgateway.config import get_settings
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+        from mcpgateway.services.encryption_service import get_encryption_service
+
+        gateway = Gateway(id=f"gw-{suffix}", name=f"GW {suffix}", slug=f"gw-{suffix}", url=f"http://{suffix}.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")  # pragma: allowlist secret
+
+        client_record = RegisteredOAuthClient(
+            id=f"client-{suffix}",
+            gateway_id=f"gw-{suffix}",
+            issuer=issuer,
+            client_id=f"client-id-{suffix}",
+            client_secret_encrypted="encrypted",  # pragma: allowlist secret
+            registration_client_uri=registration_client_uri,
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+        )
+        test_db.add(client_record)
+        test_db.commit()
+        return client_record
+
+    @pytest.mark.asyncio
+    async def test_update_refuses_cross_origin_uri(self, test_db):
+        """A cross-origin management URL is refused before the PUT."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-deny", "http://169.254.169.254/register/c", "https://as.example.com")
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock()
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service.update_client_registration(client_record, test_db)
+
+        assert "origin" in str(exc_info.value).lower()
+        mock_client.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_puts_to_pinned_address_with_bearer_token(self, test_db):
+        """A valid update reaches the pinned address and keeps its Authorization header."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-ok", "https://as.example.com/register/c", "https://as.example.com")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"client_id": "client-id-upd-ok"})
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            await dcr_service.update_client_registration(client_record, test_db)
+
+        call_args, call_kwargs = mock_client.put.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register/c"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["headers"]["Authorization"] == "Bearer registration-access-token"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+
+    @pytest.mark.asyncio
+    async def test_delete_refuses_cross_origin_uri(self, test_db):
+        """A cross-origin management URL returns False and sends nothing."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "del-deny", "http://169.254.169.254/register/c", "https://as.example.com")
+
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock()
+
+        with patch_isolated_client(mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+
+        assert result is False
+        mock_client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_sends_to_pinned_address(self, test_db):
+        """A valid delete reaches the pinned address with the original authority."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "del-ok", "https://as.example.com/register/c", "https://as.example.com")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 204
+
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+
+        assert result is True
+        call_args, call_kwargs = mock_client.delete.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register/c"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

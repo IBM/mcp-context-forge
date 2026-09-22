@@ -28,7 +28,7 @@ from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidat
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
+from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.utils.origin import is_same_origin, origin_from_url
 
 logger = logging.getLogger(__name__)
@@ -59,14 +59,6 @@ class DcrService:
     def __init__(self):
         """Initialize DCR service."""
         self.settings = get_settings()
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get the shared singleton HTTP client.
-
-        Returns:
-            Shared httpx.AsyncClient instance with connection pooling
-        """
-        return await get_http_client()
 
     def _get_timeout(self) -> float:
         """Get the OAuth request timeout from settings.
@@ -432,26 +424,34 @@ class DcrService:
         # Build update request
         update_request = {"client_id": client_record.client_id, "redirect_uris": orjson.loads(client_record.redirect_uris), "grant_types": orjson.loads(client_record.grant_types)}
 
+        pinned_target = await self._prepare_pinned_request(client_record.registration_client_uri, client_record.issuer, "DCR registration_client_uri")
+
         # Send update request
         try:
-            client = await self._get_client()
-            headers = {"Authorization": f"Bearer {registration_access_token}"}
-            response = await client.put(client_record.registration_client_uri, json=update_request, headers=headers, timeout=self._get_timeout())
-            if response.status_code == 200:
-                updated_response = response.json()
+            headers = {"Authorization": f"Bearer {registration_access_token}", **pinned_target.headers}
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.put(
+                    pinned_target.url,
+                    json=update_request,
+                    headers=headers,
+                    extensions=pinned_target.extensions,
+                    timeout=self._get_timeout(),
+                )
+                if response.status_code == 200:
+                    updated_response = response.json()
 
-                # Update encrypted secret if changed
-                if "client_secret" in updated_response:
-                    client_record.client_secret_encrypted = await encryption.encrypt_secret_async(updated_response["client_secret"])
+                    # Update encrypted secret if changed
+                    if "client_secret" in updated_response:
+                        client_record.client_secret_encrypted = await encryption.encrypt_secret_async(updated_response["client_secret"])
 
-                db.commit()
-                db.refresh(client_record)
+                    db.commit()
+                    db.refresh(client_record)
 
-                logger.info("Successfully updated client registration for %s", client_record.client_id)
-                return client_record
+                    logger.info("Successfully updated client registration for %s", client_record.client_id)
+                    return client_record
 
-            error_data = response.json()
-            raise DcrError(f"Failed to update client: {error_data}")
+                error_data = response.json()
+                raise DcrError(f"Failed to update client: {error_data}")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to update client registration: {e}")
 
@@ -485,17 +485,28 @@ class DcrService:
             logger.error("Failed to decrypt registration access token; cannot authenticate delete request to AS")
             return False
 
+        try:
+            pinned_target = await self._prepare_pinned_request(client_record.registration_client_uri, client_record.issuer, "DCR registration_client_uri")
+        except DcrError as policy_error:
+            logger.error("Refused to delete a client registration at a blocked URL: %s", SecurityValidator.sanitize_log_message(str(policy_error)))
+            return False
+
         # Send delete request
         try:
-            client = await self._get_client()
-            headers = {"Authorization": f"Bearer {registration_access_token}"}
-            response = await client.delete(client_record.registration_client_uri, headers=headers, timeout=self._get_timeout())
-            if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
-                logger.info("Successfully deleted client registration for %s", client_record.client_id)
-                return True
+            headers = {"Authorization": f"Bearer {registration_access_token}", **pinned_target.headers}
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.delete(
+                    pinned_target.url,
+                    headers=headers,
+                    extensions=pinned_target.extensions,
+                    timeout=self._get_timeout(),
+                )
+                if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
+                    logger.info("Successfully deleted client registration for %s", client_record.client_id)
+                    return True
 
-            logger.warning("Unexpected status when deleting client: %s", response.status_code)
-            return False
+                logger.warning("Unexpected status when deleting client: %s", response.status_code)
+                return False
         except httpx.HTTPError as e:
             logger.error("Failed to delete client at AS: %s", e)
             return False
