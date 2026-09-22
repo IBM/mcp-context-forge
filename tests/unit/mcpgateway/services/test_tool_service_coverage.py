@@ -10209,6 +10209,149 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
 
 
 # ---------------------------------------------------------------------------
+# invoke_tool — retry_on_status structured_content via SSE / StreamableHTTP
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpSseRetryOnStatus:
+    """HTTPStatusError on the SSE path must propagate status_code in structured_content.
+
+    Finding #2: the inner BaseException handler converts the exception to a CallToolResult
+    before the outer handler can attach structured_content.  The inner handler must do it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sse_http_status_error_sets_structured_content_status_code(self, tool_service):
+        """httpx.HTTPStatusError on SSE transport must include status_code in structured_content."""
+        import httpx  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        # Build a real httpx.HTTPStatusError with a 429 response
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 429
+        http_err = httpx.HTTPStatusError("Too Many Requests", request=MagicMock(), response=mock_response)
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=http_err)
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert result.is_error is True
+        # structured_content must carry status_code so the retry plugin can act on it
+        assert result.structured_content is not None, "structured_content must be set for HTTPStatusError"
+        assert result.structured_content.get("status_code") == 429
+
+
+class TestInvokeToolMcpStreamableHttpRetryOnStatus:
+    """HTTPStatusError on the StreamableHTTP path must propagate status_code in structured_content."""
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_http_status_error_sets_structured_content_status_code(self, tool_service):
+        """httpx.HTTPStatusError on StreamableHTTP transport must include status_code in structured_content."""
+        import httpx  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        # Build a real httpx.HTTPStatusError with a 503 response
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 503
+        http_err = httpx.HTTPStatusError("Service Unavailable", request=MagicMock(), response=mock_response)
+
+        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=http_err)
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert result.is_error is True
+        # structured_content must carry status_code so the retry plugin can act on it
+        assert result.structured_content is not None, "structured_content must be set for HTTPStatusError"
+        assert result.structured_content.get("status_code") == 503
+
+
+# ---------------------------------------------------------------------------
 # invoke_tool — MCP StreamableHTTP coverage (lines 3355-3459, 3464-3483)
 # ---------------------------------------------------------------------------
 
