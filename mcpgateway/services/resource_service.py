@@ -46,7 +46,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalErro
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
+from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent, TextResourceContents
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
@@ -72,11 +72,13 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.reverse_proxy_dispatch import _read_reverse_proxied_resource, _resource_content_for_read
+from mcpgateway.services.reverse_proxy_protocol import is_proxied_transport
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.gateway_access import build_downstream_auth, build_gateway_auth_headers, check_gateway_access, GatewayAuthValueError
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -2257,7 +2259,20 @@ class ResourceService(BaseService):
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
-                        if (gateway_transport).lower() == "sse":
+                        if is_proxied_transport(gateway_transport):
+                            # PROXIED gateways dispatch over the reverse-proxy session, never a direct
+                            # upstream connection; the gateway URL is only a registration placeholder.
+                            if uri is None:
+                                raise ResourceError(f"Cannot dispatch resources/read to PROXIED gateway '{gateway.id}' without a resource URI")
+                            # Forward stored gateway credentials only (strictly normalized; unsupported modes
+                            # are rejected rather than silently omitted); the shared ``headers`` may carry inbound
+                            # identity-propagation fields that must never ride the proxy envelope. Never logged.
+                            try:
+                                downstream_auth = build_downstream_auth(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
+                            except GatewayAuthValueError as auth_err:
+                                raise ResourceError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
+                            resource_text = await _read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth, error_factory=ResourceError)
+                        elif (gateway_transport).lower() == "sse":
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
@@ -2383,10 +2398,17 @@ class ResourceService(BaseService):
         has_valid_cached_fallback = False
 
         def _resource_has_gateway(resource: Optional[DbResource]) -> bool:
+            """Return whether the resource is backed by a gateway row."""
             return resource_db_gateway is not None or (resource is not None and resource.gateway_id is not None)
 
         def _resource_content_or_placeholder(resource: DbResource) -> ResourceContent:
+            """Resolve the resource body: PROXIED dispatch placeholder, authoritative cached content, or a gateway placeholder."""
             nonlocal has_valid_cached_fallback
+            gateway = getattr(resource, "gateway", None)
+            if str(getattr(gateway, "transport", "") or "").upper() == "PROXIED" and getattr(gateway, "created_via", None) == "reverse_proxy":
+                # Internal PROXIED row: emit the dispatch placeholder (empty text) so the
+                # read forwards resources/read downstream; never a cached-fallback candidate.
+                return _resource_content_for_read(resource)
             if _has_authoritative_cached_content(resource):
                 has_valid_cached_fallback = True
                 return resource.content
@@ -2557,10 +2579,7 @@ class ResourceService(BaseService):
 
                         logger.info("Using direct_proxy mode for resource '%s' via gateway %s", uri, resource_db.gateway.id)
 
-                        try:  # First-Party
-                            # First-Party
-                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
-
+                        try:
                             gateway = resource_db.gateway
 
                             # Prepare headers with gateway auth
@@ -2747,6 +2766,7 @@ class ResourceService(BaseService):
 
                 async def _invoke_gateway_content(content_obj: Any, attr_name: str, template_value: Any) -> None:
                     """Resolve gateway content, preserving only authoritative cached fallbacks."""
+                    nonlocal content
                     content_id = getattr(content_obj, "id", None)
                     gateway_fetch_allowed = _resource_has_gateway(resource_db)
                     requested_uri = uri if uri is not None else original_uri
@@ -2783,11 +2803,19 @@ class ResourceService(BaseService):
                             logger.warning("Gateway resource refresh failed; serving cached content for resource '%s'", getattr(resource_db, "id", None))
                             return
                         raise
+                    if isinstance(resource_response, ResourceContents):
+                        # Typed wire content (e.g. PROXIED dispatch): replace the placeholder
+                        # wholesale so text/blob typing survives the read.
+                        content = resource_response
+                        return
                     _set_gateway_content(content_obj, attr_name, resource_response)
 
                 if content_resolved:
                     pass
-                elif isinstance(content, (ResourceContent, ResourceContents, TextContent)):
+                elif isinstance(content, ResourceContents):
+                    # Already resolved typed content (direct_proxy or PROXIED dispatch) - no re-invocation
+                    pass
+                elif isinstance(content, (ResourceContent, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     await _invoke_gateway_content(content, "text", getattr(content, "text", None))
                 # If content is any object that quacks like content
