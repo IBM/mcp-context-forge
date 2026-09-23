@@ -1587,6 +1587,58 @@ class TestMcpPerServerEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# Test: Invitee invitation lifecycle
+# ---------------------------------------------------------------------------
+class TestTeamInvitationLifecycle:
+    """Exercise invitation inbox and decline routes through the live gateway."""
+
+    def test_invitee_lists_and_declines_invitation(self, admin_api: APIRequestContext, playwright: Playwright, rbac_team: dict[str, Any]) -> None:
+        """Create, list, and decline an invitation using authenticated HTTP clients."""
+        email = f"{RBAC_PREFIX}-invitee-{uuid.uuid4().hex[:8]}@test.com"
+        invitee = _create_user_with_token(admin_api, playwright, email)
+        invitee_api = _api_context(playwright, invitee["access_token"])
+
+        try:
+            create_response = admin_api.post(
+                f"/v1/teams/{rbac_team['id']}/invitations",
+                data={"email": email, "role": "member"},
+            )
+            assert create_response.status == 201, f"Invitation creation failed: {create_response.status} {create_response.text()}"
+            created = create_response.json()
+            invitation_id = created["id"]
+            invitation_token = created["token"]
+
+            owner_inbox_response = admin_api.get("/v1/users/me/invitations")
+            assert owner_inbox_response.status == 200, f"Owner inbox failed: {owner_inbox_response.status} {owner_inbox_response.text()}"
+            assert invitation_id not in {item["id"] for item in owner_inbox_response.json()}
+
+            inbox_response = invitee_api.get("/v1/users/me/invitations")
+            assert inbox_response.status == 200, f"Invitee inbox failed: {inbox_response.status} {inbox_response.text()}"
+            matching = [item for item in inbox_response.json() if item["id"] == invitation_id]
+            assert len(matching) == 1
+            assert matching[0]["email"] == email
+            assert matching[0]["team_id"] == rbac_team["id"]
+            assert matching[0]["team_name"] == rbac_team["name"]
+            assert matching[0]["role"] == "member"
+            assert matching[0]["is_active"] is True
+            assert matching[0]["is_expired"] is False
+
+            decline_response = invitee_api.post(f"/v1/teams/invitations/{invitation_token}/decline")
+            assert decline_response.status == 200, f"Invitation decline failed: {decline_response.status} {decline_response.text()}"
+            assert decline_response.json()["message"] == "Team invitation declined successfully"
+
+            final_inbox_response = invitee_api.get("/v1/users/me/invitations")
+            assert final_inbox_response.status == 200
+            assert invitation_id not in {item["id"] for item in final_inbox_response.json()}
+
+            repeated_decline_response = invitee_api.post(f"/v1/teams/invitations/{invitation_token}/decline")
+            assert repeated_decline_response.status == 404
+        finally:
+            invitee_api.dispose()
+            _cleanup_user(admin_api, invitee)
+
+
+# ---------------------------------------------------------------------------
 # Test: Deny paths (security invariants)
 # ---------------------------------------------------------------------------
 class TestDenyPaths:
