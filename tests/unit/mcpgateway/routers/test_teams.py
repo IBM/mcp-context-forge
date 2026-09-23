@@ -1594,6 +1594,26 @@ class TestTeamsRouter:
             assert result[0].team_name == mock_team.name
 
     @pytest.mark.asyncio
+    async def test_list_team_invitations_database_failure_returns_500(self, mock_user_context, mock_db):
+        """Map invitation query failures to a safe server error."""
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockTeamService, patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService:
+            team_service = AsyncMock(spec=TeamManagementService)
+            team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            MockTeamService.return_value = team_service
+
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.get_team_invitations = AsyncMock(side_effect=RuntimeError("database unavailable"))
+            MockInviteService.return_value = invitation_service
+
+            from mcpgateway.routers.teams import list_team_invitations
+
+            with pytest.raises(HTTPException) as exc_info:
+                await list_team_invitations("team-1", current_user=mock_user_context, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail == "Failed to list invitations"
+
+    @pytest.mark.asyncio
     async def test_accept_team_invitation_success(self, mock_user_context, mock_db, mock_team_member):
         """Test accepting a team invitation."""
         token = "test-token-123"
@@ -1754,6 +1774,33 @@ class TestTeamsRouter:
             result = await cancel_team_invitation(invitation_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team invitation cancelled successfully"
+
+    @pytest.mark.asyncio
+    async def test_cancel_team_invitation_database_failure_returns_500(self, mock_user_context, mock_db, mock_invitation):
+        """Map invitation revoke failures to a safe server error."""
+        invitation_id = mock_invitation.id
+        mock_filter = MagicMock()
+        mock_filter.first.return_value = mock_invitation
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_filter
+        mock_db.query.return_value = mock_query
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockTeamService, patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService:
+            team_service = AsyncMock(spec=TeamManagementService)
+            team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            MockTeamService.return_value = team_service
+
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.revoke_invitation = AsyncMock(side_effect=RuntimeError("database unavailable"))
+            MockInviteService.return_value = invitation_service
+
+            from mcpgateway.routers.teams import cancel_team_invitation
+
+            with pytest.raises(HTTPException) as exc_info:
+                await cancel_team_invitation(invitation_id, current_user=mock_user_context, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail == "Failed to cancel invitation"
 
     # =========================================================================
     # Team Discovery and Join Request Tests

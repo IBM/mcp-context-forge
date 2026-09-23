@@ -591,7 +591,10 @@ class TeamInvitationService:
             revoked_by: Email of user revoking the invitation
 
         Returns:
-            bool: True if invitation was revoked successfully, False otherwise
+            bool: True if the invitation was revoked. False if it was missing or the caller lacked permission.
+
+        Raises:
+            Exception: If the database operation fails.
 
         Examples:
             Team owners can revoke pending invitations.
@@ -635,6 +638,9 @@ class TeamInvitationService:
         Returns:
             List[EmailTeamInvitation]: List of team invitations
 
+        Raises:
+            Exception: If the database query fails.
+
         Examples:
             Team management interface showing pending invitations.
         """
@@ -660,6 +666,9 @@ class TeamInvitationService:
 
         Returns:
             List[EmailTeamInvitation]: List of invitations for the user
+
+        Raises:
+            Exception: If the database query fails.
 
         Examples:
             User dashboard showing pending team invitations.
