@@ -112,6 +112,24 @@ def test_agent_violation_logged():
     assert "bad-agent" in mock_logger.warning.call_args[0][0]
 
 
+def test_agent_violation_with_per_table_scan():
+    """Agent violations are collected even when scanned per-table."""
+    ctx = _mock_session(
+        gateways=[GwRow("g1", "ok-gw", "https://ok.example.com")],
+        agents=[AgentRow("a1", "bad-agent", "ftp://evil.example.com")],
+    )
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.logger") as mock_logger,
+        patch("mcpgateway.main.settings") as mock_settings,
+    ):
+        mock_settings.validation_allowed_url_schemes = ["http://", "https://"]
+        mock_settings.strict_scheme_enforcement = False
+        _check_url_scheme_compliance()
+    warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+    assert any("bad-agent" in m for m in warning_messages)
+
+
 def test_strict_enforcement_raises_system_exit():
     """SystemExit raised when strict_scheme_enforcement is True and violations exist."""
     ctx = _mock_session(gateways=[GwRow("g1", "bad-gw", "ftp://evil.example.com")])
