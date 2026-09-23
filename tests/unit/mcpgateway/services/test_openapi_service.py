@@ -7,6 +7,7 @@ Unit tests for OpenAPI service.
 """
 
 # Standard
+import asyncio
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ import pytest
 # First-Party
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
+    _SPEC_CACHE_TTL,
     _spec_cache,
     _spec_locks,
     extract_schemas_from_openapi,
@@ -412,6 +414,56 @@ class TestFetchOpenAPISpec:
             with patch(_PATCH_SETTINGS, mock_settings):
                 with pytest.raises(ValueError, match="blocked by URL policy"):
                     await fetch_openapi_spec("http://example.com/openapi.json")
+
+    @pytest.mark.asyncio
+    async def test_cache_ttl_expiry_triggers_refetch(self):
+        """Expired cache entry triggers a fresh upstream fetch."""
+        mock_spec_v1 = {"openapi": "3.0.0", "info": {"version": "1"}}
+        mock_spec_v2 = {"openapi": "3.0.0", "info": {"version": "2"}}
+        url = "http://example.com/openapi.json"
+
+        client_v1 = _mock_httpx_client(orjson.dumps(mock_spec_v1))
+        with patch("httpx.AsyncClient", return_value=client_v1):
+            with patch(_PATCH_VALIDATE, new_callable=AsyncMock, return_value=_VALID_PIN):
+                first = await fetch_openapi_spec(url)
+        assert first == mock_spec_v1
+
+        # Expire the cache entry by backdating its timestamp.
+        ts, spec = _spec_cache[url]
+        _spec_cache[url] = (ts - _SPEC_CACHE_TTL - 1, spec)
+
+        client_v2 = _mock_httpx_client(orjson.dumps(mock_spec_v2))
+        with patch("httpx.AsyncClient", return_value=client_v2):
+            with patch(_PATCH_VALIDATE, new_callable=AsyncMock, return_value=_VALID_PIN) as mock_val:
+                second = await fetch_openapi_spec(url)
+
+        assert second == mock_spec_v2
+        mock_val.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_fetches_coalesce_to_single_request(self):
+        """Multiple concurrent callers for the same URL produce exactly one upstream fetch."""
+        mock_spec = {"openapi": "3.0.0", "paths": {}}
+        fetch_count = 0
+
+        original_do_fetch = None
+
+        async def _counting_fetch(spec_url, timeout):
+            nonlocal fetch_count
+            fetch_count += 1
+            await asyncio.sleep(0.05)  # Simulate network latency.
+            return mock_spec
+
+        with patch("mcpgateway.services.openapi_service._do_fetch", side_effect=_counting_fetch):
+            results = await asyncio.gather(
+                fetch_openapi_spec("http://example.com/openapi.json"),
+                fetch_openapi_spec("http://example.com/openapi.json"),
+                fetch_openapi_spec("http://example.com/openapi.json"),
+            )
+
+        assert fetch_count == 1, f"Expected 1 upstream fetch, got {fetch_count}"
+        for r in results:
+            assert r == mock_spec
 
 class TestFetchAndExtractSchemas:
     """Tests for fetch_and_extract_schemas function."""

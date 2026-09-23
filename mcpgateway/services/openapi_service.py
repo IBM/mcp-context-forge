@@ -8,6 +8,7 @@ This module provides services for fetching and extracting schemas from OpenAPI s
 """
 
 import asyncio
+import copy
 import collections
 import logging
 import time
@@ -101,7 +102,7 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
     cached = _spec_cache.get(spec_url)
     if cached and (now - cached[0]) < _SPEC_CACHE_TTL:
         _spec_cache.move_to_end(spec_url)
-        return cached[1]
+        return copy.deepcopy(cached[1])
 
     # --- single-flight: one fetch per URL, concurrent callers wait ---
     async with _spec_locks_guard:
@@ -114,7 +115,7 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         cached = _spec_cache.get(spec_url)
         if cached and (time.monotonic() - cached[0]) < _SPEC_CACHE_TTL:
             _spec_cache.move_to_end(spec_url)
-            return cached[1]
+            return copy.deepcopy(cached[1])
 
         result = await _do_fetch(spec_url, timeout)
 
