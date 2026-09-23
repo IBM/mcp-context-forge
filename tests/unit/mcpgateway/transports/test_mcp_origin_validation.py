@@ -13,7 +13,9 @@ Covers:
 - SDK TransportSecuritySettings wiring: security_settings passed when mcp_allowed_hosts is
   set; None when mcp_allowed_hosts is empty.
 - Split-enforcement path: mcp_allowed_hosts set, mcp_allowed_origins empty — custom gate
-  enforces origins while SDK receives allowed_origins=[].
+  enforces origins while SDK omits allowed_origins (preventing SDK reject-all behaviour).
+- Request-level split-config invariant: browser Origin not 403'd when mcp_allowed_origins is
+  empty (Host-only enforcement mode).
 """
 
 # Future
@@ -451,3 +453,66 @@ async def test_origin_enforced_by_custom_gate_when_sdk_hosts_not_configured(monk
         f"Custom origin gate must reject unapproved origins even when mcp_allowed_hosts is empty, got {sent}"
     )
     assert not wrapper.session_manager.called, "Session manager must NOT be called when origin is rejected"
+
+
+def test_sdk_security_settings_omits_allowed_origins_when_mcp_allowed_origins_empty(monkeypatch):
+    """When mcp_allowed_hosts is set but mcp_allowed_origins is empty, the SDK must NOT receive
+    allowed_origins (omitting it prevents the SDK from rejecting all browser-originated requests)."""
+    captured_kwargs: dict = {}
+
+    class CapturingSessionManager(DummySessionManager):
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
+
+    SessionManagerWrapper()
+
+    security = captured_kwargs.get("security_settings")
+    assert security is not None, "security_settings must be passed when mcp_allowed_hosts is set"
+    assert security.enable_dns_rebinding_protection is True
+    assert "myapp.example.com:4444" in security.allowed_hosts
+    # allowed_origins must be absent or empty — the SDK must not receive an explicit empty list
+    # which it would interpret as "reject every non-empty Origin".
+    sdk_origins = getattr(security, "allowed_origins", None)
+    assert not sdk_origins, (
+        "SDK allowed_origins must be empty/absent when mcp_allowed_origins is not configured; "
+        f"got {sdk_origins}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_browser_origin_not_rejected_when_only_mcp_allowed_hosts_set(monkeypatch):
+    """When mcp_allowed_hosts is set but mcp_allowed_origins is empty, a present Origin header
+    must NOT trigger a 403 from the gateway's own _check_mcp_origin gate (empty allowlist = accept-all).
+    This is the key split-config invariant: Host-only enforcement must not block browser clients."""
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    scope = _make_scope(
+        "/mcp",
+        headers=[(b"origin", b"https://any-browser-app.example.com")],
+    )
+    await wrapper.handle_streamable_http(scope, receive, send)
+    await wrapper.shutdown()
+
+    # The gateway Origin gate must NOT return 403 when mcp_allowed_origins is empty.
+    origin_403 = any(m.get("status") == 403 for m in sent if m.get("type") == "http.response.start")
+    assert not origin_403, (
+        f"Browser origin must not be rejected when mcp_allowed_origins is empty (Host-only mode), got {sent}"
+    )
