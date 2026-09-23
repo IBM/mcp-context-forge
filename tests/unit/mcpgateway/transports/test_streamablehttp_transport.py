@@ -9042,6 +9042,7 @@ async def test_forwarded_non_post_returns_200(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9068,6 +9069,7 @@ async def test_forwarded_post_routes_to_rpc(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9112,6 +9114,7 @@ async def test_forwarded_post_routes_to_rpc_multipart_body_and_auth_header(monke
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9168,6 +9171,7 @@ async def test_forwarded_post_empty_body_returns_202(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9192,6 +9196,7 @@ async def test_forwarded_post_notification_returns_202(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9217,6 +9222,7 @@ async def test_forwarded_post_disconnect_returns_early(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9246,6 +9252,7 @@ async def test_forwarded_post_exception_falls_through(monkeypatch):
             await send_func({"type": "http.response.body", "body": b"sdk"})
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9286,6 +9293,7 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9344,6 +9352,7 @@ async def test_forwarded_post_injects_server_id_with_existing_params(monkeypatch
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9409,6 +9418,7 @@ async def test_forwarded_post_injects_server_id_with_non_dict_params(monkeypatch
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9464,6 +9474,7 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9515,6 +9526,7 @@ async def test_forwarded_post_denies_non_owner_session_access(monkeypatch):
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._validate_streamable_session_access", AsyncMock(return_value=(False, 403, "Session access denied")))
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
 
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
@@ -9556,6 +9568,7 @@ async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9599,6 +9612,7 @@ async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
     monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 

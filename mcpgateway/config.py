@@ -2074,20 +2074,64 @@ class Settings(BaseSettings):
         description="Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
+    @staticmethod
+    def _parse_origin_set(v: Any, *, coerce_non_iterable_to_empty: bool = False) -> Set[str]:
+        """Parse an origin/host set from a JSON array, CSV string, or collection.
+
+        Handles multiple input formats:
+        - JSON array string: '["http://localhost", "http://example.com"]'
+        - Comma-separated string: "http://localhost, http://example.com"
+        - Already parsed set, frozenset, list, or tuple
+
+        Strips whitespace and removes a single outer quote pair when present.
+
+        Args:
+            v: Raw value — a string (JSON or CSV), a collection, or any other type.
+            coerce_non_iterable_to_empty: When True, values that are not a string or
+                a recognised collection type (e.g. None, int) return an empty set
+                instead of being passed to set(). Used by fields that default to empty.
+
+        Returns:
+            Set[str]: Parsed origin strings, or an empty set for blank/unknown input.
+
+        Examples:
+            >>> sorted(Settings._parse_origin_set('["https://a.com", "https://b.com"]'))
+            ['https://a.com', 'https://b.com']
+            >>> sorted(Settings._parse_origin_set("https://x.com , https://y.com"))
+            ['https://x.com', 'https://y.com']
+            >>> Settings._parse_origin_set('""')
+            set()
+            >>> Settings._parse_origin_set('"https://single.com"')
+            {'https://single.com'}
+            >>> sorted(Settings._parse_origin_set(['http://a.com', 'http://b.com']))
+            ['http://a.com', 'http://b.com']
+            >>> Settings._parse_origin_set({'http://existing.com'})
+            {'http://existing.com'}
+        """
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
+                v = v[1:-1]
+            if not v:
+                return set()
+            try:
+                parsed = set(orjson.loads(v))
+            except orjson.JSONDecodeError:
+                parsed = {s.strip() for s in v.split(",") if s.strip()}
+            return parsed
+        if isinstance(v, (set, frozenset, list, tuple)):
+            return set(v)
+        if coerce_non_iterable_to_empty:
+            return set()
+        return set(v)  # type: ignore[arg-type]
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def _parse_allowed_origins(cls, v: Any) -> Set[str]:
-        """Parse allowed origins from environment variable or config value.
-
-        Handles multiple input formats for the allowed_origins field:
-        - JSON array string: '["http://localhost", "http://example.com"]'
-        - Comma-separated string: "http://localhost, http://example.com"
-        - Already parsed set/list
-
-        Automatically strips whitespace and removes outer quotes if present.
+        """Parse allowed_origins from environment variable or config value.
 
         Args:
-            v: The input value to parse. Can be a string (JSON or CSV), set, list, or other iterable.
+            v: The input value to parse.
 
         Returns:
             Set[str]: A set of allowed origin strings.
@@ -2106,16 +2150,20 @@ class Settings(BaseSettings):
             >>> Settings._parse_allowed_origins({'http://existing.com'})
             {'http://existing.com'}
         """
-        if isinstance(v, str):
-            v = v.strip()
-            if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
-                v = v[1:-1]
-            try:
-                parsed = set(orjson.loads(v))
-            except orjson.JSONDecodeError:
-                parsed = {s.strip() for s in v.split(",") if s.strip()}
-            return parsed
-        return set(v)
+        return cls._parse_origin_set(v)
+
+    @field_validator("mcp_allowed_origins", "mcp_allowed_hosts", mode="before")
+    @classmethod
+    def _parse_mcp_origin_sets(cls, v: Any) -> Set[str]:
+        """Parse mcp_allowed_origins / mcp_allowed_hosts from JSON array, CSV string, or collection.
+
+        Args:
+            v: Raw env-var string, set, list, or other iterable.
+
+        Returns:
+            Set[str]: Parsed values, empty set for blank or unrecognised input.
+        """
+        return cls._parse_origin_set(v, coerce_non_iterable_to_empty=True)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
@@ -3123,6 +3171,14 @@ class Settings(BaseSettings):
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
+
+    # MCP Origin allowlist — present-but-unlisted Origin returns HTTP 403 (MCP §transport-security).
+    # Empty (default) disables enforcement. Set via MCP_ALLOWED_ORIGINS.
+    mcp_allowed_origins: Annotated[Set[str], NoDecode] = set()
+
+    # MCP Host allowlist — enables SDK-level Host validation when non-empty.
+    # Set via MCP_ALLOWED_HOSTS. Entries: "host:port" or "host:*" for wildcard port.
+    mcp_allowed_hosts: Annotated[Set[str], NoDecode] = set()
 
     # GET /mcp server-to-client stream (ADR-052)
     # When True, GET /mcp returns an SSE stream that delivers server-initiated

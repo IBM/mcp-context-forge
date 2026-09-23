@@ -30,7 +30,8 @@ from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Server as DbServer
 from mcpgateway.deprecations import DEPRECATION_LINK_VALUE, DEPRECATION_RESPONSE_HEADERS, RUST_MCP_RUNTIME_DEPRECATION_MESSAGE
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
-from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
+from mcpgateway.transports.streamablehttp_transport import _check_mcp_host, _check_mcp_origin, _parse_mcp_scope_headers, get_streamable_http_auth_context
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,22 @@ class RustMCPRuntimeProxy:
             logger.debug("Rust MCP runtime deferring to Python fallback: HTTP method %r is not supported", method)
             await self.python_fallback_app(scope, receive, send)
             return
+
+        # Reject unapproved Origin/Host before proxying to Rust runtime (MCP §transport-security).
+        _raw_headers = _parse_mcp_scope_headers(scope)
+        _raw_origin: str | None = _raw_headers.get("origin") or None
+        _raw_host: str | None = _raw_headers.get("host") or None
+        _client = scope.get("client")
+        _is_loopback_forward = settings.mcpgateway_session_affinity_enabled and bool(_client) and _client[0] in ("127.0.0.1", "::1") and _raw_headers.get("x-forwarded-internally") == "true"
+        if not _is_loopback_forward:
+            if not _check_mcp_origin(_raw_origin):
+                logger.warning("Rejecting Rust-proxied MCP request — invalid Origin: %s", sanitize_for_log(str(_raw_origin)))
+                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=403, headers=_deprecation_response_headers())(scope, receive, send)
+                return
+            if not _check_mcp_host(_raw_host):
+                logger.warning("Rejecting Rust-proxied MCP request — invalid Host: %s", sanitize_for_log(str(_raw_host)))
+                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=403, headers=_deprecation_response_headers())(scope, receive, send)
+                return
 
         modified_path = str(scope.get("modified_path") or scope.get("path") or "")
         match = _SERVER_ID_RE.search(modified_path)
