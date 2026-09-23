@@ -1,0 +1,71 @@
+###############################################################################
+#  Production resource overrides
+#
+#  Reduces CPU/memory limits and gateway replicas for smaller hosts.
+#  Usage:  make prod-up          (layers this on top of docker-compose.yml)
+#          make prod-down
+###############################################################################
+
+services:
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '4'
+          memory: 4G
+
+  gateway:
+    deploy:
+      mode: replicated
+      replicas: ${GATEWAY_REPLICAS:-3}
+      resources:
+        limits:
+          cpus: '${GATEWAY_CPU_LIMIT:-4}'
+          memory: ${GATEWAY_MEM_LIMIT:-4G}
+        reservations:
+          cpus: '${GATEWAY_CPU_RESERVATION:-4}'
+          memory: ${GATEWAY_MEM_RESERVATION:-4G}
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '4'
+          memory: 4G
+
+  pgbouncer:
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '4'
+          memory: 4G
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '4'
+          memory: 4G
+
+  fast_time_server:
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '4'
+          memory: 4G

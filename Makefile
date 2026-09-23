@@ -5594,6 +5594,8 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
+# help: prod-up              - Start stack with production resource overrides (docker-compose.prod.yml)
+# help: prod-down             - Stop production-override stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
@@ -5677,10 +5679,11 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-compose-siem-up compose-siem-down compose-siem-logs \
+	compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
-	compose-ui-config-check
+	compose-ui-config-check \
+	prod-up prod-down
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5732,6 +5735,23 @@ compose-upgrade-pg18: compose-validate
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+
+PROD_COMPOSE_FILE := docker-compose.prod.yml
+PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
+
+prod-up: compose-validate                 ## Start stack with production resource overrides
+	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🚀  Using $(COMPOSE_CMD) + $(PROD_COMPOSE_FILE); starting production stack..."
+	IMAGE_LOCAL=$(call get_image_name) $(PROD_COMPOSE) up -d
+
+prod-down: compose-validate               ## Stop production-override stack
+	@echo "🛑 Stopping production stack..."
+	@$(PROD_COMPOSE) stop -t 10 2>/dev/null || true
+	$(PROD_COMPOSE) down --remove-orphans
+	@echo "✅ Production stack stopped."
 
 compose-sso: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
