@@ -17,8 +17,6 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-mcp = "2026-07-29T23:59:59Z"
-mcp-types = "2026-07-29T23:59:59Z"
 cpex = "2026-09-22T23:59:59Z"
 cpex-url-reputation = "2026-09-22T23:59:59Z"
 cpex-rate-limiter = "2026-09-22T23:59:59Z"
