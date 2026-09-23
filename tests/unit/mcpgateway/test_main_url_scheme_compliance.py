@@ -244,3 +244,62 @@ def test_db_error_nonstrict_mode_warns():
         mock_settings.strict_scheme_enforcement = False
         _check_url_scheme_compliance()
     mock_logger.warning.assert_called_once_with("URL scheme compliance check skipped: database unavailable")
+
+
+def test_per_table_db_error_rolls_back_and_continues():
+    """Per-table SQLAlchemyError triggers rollback so subsequent tables still scan."""
+    mock_db = MagicMock()
+    call_count = 0
+
+    def fake_query(*cols):
+        nonlocal call_count
+        call_count += 1
+        parent = cols[0].class_.__name__
+        if parent == "Gateway":
+            raise SQLAlchemyError("schema drift")
+        mock_q = MagicMock()
+        if parent == "Tool":
+            mock_q.filter.return_value.all.return_value = [
+                ToolRow(id=1, original_name="ok-tool", url="https://ok.example.com"),
+            ]
+        elif parent == "A2AAgent":
+            mock_q.filter.return_value.all.return_value = []
+        else:
+            mock_q.filter.return_value.all.return_value = []
+        return mock_q
+
+    mock_db.query.side_effect = fake_query
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=mock_db)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=ctx),
+        patch("mcpgateway.main.settings") as mock_settings,
+        patch("mcpgateway.main.logger") as mock_logger,
+    ):
+        mock_settings.validation_allowed_url_schemes = ["https"]
+        mock_settings.strict_scheme_enforcement = False
+        _check_url_scheme_compliance()
+
+    mock_db.rollback.assert_called_once()
+    assert any("gateways" in str(c) for c in mock_logger.warning.call_args_list)
+    # tools and agents still queried after rollback
+    assert call_count == 3
+
+
+def test_malformed_url_value_error_does_not_abort():
+    """A malformed URL causing ValueError in sanitize_url_for_logging does not abort startup."""
+    session = _mock_session(
+        gateways=[GwRow(id=1, name="bad-bracket", url="ftp://[malformed:8080/path")],
+    )
+    with (
+        patch("mcpgateway.main.SessionLocal", return_value=session),
+        patch("mcpgateway.main.settings") as mock_settings,
+        patch("mcpgateway.main.logger") as mock_logger,
+    ):
+        mock_settings.validation_allowed_url_schemes = ["https"]
+        mock_settings.strict_scheme_enforcement = False
+        _check_url_scheme_compliance()
+
+    assert any("malformed URL" in str(c) for c in mock_logger.warning.call_args_list)

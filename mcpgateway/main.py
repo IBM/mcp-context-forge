@@ -1499,8 +1499,12 @@ def _check_url_scheme_compliance() -> None:
                 try:
                     violations.extend(scan_fn(db))
                 except SQLAlchemyError:
+                    db.rollback()
                     db_error = True
                     logger.warning(f"URL scheme compliance check failed for {table_name} table")
+                except ValueError:
+                    db_error = True
+                    logger.warning(f"URL scheme compliance check encountered a malformed URL in {table_name} table")
     except SQLAlchemyError:
         db_error = True
         logger.warning("URL scheme compliance check skipped: database unavailable")
