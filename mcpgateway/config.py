@@ -2074,20 +2074,63 @@ class Settings(BaseSettings):
         description="Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
+    @staticmethod
+    def _parse_origin_set(v: Any, *, allow_empty_string: bool = False) -> Set[str]:
+        """Parse an origin/host set from a JSON array, CSV string, or collection.
+
+        Handles multiple input formats:
+        - JSON array string: '["http://localhost", "http://example.com"]'
+        - Comma-separated string: "http://localhost, http://example.com"
+        - Already parsed set, frozenset, list, or tuple
+
+        Strips whitespace and removes a single outer quote pair when present.
+
+        Args:
+            v: Raw value — a string (JSON or CSV), a collection, or any other type.
+            allow_empty_string: When True, an empty/blank string returns an empty set
+                instead of raising. Used by fields that default to empty.
+
+        Returns:
+            Set[str]: Parsed origin strings, or an empty set for blank/unknown input.
+
+        Examples:
+            >>> sorted(Settings._parse_origin_set('["https://a.com", "https://b.com"]'))
+            ['https://a.com', 'https://b.com']
+            >>> sorted(Settings._parse_origin_set("https://x.com , https://y.com"))
+            ['https://x.com', 'https://y.com']
+            >>> Settings._parse_origin_set('""')
+            set()
+            >>> Settings._parse_origin_set('"https://single.com"')
+            {'https://single.com'}
+            >>> sorted(Settings._parse_origin_set(['http://a.com', 'http://b.com']))
+            ['http://a.com', 'http://b.com']
+            >>> Settings._parse_origin_set({'http://existing.com'})
+            {'http://existing.com'}
+        """
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
+                v = v[1:-1]
+            if not v:
+                return set()
+            try:
+                parsed = set(orjson.loads(v))
+            except orjson.JSONDecodeError:
+                parsed = {s.strip() for s in v.split(",") if s.strip()}
+            return parsed
+        if isinstance(v, (set, frozenset, list, tuple)):
+            return set(v)
+        if allow_empty_string:
+            return set()
+        return set(v)  # type: ignore[arg-type]
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def _parse_allowed_origins(cls, v: Any) -> Set[str]:
-        """Parse allowed origins from environment variable or config value.
-
-        Handles multiple input formats for the allowed_origins field:
-        - JSON array string: '["http://localhost", "http://example.com"]'
-        - Comma-separated string: "http://localhost, http://example.com"
-        - Already parsed set/list
-
-        Automatically strips whitespace and removes outer quotes if present.
+        """Parse allowed_origins from environment variable or config value.
 
         Args:
-            v: The input value to parse. Can be a string (JSON or CSV), set, list, or other iterable.
+            v: The input value to parse.
 
         Returns:
             Set[str]: A set of allowed origin strings.
@@ -2106,16 +2149,7 @@ class Settings(BaseSettings):
             >>> Settings._parse_allowed_origins({'http://existing.com'})
             {'http://existing.com'}
         """
-        if isinstance(v, str):
-            v = v.strip()
-            if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
-                v = v[1:-1]
-            try:
-                parsed = set(orjson.loads(v))
-            except orjson.JSONDecodeError:
-                parsed = {s.strip() for s in v.split(",") if s.strip()}
-            return parsed
-        return set(v)
+        return cls._parse_origin_set(v)
 
     @field_validator("mcp_allowed_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
@@ -2126,22 +2160,9 @@ class Settings(BaseSettings):
             v: Raw env-var string, set, list, or other iterable.
 
         Returns:
-            Set[str]: Parsed values, empty set for blank input.
+            Set[str]: Parsed values, empty set for blank or unrecognised input.
         """
-        if isinstance(v, str):
-            v = v.strip()
-            if v[:1] in "\"'" and v[-1:] == v[:1]:
-                v = v[1:-1]
-            if not v:
-                return set()
-            try:
-                parsed = set(orjson.loads(v))
-            except orjson.JSONDecodeError:
-                parsed = {s.strip() for s in v.split(",") if s.strip()}
-            return parsed
-        if isinstance(v, (set, frozenset, list, tuple)):
-            return set(v)
-        return set()
+        return cls._parse_origin_set(v, allow_empty_string=True)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")

@@ -30,7 +30,7 @@ from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Server as DbServer
 from mcpgateway.deprecations import DEPRECATION_LINK_VALUE, DEPRECATION_RESPONSE_HEADERS, RUST_MCP_RUNTIME_DEPRECATION_MESSAGE
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
-from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
+from mcpgateway.transports.streamablehttp_transport import _check_mcp_origin, get_streamable_http_auth_context
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
@@ -183,6 +183,28 @@ class RustMCPRuntimeProxy:
         if method not in {"GET", "POST", "DELETE"}:
             logger.debug("Rust MCP runtime deferring to Python fallback: HTTP method %r is not supported", method)
             await self.python_fallback_app(scope, receive, send)
+            return
+
+        # Reject unapproved Origin before proxying to Rust runtime (MCP §transport-security).
+        # Loopback-forwarded requests from the gateway itself skip this check.
+        _raw_headers: dict[str, str] = {
+            name.decode("latin-1").lower(): value.decode("latin-1")
+            for item in scope.get("headers") or []
+            if isinstance(item, (tuple, list)) and len(item) == 2
+            for name, value in [item]
+            if isinstance(name, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
+        }
+        _raw_origin: str | None = _raw_headers.get("origin") or None
+        _client = scope.get("client")
+        _is_loopback_forward = bool(_client) and _client[0] in ("127.0.0.1", "::1") and _raw_headers.get("x-forwarded-internally") == "true"
+        if not _is_loopback_forward and not _check_mcp_origin(_raw_origin):
+            logger.warning("Rejecting Rust-proxied MCP request — invalid Origin: %s", str(_raw_origin))
+            response = ORJSONResponse(
+                {"detail": "Forbidden: Origin not allowed"},
+                status_code=403,
+                headers=_deprecation_response_headers(),
+            )
+            await response(scope, receive, send)
             return
 
         modified_path = str(scope.get("modified_path") or scope.get("path") or "")

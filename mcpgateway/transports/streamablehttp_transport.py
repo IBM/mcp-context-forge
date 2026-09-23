@@ -4107,17 +4107,21 @@ class SessionManagerWrapper:
             stateless = True
 
         # Enable SDK Host validation only when mcp_allowed_hosts is set.
+        # Omit allowed_origins when mcp_allowed_origins is empty — the SDK rejects all
+        # non-empty Origins when given an empty list; Origin enforcement falls to _check_mcp_origin().
         _sdk_security: Optional[TransportSecuritySettings] = None
         if settings.mcp_allowed_hosts:
-            _sdk_security = TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=sorted(settings.mcp_allowed_hosts),
-                allowed_origins=sorted(settings.mcp_allowed_origins),
-            )
+            _sdk_kwargs: dict = {
+                "enable_dns_rebinding_protection": True,
+                "allowed_hosts": sorted(settings.mcp_allowed_hosts),
+            }
+            if settings.mcp_allowed_origins:
+                _sdk_kwargs["allowed_origins"] = sorted(settings.mcp_allowed_origins)
+            _sdk_security = TransportSecuritySettings(**_sdk_kwargs)
             logger.info(
                 "MCP SDK TransportSecuritySettings active — allowed_hosts=%s allowed_origins=%s",
                 sorted(settings.mcp_allowed_hosts),
-                sorted(settings.mcp_allowed_origins),
+                sorted(settings.mcp_allowed_origins) if settings.mcp_allowed_origins else "(not set — Origin enforcement via gateway gate only)",
             )
 
         self.session_manager = StreamableHTTPSessionManager(
@@ -4263,11 +4267,17 @@ class SessionManagerWrapper:
             # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
             headers[k.decode("latin-1").lower()] = v.decode("latin-1")
 
+        # Loopback + sentinel header identifies gateway-internal forwards (used below for both
+        # Origin-check bypass and session-affinity). Only trust from loopback to prevent spoofing.
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_internally_forwarded = _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
+
         # Reject unapproved Origin before any session or backend logic (MCP §transport-security).
-        # Loopback-forwarded requests from the gateway itself skip this check.
+        # _check_mcp_origin() does exact-string matching; the SDK supports "host:*" wildcard-port
+        # syntax. Use explicit port entries (e.g. "http://localhost:4444") when both gates are active.
         _raw_origin: Optional[str] = headers.get("origin") or None
-        _is_loopback_forward = scope.get("client") and scope["client"][0] in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
-        if not _is_loopback_forward and not _check_mcp_origin(_raw_origin):
+        if not is_internally_forwarded and not _check_mcp_origin(_raw_origin):
             logger.warning("Rejecting MCP Streamable HTTP request — invalid Origin: %s", sanitize_for_log(str(_raw_origin)))
             response = ORJSONResponse(
                 {"detail": "Forbidden: Origin not allowed"},
@@ -4290,11 +4300,6 @@ class SessionManagerWrapper:
 
         # Multi-worker session affinity: check if we should forward to another worker
         # This must happen BEFORE the SDK's session manager handles the request
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _client = scope.get("client")
-        _client_host = _client[0] if _client else None
-        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
-        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
