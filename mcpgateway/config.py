@@ -2075,7 +2075,7 @@ class Settings(BaseSettings):
     )
 
     @staticmethod
-    def _parse_origin_set(v: Any, *, allow_empty_string: bool = False) -> Set[str]:
+    def _parse_origin_set(v: Any, *, coerce_non_iterable_to_empty: bool = False) -> Set[str]:
         """Parse an origin/host set from a JSON array, CSV string, or collection.
 
         Handles multiple input formats:
@@ -2087,8 +2087,9 @@ class Settings(BaseSettings):
 
         Args:
             v: Raw value — a string (JSON or CSV), a collection, or any other type.
-            allow_empty_string: When True, an empty/blank string returns an empty set
-                instead of raising. Used by fields that default to empty.
+            coerce_non_iterable_to_empty: When True, values that are not a string or
+                a recognised collection type (e.g. None, int) return an empty set
+                instead of being passed to set(). Used by fields that default to empty.
 
         Returns:
             Set[str]: Parsed origin strings, or an empty set for blank/unknown input.
@@ -2120,7 +2121,7 @@ class Settings(BaseSettings):
             return parsed
         if isinstance(v, (set, frozenset, list, tuple)):
             return set(v)
-        if allow_empty_string:
+        if coerce_non_iterable_to_empty:
             return set()
         return set(v)  # type: ignore[arg-type]
 
@@ -2162,7 +2163,7 @@ class Settings(BaseSettings):
         Returns:
             Set[str]: Parsed values, empty set for blank or unrecognised input.
         """
-        return cls._parse_origin_set(v, allow_empty_string=True)
+        return cls._parse_origin_set(v, coerce_non_iterable_to_empty=True)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")

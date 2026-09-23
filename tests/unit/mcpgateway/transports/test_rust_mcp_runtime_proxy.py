@@ -1010,9 +1010,10 @@ async def test_rust_proxy_accepts_missing_origin_when_allowlist_set(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_rust_proxy_loopback_internal_forward_bypasses_origin_check(monkeypatch):
-    """Internally-forwarded loopback requests skip Origin validation in RustMCPRuntimeProxy."""
+    """Internally-forwarded loopback requests skip Origin validation in RustMCPRuntimeProxy when affinity is enabled."""
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
     monkeypatch.setattr(proxy_mod.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+    monkeypatch.setattr(proxy_mod.settings, "mcpgateway_session_affinity_enabled", True)
 
     # Request will proceed past Origin check; allow it to fail at the Rust call rather than
     # asserting a 403.

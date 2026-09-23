@@ -55,7 +55,6 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
 from sqlalchemy import select
@@ -121,6 +120,26 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def _parse_mcp_scope_headers(scope: Scope) -> dict[str, str]:
+    """Extract and normalise HTTP headers from an ASGI scope into a lowercase str dict.
+
+    Args:
+        scope: ASGI scope dict.
+
+    Returns:
+        Dict mapping lowercase header name to decoded value.
+    """
+    result: dict[str, str] = {}
+    for item in scope.get("headers") or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        name, value = item
+        if not isinstance(name, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
+            continue
+        result[name.decode("latin-1").lower()] = value.decode("latin-1")
+    return result
+
+
 def _check_mcp_origin(origin: Optional[str]) -> bool:
     """Return True when the Origin header is allowed for MCP Streamable HTTP ingress.
 
@@ -139,6 +158,26 @@ def _check_mcp_origin(origin: Optional[str]) -> bool:
     if not settings.mcp_allowed_origins:
         return True
     return origin in settings.mcp_allowed_origins
+
+
+def _check_mcp_host(host: Optional[str]) -> bool:
+    """Return True when the Host header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Host is always accepted. When ``mcp_allowed_hosts`` is empty, all
+    hosts are accepted (opt-in enforcement). Otherwise the host must be an exact
+    member of the configured set or the request must be rejected with HTTP 403.
+
+    Args:
+        host: Value of the Host header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if host is None:
+        return True
+    if not settings.mcp_allowed_hosts:
+        return True
+    return host in settings.mcp_allowed_hosts
 
 
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
@@ -4106,30 +4145,11 @@ class SessionManagerWrapper:
             event_store = None
             stateless = True
 
-        # Enable SDK Host validation only when mcp_allowed_hosts is set.
-        # Omit allowed_origins when mcp_allowed_origins is empty — the SDK rejects all
-        # non-empty Origins when given an empty list; Origin enforcement falls to _check_mcp_origin().
-        _sdk_security: Optional[TransportSecuritySettings] = None
-        if settings.mcp_allowed_hosts:
-            _sdk_kwargs: dict = {
-                "enable_dns_rebinding_protection": True,
-                "allowed_hosts": sorted(settings.mcp_allowed_hosts),
-            }
-            if settings.mcp_allowed_origins:
-                _sdk_kwargs["allowed_origins"] = sorted(settings.mcp_allowed_origins)
-            _sdk_security = TransportSecuritySettings(**_sdk_kwargs)
-            logger.info(
-                "MCP SDK TransportSecuritySettings active — allowed_hosts=%s allowed_origins=%s",
-                sorted(settings.mcp_allowed_hosts),
-                sorted(settings.mcp_allowed_origins) if settings.mcp_allowed_origins else "(not set — Origin enforcement via gateway gate only)",
-            )
-
         self.session_manager = StreamableHTTPSessionManager(
             app=mcp_app,
             event_store=event_store,
             json_response=settings.json_response_enabled,
             stateless=stateless,
-            security_settings=_sdk_security,
         )
         self.stack = AsyncExitStack()
 
@@ -4256,35 +4276,26 @@ class SessionManagerWrapper:
         match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
-        raw_headers = scope.get("headers") or []
-        headers: dict[str, str] = {}
-        for item in raw_headers:
-            if not isinstance(item, (tuple, list)) or len(item) != 2:
-                continue
-            k, v = item
-            if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
-                continue
-            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
-            headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+        headers = _parse_mcp_scope_headers(scope)
 
-        # Loopback + sentinel header identifies gateway-internal forwards (used below for both
-        # Origin-check bypass and session-affinity). Only trust from loopback to prevent spoofing.
+        # Internal-forward bypass: only valid when session-affinity is enabled (the sole code path
+        # that sets x-forwarded-internally). Gate on loopback source to prevent external spoofing.
         _client = scope.get("client")
         _client_host = _client[0] if _client else None
-        is_internally_forwarded = _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
+        is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
 
-        # Reject unapproved Origin before any session or backend logic (MCP §transport-security).
-        # _check_mcp_origin() does exact-string matching; the SDK supports "host:*" wildcard-port
-        # syntax. Use explicit port entries (e.g. "http://localhost:4444") when both gates are active.
+        # Reject unapproved Origin/Host before any session or backend logic (MCP §transport-security).
         _raw_origin: Optional[str] = headers.get("origin") or None
-        if not is_internally_forwarded and not _check_mcp_origin(_raw_origin):
-            logger.warning("Rejecting MCP Streamable HTTP request — invalid Origin: %s", sanitize_for_log(str(_raw_origin)))
-            response = ORJSONResponse(
-                {"detail": "Forbidden: Origin not allowed"},
-                status_code=HTTP_403_FORBIDDEN,
-            )
-            await response(scope, receive, send)
-            return
+        _raw_host: Optional[str] = headers.get("host") or None
+        if not is_internally_forwarded:
+            if not _check_mcp_origin(_raw_origin):
+                logger.warning("Rejecting MCP Streamable HTTP request — invalid Origin: %s", sanitize_for_log(str(_raw_origin)))
+                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+            if not _check_mcp_host(_raw_host):
+                logger.warning("Rejecting MCP Streamable HTTP request — invalid Host: %s", sanitize_for_log(str(_raw_host)))
+                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"

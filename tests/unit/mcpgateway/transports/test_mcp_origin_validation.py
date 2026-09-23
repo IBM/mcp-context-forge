@@ -3,19 +3,15 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for MCP Streamable HTTP Origin / DNS-rebinding protection.
+Unit tests for MCP Streamable HTTP Origin/Host / DNS-rebinding protection.
 
 Covers:
 - _check_mcp_origin helper: missing, allowlisted, unapproved, 'null', empty allowlist
-- handle_streamable_http integration: 403 returned before any session/backend logic
-  when MCP_ALLOWED_ORIGINS is configured and the Origin header is rejected.
-- Internally-forwarded requests (loopback + x-forwarded-internally) bypass the check.
-- SDK TransportSecuritySettings wiring: security_settings passed when mcp_allowed_hosts is
-  set; None when mcp_allowed_hosts is empty.
-- Split-enforcement path: mcp_allowed_hosts set, mcp_allowed_origins empty — custom gate
-  enforces origins while SDK omits allowed_origins (preventing SDK reject-all behaviour).
-- Request-level split-config invariant: browser Origin not 403'd when mcp_allowed_origins is
-  empty (Host-only enforcement mode).
+- _check_mcp_host helper: missing, allowlisted, unapproved, empty allowlist
+- handle_streamable_http integration: 403 for rejected Origin or Host before session/backend
+- Internally-forwarded bypass: only when mcpgateway_session_affinity_enabled is True
+- Host-only enforcement: mcp_allowed_origins empty, mcp_allowed_hosts set — Origin passes,
+  unlisted Host is rejected
 """
 
 # Future
@@ -30,6 +26,7 @@ import pytest
 # First-Party
 from mcpgateway.transports import streamablehttp_transport as tr
 from mcpgateway.transports.streamablehttp_transport import (
+    _check_mcp_host,
     _check_mcp_origin,
     SessionManagerWrapper,
 )
@@ -259,8 +256,9 @@ async def test_null_origin_rejected_when_allowlist_set(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_internal_forward_bypasses_origin_check(monkeypatch):
-    """Internally-forwarded (loopback + x-forwarded-internally) requests skip Origin validation."""
+    """Internally-forwarded (loopback + x-forwarded-internally) requests skip Origin validation when affinity is enabled."""
     monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
 
     wrapper = SessionManagerWrapper()
@@ -374,55 +372,113 @@ async def test_unapproved_origin_on_delete_method_returns_403(monkeypatch):
     assert sent[0]["status"] == 403, f"Expected 403 for DELETE with bad Origin, got {sent}"
 
 
-def test_session_manager_wrapper_builds_sdk_security_settings(monkeypatch):
-    """SessionManagerWrapper passes TransportSecuritySettings to the SDK when mcp_allowed_hosts is set."""
-    captured_kwargs: dict = {}
-
-    class CapturingSessionManager(DummySessionManager):
-        def __init__(self, **kwargs):
-            captured_kwargs.update(kwargs)
-            super().__init__(**kwargs)
-
-    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
-    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://myapp.example.com"})
-    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
-
-    SessionManagerWrapper()
-
-    security = captured_kwargs.get("security_settings")
-    assert security is not None, "security_settings must be passed when mcp_allowed_hosts is set"
-    assert security.enable_dns_rebinding_protection is True
-    assert "myapp.example.com:4444" in security.allowed_hosts
-    assert "https://myapp.example.com" in security.allowed_origins
+# ---------------------------------------------------------------------------
+# _check_mcp_host unit tests
+# ---------------------------------------------------------------------------
 
 
-def test_session_manager_wrapper_no_sdk_security_when_hosts_empty(monkeypatch):
-    """SessionManagerWrapper passes security_settings=None to the SDK when mcp_allowed_hosts is empty."""
-    captured_kwargs: dict = {}
+class TestCheckMcpHost:
+    """Unit tests for _check_mcp_host."""
 
-    class CapturingSessionManager(DummySessionManager):
-        def __init__(self, **kwargs):
-            captured_kwargs.update(kwargs)
-            super().__init__(**kwargs)
+    def _patch_allowed(self, monkeypatch, hosts: set):
+        monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", hosts)
 
-    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", set())
-    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://myapp.example.com"})
-    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
+    def test_missing_host_always_accepted_when_allowlist_empty(self, monkeypatch):
+        """Missing Host header is always accepted."""
+        self._patch_allowed(monkeypatch, set())
+        assert _check_mcp_host(None) is True
 
-    SessionManagerWrapper()
+    def test_any_host_accepted_when_allowlist_empty(self, monkeypatch):
+        """Any Host is accepted when mcp_allowed_hosts is empty (opt-in default)."""
+        self._patch_allowed(monkeypatch, set())
+        assert _check_mcp_host("attacker.invalid:80") is True
 
-    assert captured_kwargs.get("security_settings") is None, (
-        "security_settings must be None when mcp_allowed_hosts is empty — "
-        "enabling SDK host validation with an empty allowlist would reject all requests"
-    )
+    def test_missing_host_accepted_when_allowlist_configured(self, monkeypatch):
+        """Missing Host is always accepted even when allowlist is configured."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host(None) is True
+
+    def test_allowlisted_host_accepted(self, monkeypatch):
+        """A Host in the allowlist is accepted."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("myapp.example.com:4444") is True
+
+    def test_unapproved_host_rejected(self, monkeypatch):
+        """A Host not in the allowlist is rejected."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("attacker.invalid:80") is False
+
+    def test_wrong_port_rejected(self, monkeypatch):
+        """Same hostname but different port is rejected (exact match)."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("myapp.example.com:80") is False
+
+
+# ---------------------------------------------------------------------------
+# handle_streamable_http: Host gate
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_origin_enforced_by_custom_gate_when_sdk_hosts_not_configured(monkeypatch):
-    """When mcp_allowed_hosts is empty but mcp_allowed_origins is set, the custom gate still rejects
-    unapproved origins (the SDK receives allowed_origins=[] and enforces nothing on its own)."""
-    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", set())
+async def test_unapproved_host_returns_403(monkeypatch):
+    """An unapproved Host must yield HTTP 403 before the session manager is touched."""
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"trusted.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    scope = _make_scope("/mcp", headers=[(b"host", b"attacker.invalid:80")])
+    await wrapper.handle_streamable_http(scope, receive, send)
+    await wrapper.shutdown()
+
+    assert sent[0]["status"] == 403, f"Expected 403 for unlisted Host, got {sent}"
+    assert not wrapper.session_manager.called
+
+
+@pytest.mark.asyncio
+async def test_allowlisted_host_not_rejected(monkeypatch):
+    """A request with an allowlisted Host must not be rejected by the Host gate."""
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"trusted.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    scope = _make_scope("/mcp", headers=[(b"host", b"trusted.example.com:4444")])
+    await wrapper.handle_streamable_http(scope, receive, send)
+    await wrapper.shutdown()
+
+    host_403 = any(m.get("status") == 403 for m in sent if m.get("type") == "http.response.start")
+    assert not host_403, f"Allowlisted Host must not produce a 403, got {sent}"
+
+
+@pytest.mark.asyncio
+async def test_origin_enforced_independently_of_host(monkeypatch):
+    """Unapproved Origin is rejected even when mcp_allowed_hosts is empty."""
     monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", set())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
 
     wrapper = SessionManagerWrapper()
@@ -436,61 +492,25 @@ async def test_origin_enforced_by_custom_gate_when_sdk_hosts_not_configured(monk
     async def receive():
         return {"type": "http.disconnect"}
 
-    scope = _make_scope(
-        "/mcp",
-        headers=[(b"origin", b"https://attacker.invalid")],
-    )
+    scope = _make_scope("/mcp", headers=[(b"origin", b"https://attacker.invalid")])
     await wrapper.handle_streamable_http(scope, receive, send)
     await wrapper.shutdown()
 
-    # The custom _check_mcp_origin gate must reject this — the SDK is not configured for
-    # Origin enforcement in this path (allowed_origins=[] is not passed to TransportSecuritySettings
-    # because mcp_allowed_hosts is empty and _sdk_security is None).
-    assert sent, "Expected at least one ASGI message"
-    start_msg = sent[0]
-    assert start_msg["type"] == "http.response.start"
-    assert start_msg["status"] == 403, (
-        f"Custom origin gate must reject unapproved origins even when mcp_allowed_hosts is empty, got {sent}"
-    )
-    assert not wrapper.session_manager.called, "Session manager must NOT be called when origin is rejected"
+    assert sent[0]["status"] == 403
+    assert not wrapper.session_manager.called
 
 
-def test_sdk_security_settings_omits_allowed_origins_when_mcp_allowed_origins_empty(monkeypatch):
-    """When mcp_allowed_hosts is set but mcp_allowed_origins is empty, the SDK must NOT receive
-    allowed_origins (omitting it prevents the SDK from rejecting all browser-originated requests)."""
-    captured_kwargs: dict = {}
-
-    class CapturingSessionManager(DummySessionManager):
-        def __init__(self, **kwargs):
-            captured_kwargs.update(kwargs)
-            super().__init__(**kwargs)
-
-    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
-    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
-    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", CapturingSessionManager)
-
-    SessionManagerWrapper()
-
-    security = captured_kwargs.get("security_settings")
-    assert security is not None, "security_settings must be passed when mcp_allowed_hosts is set"
-    assert security.enable_dns_rebinding_protection is True
-    assert "myapp.example.com:4444" in security.allowed_hosts
-    # allowed_origins must be absent or empty — the SDK must not receive an explicit empty list
-    # which it would interpret as "reject every non-empty Origin".
-    sdk_origins = getattr(security, "allowed_origins", None)
-    assert not sdk_origins, (
-        "SDK allowed_origins must be empty/absent when mcp_allowed_origins is not configured; "
-        f"got {sdk_origins}"
-    )
+# ---------------------------------------------------------------------------
+# Loopback bypass gated on mcpgateway_session_affinity_enabled
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_browser_origin_not_rejected_when_only_mcp_allowed_hosts_set(monkeypatch):
-    """When mcp_allowed_hosts is set but mcp_allowed_origins is empty, a present Origin header
-    must NOT trigger a 403 from the gateway's own _check_mcp_origin gate (empty allowlist = accept-all).
-    This is the key split-config invariant: Host-only enforcement must not block browser clients."""
-    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
-    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
+async def test_internal_forward_bypasses_checks_when_affinity_enabled(monkeypatch):
+    """Loopback + x-forwarded-internally bypasses Origin/Host checks only when affinity is enabled."""
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"trusted.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
 
     wrapper = SessionManagerWrapper()
@@ -506,13 +526,48 @@ async def test_browser_origin_not_rejected_when_only_mcp_allowed_hosts_set(monke
 
     scope = _make_scope(
         "/mcp",
-        headers=[(b"origin", b"https://any-browser-app.example.com")],
+        headers=[
+            (b"origin", b"https://attacker.invalid"),
+            (b"host", b"attacker.invalid:80"),
+            (b"x-forwarded-internally", b"true"),
+        ],
+        client=("127.0.0.1", 0),
     )
     await wrapper.handle_streamable_http(scope, receive, send)
     await wrapper.shutdown()
 
-    # The gateway Origin gate must NOT return 403 when mcp_allowed_origins is empty.
-    origin_403 = any(m.get("status") == 403 for m in sent if m.get("type") == "http.response.start")
-    assert not origin_403, (
-        f"Browser origin must not be rejected when mcp_allowed_origins is empty (Host-only mode), got {sent}"
+    gate_403 = any(m.get("status") == 403 for m in sent if m.get("type") == "http.response.start")
+    assert not gate_403, f"Internal forward with affinity enabled must not get 403, got {sent}"
+
+
+@pytest.mark.asyncio
+async def test_internal_forward_not_bypassed_when_affinity_disabled(monkeypatch):
+    """When mcpgateway_session_affinity_enabled is False, x-forwarded-internally provides no bypass."""
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", set())
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", DummySessionManager)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    scope = _make_scope(
+        "/mcp",
+        headers=[
+            (b"origin", b"https://attacker.invalid"),
+            (b"x-forwarded-internally", b"true"),
+        ],
+        client=("127.0.0.1", 0),
     )
+    await wrapper.handle_streamable_http(scope, receive, send)
+    await wrapper.shutdown()
+
+    assert sent[0]["status"] == 403, f"x-forwarded-internally must not bypass when affinity disabled, got {sent}"
