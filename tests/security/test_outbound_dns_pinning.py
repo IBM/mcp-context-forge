@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for outbound DNS pinning on SSRF-sensitive paths."""
+"""Location: ./tests/security/test_outbound_dns_pinning.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Regression tests for outbound DNS pinning on SSRF-sensitive paths.
+"""
 
 # Standard
 from contextlib import asynccontextmanager, contextmanager
