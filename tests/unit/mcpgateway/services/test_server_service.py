@@ -3481,12 +3481,18 @@ class TestServerServiceCoverageMissingBranches:
 
         cache = AsyncMock()
         cache.invalidate_servers = AsyncMock()
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+        ):
             result = await server_service.set_server_state(db, "srv-1", True)
 
         assert result == "server_read"
         assert mock_server.enabled is True
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with(str(mock_server.id))
 
     @pytest.mark.asyncio
     async def test_set_server_state_no_change_skips_update_block(self, server_service, mock_server):

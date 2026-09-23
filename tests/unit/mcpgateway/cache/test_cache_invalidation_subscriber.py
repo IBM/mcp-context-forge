@@ -169,6 +169,22 @@ class TestCacheInvalidationSubscriber:
         assert "server:srv-456:tool-a" in mock_tool_lookup._cache
 
     @pytest.mark.asyncio
+    async def test_process_exact_scoped_tool_lookup_invalidation(self, cache_subscriber):
+        """Exact scoped-key messages must not be parsed as whole-server messages."""
+        mock_tool_lookup = MagicMock()
+        mock_tool_lookup._cache = {
+            "server:srv-123:tool-a": MagicMock(value={"status": "active"}),
+            "server:srv-123:tool-b": MagicMock(value={"status": "active"}),
+        }
+        mock_tool_lookup._lock = threading.Lock()
+
+        with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_tool_lookup)}):
+            await cache_subscriber._process_invalidation("tool_lookup:key:server:srv-123:tool-a")
+
+        assert "server:srv-123:tool-a" not in mock_tool_lookup._cache
+        assert "server:srv-123:tool-b" in mock_tool_lookup._cache
+
+    @pytest.mark.asyncio
     async def test_process_all_scoped_tool_lookup_invalidation(self, cache_subscriber):
         """Test processing of the all-scoped tool lookup invalidation message."""
         mock_tool_lookup = MagicMock()
@@ -603,6 +619,7 @@ class TestCrossWorkerCacheInvalidation:
             await subscriber._process_invalidation("registry:resources")
             await subscriber._process_invalidation("registry:agents")
             await subscriber._process_invalidation("tool_lookup:my-tool")
+            await subscriber._process_invalidation("tool_lookup:key:server:srv-123:my-tool")
             await subscriber._process_invalidation("tool_lookup:gateway:gw-123")
             await subscriber._process_invalidation("tool_lookup:server:srv-123")
             await subscriber._process_invalidation("tool_lookup:scoped")

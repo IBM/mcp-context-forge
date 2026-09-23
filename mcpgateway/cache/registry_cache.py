@@ -872,6 +872,7 @@ class CacheInvalidationSubscriber:
     Message formats handled:
         - registry:{cache_type} - Invalidate registry cache (tools, prompts, etc.)
         - tool_lookup:{name} - Invalidate specific tool lookup
+        - tool_lookup:key:{cache_key} - Invalidate one exact scoped lookup key
         - tool_lookup:gateway:{gateway_id} - Invalidate all tools for a gateway
         - tool_lookup:server:{server_id} - Invalidate all tools scoped to a virtual server
         - tool_lookup:scoped - Invalidate all virtual-server-scoped tool lookups
@@ -1062,6 +1063,18 @@ class CacheInvalidationSubscriber:
                     for key in keys_to_remove:
                         cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local registry:%s cache (%d keys)", cache_type, len(keys_to_remove))
+
+            elif message.startswith("tool_lookup:key:"):
+                # Handle one exact internal tool lookup key. This distinct
+                # prefix avoids confusing a key beginning with ``server:``
+                # with the whole-server invalidation message below.
+                cache_key = message[len("tool_lookup:key:") :]
+                # First-Party
+                from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+                with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    tool_lookup_cache._cache.pop(cache_key, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup key %s", cache_key)
 
             elif message == "tool_lookup:scoped":
                 # Handle all virtual-server-scoped tool lookup invalidation

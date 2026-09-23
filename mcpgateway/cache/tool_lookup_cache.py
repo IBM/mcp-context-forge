@@ -129,7 +129,7 @@ class ToolLookupCache:
         Returns:
             Redis key for the tool lookup entry.
         """
-        return f"{self._cache_prefix}tool_lookup:{name}"
+        return f"{self._cache_prefix}tool_lookup:v2:{name}"
 
     @staticmethod
     def _cache_key(name: str, server_id: Optional[str] = None) -> str:
@@ -375,8 +375,10 @@ class ToolLookupCache:
             return
 
         if gateway_id:
+            # A tool mutation can change which gateway wins a name lookup. Clear
+            # that gateway's indexed entries, then continue and clear the name in
+            # every lookup scope as well.
             await self.invalidate_gateway(gateway_id)
-            return
 
         cache_key = self._cache_key(name, server_id)
 
@@ -394,7 +396,8 @@ class ToolLookupCache:
             await redis.delete(self._redis_key(cache_key))
             if server_id:
                 await redis.srem(self._server_set_key(server_id), cache_key)
-            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:{cache_key}")
+                await redis.srem(self._scoped_set_key(), cache_key)
+            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:key:{cache_key}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
 
@@ -446,6 +449,7 @@ class ToolLookupCache:
             if cache_keys:
                 keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
                 await redis.delete(*keys)
+                await redis.srem(self._scoped_set_key(), *cache_keys)
             await redis.delete(set_key)
             await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:server:{server_id}")
         except Exception as exc:

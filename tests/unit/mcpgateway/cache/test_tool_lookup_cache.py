@@ -41,6 +41,29 @@ async def test_tool_lookup_cache_set_get_l1(tool_lookup_cache_instance):
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_same_name_by_server_l1(tool_lookup_cache_instance):
+    """Same-name tools on different virtual servers must not share L1 entries."""
+    payload_a = {"status": "active", "tool": {"id": "tool-a", "name": "shared-tool"}}
+    payload_b = {"status": "active", "tool": {"id": "tool-b", "name": "shared-tool"}}
+
+    await tool_lookup_cache_instance.set("shared-tool", payload_a, server_id="server-a")
+    await tool_lookup_cache_instance.set("shared-tool", payload_b, server_id="server-b")
+
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-a") == payload_a
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-b") == payload_b
+    assert await tool_lookup_cache_instance.get("shared-tool") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_negative_entries_by_server(tool_lookup_cache_instance):
+    """One server's offline result must not poison another server's lookup."""
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", server_id="server-a")
+
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-b") is None
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_isolates_server_scopes(tool_lookup_cache_instance):
     global_payload = {"status": "active", "tool": {"name": "global-tool"}}
     server_one_payload = {"status": "active", "tool": {"name": "server-one-tool"}}
@@ -161,6 +184,35 @@ async def test_tool_lookup_cache_l2_hit(tool_lookup_cache_instance):
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_same_name_by_server_l2(tool_lookup_cache_instance):
+    """Redis keys must preserve virtual-server scope after an L1 reset."""
+    tool_lookup_cache_instance._l2_enabled = True
+    stored = {}
+
+    async def _setex(key, _ttl, value):
+        stored[key] = value
+
+    async def _get(key):
+        return stored.get(key)
+
+    redis = MagicMock()
+    redis.setex = AsyncMock(side_effect=_setex)
+    redis.get = AsyncMock(side_effect=_get)
+    redis.sadd = AsyncMock()
+    redis.expire = AsyncMock()
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+    payload_a = {"status": "active", "tool": {"id": "tool-a"}}
+    payload_b = {"status": "active", "tool": {"id": "tool-b"}}
+
+    await tool_lookup_cache_instance.set("shared-tool", payload_a, server_id="server-a")
+    await tool_lookup_cache_instance.set("shared-tool", payload_b, server_id="server-b")
+    tool_lookup_cache_instance.invalidate_all_local()
+
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-a") == payload_a
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-b") == payload_b
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     payload = {"status": "active", "tool": {"name": "tool-a"}}
@@ -173,7 +225,7 @@ async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_
 
     await tool_lookup_cache_instance.set("tool-a", payload, gateway_id="gw-1", server_id="srv-1")
 
-    redis.setex.assert_awaited_once_with("mcpgw:tool_lookup:server:srv-1:tool-a", tool_lookup_cache_instance._ttl_seconds, orjson.dumps(payload))
+    redis.setex.assert_awaited_once_with("mcpgw:tool_lookup:v2:server:srv-1:tool-a", tool_lookup_cache_instance._ttl_seconds, orjson.dumps(payload))
     assert redis.sadd.await_args_list == [
         call("mcpgw:tool_lookup:gateway:gw-1", "server:srv-1:tool-a"),
         call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:tool-a"),
@@ -208,6 +260,26 @@ async def test_tool_lookup_cache_invalidate_redis(tool_lookup_cache_instance):
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_exact_server_scope_redis(tool_lookup_cache_instance):
+    """Targeted scoped invalidation must publish an unambiguous exact-key message."""
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
+    redis.delete = AsyncMock()
+    redis.srem = AsyncMock()
+    redis.publish = AsyncMock()
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    await tool_lookup_cache_instance.invalidate("shared-tool", server_id="srv-1")
+
+    redis.delete.assert_awaited_once_with("mcpgw:tool_lookup:v2:server:srv-1:shared-tool")
+    assert redis.srem.await_args_list == [
+        call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:shared-tool"),
+        call("mcpgw:tool_lookup_index:scoped", "server:srv-1:shared-tool"),
+    ]
+    redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:key:server:srv-1:shared-tool")
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_invalidate_redis_exception_is_swallowed(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
@@ -238,6 +310,7 @@ async def test_tool_lookup_cache_invalidate_server_redis(tool_lookup_cache_insta
     redis = MagicMock()
     redis.smembers = AsyncMock(return_value={b"server:srv-1:tool-a", "server:srv-1:tool-b"})
     redis.delete = AsyncMock()
+    redis.srem = AsyncMock()
     redis.publish = AsyncMock()
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
@@ -245,6 +318,9 @@ async def test_tool_lookup_cache_invalidate_server_redis(tool_lookup_cache_insta
 
     redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup:server:srv-1")
     assert redis.delete.await_count == 2
+    redis.srem.assert_awaited_once()
+    assert redis.srem.await_args.args[0] == "mcpgw:tool_lookup_index:scoped"
+    assert set(redis.srem.await_args.args[1:]) == {b"server:srv-1:tool-a", "server:srv-1:tool-b"}
     redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:server:srv-1")
 
 

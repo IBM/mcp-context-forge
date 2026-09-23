@@ -1567,6 +1567,7 @@ class ServerService(BaseService):
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
                 await cache.invalidate_servers()
+                await _get_tool_lookup_cache().invalidate_server(str(server.id))
 
                 if activate:
                     await self._notify_server_activated(server)
