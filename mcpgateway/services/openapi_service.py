@@ -98,11 +98,10 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         _spec_cache.pop(k, None)
         _spec_locks.pop(k, None)
 
-    # --- cache hit (still within TTL) ---
-    cached = _spec_cache.get(spec_url)
-    if cached and (now - cached[0]) < _SPEC_CACHE_TTL:
-        _spec_cache.move_to_end(spec_url)
-        return copy.deepcopy(cached[1])
+    fresh = _fresh_cached_copy(spec_url)
+    if fresh is not None:
+        logger.debug("OpenAPI spec cache hit for %s", spec_url)
+        return fresh
 
     # --- single-flight: one fetch per URL, concurrent callers wait ---
     async with _spec_locks_guard:
@@ -112,12 +111,20 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
 
     async with lock:
         # Re-check after acquiring — another waiter may have populated the cache.
-        cached = _spec_cache.get(spec_url)
-        if cached and (time.monotonic() - cached[0]) < _SPEC_CACHE_TTL:
-            _spec_cache.move_to_end(spec_url)
-            return copy.deepcopy(cached[1])
+        fresh = _fresh_cached_copy(spec_url)
+        if fresh is not None:
+            logger.debug("OpenAPI spec single-flight coalesced for %s", spec_url)
+            return fresh
 
-        result = await _do_fetch(spec_url, timeout)
+        logger.debug("OpenAPI spec cache miss, fetching %s", spec_url)
+        try:
+            result = await _do_fetch(spec_url, timeout)
+        except Exception:
+            # A failed fetch writes no cache entry, so neither the TTL sweep nor
+            # LRU eviction can ever drop this lock. Pop it here to keep
+            # _spec_locks bounded against caller-controlled failing URLs.
+            _spec_locks.pop(spec_url, None)
+            raise
 
         # --- store and enforce maxsize (LRU eviction) ---
         _spec_cache[spec_url] = (time.monotonic(), result)
@@ -126,7 +133,23 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
             evicted_key, _ = _spec_cache.popitem(last=False)
             _spec_locks.pop(evicted_key, None)
 
-        return result
+        return copy.deepcopy(result)
+
+
+def _fresh_cached_copy(spec_url: str) -> Optional[dict]:
+    """Return an independent copy of the cached spec while it is within its TTL.
+
+    Args:
+        spec_url: Cache key for the OpenAPI spec.
+
+    Returns:
+        A deep copy of the cached spec, or ``None`` when absent or expired.
+    """
+    cached = _spec_cache.get(spec_url)
+    if cached and (time.monotonic() - cached[0]) < _SPEC_CACHE_TTL:
+        _spec_cache.move_to_end(spec_url)
+        return copy.deepcopy(cached[1])
+    return None
 
 
 async def _do_fetch(spec_url: str, timeout: float) -> dict:

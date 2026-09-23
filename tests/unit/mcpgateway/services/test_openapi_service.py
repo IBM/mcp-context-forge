@@ -19,6 +19,7 @@ import pytest
 # First-Party
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
+    _SPEC_CACHE_MAX,
     _SPEC_CACHE_TTL,
     _spec_cache,
     _spec_locks,
@@ -446,8 +447,6 @@ class TestFetchOpenAPISpec:
         mock_spec = {"openapi": "3.0.0", "paths": {}}
         fetch_count = 0
 
-        original_do_fetch = None
-
         async def _counting_fetch(spec_url, timeout):
             nonlocal fetch_count
             fetch_count += 1
@@ -464,6 +463,45 @@ class TestFetchOpenAPISpec:
         assert fetch_count == 1, f"Expected 1 upstream fetch, got {fetch_count}"
         for r in results:
             assert r == mock_spec
+
+    @pytest.mark.asyncio
+    async def test_failed_fetch_does_not_leak_lock(self):
+        """A URL that always fails leaves no entry behind in ``_spec_locks``."""
+        with patch("mcpgateway.services.openapi_service._do_fetch", side_effect=ValueError("boom")):
+            for i in range(50):
+                with pytest.raises(ValueError, match="boom"):
+                    await fetch_openapi_spec(f"http://example.com/{i}/openapi.json")
+
+        assert _spec_locks == {}
+        assert _spec_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_cache_returns_independent_copy(self):
+        """Mutating a returned spec never corrupts the cached copy."""
+        url = "http://example.com/openapi.json"
+        mock_spec = {"openapi": "3.0.0", "paths": {"/a": {"get": {}}}}
+
+        with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value=mock_spec):
+            miss = await fetch_openapi_spec(url)
+            miss["paths"]["/a"]["get"]["polluted"] = True
+            hit = await fetch_openapi_spec(url)
+            hit["paths"].clear()
+            again = await fetch_openapi_spec(url)
+
+        assert again == {"openapi": "3.0.0", "paths": {"/a": {"get": {}}}}
+
+    @pytest.mark.asyncio
+    async def test_cache_bounded_eviction(self):
+        """Cache never grows past ``_SPEC_CACHE_MAX``; oldest URLs are evicted first."""
+        with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value={"openapi": "3.0.0"}):
+            for i in range(_SPEC_CACHE_MAX + 10):
+                await fetch_openapi_spec(f"http://example.com/{i}/openapi.json")
+
+        assert len(_spec_cache) == _SPEC_CACHE_MAX
+        assert len(_spec_locks) == _SPEC_CACHE_MAX
+        assert "http://example.com/0/openapi.json" not in _spec_cache
+        assert f"http://example.com/{_SPEC_CACHE_MAX + 9}/openapi.json" in _spec_cache
+
 
 class TestFetchAndExtractSchemas:
     """Tests for fetch_and_extract_schemas function."""
