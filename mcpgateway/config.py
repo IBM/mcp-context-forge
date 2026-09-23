@@ -827,7 +827,9 @@ class Settings(BaseSettings):
     ssrf_dns_fail_closed: bool = Field(
         default=True,
         description=(
-            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved are rejected. When false, unresolvable hostnames are allowed through (hostname blocklist still applies)."
+            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved are rejected. When false, unresolvable hostnames are allowed through (hostname blocklist still applies). "
+            "Most outbound connection pinning call sites honor this setting: an unresolvable hostname is sent unpinned rather than rejected. The A2A protocol path (a2a_protocol.py) and the REST arm of "
+            "tool invocation (tool_service.py) keep their own guard and reject an unresolvable hostname regardless of this setting."
         ),
     )
 

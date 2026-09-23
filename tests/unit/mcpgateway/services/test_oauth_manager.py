@@ -2034,9 +2034,13 @@ async def test_exchange_code_for_tokens_basic_auth_without_client_secret(oauth_m
 
     assert result["access_token"] == "test-token"
 
-    # Verify the POST call was made with client_id in body (not in Authorization header)
+    # Verify the POST call was made with client_id in body (not in Authorization header).
+    # DNS pinning rewrites the host to the address the global test stub resolves
+    # "oauth.example.com" to (see tests/conftest.py), while the Host header keeps
+    # the original authority.
     call_args = mock_client.post.call_args
-    assert call_args[0][0] == "https://oauth.example.com/token"
+    assert call_args[0][0] == "https://93.184.215.14/token"
+    assert call_args.kwargs["headers"]["Host"] == "oauth.example.com"
 
     # Check that client_id is in the POST body
     post_data = call_args.kwargs["data"]
@@ -2107,9 +2111,13 @@ async def test_refresh_token_basic_auth_without_client_secret(oauth_manager):
 
     assert result["access_token"] == "refreshed-token"
 
-    # Verify the POST call was made with client_id in body (not in Authorization header)
+    # Verify the POST call was made with client_id in body (not in Authorization header).
+    # DNS pinning rewrites the host to the address the global test stub resolves
+    # "oauth.example.com" to (see tests/conftest.py), while the Host header keeps
+    # the original authority.
     call_args = mock_client.post.call_args
-    assert call_args[0][0] == "https://oauth.example.com/token"
+    assert call_args[0][0] == "https://93.184.215.14/token"
+    assert call_args.kwargs["headers"]["Host"] == "oauth.example.com"
 
     # Check that client_id is in the POST body
     post_data = call_args.kwargs["data"]
