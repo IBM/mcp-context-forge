@@ -78,7 +78,7 @@ def test_gateway_healthy_implies_startup_scheme_check_passed():
 def test_disallowed_url_scheme_rejected_by_api(auth_headers: dict[str, str]):
     """POST /mcp-servers/test with an ftp:// URL is rejected at the validation boundary."""
     resp = httpx.post(
-        f"{BASE_URL}/mcp-servers/test",
+        f"{BASE_URL}/v1/mcp-servers/test",
         json={"method": "GET", "base_url": "ftp://evil.example.com", "path": "/"},
         headers=auth_headers,
         timeout=10,

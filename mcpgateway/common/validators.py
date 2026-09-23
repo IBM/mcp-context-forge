@@ -379,10 +379,9 @@ def url_scheme_allowed(url: str, allowed_schemes: list[str]) -> bool:
 class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
-    # ponytail: these class attrs are frozen at import; convert to call-time reads when SIGHUP reload matters for them
+    # Class attributes frozen at import time; validate_url() reads settings at call time for scheme enforcement
     DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern  # Default: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>'
     DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern  # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
-    ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # ponytail: compat shim, frozen at import; validate_url() reads settings at call time
     # Character type patterns
     NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_.\- ]+$ (literal space, not \s)
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$

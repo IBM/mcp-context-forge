@@ -66,12 +66,21 @@ async def sighup_reload() -> None:
 
     try:
         # First-Party
-        from mcpgateway.config import get_settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.config import Settings, get_settings  # pylint: disable=import-outside-toplevel
 
+        # Build a trial Settings to validate the new environment before
+        # evicting the known-good cached instance.
+        trial = Settings()
+        trial.validate_transport()
+        trial.validate_database()
+        status = trial.get_security_status()
+        if status["status"] == "FAIL":
+            raise ValueError(status["message"])
         get_settings.cache_clear()
-        logger.info("SIGHUP: settings cache cleared")
+        get_settings()
+        logger.info("SIGHUP: settings reloaded")
     except Exception as exc:
-        logger.warning(f"SIGHUP: settings cache clear failed: {exc}")
+        logger.error(f"SIGHUP: settings reload failed, keeping previous settings: {exc}")
 
 
 def sighup_handler(_signum: int, _frame: Any) -> None:

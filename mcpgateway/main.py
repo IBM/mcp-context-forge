@@ -1464,25 +1464,49 @@ def _check_url_scheme_compliance() -> None:
     """
     allowed = [s.lower() for s in settings.validation_allowed_url_schemes]
     violations: list[str] = []
+    db_error = False
+
+    scans: list[tuple[str, Any]] = [
+        (
+            "gateways",
+            lambda db: [
+                f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {sanitize_url_for_logging(gw.url)}"
+                for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all()
+                if gw.url and not url_scheme_allowed(gw.url, allowed)
+            ],
+        ),
+        (
+            "tools",
+            lambda db: [
+                f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {sanitize_url_for_logging(tool.url)}"
+                for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all()
+                if tool.url and not url_scheme_allowed(tool.url, allowed)
+            ],
+        ),
+        (
+            "agents",
+            lambda db: [
+                f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {sanitize_url_for_logging(agent.endpoint_url)}"
+                for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all()
+                if agent.endpoint_url and not url_scheme_allowed(agent.endpoint_url, allowed)
+            ],
+        ),
+    ]
 
     try:
         with SessionLocal() as db:
-            for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all():
-                if gw.url and not url_scheme_allowed(gw.url, allowed):
-                    violations.append(f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {sanitize_url_for_logging(gw.url)}")
-
-            for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all():
-                if tool.url and not url_scheme_allowed(tool.url, allowed):
-                    violations.append(f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {sanitize_url_for_logging(tool.url)}")
-
-            for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all():
-                if agent.endpoint_url and not url_scheme_allowed(agent.endpoint_url, allowed):
-                    violations.append(f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {sanitize_url_for_logging(agent.endpoint_url)}")
+            for table_name, scan_fn in scans:
+                try:
+                    violations.extend(scan_fn(db))
+                except SQLAlchemyError:
+                    db_error = True
+                    logger.warning(f"URL scheme compliance check failed for {table_name} table")
     except SQLAlchemyError:
-        if settings.strict_scheme_enforcement:
-            raise SystemExit("STRICT_SCHEME_ENFORCEMENT is enabled but the URL scheme compliance check could not query the database. Resolve the database connection or disable enforcement to start.")
+        db_error = True
         logger.warning("URL scheme compliance check skipped: database unavailable")
-        return
+
+    if db_error and not violations and settings.strict_scheme_enforcement:
+        raise SystemExit("STRICT_SCHEME_ENFORCEMENT is enabled but the URL scheme compliance check could not query the database. Resolve the database connection or disable enforcement to start.")
 
     if not violations:
         return
