@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
@@ -1360,12 +1361,24 @@ async def test_default_session_factory_sse_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_default_session_factory_passes_httpx_factory(monkeypatch):
-    """A provided httpx_client_factory is threaded through to the transport."""
+    """A provided httpx_client_factory is wrapped (not replaced) so pinning still applies.
+
+    Outbound DNS pinning (issue #6518) requires the pooled factory to pin every
+    transport's connection, including one built by a caller-supplied factory. The
+    caller's factory must still be exercised — that's where its TLS settings (custom
+    CA, client certs) live — so the transport threaded through to the SDK is a wrapper
+    around it, not the caller's factory itself.
+    """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
     captured = {}
-    sentinel_factory = object()
+    inner_calls = []
+
+    def sentinel_factory(headers=None, timeout=None, auth=None):
+        """Stand in for a caller's own httpx client factory."""
+        inner_calls.append((headers, timeout, auth))
+        return httpx.AsyncClient()
 
     def fake_stream(**kwargs):
         captured.update(kwargs)
@@ -1377,7 +1390,15 @@ async def test_default_session_factory_passes_httpx_factory(monkeypatch):
     req = _make_request(httpx_client_factory=sentinel_factory)
     _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    assert captured.get("httpx_client_factory") is sentinel_factory
+    wrapped_factory = captured.get("httpx_client_factory")
+    assert wrapped_factory is not None
+    assert wrapped_factory is not sentinel_factory
+
+    client = wrapped_factory(headers={"h": "v"}, timeout=None, auth=None)
+    try:
+        assert inner_calls == [({"h": "v"}, None, None)]
+    finally:
+        await client.aclose()
 
     lifecycle.shutdown_event.set()
     await lifecycle.owner_task
@@ -1562,15 +1583,23 @@ def test_upstream_session_age_seconds_exposes_wallclock_age():
 
 @pytest.mark.asyncio
 async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch):
-    """SSE transport + httpx_client_factory routes through sse_client with the factory threaded in.
+    """SSE transport + httpx_client_factory routes through sse_client with the factory wrapped, not replaced.
 
     Covers the SSE + httpx_client_factory branch of _default_session_factory.
+    Outbound DNS pinning (issue #6518) requires the caller's factory to still be
+    exercised — that's where its TLS settings (custom CA, client certs) live — so the
+    factory threaded through to sse_client is a pinning wrapper around it.
     """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
     captured = {}
-    sentinel_factory = object()
+    inner_calls = []
+
+    def sentinel_factory(headers=None, timeout=None, auth=None):
+        """Stand in for a caller's own httpx client factory."""
+        inner_calls.append((headers, timeout, auth))
+        return httpx.AsyncClient()
 
     def fake_sse(**kwargs):
         captured.update(kwargs)
@@ -1582,7 +1611,15 @@ async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch
     req = _make_request(transport_type=TransportType.SSE, httpx_client_factory=sentinel_factory)
     _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    assert captured.get("httpx_client_factory") is sentinel_factory
+    wrapped_factory = captured.get("httpx_client_factory")
+    assert wrapped_factory is not None
+    assert wrapped_factory is not sentinel_factory
+
+    client = wrapped_factory(headers={"h": "v"}, timeout=None, auth=None)
+    try:
+        assert inner_calls == [({"h": "v"}, None, None)]
+    finally:
+        await client.aclose()
 
     lifecycle.shutdown_event.set()
     await lifecycle.owner_task

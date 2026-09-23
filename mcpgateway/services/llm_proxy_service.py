@@ -22,7 +22,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
 from mcpgateway.llm_schemas import (
@@ -40,6 +39,7 @@ from mcpgateway.services.llm_provider_service import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Initialize logging
@@ -475,9 +475,8 @@ class LLMProxyService:
         # Ensure non-streaming
         body["stream"] = False
 
-        # Validate the constructed URL to prevent SSRF attacks
         try:
-            SecurityValidator.validate_url(url, "LLM provider URL")
+            pinned_target = await resolve_pinned_target(url, "LLM provider URL")
         except ValueError as url_err:
             raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
@@ -494,7 +493,12 @@ class LLMProxyService:
 
         with create_span("llm.proxy", span_attributes) as span:
             try:
-                response = await self._client.post(url, headers=headers, json=body)
+                response = await self._client.post(
+                    pinned_target.pin(url),
+                    headers=pinned_target.apply_headers(headers),
+                    json=body,
+                    extensions=pinned_target.extensions,
+                )
                 response.raise_for_status()
                 data = response.json()
 
@@ -561,9 +565,8 @@ class LLMProxyService:
         # Ensure streaming
         body["stream"] = True
 
-        # Validate the constructed URL to prevent SSRF attacks
         try:
-            SecurityValidator.validate_url(url, "LLM provider URL")
+            pinned_target = await resolve_pinned_target(url, "LLM provider URL")
         except ValueError as url_err:
             raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
@@ -586,7 +589,13 @@ class LLMProxyService:
 
         with create_span("llm.proxy", span_attributes) as span:
             try:
-                async with self._client.stream("POST", url, headers=headers, json=body) as response:
+                async with self._client.stream(
+                    "POST",
+                    pinned_target.pin(url),
+                    headers=pinned_target.apply_headers(headers),
+                    json=body,
+                    extensions=pinned_target.extensions,
+                ) as response:
                     response.raise_for_status()
 
                     async for line in response.aiter_lines():

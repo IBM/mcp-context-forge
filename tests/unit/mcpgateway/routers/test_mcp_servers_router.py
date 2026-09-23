@@ -769,7 +769,7 @@ async def test_handshake_discover_fallback_to_initialize(handshake_request, user
     # The SDK keeps the validated hostname; _SniPinningTransport dials the pinned address.
     assert mock_streamable.call_args.kwargs["url"] == "http://example.com/mcp"
     assert mock_transport.call_args.kwargs["sni_hostname"] == "example.com"
-    assert mock_transport.call_args.kwargs["pinned_host"] == "8.8.8.8"
+    assert mock_transport.call_args.kwargs["pinned_hosts"] == ["8.8.8.8"]
 
 
 @pytest.mark.asyncio
@@ -1197,7 +1197,7 @@ async def test_handshake_sse_gateway_uses_sse_client(handshake_request, user_ctx
             await factory_client.aclose()
 
     assert mock_transport.call_args.kwargs["sni_hostname"] == "example.com"
-    assert mock_transport.call_args.kwargs["pinned_host"] == "8.8.8.8"
+    assert mock_transport.call_args.kwargs["pinned_hosts"] == ["8.8.8.8"]
 
 
 @pytest.mark.asyncio
@@ -1580,7 +1580,7 @@ async def test_handshake_registered_only_allowlist_keeps_public_gateways_probeab
 @pytest.mark.asyncio
 async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
     """The transport rewrites the request onto the pinned address while keeping Host and TLS identity."""
-    transport = _SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
+    transport = _SniPinningTransport(sni_hostname="example.com", pinned_hosts=["8.8.8.8"])
     request = httpx2.Request("GET", "http://example.com/mcp")
 
     with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
@@ -1595,7 +1595,7 @@ async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
 @pytest.mark.asyncio
 async def test_sni_pinning_transport_refuses_unvalidated_host():
     """The transport refuses to send anywhere but the validated hostname."""
-    transport = _SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
+    transport = _SniPinningTransport(sni_hostname="example.com", pinned_hosts=["8.8.8.8"])
     request = httpx2.Request("GET", "http://attacker.example.net/mcp")
 
     with pytest.raises(httpx2.UnsupportedProtocol):
@@ -1655,7 +1655,7 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
 @pytest.mark.asyncio
 async def test_sni_pinning_transport_accepts_punycode_host():
     """An internationalized hostname is matched in its IDNA-encoded form, not rejected."""
-    transport = _SniPinningTransport(sni_hostname="xn--nicode-2ya.com", pinned_host="8.8.8.8")
+    transport = _SniPinningTransport(sni_hostname="xn--nicode-2ya.com", pinned_hosts=["8.8.8.8"])
     request = httpx2.Request("GET", "http://xn--nicode-2ya.com/mcp")
 
     with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):

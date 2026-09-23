@@ -142,6 +142,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target, SniPinningTransport as _SniPinningTransport
 from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
@@ -4942,22 +4943,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     httpx2.AsyncClient: Configured HTTPX async client
                 """
                 return httpx2.AsyncClient(
-                    verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=False,
                     headers=headers,
                     timeout=timeout if timeout else get_httpx2_timeout(),
                     auth=auth,
-                    limits=httpx2.Limits(
-                        max_connections=settings.httpx_max_connections,
-                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    **pinned_target.client_kwargs(
+                        verify=ssl_context if ssl_context else get_default_verify(),
+                        limits=httpx2.Limits(
+                            max_connections=settings.httpx_max_connections,
+                            max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                            keepalive_expiry=settings.httpx_keepalive_expiry,
+                        ),
                     ),
                 )
 
             # Use isolated client for gateway health checks (each gateway may have custom CA cert)
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
-            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context, follow_redirects=False) as client:
                 logger.debug("Checking health of gateway: %s (%s)", gateway_name, gateway_url_sanitized)
                 try:
                     # Handle different authentication types
@@ -5046,10 +5049,25 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # checks self-heal without requiring a manual re-save.
                         headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
+                    try:
+                        pinned_target = await resolve_pinned_target(gateway_base_url, "Gateway URL")
+                    except ValueError as pin_exc:
+                        if span:
+                            set_span_attribute(span, "health.status", "unhealthy")
+                            set_span_error(span, pin_exc)
+                        await self._handle_gateway_failure(gateway, error=pin_exc, auth_query_params=auth_query_params_decrypted)
+                        return
+
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
-                        async with client.stream("GET", gateway_url, headers=headers, timeout=timeout) as response:
+                        async with client.stream(
+                            "GET",
+                            pinned_target.pin(gateway_url),
+                            headers=pinned_target.apply_headers(headers),
+                            timeout=timeout,
+                            extensions=pinned_target.extensions,
+                        ) as response:
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
@@ -7229,9 +7247,44 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if validation_warnings is None:
             validation_warnings = []
 
+        try:
+            pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
+        except ValueError as exc:
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}") from exc
+
+        def get_httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            """Build the SDK's httpx client so it dials the address pinned at validation time.
+
+            Args:
+                headers: Optional headers for the client
+                timeout: Optional timeout for the client
+                auth: Optional auth for the client
+
+            Returns:
+                httpx2.AsyncClient: Configured HTTPX async client
+            """
+            return httpx2.AsyncClient(
+                follow_redirects=False,
+                headers=headers,
+                timeout=timeout if timeout else get_httpx2_timeout(),
+                auth=auth,
+                **pinned_target.client_kwargs(
+                    verify=get_default_verify(),
+                    limits=httpx2.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
+                ),
+            )
+
         # Client auto-initializes on entry; no manual initialize() needed.
         try:
-            async with mcp_proxy_client(url=server_url, headers=authentication, transport="sse") as client:
+            async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
                 # Read negotiated capabilities from the auto-initialized session
                 capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
@@ -7368,6 +7421,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if authentication is None:
             authentication = {}
 
+        try:
+            pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
+        except ValueError as exc:
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}") from exc
+
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
             timeout: httpx2.Timeout | None = None,
@@ -7391,15 +7449,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = None
 
             return httpx2.AsyncClient(
-                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
-                limits=httpx2.Limits(
-                    max_connections=settings.httpx_max_connections,
-                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                **pinned_target.client_kwargs(
+                    verify=ctx if ctx else get_default_verify(),
+                    limits=httpx2.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 ),
             )
 
@@ -7531,6 +7591,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if authentication is None:
             authentication = {}
 
+        try:
+            pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
+        except ValueError as exc:
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}") from exc
+
         # Use authentication directly instead
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -7555,15 +7620,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = None
 
             return httpx2.AsyncClient(
-                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
-                limits=httpx2.Limits(
-                    max_connections=settings.httpx_max_connections,
-                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                **pinned_target.client_kwargs(
+                    verify=ctx if ctx else get_default_verify(),
+                    limits=httpx2.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 ),
             )
 
@@ -7670,48 +7737,6 @@ _HANDSHAKE_PROTOCOL_COPY = (
     "The server responded but MCP negotiation failed. Confirm the URL points at an MCP endpoint (for example /mcp or /sse) and supports an MCP protocol this gateway understands."
 )
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
-
-
-class _SniPinningTransport(httpx2.AsyncHTTPTransport):
-    """Dial a DNS-pinned address while keeping the request's hostname authority and TLS identity.
-
-    The MCP SDK compares the origin it connected to against the origin the
-    server advertises (``mcp.client.sse`` raises on a mismatch), so pinning has
-    to happen below the SDK: requests keep the validated hostname in their URL
-    and ``Host`` header, while every connection goes to the address resolved at
-    validation time and TLS is verified against that hostname. Built on httpx2
-    because the SDK 2.0 client transports run on that stack.
-    """
-
-    def __init__(self, sni_hostname: str, pinned_host: str, **kwargs: Any) -> None:
-        """Record the validated hostname and the address to dial in its place.
-
-        Args:
-            sni_hostname: Validated hostname whose certificate must match.
-            pinned_host: Address resolved at validation time, dialled instead of re-resolving.
-            **kwargs: Forwarded to ``httpx2.AsyncHTTPTransport``.
-        """
-        super().__init__(**kwargs)
-        self._sni_hostname = sni_hostname
-        self._pinned_host = pinned_host
-
-    async def handle_async_request(self, request: "httpx2.Request") -> "httpx2.Response":
-        """Send the request to the pinned address with TLS pinned to the validated hostname.
-
-        Args:
-            request: Outbound request addressed to the validated hostname.
-
-        Returns:
-            httpx2.Response: The upstream response.
-
-        Raises:
-            httpx2.UnsupportedProtocol: If the request targets any other host.
-        """
-        if request.url.raw_host.decode("ascii") != self._sni_hostname:
-            raise httpx2.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
-        request.extensions.setdefault("sni_hostname", self._sni_hostname)
-        request.url = request.url.copy_with(host=self._pinned_host)
-        return await super().handle_async_request(request)
 
 
 def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
@@ -8535,7 +8560,7 @@ async def test_gateway_handshake(
             auth=auth,
             transport=_SniPinningTransport(
                 sni_hostname=validated_hostname,
-                pinned_host=target["resolved_ip"],
+                pinned_hosts=[target["resolved_ip"]],
                 verify=handshake_verify,
                 limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,

@@ -88,7 +88,11 @@ class TestOAuthManager:
             # Verify the request was made with correct form data
             mock_client.post.assert_called_once()
             call_args = mock_client.post.call_args
-            assert call_args[0][0] == "https://keycloak.example.com/auth/realms/myrealm/protocol/openid-connect/token"
+            # DNS pinning dials the resolved address (the global test stub in tests/conftest.py
+            # resolves every hostname to 93.184.215.14) while the Host header keeps the original
+            # authority, so the token endpoint's TLS identity still checks out upstream.
+            assert call_args[0][0] == "https://93.184.215.14/auth/realms/myrealm/protocol/openid-connect/token"
+            assert call_args[1]["headers"]["Host"] == "keycloak.example.com"
             assert call_args[1]["data"]["grant_type"] == "password"
             assert call_args[1]["data"]["username"] == "systemadmin@system.com"
             assert call_args[1]["data"]["password"] == "test_password"
@@ -1373,7 +1377,11 @@ class TestOAuthManager:
             # Verify the correct data was sent
             mock_client.post.assert_called_once()
             call_args = mock_client.post.call_args
-            assert call_args[0][0] == "https://oauth.example.com/token"
+            # DNS pinning dials the resolved address (the global test stub in tests/conftest.py
+            # resolves every hostname to 93.184.215.14) while the Host header keeps the original
+            # authority, so the token endpoint's TLS identity still checks out upstream.
+            assert call_args[0][0] == "https://93.184.215.14/token"
+            assert call_args[1]["headers"]["Host"] == "oauth.example.com"
             assert call_args[1]["data"]["grant_type"] == "refresh_token"
             assert call_args[1]["data"]["refresh_token"] == "old_refresh_token"
             assert call_args[1]["data"]["client_id"] == "test_client"

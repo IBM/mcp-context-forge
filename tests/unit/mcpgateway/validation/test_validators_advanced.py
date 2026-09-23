@@ -2437,6 +2437,7 @@ class TestOutboundUrlConnectionPinningValidation:
             "hostname": "api.example.com",
             "original_authority": "api.example.com:8443",
             "resolved_ip": "8.8.4.4",
+            "resolved_ips": ["8.8.4.4"],
         }
 
     @pytest.mark.asyncio
@@ -2580,8 +2581,8 @@ class TestOutboundUrlConnectionPinningValidation:
                 await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
 
     @pytest.mark.asyncio
-    async def test_resolve_hostname_for_connection_pinning_fails_closed_when_protection_enabled(self, monkeypatch):
-        """Pinned resolution does not allow SSRF DNS fail-open to continue unpinned."""
+    async def test_resolve_hostname_for_connection_pinning_honors_dns_fail_closed_false(self, monkeypatch):
+        """Pinned resolution honors ``ssrf_dns_fail_closed=False`` and returns no pin instead of raising."""
 
         def mock_getaddrinfo(_host, *_args, **_kwargs):
             raise socket.gaierror("not found")
@@ -2589,8 +2590,9 @@ class TestOutboundUrlConnectionPinningValidation:
         monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
 
         with patch("mcpgateway.common.validators.settings", self._settings(ssrf_dns_fail_closed=False)):
-            with pytest.raises(ValueError, match="connection pinning requires a resolved address"):
-                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+            result = await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_resolve_hostname_for_connection_pinning_fails_open_when_protection_disabled(self, monkeypatch):
@@ -2636,8 +2638,8 @@ class TestOutboundUrlConnectionPinningValidation:
                 await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
 
     @pytest.mark.asyncio
-    async def test_resolve_hostname_for_connection_pinning_rejects_no_valid_answers_when_fail_open_configured(self, monkeypatch):
-        """SSRF-protected pinning requires a usable address even when DNS fail-open is configured."""
+    async def test_resolve_hostname_for_connection_pinning_returns_empty_for_no_valid_answers_when_fail_open_configured(self, monkeypatch):
+        """SSRF-protected pinning returns no pin, not a raise, when DNS fail-open is configured."""
 
         def mock_getaddrinfo(_host, _port, _family=0, _type=0, _proto=0, _flags=0):
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0))]
@@ -2645,5 +2647,6 @@ class TestOutboundUrlConnectionPinningValidation:
         monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
 
         with patch("mcpgateway.common.validators.settings", self._settings(ssrf_dns_fail_closed=False)):
-            with pytest.raises(ValueError, match="connection pinning requires a resolved address"):
-                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+            result = await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+        assert result == []

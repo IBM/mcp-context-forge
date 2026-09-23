@@ -5295,8 +5295,12 @@ class TestCrossGatewayRoutingCoverage:
         assert mock_client.post.called
         call_args = mock_client.post.call_args
 
-        # Check URL is the body-based invoke endpoint (not path-based)
-        assert "https://agent.example.com/a2a/invoke" in str(call_args)
+        # Check URL is the body-based invoke endpoint (not path-based). The
+        # dialled URL is now pinned to the resolved address (outbound DNS
+        # pinning), so the path is asserted on the URL and the original
+        # hostname is asserted on the Host header instead of the raw URL.
+        assert call_args.args[0].endswith("/a2a/invoke")
+        assert call_args.kwargs["headers"]["Host"] == "agent.example.com"
 
         # Check UAID is in request body as agent_id
         sent_json = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
@@ -5501,9 +5505,12 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert result == {"result": "mcp success"}
-        # Verify MCP endpoint was used
+        # Verify MCP endpoint was used. The dialled URL is pinned to the
+        # resolved address, so the path is asserted on the URL and the
+        # original hostname is asserted on the Host header.
         call_args = mock_client.post.call_args
-        assert "https://mcp.example.com/mcp/tools/call" in str(call_args)
+        assert call_args.args[0].endswith("/mcp/tools/call")
+        assert call_args.kwargs["headers"]["Host"] == "mcp.example.com"
 
     async def test_invoke_remote_agent_http_error(self, service, monkeypatch):
         """Test _invoke_remote_agent with HTTP error."""
@@ -5916,9 +5923,12 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert result == {"result": "success"}
-        # Verify URL was constructed with port
+        # Verify URL was constructed with port. The dialled URL is pinned to
+        # the resolved address, so the port is asserted on the URL and the
+        # original hostname:port is asserted on the Host header.
         call_args = mock_client.post.call_args
-        assert "gateway.example.com:8443" in call_args[0][0]
+        assert call_args.args[0].endswith(":8443/a2a/invoke")
+        assert call_args.kwargs["headers"]["Host"] == "gateway.example.com:8443"
 
 
 # Module-level fixtures for cross-gateway routing tests

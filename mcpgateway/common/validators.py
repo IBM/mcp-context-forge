@@ -57,7 +57,7 @@ from pathlib import Path
 import re
 import shlex
 import socket
-from typing import Annotated, Any, Dict, Iterable, List, Optional, Pattern
+from typing import Annotated, Any, Dict, Iterable, List, Optional, Pattern, TypedDict
 import unicodedata
 from urllib.parse import unquote, urlparse
 import uuid
@@ -78,6 +78,27 @@ def pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
     pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
     pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
     return parsed._replace(netloc=pinned_netloc).geturl()
+
+
+def _authority_is_ipv6_literal(url: str) -> bool:
+    """Report whether ``url``'s authority is a bracketed IPv6 literal.
+
+    A bracketed authority (``[::1]`` or ``[::1]:8080``) is the only valid way an IPv6
+    address appears in a URL's netloc, so this needs no percent-decoding: it is a
+    structural, ASCII-only check that runs before the full URL validator so the
+    connection-pinning path can tell it is looking at an IP literal, not a hostname.
+
+    Args:
+        url: Candidate URL, not yet validated.
+
+    Returns:
+        bool: True when the URL's netloc begins with ``[``, false for a malformed URL or
+            any other parse failure (the caller's own validation then reports the failure).
+    """
+    try:
+        return urlparse(url).netloc.startswith("[")
+    except Exception:  # pylint: disable=broad-except
+        return False
 
 
 # ============================================================================
@@ -368,6 +389,16 @@ def _strip_html_tags(value: str) -> str:
     s.feed(value)
     s.close()
     return s.get_data()
+
+
+class ConnectionPinningResult(TypedDict):
+    """Return type of ``SecurityValidator.validate_url_for_connection_pinning``."""
+
+    validated_url: str
+    hostname: str
+    original_authority: str
+    resolved_ip: Optional[str]
+    resolved_ips: List[str]
 
 
 class SecurityValidator:
@@ -1243,6 +1274,33 @@ class SecurityValidator:
                 ...
             ValueError: URL contains unsupported or potentially dangerous protocol
         """
+        return cls._validate_url_impl(value, field_name, skip_ssrf=skip_ssrf, reject_ipv6=True)
+
+    @classmethod
+    def _validate_url_impl(cls, value: str, field_name: str, *, skip_ssrf: bool, reject_ipv6: bool) -> str:
+        """Run the URL checks shared by ``validate_url`` and IP-literal connection pinning.
+
+        ``validate_url`` always calls this with ``reject_ipv6=True``, preserving its documented
+        blanket IPv6 rejection for every other caller. ``validate_url_for_connection_pinning``
+        calls this directly with ``reject_ipv6=False``, and only after confirming the URL's
+        authority is a bracketed IPv6 literal: a literal has no hostname for DNS to rebind, so
+        the SSRF check that runs afterwards on the resolved literal address is what protects
+        the connection instead.
+
+        Args:
+            value: Value to validate.
+            field_name: Name of field being validated.
+            skip_ssrf: Skip DNS-based SSRF checks. Intended only for callers that immediately
+                resolve, validate, and pin the same outbound connection target.
+            reject_ipv6: Reject a bracketed IPv6 authority. Pass False only for the IP-literal
+                connection-pinning path described above; every other caller must pass True.
+
+        Returns:
+            str: The ORIGINAL (percent-encoded) URL if acceptable.
+
+        Raises:
+            ValueError: When input is not acceptable.
+        """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
 
@@ -1285,7 +1343,7 @@ class SecurityValidator:
         # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
         # suffices: unquote() never removes non-`%` chars, so any `[` in
         # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
-        if "[" in decoded_value or "]" in decoded_value:
+        if reject_ipv6 and ("[" in decoded_value or "]" in decoded_value):
             raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
         # Block protocol-relative URLs
@@ -1311,7 +1369,7 @@ class SecurityValidator:
                 raise ValueError(f"{field_name} is not a valid URL")
 
             # Additional validation: ensure netloc doesn't contain brackets (double-check)
-            if "[" in result.netloc or "]" in result.netloc:
+            if reject_ipv6 and ("[" in result.netloc or "]" in result.netloc):
                 raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
             # urlparse does not decode netloc; decode to catch `exam%20ple.com`-style
@@ -1570,7 +1628,7 @@ class SecurityValidator:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
-    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> Dict[str, Optional[str]]:
+    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> ConnectionPinningResult:
         """Validate an outbound URL and return DNS metadata for connection pinning.
 
         This helper is intended for async request handlers that validate a URL
@@ -1584,10 +1642,11 @@ class SecurityValidator:
             field_name: Human-readable field name for validation errors.
 
         Returns:
-            Metadata containing ``validated_url``, original ``hostname``,
-            ``original_authority`` from the URL netloc, and an optional safe
-            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when SSRF
-            protection is disabled and DNS resolution is allowed to fail open.
+            Metadata containing ``validated_url``, the IDNA-encoded ``hostname``,
+            ``original_authority`` (that hostname plus any port, without userinfo),
+            every safe address in ``resolved_ips``, and ``resolved_ip`` as the
+            first of them. Both address fields are empty or ``None`` only when
+            DNS resolution is allowed to fail open.
 
         Raises:
             ValueError: If validation fails or the resolved target violates the
@@ -1606,9 +1665,13 @@ class SecurityValidator:
 
         dns_timeout = float(getattr(settings, "gateway_test_dns_timeout", 5.0))
         loop = asyncio.get_running_loop()
+        # An IPv6 literal authority has no hostname for DNS to rebind, so `validate_url`'s
+        # blanket IPv6 rejection does not apply here. The SSRF check below still runs on the
+        # literal address itself once it lands in `resolved_ips`.
+        reject_ipv6 = not _authority_is_ipv6_literal(value)
         try:
             validated_url = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name, skip_ssrf=True)),
+                loop.run_in_executor(None, lambda: cls._validate_url_impl(value, field_name, skip_ssrf=True, reject_ipv6=reject_ipv6)),
                 timeout=dns_timeout,
             )
         except asyncio.TimeoutError as exc:
@@ -1641,11 +1704,17 @@ class SecurityValidator:
             for resolved_ip in resolved_ips:
                 cls._validate_ssrf(resolved_ip, field_name)
 
+        # An IPv6 authority needs brackets in the `Host` header (RFC 3986 §3.2.2); `hostname`
+        # itself stays unbracketed, matching what httpx reports as `request.url.raw_host` for
+        # an IPv6 target and what a TLS SNI value expects.
+        authority_host = f"[{hostname_normalized}]" if ":" in hostname_normalized else hostname_normalized
+        authority = f"{authority_host}:{parsed.port}" if parsed.port is not None else authority_host
         return {
             "validated_url": validated_url,
-            "hostname": hostname,
-            "original_authority": parsed.netloc,
+            "hostname": hostname_normalized,
+            "original_authority": authority,
             "resolved_ip": resolved_ips[0] if resolved_ips else None,
+            "resolved_ips": resolved_ips,
         }
 
     @classmethod
@@ -1661,7 +1730,7 @@ class SecurityValidator:
                 timeout=timeout,
             )
         except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror) as exc:
-            if settings.ssrf_protection_enabled:
+            if settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
                 raise ValueError(f"{field_name} DNS resolution failed and connection pinning requires a resolved address") from exc
             return []
 
@@ -1677,7 +1746,7 @@ class SecurityValidator:
             except ValueError:
                 continue
 
-        if not resolved_ips and settings.ssrf_protection_enabled:
+        if not resolved_ips and settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
             raise ValueError(f"{field_name} DNS resolution returned no addresses and connection pinning requires a resolved address")
         return resolved_ips
 
