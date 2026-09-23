@@ -1692,5 +1692,260 @@ class TestRegisterClientSsrfDenyPath:
         assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
 
 
+class TestPreparePinnedRequestIncompletePinning:
+    """Test the defensive guard when validation succeeds but pinning data is incomplete."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_incomplete_pinning_data_with_ssrf_enabled(self):
+        """SSRF protection on, but the validator returns partial data: refused, not silently accepted."""
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(ssrf_protection_enabled=True)
+
+        incomplete = {"validated_url": "https://as.example.com/register", "hostname": "as.example.com", "original_authority": None, "resolved_ip": None}
+
+        with patch("mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning", AsyncMock(return_value=incomplete)):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service._prepare_pinned_request(
+                    "https://as.example.com/register",
+                    "https://as.example.com",
+                    "DCR registration_endpoint",
+                )
+
+        assert "url policy" in str(exc_info.value).lower()
+
+
+class TestDiscoverAsMetadataNonJsonBody:
+    """Test that a non-JSON discovery response raises DcrError instead of an unguarded ValueError."""
+
+    @pytest.mark.asyncio
+    async def test_rfc8414_non_json_body_raises_dcr_error(self):
+        """A 200 response from the RFC 8414 endpoint with a non-JSON body raises DcrError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+    @pytest.mark.asyncio
+    async def test_oidc_fallback_non_json_body_raises_dcr_error(self):
+        """A 200 response from the OIDC fallback endpoint with a non-JSON body raises DcrError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        rfc8414_404 = MagicMock()
+        rfc8414_404.status_code = 404
+
+        oidc_bad_json = MagicMock()
+        oidc_bad_json.status_code = 200
+        oidc_bad_json.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[rfc8414_404, oidc_bad_json])
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+    @pytest.mark.asyncio
+    async def test_oidc_fallback_issuer_mismatch_raises_dcr_error(self):
+        """The OIDC fallback path also validates the issuer, independently of the RFC 8414 path."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        rfc8414_404 = MagicMock()
+        rfc8414_404.status_code = 404
+
+        oidc_mismatch = MagicMock()
+        oidc_mismatch.status_code = 200
+        oidc_mismatch.json = MagicMock(return_value={"issuer": "https://attacker.example.com"})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[rfc8414_404, oidc_mismatch])
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="issuer mismatch"):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+
+class TestRegisterClientNonJsonBody:
+    """Test that a non-JSON registration response raises DcrError instead of an unguarded ValueError."""
+
+    @pytest.mark.asyncio
+    async def test_success_status_non_json_body_raises_dcr_error(self, test_db):
+        """A 201 response with a non-JSON body raises DcrError instead of escaping as ValueError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="not valid JSON"):
+                await dcr_service.register_client(
+                    gateway_id="gw-badjson",
+                    gateway_name="Bad JSON Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+    @pytest.mark.asyncio
+    async def test_error_status_non_json_body_raises_dcr_error(self, test_db):
+        """A non-2xx response with a non-JSON error body raises DcrError instead of escaping as ValueError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.register_client(
+                    gateway_id="gw-badjson-err",
+                    gateway_name="Bad JSON Error Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+
+class TestUpdateClientRegistrationErrorPaths:
+    """Test the non-200 and non-JSON response paths of update_client_registration."""
+
+    @staticmethod
+    def _make_record(test_db, suffix):
+        """Create a gateway and a registered client row for these tests.
+
+        Args:
+            test_db: Database session fixture.
+            suffix: Unique suffix for the generated identifiers.
+
+        Returns:
+            RegisteredOAuthClient: The persisted client row.
+        """
+        # First-Party
+        from mcpgateway.config import get_settings
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+        from mcpgateway.services.encryption_service import get_encryption_service
+
+        gateway = Gateway(id=f"gw-{suffix}", name=f"GW {suffix}", slug=f"gw-{suffix}", url=f"http://{suffix}.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")  # pragma: allowlist secret
+
+        client_record = RegisteredOAuthClient(
+            id=f"client-{suffix}",
+            gateway_id=f"gw-{suffix}",
+            issuer="https://as.example.com",
+            client_id=f"client-id-{suffix}",
+            client_secret_encrypted="encrypted",  # pragma: allowlist secret
+            registration_client_uri="https://as.example.com/register/c",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+        )
+        test_db.add(client_record)
+        test_db.commit()
+        return client_record
+
+    @pytest.mark.asyncio
+    async def test_success_status_non_json_body_raises_dcr_error(self, test_db):
+        """A 200 response with a non-JSON body raises DcrError instead of escaping as ValueError."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-badjson")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="not valid JSON"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
+    @pytest.mark.asyncio
+    async def test_error_status_with_json_body_raises_dcr_error(self, test_db):
+        """A non-200 response with a valid JSON error body raises DcrError describing it."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-err-json")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json = MagicMock(return_value={"error": "invalid_client_metadata"})
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="invalid_client_metadata"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
+    @pytest.mark.asyncio
+    async def test_error_status_non_json_body_raises_dcr_error(self, test_db):
+        """A non-200 response with a non-JSON error body raises DcrError instead of escaping as ValueError."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-err-badjson")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
