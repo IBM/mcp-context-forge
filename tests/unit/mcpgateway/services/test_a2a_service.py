@@ -6160,15 +6160,7 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info="user@example.com",
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info="user@example.com", team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with the string email
             mock_team_service.return_value.get_user_teams.assert_called_once_with("user@example.com")
@@ -6180,21 +6172,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": "admin@example.com",
-                "full_name": "Admin User",
-                "is_admin": True
-            }
+            user_dict = {"email": "admin@example.com", "full_name": "Admin User", "is_admin": True}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should extract email string and call get_user_teams
             mock_team_service.return_value.get_user_teams.assert_called_once_with("admin@example.com")
@@ -6207,22 +6187,10 @@ class TestListAgentsForUserTypeValidation:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
             # Simulate the bug: email key contains a dict instead of string
-            user_dict = {
-                "email": {"nested": "dict", "value": "admin@example.com"},
-                "full_name": "Admin User",
-                "is_admin": True
-            }
+            user_dict = {"email": {"nested": "dict", "value": "admin@example.com"}, "full_name": "Admin User", "is_admin": True}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type dict" in record.message for record in caplog.records)
@@ -6238,21 +6206,10 @@ class TestListAgentsForUserTypeValidation:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
             # Email key contains a list instead of string
-            user_dict = {
-                "email": ["admin@example.com", "backup@example.com"],
-                "full_name": "Admin User"
-            }
+            user_dict = {"email": ["admin@example.com", "backup@example.com"], "full_name": "Admin User"}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type list" in record.message for record in caplog.records)
@@ -6267,20 +6224,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": None,
-                "full_name": "Anonymous User"
-            }
+            user_dict = {"email": None, "full_name": "Anonymous User"}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with empty string (None is not a string)
             # Note: None.get() would fail, but user_dict.get("email") returns None,
@@ -6294,20 +6240,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "full_name": "User Without Email",
-                "is_admin": False
-            }
+            user_dict = {"full_name": "User Without Email", "is_admin": False}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with empty string (default from .get())
             mock_team_service.return_value.get_user_teams.assert_called_once_with("")
@@ -6319,21 +6254,10 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": 12345,
-                "full_name": "User With Integer Email"
-            }
+            user_dict = {"email": 12345, "full_name": "User With Integer Email"}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type int" in record.message for record in caplog.records)

@@ -739,6 +739,7 @@ async def test_exchange_code_for_token_basic_auth_without_secret(oauth_manager):
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
 
+
 @pytest.mark.asyncio
 async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
     """Test exchange_code_for_token with explicit token_endpoint_auth_method='none' (RFC 7591 §2)."""
@@ -767,7 +768,6 @@ async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
     assert "client_secret" not in call_kwargs["data"]
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
-
 
 
 # ---------- refresh_token ----------
@@ -1805,12 +1805,7 @@ async def test_initiate_authorization_code_flow_with_popup_false(oauth_manager):
         "redirect_uri": "https://app.example.com/callback",
     }
 
-    result = await oauth_manager.initiate_authorization_code_flow(
-        "test-gateway",
-        credentials,
-        app_user_email="user@test.com",
-        popup=False
-    )
+    result = await oauth_manager.initiate_authorization_code_flow("test-gateway", credentials, app_user_email="user@test.com", popup=False)
 
     assert "authorization_url" in result
     assert "state" in result
@@ -1826,12 +1821,7 @@ async def test_initiate_authorization_code_flow_with_popup_true(oauth_manager):
         "redirect_uri": "https://app.example.com/callback",
     }
 
-    result = await oauth_manager.initiate_authorization_code_flow(
-        "test-gateway",
-        credentials,
-        app_user_email="user@test.com",
-        popup=True
-    )
+    result = await oauth_manager.initiate_authorization_code_flow("test-gateway", credentials, app_user_email="user@test.com", popup=True)
 
     assert "authorization_url" in result
     assert "state" in result

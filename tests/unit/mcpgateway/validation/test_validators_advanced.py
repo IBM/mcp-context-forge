@@ -1855,22 +1855,14 @@ class TestGatewayTestUrlValidation:
         """
         allowed_hosts = ["trusted.com"]
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://evil.com./bypass",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://evil.com./bypass", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_trailing_dot_fqdn_normalized_and_allowed(self, mock_dns_public):
         """Test that trailing dots are normalized for legitimate hosts."""
         allowed_hosts = ["trusted.com"]
         # trusted.com. should be normalized to trusted.com and allowed
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://trusted.com./path",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://trusted.com./path", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://trusted.com./path"
         assert result["hostname"] == "trusted.com."
         assert result["resolved_ip"] == "8.8.8.8"
@@ -1945,11 +1937,7 @@ class TestGatewayTestUrlValidation:
             mock_settings.gateway_test_dns_timeout = 5.0
 
             with pytest.raises(ValueError, match="is not allowed"):
-                await SecurityValidator.validate_gateway_test_url(
-                    "https://169.254.169.254/",
-                    ["169.254.169.254"],
-                    "Gateway URL"
-                )
+                await SecurityValidator.validate_gateway_test_url("https://169.254.169.254/", ["169.254.169.254"], "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_cgnat_blocked_when_ssrf_enabled(self):
@@ -1975,21 +1963,13 @@ class TestGatewayTestUrlValidation:
         allowed_hosts = ["evil-rebinding.com"]
         # evil-rebinding.com is in allowlist, but DNS returns private IP
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://evil-rebinding.com/",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://evil-rebinding.com/", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_exact_hostname_match_allowed(self, mock_dns_public):
         """Test that exact hostname matches are allowed."""
         allowed_hosts = ["api.example.com"]
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://api.example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://api.example.com/test", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://api.example.com/test"
         assert result["hostname"] == "api.example.com"
         assert result["resolved_ip"] == "8.8.8.8"
@@ -2000,50 +1980,30 @@ class TestGatewayTestUrlValidation:
         allowed_hosts = ["*.example.com"]
 
         # Should match subdomains
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://api.example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://api.example.com/test", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://api.example.com/test"
         assert result["resolved_ip"] == "8.8.8.8"
 
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://api.v2.example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://api.v2.example.com/test", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://api.v2.example.com/test"
         assert result["resolved_ip"] == "8.8.8.8"
 
         # Should NOT match the base domain itself (only subdomains)
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://example.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://example.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_wildcard_does_not_match_different_domain(self, mock_dns_public):
         """Test that wildcard patterns don't match unrelated domains."""
         allowed_hosts = ["*.example.com"]
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://evil.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://evil.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_empty_allowlist_rejects_all(self, mock_dns_public):
         """Test that empty allowlist rejects all URLs (AC #1)."""
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://example.com/",
-                [],
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://example.com/", [], "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_generic_error_message_no_detail_leakage(self):
@@ -2075,11 +2035,7 @@ class TestGatewayTestUrlValidation:
     async def test_case_insensitive_hostname_matching(self, mock_dns_public):
         """Test that hostname matching is case-insensitive."""
         allowed_hosts = ["Example.COM"]
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://example.com/test", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://example.com/test"
         assert result["resolved_ip"] == "8.8.8.8"
 
@@ -2159,11 +2115,7 @@ class TestGatewayTestUrlValidation:
 
         # IPv4-mapped IPv6 loopback should be blocked
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "http://[::ffff:127.0.0.1]/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("http://[::ffff:127.0.0.1]/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_ipv4_mapped_ipv6_in_resolved_address_blocked(self, monkeypatch):
@@ -2180,11 +2132,7 @@ class TestGatewayTestUrlValidation:
         allowed_hosts = ["mapped.example.com"]
 
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://mapped.example.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://mapped.example.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_dns_resolution_failure_rejected(self, monkeypatch):
@@ -2199,11 +2147,7 @@ class TestGatewayTestUrlValidation:
         allowed_hosts = ["nonexistent.example.com"]
 
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://nonexistent.example.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://nonexistent.example.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_cgnat_address_blocked(self, monkeypatch):
@@ -2220,11 +2164,7 @@ class TestGatewayTestUrlValidation:
 
         # Should be blocked even if in allowlist
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://cgnat.example.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://cgnat.example.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_cgnat_direct_ip_blocked(self):
@@ -2259,11 +2199,7 @@ class TestGatewayTestUrlValidation:
         allowed_hosts = ["mixed.example.com"]
 
         # Should succeed because one address is valid
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://mixed.example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://mixed.example.com/test", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://mixed.example.com/test"
         assert result["resolved_ip"] == "8.8.8.8"
 
@@ -2291,22 +2227,14 @@ class TestGatewayTestUrlValidation:
         allowed_hosts = ["*.example.com"]
 
         # Test wildcard match for subdomain
-        result = await SecurityValidator.validate_gateway_test_url(
-            "https://sub.example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
+        result = await SecurityValidator.validate_gateway_test_url("https://sub.example.com/test", allowed_hosts, "Gateway URL")
         assert result["validated_url"] == "https://sub.example.com/test"
         assert result["hostname"] == "sub.example.com"
         assert result["resolved_ip"] == "8.8.8.8"
 
         # Test that base domain does NOT match wildcard pattern (only subdomains)
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://example.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://example.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_hostname_not_in_allowlist_rejected(self, monkeypatch):
@@ -2322,11 +2250,7 @@ class TestGatewayTestUrlValidation:
 
         # Test that non-matching hostname is rejected
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://notallowed.example.com/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("https://notallowed.example.com/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_ipv4_mapped_ipv6_public_unwrapping(self):
@@ -2338,11 +2262,7 @@ class TestGatewayTestUrlValidation:
         # IPv4-mapped public IP should be unwrapped and pass through to allowlist check
         # It will fail because the IP itself is not in the allowlist (need hostname match)
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "http://[::ffff:8.8.8.8]/test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("http://[::ffff:8.8.8.8]/test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_url_with_missing_hostname_rejected(self):
@@ -2351,11 +2271,7 @@ class TestGatewayTestUrlValidation:
 
         # URL with no hostname (http:///test has hostname=None)
         with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "http:///test",
-                allowed_hosts,
-                "Gateway URL"
-            )
+            await SecurityValidator.validate_gateway_test_url("http:///test", allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
     async def test_multiple_public_dns_answers_use_first_safe_ip(self, monkeypatch):

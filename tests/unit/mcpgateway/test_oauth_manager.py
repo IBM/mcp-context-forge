@@ -1412,8 +1412,7 @@ class TestOAuthManager:
 
     @pytest.mark.asyncio
     async def test_refresh_token_error_handling(self):
-        """Test token refresh error handling.
-        """
+        """Test token refresh error handling."""
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
 
