@@ -128,16 +128,17 @@ UI_BASE_URL=https://ui.example.com/contextforge
 
 ContextForge uses this trusted base to generate these browser-facing email links:
 
-- `https://ui.example.com/contextforge/accept-invitation/{token}`
-- `https://ui.example.com/contextforge/reset-password/{token}`
-- `https://ui.example.com/contextforge/forgot-password`
+- `https://ui.example.com/contextforge/app/accept-invitation/{token}`
+- `https://ui.example.com/contextforge/app/reset-password/{token}`
+- `https://ui.example.com/contextforge/app/forgot-password`
 
-When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base. Password-reset and account-lockout
-emails preserve compatibility with the bundled Admin UI by using `/admin/reset-password/{token}` and
-`/admin/forgot-password`; these routes require `MCPGATEWAY_ADMIN_API_ENABLED=true`. Invitation emails continue to use
-`/accept-invitation/{token}`, so the fallback host must serve that frontend route. ContextForge does not provide the
-React invitation page. If the React client is deployed separately, configure `UI_BASE_URL`. ContextForge never
-derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
+When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base.
+With `MCPGATEWAY_ADMIN_API_ENABLED=true`, password-recovery emails use the bundled Admin UI routes:
+`/admin/reset-password/{token}` and `/admin/forgot-password`.
+With the Admin API disabled, these emails use `/app/reset-password/{token}` and `/app/forgot-password`.
+Invitation emails always use `/app/accept-invitation/{token}`. The fallback host must serve the corresponding frontend routes.
+For a separately deployed React client, configure `UI_BASE_URL` with its base URL before the `/app` prefix.
+ContextForge never derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
 
 `UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
 different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set

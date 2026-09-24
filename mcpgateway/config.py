@@ -1798,11 +1798,11 @@ class Settings(BaseSettings):
                 password_route_warning = (
                     "Password-recovery links will use legacy /admin routes because MCPGATEWAY_ADMIN_API_ENABLED=true."
                     if self.mcpgateway_admin_api_enabled
-                    else "Password-recovery links will use frontend /forgot-password and /reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
+                    else "Password-recovery links will use frontend /app/forgot-password and /app/reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
                 )
                 logger.warning(
                     "SMTP_ENABLED=true while UI_BASE_URL is unset. Invitation links will use APP_DOMAIN plus "
-                    "APP_ROOT_PATH and require /accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
+                    "APP_ROOT_PATH and require /app/accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
                     password_route_warning,
                 )
 
