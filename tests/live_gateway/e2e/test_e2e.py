@@ -59,7 +59,7 @@ import httpx2
 from mcp import ClientSession, MCPError as McpError
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.server.mcpserver import MCPServer
-from mcp.types import InitializeResult
+from mcp.types import PaginatedRequestParams
 import pytest
 import uvicorn
 
@@ -314,9 +314,9 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
                     names = []
                     cursor = None
                     while True:
-                        page = await session.list_resources(cursor=cursor)
+                        page = await session.list_resources(params=PaginatedRequestParams(cursor=cursor))
                         names.extend(item.name for item in page.resources if str(item.uri) == resource_namespacing_upstreams[0]["uri"])
-                        cursor = page.nextCursor
+                        cursor = page.next_cursor
                         if not cursor:
                             break
                     assert sorted(names) == sorted(expected_names)
