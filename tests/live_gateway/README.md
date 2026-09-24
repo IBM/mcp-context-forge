@@ -57,6 +57,59 @@ make test-oauth-status-live        # tests/live_gateway/mcp/test_oauth_status_li
 uv run --extra plugins pytest tests/live_gateway/mcp/test_langfuse_traces.py -v
 ```
 
+## Resource template federation (#6625)
+
+Run the Python gateway with authentication enabled and a test workload allowance
+for rate limiting. The fixture registers two real Streamable HTTP upstreams.
+It creates and deletes its own gateways, resources, virtual servers, users, and teams.
+
+```bash
+# Match these values to the running gateway.
+export MCP_CLI_BASE_URL=http://127.0.0.1:8080
+export GATEWAY_TOOL_NAME_SEPARATOR=-
+export MCP_TEMPLATE_GATEWAY_COMMIT="commit-used-to-build-the-gateway"
+# Use 127.0.0.1 for a host gateway, host.docker.internal for Docker Desktop,
+# or host.lima.internal for Colima. The gateway must reach the fixture ports.
+export MCP_TEMPLATE_UPSTREAM_HOST=host.docker.internal
+make test-e2e K=resource_template
+```
+
+Supply `JWT_SECRET_KEY` for the test gateway through the environment.
+Enable `MCP_REQUIRE_AUTH` on the gateway for the unauthenticated denial case.
+Use `RATE_LIMITING_ENABLED=false` only on an isolated test gateway, or configure
+limits that accommodate the suite. Allow the fixture host through the test gateway's SSRF policy.
+
+The acceptance tests verify both templates, concrete-resource separation, expanded
+URI reads, upstream request correlation, and gateway-prefixed names. They exercise
+global and server-scoped endpoints. Security cases cover narrowed team tokens,
+public-only tokens, private resources, another administrator, disabled resources,
+wrong-server reads, missing permissions, and unauthenticated initialization.
+
+The five `edge_probe` cases record observations; a passing probe does not certify
+support for nonstandard advertisements or non-text templates. Their JSON output
+and optional JUnit `resource_template_probe` properties retain the observations.
+For JUnit evidence, add `--junitxml=<output.xml> -o junit_family=legacy` through `PYTEST_ADDOPTS`.
+
+Namespacing assertions certify the post-#6621 baseline. Every result identifies
+the supplied gateway commit; it does not certify an untested `main` checkout.
+Authenticated requests bypass the unscoped template cache. Identical URI patterns
+across upstreams and the Rust runtime are outside this suite's scope.
+
+For independent client verification, keep the fixture running in another terminal:
+
+```bash
+uv run python -m tests.live_gateway.fixtures.resource_templates
+```
+
+Register both printed `gateway_url` values through the gateway API or Admin UI.
+Associate their discovered concrete resources and templates with a virtual server.
+In MCP Inspector, connect using a token with `resources.read` and `servers.use`.
+Run `resources/templates/list`, `resources/list`, and `resources/read` with a printed
+`read_uri`. Compare returned text with `expected_text` and inspect `received_uri`
+in the fixture terminal. Repeat against the global MCP endpoint. This checks an
+independent client's parsing as well as upstream routing. Delete the registered
+objects and stop the fixture with Ctrl+C.
+
 ## Tuning sync deadlines
 
 `tests/live_gateway/e2e/test_e2e.py` polls the gateway for state that
