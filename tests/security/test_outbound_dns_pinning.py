@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import httpx
+import httpx2
 import pytest
 
 # First-Party
@@ -253,12 +254,12 @@ async def test_transport_dials_pinned_host_and_keeps_identity(monkeypatch):
         seen["dialled_host"] = request.url.host
         seen["sni"] = request.extensions.get("sni_hostname")
         seen["host_header"] = request.headers.get("Host")
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _capture)
     transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34"])
 
-    await transport.handle_async_request(httpx.Request("GET", "https://example.com/mcp"))
+    await transport.handle_async_request(httpx2.Request("GET", "https://example.com/mcp"))
 
     assert seen == {"dialled_host": "93.184.216.34", "sni": "example.com", "host_header": "example.com"}
 
@@ -269,13 +270,13 @@ async def test_transport_falls_back_to_the_next_address(monkeypatch):
     async def _capture(_self, request):
         dialled.append(request.url.host)
         if request.url.host == "93.184.216.34":
-            raise httpx.ConnectError("no route", request=request)
-        return httpx.Response(200)
+            raise httpx2.ConnectError("no route", request=request)
+        return httpx2.Response(200)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _capture)
     transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34", "93.184.216.35"])
 
-    response = await transport.handle_async_request(httpx.Request("GET", "https://example.com/mcp"))
+    response = await transport.handle_async_request(httpx2.Request("GET", "https://example.com/mcp"))
 
     assert response.status_code == 200
     assert dialled == ["93.184.216.34", "93.184.216.35"]
@@ -284,8 +285,8 @@ async def test_transport_falls_back_to_the_next_address(monkeypatch):
 async def test_transport_refuses_an_unvalidated_host():
     transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34"])
 
-    with pytest.raises(httpx.UnsupportedProtocol):
-        await transport.handle_async_request(httpx.Request("GET", "https://evil.test/mcp"))
+    with pytest.raises(httpx2.UnsupportedProtocol):
+        await transport.handle_async_request(httpx2.Request("GET", "https://evil.test/mcp"))
 
 
 # First-Party
@@ -310,8 +311,7 @@ async def test_gateway_connectors_pin_the_validated_address(fake_resolver, monke
         captured["factory"] = kwargs["httpx_client_factory"]
         raise RuntimeError("stop after the client factory is built")
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", _capture_factory)
-    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", _capture_factory)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", _capture_factory)
     service = GatewayService()
 
     try:
@@ -332,8 +332,7 @@ async def test_gateway_connectors_pin_the_validated_address(fake_resolver, monke
 @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
 async def test_gateway_connectors_refuse_a_rebound_address(fake_resolver, monkeypatch, connector):
     fake_resolver(["169.254.169.254"])
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", _refuse_to_dial)
-    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", _refuse_to_dial)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", _refuse_to_dial)
     service = GatewayService()
 
     try:
@@ -858,7 +857,7 @@ async def test_tool_invoke_direct_pins_the_validated_address(fake_resolver, monk
     monkeypatch.setattr("mcpgateway.services.tool_service.settings.mcpgateway_direct_proxy_timeout", 30)
     monkeypatch.setattr("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.services.tool_service.build_gateway_auth_headers", lambda _gw: {"Authorization": "Bearer remote-token"})
-    monkeypatch.setattr("mcpgateway.services.tool_service.streamablehttp_client", _capture_client_factory(captured))
+    monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _capture_client_factory(captured))
 
     with pytest.raises(Exception):
         await service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={"key": "value"}, user_email="user@example.com", token_teams=["team-1"])
@@ -884,7 +883,7 @@ async def test_tool_invoke_direct_refuses_a_rebound_address(fake_resolver, monke
     monkeypatch.setattr("mcpgateway.services.tool_service.settings.mcpgateway_direct_proxy_timeout", 30)
     monkeypatch.setattr("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.services.tool_service.build_gateway_auth_headers", lambda _gw: {"Authorization": "Bearer remote-token"})
-    monkeypatch.setattr("mcpgateway.services.tool_service.streamablehttp_client", _refuse_to_dial)
+    monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _refuse_to_dial)
 
     with pytest.raises(ToolInvocationError, match="Outbound URL blocked by URL policy"):
         await service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={"key": "value"}, user_email="user@example.com", token_teams=["team-1"])
@@ -977,13 +976,13 @@ def _mcp_db_execute(tool, gateway):
 
 
 @pytest.mark.parametrize(
-    ("tool_request_type", "gateway_transport", "patch_target"),
+    ("tool_request_type", "gateway_transport"),
     [
-        ("SSE", "SSE", "sse_client"),
-        ("StreamableHTTP", "STREAMABLEHTTP", "streamablehttp_client"),
+        ("SSE", "SSE"),
+        ("StreamableHTTP", "STREAMABLEHTTP"),
     ],
 )
-async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport, patch_target):
+async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport):
     fake_resolver(["93.184.216.34"])
     gateway = _mcp_gateway("http://fake-mcp:8080/mcp", gateway_transport)
     tool = _wire_mcp_tool(mock_tool, gateway, tool_request_type)
@@ -993,7 +992,7 @@ async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeyp
     service._http_client = AsyncMock()
     captured = {}
 
-    monkeypatch.setattr(f"mcpgateway.services.tool_service.{patch_target}", _capture_client_factory(captured))
+    monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _capture_client_factory(captured))
     monkeypatch.setattr("mcpgateway.services.tool_service.decode_auth", lambda *_a, **_k: {"Authorization": "Bearer xyz"})
     monkeypatch.setattr("mcpgateway.services.tool_service.extract_using_jq", lambda data, _filt: data)
     monkeypatch.setattr("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock()))
@@ -1011,13 +1010,13 @@ async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeyp
 
 
 @pytest.mark.parametrize(
-    ("tool_request_type", "gateway_transport", "patch_target"),
+    ("tool_request_type", "gateway_transport"),
     [
-        ("SSE", "SSE", "sse_client"),
-        ("StreamableHTTP", "STREAMABLEHTTP", "streamablehttp_client"),
+        ("SSE", "SSE"),
+        ("StreamableHTTP", "STREAMABLEHTTP"),
     ],
 )
-async def test_tool_invoke_mcp_refuses_a_rebound_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport, patch_target):
+async def test_tool_invoke_mcp_refuses_a_rebound_address(fake_resolver, monkeypatch, mock_tool, test_db, tool_request_type, gateway_transport):
     fake_resolver(["169.254.169.254"])
     gateway = _mcp_gateway("http://fake-mcp:8080/mcp", gateway_transport)
     tool = _wire_mcp_tool(mock_tool, gateway, tool_request_type)
@@ -1026,7 +1025,7 @@ async def test_tool_invoke_mcp_refuses_a_rebound_address(fake_resolver, monkeypa
     service = ToolService()
     service._http_client = AsyncMock()
 
-    monkeypatch.setattr(f"mcpgateway.services.tool_service.{patch_target}", _refuse_to_dial)
+    monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _refuse_to_dial)
     monkeypatch.setattr("mcpgateway.services.tool_service.decode_auth", lambda *_a, **_k: {"Authorization": "Bearer xyz"})
     monkeypatch.setattr("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock()))
 
@@ -1170,11 +1169,11 @@ async def test_transport_restores_the_request_url_after_success(monkeypatch):
 
     async def _capture(_self, request):
         seen["dialled_host"] = request.url.host
-        return httpx.Response(200, request=request)
+        return httpx2.Response(200, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _capture)
     transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34"])
-    request = httpx.Request("GET", "https://example.com/mcp")
+    request = httpx2.Request("GET", "https://example.com/mcp")
 
     response = await transport.handle_async_request(request)
 
@@ -1189,12 +1188,12 @@ async def test_transport_restores_the_request_url_after_fallback(monkeypatch):
     async def _capture(_self, request):
         dialled.append(request.url.host)
         if request.url.host == "93.184.216.34":
-            raise httpx.ConnectError("no route", request=request)
-        return httpx.Response(200, request=request)
+            raise httpx2.ConnectError("no route", request=request)
+        return httpx2.Response(200, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _capture)
     transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34", "93.184.216.35"])
-    request = httpx.Request("GET", "https://example.com/mcp")
+    request = httpx2.Request("GET", "https://example.com/mcp")
 
     await transport.handle_async_request(request)
 
@@ -1202,7 +1201,7 @@ async def test_transport_restores_the_request_url_after_fallback(monkeypatch):
     assert request.url.host == "example.com"
 
 
-class _MultiChunkAsyncStream(httpx.AsyncByteStream):
+class _MultiChunkAsyncStream(httpx2.AsyncByteStream):
     """A real multi-chunk async byte stream, standing in for a live SSE/streaming body."""
 
     def __init__(self, chunks: list) -> None:
@@ -1228,11 +1227,11 @@ async def test_transport_restores_the_request_url_while_a_stream_is_still_open(m
 
     async def _capture(_self, request):
         seen["dialled_host"] = request.url.host
-        return httpx.Response(200, request=request, stream=_MultiChunkAsyncStream(chunks))
+        return httpx2.Response(200, request=request, stream=_MultiChunkAsyncStream(chunks))
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _capture)
     transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34"])
-    request = httpx.Request("GET", "https://example.com/mcp")
+    request = httpx2.Request("GET", "https://example.com/mcp")
 
     response = await transport.handle_async_request(request)
 
