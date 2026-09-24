@@ -6,7 +6,7 @@ name: Build Python Package
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: [ "main", "chore/mcp-sdk-v2" ]
+    branches: [ "main" ]
     paths:
       - "mcpgateway/**"
       - "pyproject.toml"

@@ -19,7 +19,7 @@ name: Docker Scan Skip Reporter
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main", "chore/mcp-sdk-v2"]
+    branches: ["main"]
     paths-ignore:
       - 'Containerfile'
       - 'infra/nginx/**'
