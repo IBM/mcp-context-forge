@@ -611,13 +611,16 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
     return f"<{fallback_type} object (unrepresentable)>"
 
 
-def _handle_json_parse_error(response, error, is_error_response: bool = False) -> list:
-    """Handle JSON parsing failures with graceful fallback to error TextContent.
+def _handle_json_parse_error(response, error, is_error_response: bool = False) -> list[TextContent]:
+    """Build the error content reported when a REST response body is not valid JSON.
 
-    When JSON parsing fails (e.g., due to truncation or malformed response),
-    this returns a list of TextContent objects that signal an error condition.
-    The caller checks for this pattern and sets is_error=True, preventing
-    invalid/truncated JSON from being sent through output schema validation.
+    Logs the failure and returns a single ``TextContent`` describing the parse error
+    and the (possibly truncated) body. Callers use the result directly as
+    ``ToolResult.content`` with ``is_error=True``. On the 2xx success path that only
+    happens when the tool declares an ``outputSchema``; otherwise the raw text is
+    passed through as a successful result. Never pass the result to
+    ``extract_using_jq``: ``TextContent`` is not JSON-serializable, so the filter
+    fails and replaces this message with a generic jsonpath error.
 
     Args:
         response: The HTTP response object with .text attribute
@@ -625,9 +628,8 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
         is_error_response: If True, logs as "error response", else "response"
 
     Returns:
-        List of TextContent objects containing error message and truncated response.
-        This format signals to the caller that an error occurred and should be
-        treated as is_error=True, bypassing output schema validation.
+        A one-element list holding the error ``TextContent``; the body is truncated
+        to ``REST_RESPONSE_TEXT_MAX_LENGTH`` characters.
     """
     msg = "error response" if is_error_response else "response"
     if not response.text:
@@ -6149,19 +6151,29 @@ class ToolService(BaseService):
                             )
                             # Don't mark as successful for error responses - success remains False
                         else:
+                            parse_error = None
                             try:
                                 result = response.json()
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=False)
-                            logger.debug("REST API tool response: %s", result)
-                            filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
-                            # Check if extract_using_jq returned an error (list of TextContent objects)
-                            if _is_jq_filter_error(filtered_response):
-                                # Error case - use the TextContent directly
-                                tool_result = ToolResult(content=filtered_response, is_error=True)
-                                success = False
+                                parse_error = _handle_json_parse_error(response, e, is_error_response=False)
+                                # Without an outputSchema a non-JSON body (plain text, HTML, CSV) is still a usable
+                                # result, so pass the raw text through as before (#6199 only concerns schema tools).
+                                result = {"response_text": response.text[: settings.rest_response_text_max_length]} if response.text else {"error": "Empty response body"}
+                            if parse_error is not None and tool_output_schema:
+                                # A non-JSON body can never satisfy outputSchema. Report the parse error directly
+                                # instead of running jq over TextContent (not JSON-serializable) or letting the
+                                # validator fail with a generic "no structured output" message (#6199).
+                                tool_result = ToolResult(content=parse_error, is_error=True)
                             else:
-                                tool_result = self._coerce_to_tool_result(filtered_response)
+                                logger.debug("REST API tool response: %s", result)
+                                filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
+                                # Check if extract_using_jq returned an error (list of TextContent objects)
+                                if _is_jq_filter_error(filtered_response):
+                                    # Error case - use the TextContent directly
+                                    tool_result = ToolResult(content=filtered_response, is_error=True)
+                                    success = False
+                                else:
+                                    tool_result = self._coerce_to_tool_result(filtered_response)
                             # If output schema is present, validate and attach structured content.
                             # The validator skips for isError=true (per #4202) and, on validation
                             # failure, mutates tool_result in place with is_error=True, so the
