@@ -723,13 +723,6 @@ never at pattern content.
 platform it falls back to `spawn`, matching the jq filter sandbox's own
 platform split (see section 13). The shipped container images are Linux.
 
-**`outputSchema` withholding.** When a remote MCP server advertises an
-`outputSchema` that carries a regex keyword, the gateway omits that schema
-from the tool it advertises to its own clients — the installed MCP SDK
-validates `outputSchema` with stock `jsonschema` and is not sandboxed at that
-call site. The gateway's own bounded check still validates the same response
-data server-side; only the advertised schema is withheld.
-
 **Plugin-configured regex.** Regex patterns that an operator supplies in
 plugin configuration are not routed through this sandbox — they come from
 deploy-time configuration, not from a request. The gateway logs one warning
@@ -739,7 +732,7 @@ patterns, but does not bound their compile or match time.
 **Federated MCP output validation.** The MCP client SDK's own result
 validation (`mcp.ClientSession._validate_tool_result`, in the installed `mcp`
 package, not `mcpgateway`) validates a federated peer's `structuredContent`
-against that peer's advertised `outputSchema` with stock `jsonschema`, before
+against that peer's advertised `outputSchema` with a stock `jsonschema` validator, before
 the gateway's own sandboxed check runs. A hostile federated MCP server
 controls both the schema and the instance on this path, and it is not yet
 bounded by this sandbox; tracked as a follow-up.

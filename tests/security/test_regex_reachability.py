@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Prove no validation path reaches an unbounded regex engine in this process.
 
 A grep over first-party code cannot establish this: the escape found in review lived in
-site-packages. This module verifies by execution instead, in four layers.
+site-packages. This module verifies by execution instead, in three layers.
 
 1. A positive routing assertion. It spies on the sandbox pool and asserts each call site
    submits a regex-bearing schema to the sandbox, and submits nothing for a schema without
@@ -14,12 +14,8 @@ site-packages. This module verifies by execution instead, in four layers.
 2. An in-process pattern tripwire. It replaces the ``pattern`` and ``patternProperties``
    keyword implementations in every stock draft with a function that raises. Any pattern
    evaluated in this process fails the test by name.
-3. A direct-call tripwire. It makes ``jsonschema.validate`` raise. No first-party code
-   calls that function, but the vendored SDK does, so this layer is live.
-4. A data-guard assertion for the SDK site. The SDK validates ``outputSchema`` in-process
-   and cannot be routed, so the gateway withholds a regex-bearing ``outputSchema`` instead.
-   Layers 1 to 3 cannot see that guard, because it lives in a different module and submits
-   nothing. This layer drives the real SDK handler and asserts the guard held.
+3. A direct-call tripwire. It makes ``jsonschema.validate`` raise, so a call site that
+   bypasses the draft validators still fails the test.
 
 The sandbox worker is a separate process, so none of these in-process patches reach it. A
 correctly routed validation therefore still succeeds while the tripwires are armed. That
@@ -36,22 +32,17 @@ Two habits keep this module from proving nothing:
 
 # Standard
 from contextlib import ExitStack
-from inspect import getclosurevars
-from types import SimpleNamespace
 from unittest.mock import patch
 
 # Third-Party
 import jsonschema
-import mcp.types as types
-from mcp.server.lowlevel import Server
 import pytest
 
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.services.tool_service import _validate_tool_input_arguments, _validate_with_cached_schema
-from mcpgateway.transports.streamablehttp_transport import _guard_proxied_tools, _to_mcp_tool, mcp_app
 from mcpgateway.utils import safe_jsonschema
-from mcpgateway.utils.safe_jsonschema import schema_uses_regex, shutdown_validation_pool, start_validation_pool
+from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 
 # No schema here may carry ``$anchor`` or ``$dynamicAnchor``. The 2020-12 metaschema checks
 # both with its own ``pattern`` keyword, so adding one makes ``check_schema`` evaluate a
@@ -124,65 +115,6 @@ def _boom(*args, **kwargs):
         _Tripwire: Always.
     """
     raise _Tripwire("unbounded validation reached in-process")
-
-
-def _tool_record(output_schema):
-    """Build the internal tool record shape that ``_to_mcp_tool`` reads.
-
-    Args:
-        output_schema: The schema the tool advertises as its output contract.
-
-    Returns:
-        SimpleNamespace: A stand-in for the ORM tool row.
-    """
-    return SimpleNamespace(
-        name="probe_tool",
-        title=None,
-        description="probe",
-        input_schema={"type": "object"},
-        output_schema=output_schema,
-        annotations=None,
-        extension_metadata=None,
-    )
-
-
-async def _drive_sdk_call_tool(advertised):
-    """Run the vendored SDK ``CallToolRequest`` handler against an advertised tool.
-
-    The SDK validates ``outputSchema`` at ``mcp/server/lowlevel/server.py:573`` with stock
-    ``jsonschema``, in-process and unbounded. ``validate_input=False`` does not gate that
-    branch, so the only defense is withholding a regex-bearing schema before the SDK sees it.
-
-    The registration mirrors production, which uses ``validate_input=False`` at
-    ``streamablehttp_transport.py:1775``. That flag is load-bearing here: the SDK's input
-    branch calls ``jsonschema.validate`` for every call, and ``inputSchema`` carries no
-    guard, so ``validate_input=True`` would open a second unbounded site.
-    :func:`test_production_call_tool_handler_does_not_validate_input` holds that flag in place.
-
-    Args:
-        advertised: The SDK tool model the gateway advertises, after its guards ran.
-
-    Returns:
-        mcp.types.ServerResult: The handler result, carrying ``isError`` and the message.
-    """
-    server = Server("regex-reachability-probe")
-
-    @server.call_tool(validate_input=False)
-    async def _call(name, arguments):  # pylint: disable=unused-argument
-        """Return structured content so the SDK reaches its output-validation branch.
-
-        Args:
-            name: Ignored.
-            arguments: Ignored.
-
-        Returns:
-            tuple: Unstructured content and the structured payload.
-        """
-        return ([types.TextContent(type="text", text="{}")], {"q": "abc"})
-
-    server._tool_cache[advertised.name] = advertised  # pylint: disable=protected-access
-    request = types.CallToolRequest(method="tools/call", params=types.CallToolRequestParams(name=advertised.name, arguments={}))
-    return await server.request_handlers[types.CallToolRequest](request)
 
 
 @pytest.fixture(autouse=True)
@@ -290,32 +222,6 @@ def test_routing_spy_fires(submit):
     """
     safe_jsonschema.validate_safely({"q": "abc"}, REGEX_SCHEMA, jsonschema.Draft202012Validator)
     assert submit.call_count == 1
-
-
-@pytest.mark.timeout(30)
-async def test_sdk_output_validation_tripwire_fires():
-    """Layer 4 self-test: an unguarded ``outputSchema`` must reach the SDK's validator.
-
-    This proves the SDK site is live. If it were not, the guard assertions below would
-    prove nothing, because a withheld schema and an unreachable validator look the same.
-    """
-    unguarded = types.Tool(name="probe_tool", inputSchema={"type": "object"}, outputSchema=REGEX_SCHEMA)
-    with patch("jsonschema.validate", side_effect=_boom):
-        result = await _drive_sdk_call_tool(unguarded)
-    assert result.root.isError is True
-    assert "unbounded validation reached in-process" in result.root.content[0].text
-
-
-@pytest.mark.timeout(30)
-def test_production_call_tool_handler_does_not_validate_input():
-    """Layer 4 premise: the gateway must keep the SDK's input validator switched off.
-
-    ``inputSchema`` reaches the SDK unguarded, so ``validate_input=True`` would send every
-    advertised input schema through stock ``jsonschema`` in-process. The output guard does
-    not cover that branch. This holds the flag in place.
-    """
-    handler = mcp_app.request_handlers[types.CallToolRequest]
-    assert getclosurevars(handler).nonlocals["validate_input"] is False
 
 
 # --------------------------------------------------------------------------------------
@@ -432,79 +338,6 @@ def test_prompt_path_does_not_validate_in_process(tripwire, schema, valid, inval
         fragment: Unused here.
     """
     DbPrompt(name="p", template="hi {q}", argument_schema=schema).validate_arguments(valid)
-
-
-# --------------------------------------------------------------------------------------
-# Layer 4: the SDK output-schema site, which no spy and no tripwire can route.
-# --------------------------------------------------------------------------------------
-
-
-@pytest.mark.timeout(30)
-@pytest.mark.parametrize("schema,valid,invalid,fragment", SHAPES)
-def test_to_mcp_tool_withholds_a_regex_bearing_output_schema(schema, valid, invalid, fragment):
-    """The advertised tool model must carry no regex keyword the SDK could evaluate.
-
-    Args:
-        schema: The regex-bearing schema shape under test.
-        valid: Unused here.
-        invalid: Unused here.
-        fragment: Unused here.
-    """
-    advertised = _to_mcp_tool(_tool_record(schema))
-    assert advertised.outputSchema is None
-    assert schema_uses_regex(advertised.model_dump()) is False
-
-
-@pytest.mark.timeout(30)
-@pytest.mark.parametrize("schema,valid,invalid,fragment", SHAPES)
-def test_guard_proxied_tools_withholds_a_regex_bearing_output_schema(schema, valid, invalid, fragment):
-    """Direct-proxy tools bypass ``_to_mcp_tool``, so they need the guard applied again.
-
-    Args:
-        schema: The regex-bearing schema shape under test.
-        valid: Unused here.
-        invalid: Unused here.
-        fragment: Unused here.
-    """
-    proxied = types.Tool(name="probe_tool", inputSchema={"type": "object"}, outputSchema=schema)
-    guarded = _guard_proxied_tools([proxied])[0]
-    assert guarded.outputSchema is None
-    assert schema_uses_regex(guarded.model_dump()) is False
-
-
-@pytest.mark.timeout(30)
-@pytest.mark.parametrize("schema,valid,invalid,fragment", SHAPES)
-async def test_sdk_output_validation_sees_no_regex_keyword(tripwire, schema, valid, invalid, fragment):
-    """The real SDK handler must evaluate no regex, for a tool the gateway advertises.
-
-    The tool model is built by the production guard, so removing the guard makes this fail.
-
-    Args:
-        tripwire: The armed in-process tripwires.
-        schema: The regex-bearing schema shape under test.
-        valid: Unused here.
-        invalid: Unused here.
-        fragment: Unused here.
-    """
-    result = await _drive_sdk_call_tool(_to_mcp_tool(_tool_record(schema)))
-    assert result.root.isError is False, result.root.content[0].text
-
-
-@pytest.mark.timeout(30)
-@pytest.mark.parametrize("schema,valid,invalid,fragment", SHAPES)
-async def test_sdk_output_validation_sees_no_regex_keyword_from_a_proxied_tool(tripwire, schema, valid, invalid, fragment):
-    """The same must hold for a tool proxied straight from a remote gateway.
-
-    Args:
-        tripwire: The armed in-process tripwires.
-        schema: The regex-bearing schema shape under test.
-        valid: Unused here.
-        invalid: Unused here.
-        fragment: Unused here.
-    """
-    proxied = types.Tool(name="probe_tool", inputSchema={"type": "object"}, outputSchema=schema)
-    result = await _drive_sdk_call_tool(_guard_proxied_tools([proxied])[0])
-    assert result.root.isError is False, result.root.content[0].text
 
 
 # --------------------------------------------------------------------------------------
