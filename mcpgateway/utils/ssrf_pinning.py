@@ -10,10 +10,12 @@ client that receives the hostname resolves it a second time at connection time, 
 attacker who controls DNS can answer with a public address for the check and a private
 address for the connection. These helpers carry the checked addresses to the connection.
 
-Known ceiling: httpcore keys pooled connections by URL origin and does not include
-``sni_hostname`` in that key. On a client shared across destinations, two hostnames pinned
-to one address collapse to one origin. Give such a client a per-destination instance if
-that matters.
+Constraint for callers: httpcore keys pooled connections by URL origin and does not include
+``sni_hostname`` in that key. A URL pinned by :meth:`PinnedTarget.pin` therefore carries the
+address as its origin, so two hostnames pinned to one address would collapse into a single
+pooled connection whose certificate was verified for only the first of them. Never issue a
+pinned request on a client shared with another destination: use an isolated per-call client,
+as every caller in this repository does.
 """
 
 # Standard

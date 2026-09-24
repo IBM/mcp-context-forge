@@ -41,6 +41,9 @@
   - Some outbound requests now connect to a single validated address instead of retrying every
     address returned by DNS. A dual-stack upstream whose first-sorted address is unreachable may now
     fail where a plain resolution previously fell through to the next address.
+  - Requests that connect to a validated address now use a dedicated connection rather than a shared
+    pool, so two destinations that resolve to the same address can no longer share a connection whose
+    certificate was verified for only one of them.
   - Connection handling is unchanged when an environment proxy (`HTTP_PROXY`, `HTTPS_PROXY`,
     `ALL_PROXY`) applies to the target, since the proxy performs name resolution.
 
