@@ -58,6 +58,7 @@ from playwright.sync_api import APIRequestContext, APIResponse, Error as Playwri
 
 # Local
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
 
 # Local
 from tests.helpers.api_helpers import ApiTestHelper
@@ -383,8 +384,8 @@ class TestToolCalls:
             f"Tool {tool_name!r} is not registered in the gateway. "
             "Check that register_fast_time completed and gateway synchronization finished."
         )
-        assert match.outputSchema, (
-            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. "
+        assert match.output_schema, (
+            f"Tool {tool_name!r} has no output_schema declared in the gateway: {match}. "
             "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
         )
         return match
@@ -1121,7 +1122,7 @@ def _unwrap_exception_group(exc: BaseException) -> list[BaseException]:
 # Catching bare Exception would swallow the AssertionErrors below and the test could
 # never fail (#6839). ExceptionGroup is included because the SDK's ClientSession runs
 # call_tool() inside an anyio TaskGroup, which wraps a single McpError on the way out.
-_TRANSPORT_ERRORS = (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup)
+_TRANSPORT_ERRORS = (McpError, httpx.HTTPError, httpx2.HTTPError, RuntimeError, TimeoutError, ExceptionGroup)
 
 # Every RBAC denial in mcpgateway/middleware/rbac.py raises 403. A 401 means
 # authentication failed before RBAC ran, so it is not evidence of a denial.
@@ -1163,14 +1164,27 @@ def _assert_denied_for_rbac(call: Callable[[], Any], context: str) -> None:
 
 @asynccontextmanager
 async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[ClientSession]:
-    """Open an initialized MCP client session over Streamable HTTP."""
+    """Open an initialized MCP client session over Streamable HTTP.
+
+    The mcp 2.x transport turns a non-2xx handshake response into a generic
+    JSON-RPC error and drops the HTTP status, so the gateway's ``ErrorResponseHook``
+    is attached to the client and a failed handshake is re-raised as
+    ``httpx2.HTTPStatusError`` carrying the real status (401, 403, ...).
+    """
     url = _mcp_client_url(server_url)
     headers = {"Authorization": f"Bearer {access_token}"} if access_token else None
-    timeout = httpx2.Timeout(_CLIENT_TIMEOUT)
-    async with streamable_http_client(url, http_client=create_mcp_http_client(headers=headers, timeout=timeout)) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream, read_timeout_seconds=_CLIENT_TIMEOUT) as session:
-            await session.initialize()
-            yield session
+    http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+    error_hook = ErrorResponseHook().install(http_client)
+    try:
+        async with streamable_http_client(url, http_client=http_client) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream, read_timeout_seconds=_CLIENT_TIMEOUT) as session:
+                await session.initialize()
+                yield session
+    except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
+        status_error = error_hook.to_http_status_error(exc)
+        if status_error is None:
+            raise
+        raise status_error from exc
 
 
 async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
@@ -1796,15 +1810,15 @@ class TestTokenLifecycle:
             time.sleep(_REVOCATION_PROPAGATION_SECONDS)
 
             # A revoked token fails the JWT auth dependency before any MCP method
-            # dispatch, so the SDK surfaces it as a raw httpx.HTTPStatusError from
-            # the initialize POST -- wrapped in one or more ExceptionGroup layers
-            # because the SDK runs that POST inside anyio TaskGroups (see
-            # _unwrap_exception_group). Narrowed to these two types and to status
-            # 401 so an unrelated transport failure (a restart, a timeout) cannot
-            # read as "revocation confirmed".
-            with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as excinfo:
+            # dispatch, so the gateway answers the initialize POST with 401.
+            # _mcp_session re-surfaces that as httpx2.HTTPStatusError (the mcp 2.x
+            # transport itself drops the status) -- possibly wrapped in
+            # ExceptionGroup layers (see _unwrap_exception_group). Narrowed to
+            # these two types and to status 401 so an unrelated transport
+            # failure (a restart, a timeout) cannot read as "revocation confirmed".
+            with pytest.raises((httpx2.HTTPStatusError, ExceptionGroup)) as excinfo:
                 _mcp_initialize_only(minted["access_token"])
-            status_errors = [e for e in _unwrap_exception_group(excinfo.value) if isinstance(e, httpx.HTTPStatusError)]
+            status_errors = [e for e in _unwrap_exception_group(excinfo.value) if isinstance(e, httpx2.HTTPStatusError)]
             assert status_errors and status_errors[0].response.status_code == 401, f"expected a 401 from the revoked token, got: {excinfo.value!r}"
             print(f"    -> Revoked token rejected on MCP (expected): {status_errors[0]}")
         finally:
@@ -1847,7 +1861,7 @@ class TestTokenLifecycle:
             result = None
             try:
                 result = _mcp_tool_call(minted["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
-            except (McpError, httpx.HTTPError, RuntimeError, TimeoutError, ExceptionGroup) as exc:
+            except _TRANSPORT_ERRORS as exc:
                 leaves = _unwrap_exception_group(exc)
                 assert any("access denied" in str(leaf).lower() for leaf in leaves), f"expected an access-denial error, got: {leaves!r}"
                 print(f"    -> Scoped token denied execute at the transport (expected): {leaves[0]}")
