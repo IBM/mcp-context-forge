@@ -326,6 +326,14 @@ audit_trail = get_audit_trail_service()
 
 GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
 GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
+MCP_CATALOG_STALE_CREATED_VIA_VALUES: Set[str] = {
+    "MCP",
+    "federation",
+    "health_check",
+    "manual_refresh",
+    "oauth",
+    "update",
+}
 
 
 class GatewayError(Exception):
@@ -3312,6 +3320,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway=gateway,
                         catalog_sync=catalog_sync,
                         log_context="gateway update",
+                        stale_created_via_values=MCP_CATALOG_STALE_CREATED_VIA_VALUES,
                     )
 
                     gateway.capabilities = capabilities
@@ -4554,6 +4563,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway lifecycle worker",
+                stale_created_via_values=MCP_CATALOG_STALE_CREATED_VIA_VALUES,
             )
 
             if not self._finalize_pending_gateway_success(db, gateway, capabilities):
@@ -6886,13 +6896,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Only delete MCP-discovered items (not user-created entries)
             # Excludes "api", "ui", None (legacy/user-created) to preserve user entries
-            mcp_created_via_values = {"MCP", "federation", "health_check", "manual_refresh", "oauth", "update"}
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context=f"gateway refresh ({created_via})",
-                stale_created_via_values=mcp_created_via_values,
+                stale_created_via_values=MCP_CATALOG_STALE_CREATED_VIA_VALUES,
             )
             result["tools_removed"] = reconcile_result.tools_removed
             result["resources_removed"] = reconcile_result.resources_removed
