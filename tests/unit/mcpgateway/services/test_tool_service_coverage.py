@@ -5609,21 +5609,15 @@ class TestInvokeToolCachePaths:
     @pytest.mark.asyncio
     async def test_server_scoping_denies_unattached_tool(self, tool_service):
         """Tool not attached to specified server raises not found."""
-        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn, patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)):
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            # Disable cache to force DB lookup path
             mock_cache = AsyncMock()
-            mock_cache.enabled = True
-            mock_cache.get = AsyncMock(
-                return_value={
-                    "status": "active",
-                    "tool": {"enabled": True, "reachable": True, "id": "t1", "visibility": "public", "integration_type": "REST", "annotations": {}},
-                    "gateway": None,
-                }
-            )
-            mock_cache.get_negative = AsyncMock(return_value=None)
+            mock_cache.enabled = False
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
-            db.execute = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+            # Mock DB to return empty result for tool lookup
+            db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
 
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "tool", {}, server_id="srv-1")
