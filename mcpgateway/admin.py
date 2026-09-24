@@ -13693,7 +13693,7 @@ async def admin_edit_resource(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         resource = ResourceUpdate(
             uri=str(form.get("uri", "")),
-            name=str(form.get("name", "")),
+            **({"name": str(form["name"])} if "name" in form else {}),
             custom_name=str(form["customName"]) if "customName" in form else None,
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),

@@ -701,7 +701,9 @@ describe("editResource - extended", () => {
     const visible = document.getElementById("edit-resource-custom-name");
     expect(visible.value).toBe(base);
     expect(visible.dataset.originalValue).toBe(base);
-    expect(document.getElementById("edit-resource-name").value).toBe("gateway-report");
+    const hidden = document.getElementById("edit-resource-name");
+    expect(hidden.value).toBe("gateway-report");
+    expect(hidden.disabled).toBe(true);
   });
 
   test("keeps local names verbatim even when a base slug exists", async () => {
@@ -715,6 +717,7 @@ describe("editResource - extended", () => {
     });
     await editResource("r1");
     expect(document.getElementById("edit-resource-custom-name").value).toBe("My Report");
+    expect(document.getElementById("edit-resource-name").disabled).toBe(false);
   });
 
   test("sets public visibility radio correctly", async () => {

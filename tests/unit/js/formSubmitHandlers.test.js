@@ -731,7 +731,7 @@ describe("handleEditResFormSubmit", () => {
   ])("submits only a changed base (%s -> %s)", async (original, edited, expected) => {
     const event = createFormEvent(`
       <form action="/admin/resources/r1/edit">
-        <input type="hidden" name="name" value="gateway-report" />
+        <input type="hidden" name="name" value="gateway-report" disabled />
         <input id="edit-resource-custom-name" name="customName" />
         <input name="uri" value="test://report" />
       </form>
@@ -742,7 +742,7 @@ describe("handleEditResFormSubmit", () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
     safeParseJsonResponse.mockResolvedValue({ success: true });
     await handleEditResFormSubmit(event);
-    expect(fetch.mock.calls.at(-1)[1].body.get("name")).toBe("gateway-report");
+    expect(fetch.mock.calls.at(-1)[1].body.get("name")).toBeNull();
     expect(fetch.mock.calls.at(-1)[1].body.get("customName")).toBe(expected);
   });
 

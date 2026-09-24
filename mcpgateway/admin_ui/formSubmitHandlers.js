@@ -1154,12 +1154,17 @@ export const handleEditResFormSubmit = async function (e) {
       template = uri;
     }
     formData.append("uri_template", template);
-    const nameValidation = validateInputName(name, "resource");
     const uriValidation = validateInputName(uri, "resource URI");
 
-    if (!nameValidation.valid) {
-      showErrorMessage(nameValidation.error);
-      return;
+    // An unchanged federated resource intentionally submits no name. Its derived
+    // name may have changed since the modal opened, so only validate a rename
+    // field that will actually be sent.
+    if (name !== null) {
+      const nameValidation = validateInputName(name, "resource");
+      if (!nameValidation.valid) {
+        showErrorMessage(nameValidation.error);
+        return;
+      }
     }
 
     if (!uriValidation.valid) {

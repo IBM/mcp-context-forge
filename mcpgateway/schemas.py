@@ -2342,7 +2342,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
-    custom_name: Optional[str] = Field(None, description="Explicit resource base name; takes precedence over name when non-null. Local names remain literal.")
+    custom_name: Optional[str] = Field(None, description="Explicit resource base name; required to rename federated resources. Local names remain literal.")
     description: Optional[str] = Field(None, description="Resource description")
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")

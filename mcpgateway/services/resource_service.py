@@ -3266,13 +3266,14 @@ class ResourceService(BaseService):
             # Update fields if provided
             if resource_update.uri is not None:
                 resource.uri = resource_update.uri
-            requested_name = resource_update.custom_name if resource_update.custom_name is not None else resource_update.name
-            if requested_name is not None:
-                if resource.gateway_id:
-                    # Keep unchanged names unless custom_name explicitly requests a rename.
-                    if resource_update.custom_name is not None or requested_name not in (resource.name, resource.custom_name_slug):
-                        resource.custom_name_slug = slugify(requested_name)
-                else:
+            if resource.gateway_id:
+                # Federated names are derived. Only custom_name is an explicit base rename;
+                # legacy name values may be stale copies of a previously derived name.
+                if resource_update.custom_name is not None:
+                    resource.custom_name_slug = slugify(resource_update.custom_name)
+            else:
+                requested_name = resource_update.custom_name if resource_update.custom_name is not None else resource_update.name
+                if requested_name is not None:
                     resource.name = requested_name
                     resource.custom_name_slug = slugify(requested_name)
             if resource_update.title is not None:

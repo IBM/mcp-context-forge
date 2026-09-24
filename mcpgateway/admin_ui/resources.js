@@ -679,8 +679,13 @@ export const editResource = async function (resourceId) {
     if (uriField && uriValidation.valid) {
       uriField.value = uriValidation.value;
     }
-    if (nameField && nameValidation.valid) {
-      nameField.value = nameValidation.value;
+    if (nameField) {
+      // Federated names are derived and can become stale while the modal is open.
+      // Omitting this legacy field makes customName the only rename signal.
+      nameField.disabled = Boolean(resource.gatewayId);
+      if (nameValidation.valid) {
+        nameField.value = nameValidation.value;
+      }
     }
     if (customNameField) {
       const base = resource.gatewayId

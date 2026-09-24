@@ -1079,9 +1079,9 @@ class TestResourceManagement:
         assert mock_resource.extension_metadata == metadata
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("submitted,expected_base", [("gateway-report", "report"), ("report", "report"), ("Chosen Name", "chosen-name"), ("---", "")])
-    async def test_resource_namespacing_admin_save(self, resource_service, mock_db, mock_resource, submitted, expected_base):
-        """Repeated Admin saves preserve the base unless the submitted name changes."""
+    @pytest.mark.parametrize("submitted", ["gateway-report", "report", "Chosen Name", "---"])
+    async def test_resource_namespacing_ignores_legacy_name(self, resource_service, mock_db, mock_resource, submitted):
+        """Legacy federated names cannot overwrite a current base after a read-write gap."""
         mock_resource.gateway_id = "gateway"
         mock_resource.name = "gateway-report"
         mock_resource.original_name = "Report"
@@ -1094,10 +1094,29 @@ class TestResourceManagement:
         ):
             for _ in range(2):
                 await resource_service.update_resource(mock_db, mock_resource.id, ResourceUpdate(name=submitted, description="Changed description"))
-                assert mock_resource.custom_name_slug == expected_base
+                assert mock_resource.custom_name_slug == "report"
                 assert mock_resource.original_name == "Report"
                 # The ORM listener, not this service, owns the derived name.
                 assert mock_resource.name == "gateway-report"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("submitted,expected_base", [("Chosen Name", "chosen-name"), ("---", "")])
+    async def test_resource_namespacing_uses_explicit_custom_name(self, resource_service, mock_db, mock_resource, submitted, expected_base):
+        """Explicit custom names remain the supported federated rename path."""
+        mock_resource.gateway_id = "gateway"
+        mock_resource.name = "gateway-report"
+        mock_resource.original_name = "Report"
+        mock_resource.custom_name_slug = "report"
+        mock_db.get.return_value = mock_resource
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+        with (
+            patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read", return_value={"id": mock_resource.id}),
+        ):
+            await resource_service.update_resource(mock_db, mock_resource.id, ResourceUpdate(name="stale-gateway-report", custom_name=submitted))
+        assert mock_resource.custom_name_slug == expected_base
+        assert mock_resource.original_name == "Report"
+        assert mock_resource.name == "gateway-report"
 
     @pytest.mark.asyncio
     async def test_resource_namespacing_local_rename_records_base(self, resource_service, mock_db, mock_resource):
