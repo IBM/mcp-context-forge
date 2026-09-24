@@ -560,18 +560,6 @@ async def test_llm_proxy_refuses_a_rebound_address(fake_resolver, monkeypatch):
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
 
-async def _as_awaitable(value):
-    """Wrap a value so a sync lambda can stand in for an async getter.
-
-    Args:
-        value: Value to return.
-
-    Returns:
-        The value, awaited.
-    """
-    return value
-
-
 async def test_oauth_token_post_uses_the_pinned_address(fake_resolver, monkeypatch):
     fake_resolver(["93.184.216.34"])
     seen = {}
@@ -582,13 +570,9 @@ async def test_oauth_token_post_uses_the_pinned_address(fake_resolver, monkeypat
         return httpx.Response(200, json={"access_token": "t"})
 
     manager = OAuthManager()
-    stub_client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    monkeypatch.setattr(manager, "_get_client", lambda: _as_awaitable(stub_client))
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client_stub(httpx.MockTransport(_handler), {}))
 
-    try:
-        await manager._post_token_request("https://example.com/token", {"grant_type": "client_credentials"})
-    finally:
-        await stub_client.aclose()
+    await manager._post_token_request("https://example.com/token", {"grant_type": "client_credentials"})
 
     assert seen["dialled_host"] == "93.184.216.34"
     assert seen["host_header"] == "example.com"
@@ -597,14 +581,34 @@ async def test_oauth_token_post_uses_the_pinned_address(fake_resolver, monkeypat
 async def test_oauth_token_post_refuses_a_rebound_address(fake_resolver, monkeypatch):
     fake_resolver(["169.254.169.254"])
     manager = OAuthManager()
-    stub_client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={})))
-    monkeypatch.setattr(manager, "_get_client", lambda: _as_awaitable(stub_client))
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client_stub(httpx.MockTransport(lambda _r: httpx.Response(200, json={})), {}))
 
-    try:
-        with pytest.raises(OAuthError):
-            await manager._post_token_request("https://rebind.example/token", {"grant_type": "client_credentials"})
-    finally:
-        await stub_client.aclose()
+    with pytest.raises(OAuthError):
+        await manager._post_token_request("https://rebind.example/token", {"grant_type": "client_credentials"})
+
+
+async def test_oauth_token_post_uses_an_isolated_client(fake_resolver, monkeypatch):
+    fake_resolver(["93.184.216.34"])
+    clients = []
+
+    @asynccontextmanager
+    async def _tracking_isolated_client(*_args, **kwargs):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"access_token": "t"})))
+        clients.append((client, kwargs))
+        try:
+            yield client
+        finally:
+            await client.aclose()
+
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _tracking_isolated_client)
+    manager = OAuthManager()
+
+    await manager._post_token_request("https://a.example/token", {"grant_type": "client_credentials"})
+    await manager._post_token_request("https://b.example/token", {"grant_type": "client_credentials"})
+
+    assert len(clients) == 2, "each token request must get its own client"
+    assert clients[0][0] is not clients[1][0]
+    assert clients[0][1].get("follow_redirects") is False, "redirect refusal must be preserved"
 
 
 # First-Party
@@ -632,23 +636,11 @@ async def test_uaid_cross_gateway_call_uses_the_pinned_address(fake_resolver, mo
         seen["host_header"] = request.headers.get("Host")
         return httpx.Response(200, json={"result": "ok"})
 
-    stub_client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-
-    async def _stub_get_http_client():
-        return stub_client
-
-    # `_invoke_remote_agent` imports `get_http_client` locally from
-    # `http_client_service` on every call, so patching that name on
-    # `a2a_service` (where it is never bound at module scope) would not
-    # reach the local import. Patch the defining module instead.
-    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", _stub_get_http_client)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", _isolated_client_stub(httpx.MockTransport(_handler), {}))
     monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
     service = A2AAgentService()
-    try:
-        result = await service._invoke_remote_agent(_uaid_for("example.com"), {})
-    finally:
-        await stub_client.aclose()
+    result = await service._invoke_remote_agent(_uaid_for("example.com"), {})
 
     assert result == {"result": "ok"}
     assert seen["dialled_host"] == "93.184.216.34"
@@ -663,22 +655,39 @@ async def test_uaid_cross_gateway_call_refuses_a_rebound_address(fake_resolver, 
         calls.append(request.url.host)
         return httpx.Response(200, json={"result": "ok"})
 
-    stub_client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-
-    async def _stub_get_http_client():
-        return stub_client
-
-    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", _stub_get_http_client)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", _isolated_client_stub(httpx.MockTransport(_handler), {}))
     monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
     service = A2AAgentService()
-    try:
-        with pytest.raises(A2AAgentError, match="blocked by URL policy"):
-            await service._invoke_remote_agent(_uaid_for("example.com"), {})
-    finally:
-        await stub_client.aclose()
+    with pytest.raises(A2AAgentError, match="blocked by URL policy"):
+        await service._invoke_remote_agent(_uaid_for("example.com"), {})
 
     assert calls == [], "a blocked cross-gateway target must never be dialled"
+
+
+async def test_uaid_cross_gateway_call_uses_an_isolated_client(fake_resolver, monkeypatch):
+    fake_resolver(["93.184.216.34"])
+    clients = []
+
+    @asynccontextmanager
+    async def _tracking_isolated_client(*_args, **kwargs):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"result": "ok"})))
+        clients.append((client, kwargs))
+        try:
+            yield client
+        finally:
+            await client.aclose()
+
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", _tracking_isolated_client)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["a.example", "b.example"])
+
+    service = A2AAgentService()
+    await service._invoke_remote_agent(_uaid_for("a.example"), {})
+    await service._invoke_remote_agent(_uaid_for("b.example"), {})
+
+    assert len(clients) == 2, "each cross-gateway call must get its own client"
+    assert clients[0][0] is not clients[1][0]
+    assert clients[0][1].get("follow_redirects") is False, "redirect refusal must be preserved"
 
 
 # First-Party
