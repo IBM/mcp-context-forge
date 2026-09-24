@@ -53,13 +53,54 @@ run_launcher() {
         PATH="${TMP_DIR}/bin:${PATH}" \
         VIRTUAL_ENV="${TMP_DIR}/venv" \
         LOCK_FILE="${TMP_DIR}/gunicorn.lock" \
-        GUNICORN_WORKERS=2 \
+        GUNICORN_WORKERS="${GUNICORN_WORKERS:-2}" \
         "$@" \
         "${REPO_ROOT}/run-gunicorn.sh"
 }
 
 tls_args() {
     echo "SSL=true" "CERT_FILE=${TMP_DIR}/cert.pem" "KEY_FILE=${TMP_DIR}/key.pem"
+}
+
+write_cgroup_v2() {
+    mkdir -p "${TMP_DIR}/cgroup"
+    printf '%s\n' "${1}" > "${TMP_DIR}/cgroup/cpu.max"
+    printf '%s\n' "${2}" > "${TMP_DIR}/cgroup/memory.max"
+}
+
+write_cgroup_v1() {
+    mkdir -p "${TMP_DIR}/cgroup/cpu" "${TMP_DIR}/cgroup/memory"
+    printf '%s\n' "${1}" > "${TMP_DIR}/cgroup/cpu/cpu.cfs_quota_us"
+    printf '%s\n' "${2}" > "${TMP_DIR}/cgroup/cpu/cpu.cfs_period_us"
+    printf '%s\n' "${3}" > "${TMP_DIR}/cgroup/memory/memory.limit_in_bytes"
+}
+
+@test "auto workers honor cgroup v2 CPU quota" {
+    write_cgroup_v2 "150000 100000" "max"
+    GUNICORN_WORKERS=auto run_launcher GUNICORN_CGROUP_ROOT="${TMP_DIR}/cgroup"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--workers 5"* ]]
+    [[ "$output" == *"Container CPU limit: 2 cores"* ]]
+}
+
+@test "auto workers honor cgroup v2 memory limit" {
+    write_cgroup_v2 "max 100000" "1073741824"
+    GUNICORN_WORKERS=auto run_launcher \
+        GUNICORN_CGROUP_ROOT="${TMP_DIR}/cgroup" \
+        GUNICORN_MEMORY_PER_WORKER_MB=256
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--workers 4"* ]]
+    [[ "$output" == *"Container memory limit: 1024 MiB"* ]]
+    [[ "$output" == *"Memory-derived worker limit: 4"* ]]
+}
+
+@test "auto workers honor cgroup v1 limits" {
+    write_cgroup_v1 "200000" "100000" "1073741824"
+    GUNICORN_WORKERS=auto run_launcher GUNICORN_CGROUP_ROOT="${TMP_DIR}/cgroup"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--workers 4"* ]]
+    [[ "$output" == *"Container CPU limit: 2 cores"* ]]
+    [[ "$output" == *"Container memory limit: 1024 MiB"* ]]
 }
 
 # --- Regression guards: unset behaviour is unchanged -------------------------
