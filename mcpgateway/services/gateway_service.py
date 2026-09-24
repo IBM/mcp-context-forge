@@ -94,8 +94,9 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
+from mcpgateway.db import resource_has_name_override, ResourceMetric, ResourceSubscription
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
@@ -1946,7 +1947,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if lookup_key in orphaned_resources_map:
                         # Update orphaned resource - reassign to new gateway
                         existing = orphaned_resources_map[lookup_key]
-                        existing.name = r.name
+                        has_override = resource_has_name_override(existing)
+                        if existing.original_name != r.name:
+                            existing.original_name = r.name
+                            if not has_override:
+                                existing.custom_name_slug = slugify(r.name)
                         existing.description = r.description
                         existing.mime_type = mime_type
                         existing.uri_template = r.uri_template or None
@@ -6252,10 +6257,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if existing_resource:
                     # Update existing resource if there are changes
                     fields_to_update = False
+                    has_override = resource_has_name_override(existing_resource)
+                    upstream_renamed = existing_resource.original_name != resource.name
 
                     upstream_visibility = getattr(resource, "visibility", None)
                     if (
-                        existing_resource.name != resource.name
+                        upstream_renamed
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
@@ -6266,7 +6273,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         fields_to_update = True
 
                     if fields_to_update:
-                        existing_resource.name = resource.name
+                        setattr(existing_resource, "gateway_name_cache", gateway.name)
+                        if upstream_renamed:
+                            existing_resource.original_name = resource.name
+                            if not has_override:
+                                existing_resource.custom_name_slug = slugify(resource.name)
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
@@ -6290,6 +6301,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         created_via=created_via,
                         visibility=getattr(resource, "visibility", None) or gateway.visibility,
                     )
+                    db_resource.gateway = gateway
                     resources_to_add.append(db_resource)
                     logger.debug("Created new resource: %s", resource.uri)
             except Exception as e:
@@ -8104,6 +8116,7 @@ async def test_server_handshake(
 
     # Deferred import: `main` imports this module at load time, so importing the
     # ASGI `app` singleton at module scope here would be circular.
+    # First-Party
     from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
 
     def get_httpx_client_factory(

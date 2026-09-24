@@ -10,6 +10,7 @@ RBAC roles, and token scopes. Protocol tests use an async MCP SDK client;
 RBAC tests use Playwright API setup plus synchronous MCP SDK helpers.
 
 Requirements:
+    - Chromium for the Admin form regression: ``uv run playwright install chromium``
     - Gateway running (default: http://localhost:8080 via docker-compose)
     - Upstream ``fast_time_server`` registered
       (provided by the default compose stack)
@@ -21,10 +22,15 @@ Requirements:
                                Set true in both gateway and test process to run MCP Apps cases
         MCP_E2E_GATEWAY_SYNC_DEADLINE
                                Gateway tool-sync poll deadline in seconds (default: 30.0)
+        GATEWAY_TOOL_NAME_SEPARATOR
+                               Expected gateway separator (default: -)
+        MCP_RESOURCE_NAME_EXPANSION
+                               Set true to enable the dedicated -- expansion case
 
 Usage:
     make test-e2e
-    pytest tests/live_gateway/e2e/test_e2e.py -v -s --tb=short
+    GATEWAY_TOOL_NAME_SEPARATOR=-- MCP_RESOURCE_NAME_EXPANSION=true make test-e2e K=postgres_expansion
+    pytest -p playwright tests/live_gateway/e2e/test_e2e.py -v -s --tb=short
 """
 
 # Future
@@ -39,8 +45,10 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Generator
 import uuid
@@ -50,11 +58,13 @@ import httpx
 import httpx2
 from mcp import ClientSession, MCPError as McpError
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+from mcp.server.mcpserver import MCPServer
 from mcp.types import InitializeResult
 import pytest
+import uvicorn
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, Playwright
+from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, expect, Playwright
 
 # Local
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -172,6 +182,166 @@ async def client(jwt_token: str, mcp_url: str):
 # ---------------------------------------------------------------------------
 # Connectivity / lifecycle
 # ---------------------------------------------------------------------------
+@pytest.fixture
+def resource_namespacing_upstreams():
+    """Serve two real MCP peers reachable from the gateway under test.
+
+    Compose on Docker Desktop/Colima uses host.docker.internal. For a gateway
+    running on the host, set MCP_NAMESPACING_UPSTREAM_HOST=127.0.0.1. Linux
+    container deployments need a gateway-reachable host address or host-gateway
+    mapping. No database writes or gateway internals are used by this fixture.
+    """
+    host = os.getenv("MCP_NAMESPACING_UPSTREAM_HOST", "host.docker.internal")
+    identifier = uuid.uuid4().hex[:12]
+    uri = f"test://namespacing/{identifier}"
+    long_name = "a-" * 127 + "a"
+    peers = []
+    running = []
+    try:
+        for index in range(2):
+            content = f"upstream-{identifier}-{index}"
+            app = MCPServer(f"namespacing-{index}")
+
+            def make_reader(value: str):
+                """Bind each peer's response independently of the registration loop."""
+
+                def read() -> str:
+                    """Return this peer's distinctive resource content."""
+                    return value
+
+                return read
+
+            app.resource(uri, name="Shared Report")(make_reader(content))
+            app.resource(f"{uri}/long", name=long_name)(make_reader(content))
+            listener = socket.socket()
+            listener.bind(("0.0.0.0", 0))
+            port = listener.getsockname()[1]
+            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+            thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+            running.append((server, thread, listener))
+            thread.start()
+            deadline = time.monotonic() + 10
+            while not server.started and thread.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert server.started, "Resource namespacing upstream failed to start"
+            peers.append({"url": f"http://{host}:{port}/mcp", "content": content, "uri": uri})
+        yield peers
+    finally:
+        for server, thread, listener in running:
+            server.should_exit = True
+            thread.join(timeout=10)
+            listener.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "require_expansion",
+    [
+        pytest.param(False, id="configured_separator"),
+        pytest.param(
+            True,
+            id="postgres_expansion",
+            marks=pytest.mark.skipif(
+                os.getenv("MCP_RESOURCE_NAME_EXPANSION", "false").lower() != "true",
+                reason="Dedicated PostgreSQL expansion run requires MCP_RESOURCE_NAME_EXPANSION=true and a -- gateway",
+            ),
+        ),
+    ],
+)
+async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resource_namespacing_upstreams, require_expansion):
+    """Federate colliding URIs and verify prefixing, full bases, and scoped reads.
+
+    Set GATEWAY_TOOL_NAME_SEPARATOR to match the running gateway. The separate
+    postgres_expansion case requires a PostgreSQL-backed stack using -- and
+    explicitly asserts the 382-character base; it is opt-in for the normal gate.
+    """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    assert separator in ("-", "--", "_", ".")
+    if require_expansion:
+        assert separator == "--", "The dedicated expansion run requires GATEWAY_TOOL_NAME_SEPARATOR=--"
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    gateway_ids = []
+    server_ids = []
+    expected_names = []
+    identifier = uuid.uuid4().hex[:12]
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+        try:
+            for index, peer in enumerate(resource_namespacing_upstreams):
+                gateway_name = f"namespacing{identifier}{index}"
+                response = await http.post("/gateways", json={"name": gateway_name, "url": peer["url"], "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                gateway_ids.append(gateway_id)
+                deadline = time.monotonic() + 60
+                rows = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream resources: {rows}; check MCP_NAMESPACING_UPSTREAM_HOST"
+                resource = next(row for row in rows if row["uri"] == peer["uri"])
+                expected = f"{gateway_name}{separator}shared{separator}report"
+                assert resource["name"] == expected, "GATEWAY_TOOL_NAME_SEPARATOR must match the running gateway"
+                expected_names.append(expected)
+                expanded = next(row for row in rows if row["uri"].endswith("/long"))
+                assert expanded["customNameSlug"] == f"a{separator}" * 127 + "a"
+                if require_expansion:
+                    assert len(expanded["customNameSlug"]) == 382
+                assert len(expanded["name"]) == 255
+                response = await http.post(
+                    "/servers",
+                    json={"server": {"name": f"namespacing{identifier}{index}", "associated_resources": [resource["id"]]}, "visibility": "public"},
+                )
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                server_ids.append(server_id)
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                async with streamable_http_client(f"{BASE_URL}/servers/{server_id}/mcp/", http_client=http_client) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        listed = await session.list_resources()
+                        assert [(str(item.uri), item.name) for item in listed.resources] == [(peer["uri"], expected)]
+                        result = await session.read_resource(peer["uri"])
+                        assert result.contents[0].text == peer["content"]
+
+            http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+            async with streamable_http_client(f"{BASE_URL}/mcp/", http_client=http_client) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    names = []
+                    cursor = None
+                    while True:
+                        page = await session.list_resources(cursor=cursor)
+                        names.extend(item.name for item in page.resources if str(item.uri) == resource_namespacing_upstreams[0]["uri"])
+                        cursor = page.nextCursor
+                        if not cursor:
+                            break
+                    assert sorted(names) == sorted(expected_names)
+
+            # Explicit API bases win over legacy name while upstream identity stays intact.
+            for payload, base in (
+                ({"name": "Ignored", "custom_name": "Weekly Report"}, f"weekly{separator}report"),
+                ({"name": "Monthly Report", "custom_name": None}, f"monthly{separator}report"),
+                ({"customName": expected}, expected),
+            ):
+                response = await http.put(f"/resources/{resource['id']}", json=payload)
+                assert response.status_code == 200, response.text
+                updated = response.json()
+                assert updated["name"] == f"{gateway_name}{separator}{base}"
+                assert updated["customNameSlug"] == base
+                assert updated["originalName"] == "Shared Report"
+            response = await http.put(f"/resources/{resource['id']}", json={"custom_name": ""})
+            assert response.status_code == 422, response.text
+        finally:
+            for server_id in server_ids:
+                await http.delete(f"/servers/{server_id}")
+            for gateway_id in gateway_ids:
+                await http.delete(f"/gateways/{gateway_id}")
+
+
 class TestConnectivity:
 
     async def test_ping(self, client: ClientSession) -> None:
@@ -658,6 +828,69 @@ def _get_gateway_tools(admin_api: APIRequestContext, gateway_id: str, probe: str
     """Read all tools for one gateway through Nginx using a unique cache key."""
     response = admin_api.get(_replica_tools_path(gateway_id, probe))
     return _assert_replica_response(response, read_index)
+
+
+# Keep synchronous Playwright cases after the async MCP protocol cases: its
+# session-scoped driver owns the thread's event loop until fixture teardown.
+def test_resource_namespacing_admin_rename(playwright: Playwright, jwt_token: str, resource_namespacing_upstreams: list[dict[str, str]], create_user: Any) -> None:
+    """The shipped Admin form edits a base and never prefixes it twice."""
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    gateway_name = f"adminrename{uuid.uuid4().hex[:12]}"
+    peer = resource_namespacing_upstreams[0]
+    admin_email, _, created = create_user(is_admin=True, password="V7!mQ2@zR8#pL5$xT9%wN4&k")  # pragma: allowlist secret
+    assert created.status == 201, created.text()
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    with httpx.Client(base_url=BASE_URL, headers=headers, timeout=60) as http:
+        response = http.post("/gateways", json={"name": gateway_name, "url": peer["url"], "transport": "STREAMABLEHTTP", "visibility": "public"})
+        assert response.status_code in (200, 201, 202), response.text
+        gateway_id = response.json()["id"]
+        try:
+            deadline = time.monotonic() + 60
+            resource = None
+            while time.monotonic() < deadline:
+                response = http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                assert response.status_code == 200, response.text
+                resource = next((row for row in response.json() if row["uri"] == peer["uri"]), None)
+                if resource:
+                    break
+                time.sleep(0.5)
+            assert resource, "Gateway did not discover the Admin rename fixture"
+            expected = f"{gateway_name}{separator}shared{separator}report"
+            assert resource["name"] == expected
+            browser = playwright.chromium.launch()
+            try:
+                context = browser.new_context()
+                admin_token = make_test_jwt(admin_email, is_admin=True, teams=None, secret=JWT_SECRET)
+                context.add_cookies([{"name": "jwt_token", "value": admin_token, "url": f"{BASE_URL}/", "httpOnly": True, "sameSite": "Lax"}])
+                page = context.new_page()
+                for attempt in range(2):
+                    page.goto(f"{BASE_URL}/admin/?resources_q={gateway_name}#resources")
+                    assert page.url.split("?")[0].rstrip("/") == f"{BASE_URL}/admin", f"Admin authentication failed: {page.url}"
+                    row = page.locator("#resources-table-body tr").filter(has_text=expected)
+                    row.get_by_role("button", name="Actions", exact=True).click()
+                    with page.expect_response(lambda result: result.request.method == "GET" and result.url.endswith(f"/admin/resources/{resource['id']}")) as detail:
+                        page.get_by_role("menuitem", name="Edit", exact=True).click()
+                    field = page.locator("#edit-resource-custom-name")
+                    field.wait_for(state="visible")
+                    base = f"shared{separator}report" if attempt == 0 else f"weekly{separator}report"
+                    assert detail.value.json()["resource"]["customNameSlug"] == base
+                    expect(field).to_have_value(base)
+                    field.fill("Weekly Report" if attempt == 0 else f"weekly{separator}report")
+                    page.locator("#edit-resource-description").fill(f"Admin rename regression {attempt}")
+                    with page.expect_navigation(wait_until="domcontentloaded"):
+                        with page.expect_response(lambda result: result.request.method == "POST" and result.url.endswith(f"/admin/resources/{resource['id']}/edit")) as saved:
+                            page.locator("#edit-resource-form").get_by_role("button", name="Save Changes").click()
+                    assert saved.value.status == 200
+                    response = http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                    updated = next(row for row in response.json() if row["id"] == resource["id"])
+                    expected = f"{gateway_name}{separator}weekly{separator}report"
+                    assert updated["name"] == expected
+                    assert updated["customNameSlug"] == f"weekly{separator}report"
+                    assert updated["originalName"] == "Shared Report"
+            finally:
+                browser.close()
+        finally:
+            http.delete(f"/gateways/{gateway_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -2622,11 +2855,11 @@ def create_user(admin_api: APIRequestContext, owned_users: _OwnedUsers) -> Any:
         A callable returning ``(email, payload, response)``.
     """
 
-    def _create(*, email: str | None = None, full_name: str = "E2E User", is_admin: bool = False, is_active: bool = True) -> tuple[str, dict[str, Any], APIResponse]:
+    def _create(*, email: str | None = None, full_name: str = "E2E User", is_admin: bool = False, is_active: bool = True, password: str = USER_PASSWORD) -> tuple[str, dict[str, Any], APIResponse]:
         address = email or _user_email()
         payload: dict[str, Any] = {
             "email": address,
-            "password": USER_PASSWORD,
+            "password": password,
             "full_name": full_name,
             "is_admin": is_admin,
             "is_active": is_active,

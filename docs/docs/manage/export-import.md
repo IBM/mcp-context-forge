@@ -15,7 +15,35 @@ The export/import system enables complete backup and restoration of your Context
 - **Resources** (locally defined resources)
 - **Roots** (filesystem and HTTP root paths)
 
-> **Note**: Only locally configured entities are exported. Dynamic content from federated MCP servers is excluded to ensure exports contain only your gateway's configuration.
+> **Note**: Exports describe gateway configuration and resource metadata; they do not back up upstream resource content.
+
+### Federated Resource Names
+
+Federated resource names use the gateway slug, `GATEWAY_TOOL_NAME_SEPARATOR` (default `-`), and the resource base
+slug. Local resource names and resource URIs are unchanged. Names are limited to 255 characters and are not unique:
+long prefixes can consume the resource portion, and gateway slugs can collide. A virtual-server-scoped read resolves
+a shared URI only when that server has one matching resource; prefixing names does not change URI routing.
+
+Upgrading applies these prefixes to existing federated resource names. Integrations or saved searches that match
+names may need updating; resource IDs and URIs do not change. Previously exported files are not rewritten.
+
+Resource read responses include `original_name` and `custom_name_slug` for local resources too. For a local resource,
+`original_name` records its initial naming history, not an upstream identity. Its visible name remains literal.
+Updates can supply `custom_name` to explicitly rename the base (or the literal local name). A non-null `custom_name`
+takes precedence over `name`; omitted or null values retain legacy `name` handling. Admin submits an explicit base
+only when it changes. Bulk import updates treat the imported name as operator intent and preserve upstream identity.
+
+Exports preserve local names verbatim. Federated exports select the effective base, then the upstream name, then the
+derived name, using the first candidate that validates after applying the configured length limit (at most 255).
+If none validates, the derived name is exported unchanged with a warning. Full `original_name` and `custom_name_slug`
+values accompany federated exports as provenance; import consumes only `name` and does not restore that provenance.
+Empty, oversized, or configuration-invalid bases can therefore change on import. Import also applies the destination's
+validation settings. Lowering a validation limit does not truncate local names during export.
+
+Changing the separator does not rewrite stored resource bases. They retain their separator until a manual rename or
+an applicable upstream-name change replaces them, so derived names can contain mixed separators after a configuration
+change. Separator-only differences do not count as manual overrides. Downgrading the resource-namespacing migration
+restores upstream names for federated resources and discards manual base overrides.
 
 ---
 

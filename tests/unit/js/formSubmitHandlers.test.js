@@ -721,6 +721,45 @@ describe("handleEditServerFormSubmit", () => {
 // handleEditResFormSubmit
 // ---------------------------------------------------------------------------
 describe("handleEditResFormSubmit", () => {
+  test.each([
+    ["report", "weekly-report", "weekly-report"],
+    ["report", "report", null],
+    ["", "", null],
+    ["a--".repeat(127) + "a", "a--".repeat(127) + "a", null],
+    ["report", "gateway-report", "gateway-report"],
+    ["My Report", "My Updated Report", "My Updated Report"],
+  ])("submits only a changed base (%s -> %s)", async (original, edited, expected) => {
+    const event = createFormEvent(`
+      <form action="/admin/resources/r1/edit">
+        <input type="hidden" name="name" value="gateway-report" />
+        <input id="edit-resource-custom-name" name="customName" />
+        <input name="uri" value="test://report" />
+      </form>
+    `);
+    const visible = event.target.querySelector("#edit-resource-custom-name");
+    visible.dataset.originalValue = original;
+    visible.value = edited;
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    safeParseJsonResponse.mockResolvedValue({ success: true });
+    await handleEditResFormSubmit(event);
+    expect(fetch.mock.calls.at(-1)[1].body.get("name")).toBe("gateway-report");
+    expect(fetch.mock.calls.at(-1)[1].body.get("customName")).toBe(expected);
+  });
+
+  test("rejects a changed empty base instead of validating the hidden name", async () => {
+    const event = createFormEvent(`
+      <form action="/admin/resources/r1/edit">
+        <input name="name" value="gateway-report" />
+        <input id="edit-resource-custom-name" name="customName" data-original-value="report" value="" />
+        <input name="uri" value="test://report" />
+      </form>
+    `);
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await handleEditResFormSubmit(event);
+    expect(showErrorMessage).toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   test("validates resource name on edit", async () => {
     const event = createFormEvent(`
       <form action="/admin/resources/1/edit">

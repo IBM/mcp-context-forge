@@ -76,6 +76,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -954,7 +955,13 @@ class ResourceService(BaseService):
                                 continue
                             if conflict_strategy == "update":
                                 # Update existing resource
-                                existing_resource.name = resource.name
+                                # Bulk import supplies operator intent, not a new upstream identity.
+                                if existing_resource.gateway_id:
+                                    if resource.name not in (existing_resource.name, existing_resource.custom_name_slug):
+                                        existing_resource.custom_name_slug = slugify(resource.name)
+                                else:
+                                    existing_resource.name = resource.name
+                                    existing_resource.custom_name_slug = slugify(resource.name)
                                 existing_resource.title = getattr(resource, "title", None)
                                 existing_resource.description = resource.description
                                 existing_resource.mime_type = getattr(resource, "mime_type", None)
@@ -3150,6 +3157,10 @@ class ResourceService(BaseService):
         """
         Update a resource.
 
+        A non-null custom_name explicitly replaces the base and takes precedence
+        over name. Legacy name submissions matching the derived name or base are
+        no-ops for federated resources. Local renames remain literal.
+
         MIME Type Detection Priority (NEW BEHAVIOR):
         1. **URL-detected type** (highest priority) - If MIME type can be detected from URI extension
         2. **User-provided type** - Only used if URL detection fails
@@ -3255,8 +3266,15 @@ class ResourceService(BaseService):
             # Update fields if provided
             if resource_update.uri is not None:
                 resource.uri = resource_update.uri
-            if resource_update.name is not None:
-                resource.name = resource_update.name
+            requested_name = resource_update.custom_name if resource_update.custom_name is not None else resource_update.name
+            if requested_name is not None:
+                if resource.gateway_id:
+                    # Keep unchanged names unless custom_name explicitly requests a rename.
+                    if resource_update.custom_name is not None or requested_name not in (resource.name, resource.custom_name_slug):
+                        resource.custom_name_slug = slugify(requested_name)
+                else:
+                    resource.name = requested_name
+                    resource.custom_name_slug = slugify(requested_name)
             if resource_update.title is not None:
                 resource.title = resource_update.title
             if resource_update.description is not None:
