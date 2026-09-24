@@ -159,13 +159,13 @@ class ToolLookupCache:
         return cls._cache_key(f"negative:{caller_scope}:{name}", server_id)
 
     def _negative_name_set_key(self, name: str) -> str:
-        """Build the Redis set key for caller-scoped negative entries.
+        """Build the Redis sorted-set key for caller-scoped negative entries.
 
         Args:
             name: Requested tool name.
 
         Returns:
-            Redis set key for all negative entries for the name.
+            Redis sorted-set key for all negative entries for the name.
         """
         return f"{self._cache_prefix}tool_lookup:negative_name:{name}"
 
@@ -330,7 +330,9 @@ class ToolLookupCache:
                     await redis.expire(set_key, max(ttl, self._ttl_seconds))
             if negative_name:
                 negative_set_key = self._negative_name_set_key(negative_name)
-                await redis.sadd(negative_set_key, cache_key)
+                now = time.time()
+                await redis.zadd(negative_set_key, {cache_key: now + ttl})
+                await redis.zremrangebyscore(negative_set_key, "-inf", now)
                 await redis.expire(negative_set_key, max(ttl, self._ttl_seconds))
         except Exception as exc:
             logger.debug("ToolLookupCache Redis set failed: %s", exc)
@@ -514,7 +516,9 @@ class ToolLookupCache:
 
         set_key = self._negative_name_set_key(name)
         try:
-            cache_keys = await redis.smembers(set_key)
+            now = time.time()
+            await redis.zremrangebyscore(set_key, "-inf", now)
+            cache_keys = await redis.zrange(set_key, 0, -1)
             if cache_keys:
                 keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
                 await redis.delete(*keys)

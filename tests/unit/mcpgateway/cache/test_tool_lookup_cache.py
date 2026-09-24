@@ -9,7 +9,7 @@ Tests for ToolLookupCache.
 # Standard
 import builtins
 import time
-from unittest.mock import AsyncMock, call, MagicMock
+from unittest.mock import AsyncMock, call, MagicMock, patch
 
 # Third-Party
 import orjson
@@ -257,10 +257,11 @@ async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_
 async def test_tool_lookup_cache_set_negative_updates_all_redis_indexes(tool_lookup_cache_instance):
     """Negative entries must support gateway, server, and name invalidation."""
     tool_lookup_cache_instance._l2_enabled = True
-    redis = MagicMock(setex=AsyncMock(), sadd=AsyncMock(), expire=AsyncMock())
+    redis = MagicMock(setex=AsyncMock(), sadd=AsyncMock(), zadd=AsyncMock(), zremrangebyscore=AsyncMock(), expire=AsyncMock())
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
-    await tool_lookup_cache_instance.set_negative("tool-a", "deprecated", "caller-a", gateway_id="gw-1", server_id="srv-1")
+    with patch("mcpgateway.cache.tool_lookup_cache.time.time", return_value=1000.0):
+        await tool_lookup_cache_instance.set_negative("tool-a", "deprecated", "caller-a", gateway_id="gw-1", server_id="srv-1")
 
     cache_key = "server:srv-1:negative:caller-a:tool-a"
     payload = {"status": "deprecated", "gateway_id": "gw-1"}
@@ -273,9 +274,44 @@ async def test_tool_lookup_cache_set_negative_updates_all_redis_indexes(tool_loo
         call("mcpgw:tool_lookup:gateway:gw-1", cache_key),
         call("mcpgw:tool_lookup:server:srv-1", cache_key),
         call("mcpgw:tool_lookup_index:scoped", cache_key),
-        call("mcpgw:tool_lookup:negative_name:tool-a", cache_key),
     ]
+    redis.zadd.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", {cache_key: 1010.0})
+    redis.zremrangebyscore.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", "-inf", 1000.0)
     assert redis.expire.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_negative_name_index_prunes_expired_callers(tool_lookup_cache_instance, monkeypatch):
+    """Repeated callers must not retain expired negative-index members."""
+    tool_lookup_cache_instance._l2_enabled = True
+    now = [100.0]
+    scores: dict[str, float] = {}
+
+    async def _zadd(_key, values):
+        scores.update(values)
+
+    async def _zremrangebyscore(_key, _minimum, maximum):
+        for member in [member for member, score in scores.items() if score <= float(maximum)]:
+            scores.pop(member)
+
+    redis = MagicMock(
+        setex=AsyncMock(),
+        zadd=AsyncMock(side_effect=_zadd),
+        zremrangebyscore=AsyncMock(side_effect=_zremrangebyscore),
+        expire=AsyncMock(),
+    )
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+    monkeypatch.setattr("mcpgateway.cache.tool_lookup_cache.time.time", lambda: now[0])
+
+    for caller_number in range(100):
+        now[0] = 100.0 + caller_number
+        await tool_lookup_cache_instance.set_negative("tool-a", "missing", f"caller-{caller_number}")
+        assert len(scores) <= tool_lookup_cache_instance._negative_ttl_seconds + 1
+
+    now[0] = 300.0
+    await tool_lookup_cache_instance.set_negative("tool-a", "missing", "caller-live")
+
+    assert scores == {"negative:caller-live:tool-a": 310.0}
 
 
 @pytest.mark.asyncio
@@ -293,22 +329,19 @@ async def test_tool_lookup_cache_set_redis_exception_is_swallowed(tool_lookup_ca
 async def test_tool_lookup_cache_invalidate_redis(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
-    redis.smembers = AsyncMock(
-        side_effect=[
-            {b"tool-a", b"server:srv-1:tool-a"},
-            {b"negative:caller-a:tool-a", b"server:srv-1:negative:caller-a:tool-a"},
-        ]
-    )
+    redis.smembers = AsyncMock(return_value={b"tool-a", b"server:srv-1:tool-a"})
+    redis.zremrangebyscore = AsyncMock()
+    redis.zrange = AsyncMock(return_value=[b"negative:caller-a:tool-a", b"server:srv-1:negative:caller-a:tool-a"])
     redis.delete = AsyncMock()
     redis.publish = AsyncMock()
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
-    await tool_lookup_cache_instance.invalidate("tool-a", gateway_id="gw-1")
+    with patch("mcpgateway.cache.tool_lookup_cache.time.time", return_value=1000.0):
+        await tool_lookup_cache_instance.invalidate("tool-a", gateway_id="gw-1")
 
-    assert redis.smembers.await_args_list == [
-        call("mcpgw:tool_lookup:gateway:gw-1"),
-        call("mcpgw:tool_lookup:negative_name:tool-a"),
-    ]
+    redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup:gateway:gw-1")
+    redis.zremrangebyscore.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", "-inf", 1000.0)
+    redis.zrange.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", 0, -1)
     assert redis.delete.await_count == 5
     assert set(redis.delete.await_args_list[0].args) == {
         "mcpgw:tool_lookup:v3:tool-a",
