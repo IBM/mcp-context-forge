@@ -343,8 +343,13 @@ class OAuthManager:
         an isolated ``httpx.AsyncClient`` is created with the corresponding SSL
         context so that OAuth token exchange works against self-signed or
         custom-CA upstream servers and/or presents client certificates for mTLS.
-        Otherwise the shared HTTP client (which respects the global
-        ``SKIP_SSL_VERIFY`` setting) is used.
+        Otherwise a per-call isolated HTTP client (``get_isolated_http_client``)
+        is used, not the shared pooled client. A pinned request must not share
+        a connection pool with another destination: httpcore keys pooled
+        connections by resolved address and ignores which hostname's
+        certificate was actually verified, so two token endpoints pinned to
+        the same address could otherwise collapse onto one pooled connection
+        and reuse a TLS handshake verified for a different hostname.
 
         Note:
             When only ``client_cert``/``client_key`` are provided (no custom CA),
@@ -365,10 +370,11 @@ class OAuthManager:
         Raises:
             OAuthError: If the token endpoint URL is blocked by outbound URL policy.
         """
-        # SSRF defense: never follow redirects on token endpoints. The shared HTTP
-        # client sets follow_redirects=True, which would let a validated public
-        # token_url 302-redirect into an internal target (e.g. 169.254.169.254)
-        # after pre-fetch SSRF validation has already passed.
+        # SSRF defense: never follow redirects on token endpoints. get_isolated_http_client
+        # defaults follow_redirects to True, which would let a validated public token_url
+        # 302-redirect into an internal target (e.g. 169.254.169.254) after pre-fetch SSRF
+        # validation has already passed. The redirect-refusal behavior must be requested
+        # explicitly, not assumed, so both branches below pass follow_redirects=False.
         try:
             pinned_target = await resolve_pinned_target(url, "OAuth token URL")
             pinned_url = pinned_target.pin(url)
