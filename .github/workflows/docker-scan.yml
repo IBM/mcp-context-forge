@@ -28,7 +28,7 @@ name: Docker Security Scan
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main", "chore/mcp-sdk-v2"]
+    branches: ["main"]
     paths:
       - 'Containerfile'
       - 'infra/nginx/**'
