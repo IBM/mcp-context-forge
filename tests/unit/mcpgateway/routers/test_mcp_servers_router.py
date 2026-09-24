@@ -1586,7 +1586,7 @@ async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
     with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
         await transport.handle_async_request(request)
 
-    assert str(request.url) == "http://8.8.8.8/mcp"
+    assert str(request.url) == "http://example.com/mcp"
     assert request.headers["Host"] == "example.com"
     assert request.extensions["sni_hostname"] == "example.com"
     await transport.aclose()
@@ -1661,7 +1661,7 @@ async def test_sni_pinning_transport_accepts_punycode_host():
     with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
         await transport.handle_async_request(request)
 
-    assert str(request.url) == "http://8.8.8.8/mcp"
+    assert str(request.url) == "http://xn--nicode-2ya.com/mcp"
     await transport.aclose()
 
 
