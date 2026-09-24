@@ -24,7 +24,7 @@ from mcpgateway.services.gateway_service import test_server_handshake as run_ser
 
 
 def _mock_sdk_session(init_side_effect=None):
-    """Build mocked streamablehttp_client / ClientSession context managers.
+    """Build mocked streamable_http_client / ClientSession context managers.
 
     Args:
         init_side_effect: Optional exception (or exception instance) for
@@ -34,9 +34,9 @@ def _mock_sdk_session(init_side_effect=None):
         Tuple of (transport context manager, session) mocks.
     """
     init_result = MagicMock()
-    init_result.protocolVersion = "2025-11-25"
-    init_result.serverInfo.name = "smoke-test-server"
-    init_result.serverInfo.version = "1.0"
+    init_result.protocol_version = "2025-11-25"
+    init_result.server_info.name = "smoke-test-server"
+    init_result.server_info.version = "1.0"
     init_result.capabilities.tools = MagicMock()
     init_result.capabilities.resources = None
     init_result.capabilities.prompts = None
@@ -45,7 +45,7 @@ def _mock_sdk_session(init_side_effect=None):
 
     tools_result = MagicMock()
     tools_result.tools = [MagicMock(), MagicMock()]
-    tools_result.nextCursor = None
+    tools_result.next_cursor = None
 
     session = MagicMock()
     session.initialize = AsyncMock(side_effect=init_side_effect, return_value=init_result) if init_side_effect else AsyncMock(return_value=init_result)
@@ -54,7 +54,7 @@ def _mock_sdk_session(init_side_effect=None):
     session.__aexit__ = AsyncMock(return_value=None)
 
     transport_cm = MagicMock()
-    transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+    transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
     transport_cm.__aexit__ = AsyncMock(return_value=None)
 
     return transport_cm, session
@@ -63,7 +63,7 @@ def _mock_sdk_session(init_side_effect=None):
 @pytest.mark.asyncio
 async def test_disabled_server_fails_without_attempting_a_handshake():
     """A disabled virtual server returns a graceful failure with no outbound dispatch."""
-    with patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_streamable:
+    with patch("mcpgateway.services.gateway_service.streamable_http_client") as mock_streamable:
         result = await run_server_handshake("srv-1", "my-server", False, ServerHandshakeRequest(), {})
 
     assert isinstance(result, GatewayHandshakeResponse)
@@ -79,7 +79,7 @@ async def test_successful_handshake_reuses_forwarded_session_credentials():
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {"Authorization": "Bearer caller-token"})
 
@@ -93,7 +93,7 @@ async def test_successful_handshake_reuses_forwarded_session_credentials():
     # Target is derived from the server ID via a loopback URL, never from caller input.
     called_url = mock_streamable.call_args.kwargs["url"]
     assert called_url.endswith("/servers/srv-1/mcp")
-    called_headers = mock_streamable.call_args.kwargs["headers"]
+    called_headers = mock_streamable.call_args.kwargs["http_client"].headers
     assert called_headers["Authorization"] == "Bearer caller-token"
 
 
@@ -103,7 +103,7 @@ async def test_no_credentials_reports_none_source():
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
 
@@ -117,7 +117,7 @@ async def test_body_header_override_wins_over_forwarded_credentials():
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake(
                     "srv-1",
@@ -129,7 +129,7 @@ async def test_body_header_override_wins_over_forwarded_credentials():
 
     assert result.success is True
     assert result.credential_source == "form"
-    called_headers = mock_streamable.call_args.kwargs["headers"]
+    called_headers = mock_streamable.call_args.kwargs["http_client"].headers
     assert called_headers["Authorization"] == "Bearer override-token"
 
 
@@ -139,7 +139,7 @@ async def test_body_header_override_ignores_host():
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 await run_server_handshake(
                     "srv-1",
@@ -149,7 +149,7 @@ async def test_body_header_override_ignores_host():
                     {},
                 )
 
-    called_headers = mock_streamable.call_args.kwargs["headers"]
+    called_headers = mock_streamable.call_args.kwargs["http_client"].headers
     assert "Host" not in called_headers
     assert "host" not in {k.lower() for k in called_headers}
 
@@ -175,7 +175,7 @@ async def test_body_header_override_drops_forbidden_headers(forbidden_header):
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake(
                     "srv-1",
@@ -185,8 +185,10 @@ async def test_body_header_override_drops_forbidden_headers(forbidden_header):
                     {},
                 )
 
-    called_headers = mock_streamable.call_args.kwargs["headers"]
-    assert forbidden_header.lower() not in {k.lower() for k in called_headers}
+    called_headers = mock_streamable.call_args.kwargs["http_client"].headers
+    # The client's header set includes httpx's own defaults (e.g. Connection), so the
+    # leak check is on the spoofed value rather than on the header name being absent.
+    assert called_headers.get(forbidden_header) != "spoofed-value"
     assert called_headers["Authorization"] == "Bearer caller-own-token"
     assert result.credential_source == "form"
 
@@ -200,7 +202,7 @@ async def test_forwarded_proxy_identity_header_is_not_overridable_by_body():
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake(
                     "srv-1",
@@ -210,7 +212,7 @@ async def test_forwarded_proxy_identity_header_is_not_overridable_by_body():
                     {"X-Authenticated-User": "caller@example.com"},
                 )
 
-    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["headers"].items()}
+    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["http_client"].headers.items()}
     assert called_headers.get("x-authenticated-user") == "caller@example.com"
     assert result.credential_source == "session"
 
@@ -228,7 +230,7 @@ async def test_body_header_override_honors_custom_auth_header_name(monkeypatch):
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake(
                     "srv-1",
@@ -238,7 +240,7 @@ async def test_body_header_override_honors_custom_auth_header_name(monkeypatch):
                     {},
                 )
 
-    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["headers"].items()}
+    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["http_client"].headers.items()}
     assert called_headers.get("x-mcp-gateway-auth") == "Bearer custom-header-token"
     assert result.credential_source == "form"
 
@@ -256,7 +258,7 @@ async def test_body_header_override_still_drops_spoofed_headers_with_custom_auth
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 await run_server_handshake(
                     "srv-1",
@@ -266,7 +268,7 @@ async def test_body_header_override_still_drops_spoofed_headers_with_custom_auth
                     {},
                 )
 
-    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["headers"].items()}
+    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["http_client"].headers.items()}
     assert called_headers.get("x-mcp-gateway-auth") == "Bearer custom-header-token"
     assert "x-authenticated-user" not in called_headers
 
@@ -278,7 +280,7 @@ async def test_connect_error_is_classified_as_transport_failure():
     import httpx
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", side_effect=httpx.ConnectError("boom")):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", side_effect=httpx.ConnectError("boom")):
             result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
 
     assert result.success is False
@@ -294,7 +296,7 @@ async def test_initialize_timeout_is_transport_failure():
     transport_cm, session = _mock_sdk_session(init_side_effect=TimeoutError())
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
 
@@ -315,7 +317,7 @@ async def test_exception_group_unwraps_root_cause():
     transport_cm, session = _mock_sdk_session(init_side_effect=ExceptionGroup("handshake failed", [httpx.ConnectError("connection refused")]))
 
     with patch("mcpgateway.main.app", MagicMock()):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
 
@@ -326,22 +328,18 @@ async def test_exception_group_unwraps_root_cause():
 
 @pytest.mark.asyncio
 async def test_httpx_client_factory_builds_asgi_transport_client():
-    """The httpx_client_factory passed to the SDK builds a client wired to the ASGI transport."""
+    """The http_client handed to the SDK is wired to the in-process ASGI transport."""
     # Third-Party
-    import httpx
+    import httpx2
 
     transport_cm, session = _mock_sdk_session()
     fake_app = MagicMock()
 
     with patch("mcpgateway.main.app", fake_app):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
 
-    factory = mock_streamable.call_args.kwargs["httpx_client_factory"]
-    client = factory()
-    try:
-        assert isinstance(client, httpx.AsyncClient)
-        assert isinstance(client._transport, httpx.ASGITransport)
-    finally:
-        await client.aclose()
+    client = mock_streamable.call_args.kwargs["http_client"]
+    assert isinstance(client, httpx2.AsyncClient)
+    assert isinstance(client._transport, httpx2.ASGITransport)

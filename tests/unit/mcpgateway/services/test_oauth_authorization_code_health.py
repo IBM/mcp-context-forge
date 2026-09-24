@@ -18,11 +18,13 @@ These tests verify that:
 from __future__ import annotations
 
 # Standard
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import httpx2
 import pytest
 
 # First-Party
@@ -31,6 +33,7 @@ from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
 from mcpgateway.services.token_storage_service import TokenStorageService
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 
 
 class TestAuthorizationCodeStreamableHTTP:
@@ -45,7 +48,13 @@ class TestAuthorizationCodeStreamableHTTP:
 
     @pytest.mark.asyncio
     async def test_streamablehttp_401_treated_as_reachable(self):
-        """401 wrapped in BaseExceptionGroup (streamablehttp) should not mark gateway unhealthy."""
+        """
+        A real 401 from a streamablehttp upstream must not mark the gateway unhealthy.
+
+        this test runs the real ``mcp_proxy_client`` + SDK against an
+        in-process ASGI app that answers 401 to everything.
+        the exception the health check sees is the genuine errors.
+        """
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
         service.set_gateway_state = AsyncMock()
@@ -64,12 +73,20 @@ class TestAuthorizationCodeStreamableHTTP:
         gateway.client_cert = None
         gateway.client_key = None
 
-        # Build the 401 HTTPStatusError as it would come from the MCP SDK task group:
-        # wrapped one level deep in a BaseExceptionGroup.
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        inner_exc = httpx.HTTPStatusError("401 Unauthorized", request=MagicMock(), response=mock_response)
-        wrapped_exc = BaseExceptionGroup("task group error", [inner_exc])
+        # In-process upstream that rejects every request with 401.
+        async def unauthorized_app(scope, receive, send):
+            if scope["type"] != "http":
+                return
+            await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain"), (b"www-authenticate", b"Bearer")]})
+            await send({"type": "http.response.body", "body": b"unauthorized"})
+
+        def asgi_client_factory(headers=None, timeout=None, auth=None):
+            return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=unauthorized_app), base_url="https://mcp.example.com", headers=headers or {})
+
+        @asynccontextmanager
+        async def proxy_client_via_asgi(url, headers=None, timeout=30.0, httpx_client_factory=None, **kwargs):
+            async with mcp_proxy_client(url, headers=headers, timeout=timeout, httpx_client_factory=asgi_client_factory, **kwargs) as client:
+                yield client
 
         update_db = MagicMock()
         mock_db_gateway = MagicMock()
@@ -102,9 +119,8 @@ class TestAuthorizationCodeStreamableHTTP:
         with (
             patch("mcpgateway.services.gateway_service.settings", MagicMock(enable_ed25519_signing=False, health_check_timeout=5)),
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
-            # streamablehttp_client is called directly (not via the httpx client),
-            # so we patch it to raise the BaseExceptionGroup-wrapped 401 error.
-            patch("mcpgateway.services.gateway_service.streamablehttp_client", side_effect=wrapped_exc),
+            # Real proxy client + real SDK; only the httpx transport is swapped for the ASGI app.
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client", proxy_client_via_asgi),
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
             patch("mcpgateway.services.gateway_service.SessionLocal", return_value=_StatusDBCM()),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
