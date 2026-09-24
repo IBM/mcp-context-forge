@@ -21,6 +21,7 @@ class GatewayBaseConfig(TypedDict):
     add_headers: dict[str, str]
     remove_headers: list[str]
     completion: dict[str, str]
+    capabilities: dict[str, Any]
 
 
 class BackendConfig(GatewayBaseConfig):

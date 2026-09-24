@@ -315,6 +315,7 @@ async def test_full_payload_generation_with_mock_db():
             "add_headers": {"X-Tenant": "acme"},
             "remove_headers": ["Cookie"],
             "completion": {},
+            "capabilities": gateway1.capabilities,
             "tool_schemas": {
                 "public_tool": tool1.input_schema,
                 "private_tool": {},
@@ -338,6 +339,7 @@ async def test_full_payload_generation_with_mock_db():
         selected_keys = {col.key for col in stmt.selected_columns}
         assert "add_headers" in selected_keys, "Gateway SELECT must include add_headers"
         assert "remove_headers" in selected_keys, "Gateway SELECT must include remove_headers"
+        assert "capabilities" in selected_keys
 
         tool_execute_call = mock_db.execute.call_args_list[6]
         tool_stmt = tool_execute_call[0][0]
@@ -388,6 +390,7 @@ def test_named_routes_preserve_backend_identity_and_visibility(teams, duplicate_
             passthrough_headers=[],
             add_headers={},
             remove_headers=[],
+            capabilities=None,
         )
         for gateway_id in ("g1", "g2")
     ]
@@ -417,6 +420,8 @@ def test_named_routes_preserve_backend_identity_and_visibility(teams, duplicate_
         assert backend["url"] == gw.url
         assert backend["tool_schemas"] == {"search": {"type": "object"}}
         assert backend["mcp_protocol_version"] == ""
+        assert backend["capabilities"] == {}
+
     assert host["prompts"] == ({"gw-prompt": {"backend_name": "g1", "upstream_name": "prompt"}} if teams else {})
     assert host["resources"] == ({"resource://one": {"backend_name": "g1", "upstream_name": "resource://one"}} if teams else {})
 
@@ -756,7 +761,9 @@ def test_users_only_get_items_they_can_access():
     data = ControlPlaneData(
         users=(user,),
         servers=VisibilityIndex.build([row("server1")]),
-        gateways=VisibilityIndex.build([row("gateway1", name="backend", url="https://example.com/mcp", transport="STREAMABLEHTTP", passthrough_headers=[], add_headers={}, remove_headers=[])]),
+        gateways=VisibilityIndex.build(
+            [row("gateway1", name="backend", url="https://example.com/mcp", transport="STREAMABLEHTTP", passthrough_headers=[], add_headers={}, remove_headers=[], capabilities={})]
+        ),
         tools=VisibilityIndex.build([row("tool1", "team", name="exposed_tool", original_name="upstream_tool", input_schema=schema)]),
         prompts=VisibilityIndex.build([row("prompt1", "private", name="exposed_prompt", original_name="upstream_prompt")]),
         resources=VisibilityIndex.build([row("resource1", uri="resource://one")]),
