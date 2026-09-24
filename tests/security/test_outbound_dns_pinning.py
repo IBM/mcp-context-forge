@@ -455,8 +455,11 @@ from mcpgateway.llm_schemas import ChatCompletionRequest
 from mcpgateway.services.llm_proxy_service import LLMProxyRequestError, LLMProxyService
 
 
-def _llm_provider_and_model():
+def _llm_provider_and_model(api_base="https://example.com/v1"):
     """Build the provider and model stand-ins an OpenAI-compatible request needs.
+
+    Args:
+        api_base: Provider base URL to pin against.
 
     Returns:
         tuple: A provider stand-in and a model stand-in.
@@ -465,7 +468,7 @@ def _llm_provider_and_model():
         id="p-1",
         name="pinning-test",
         provider_type=LLMProviderType.OPENAI,
-        api_base="https://example.com/v1",
+        api_base=api_base,
         api_key=None,
         default_temperature=None,
         default_max_tokens=None,
@@ -474,19 +477,21 @@ def _llm_provider_and_model():
     return provider, model
 
 
-def _llm_service_with(handler, monkeypatch):
-    """Build an LLM proxy service whose client answers through a mock transport.
+def _llm_service_with(handler, monkeypatch, api_base="https://example.com/v1"):
+    """Build an LLM proxy service whose isolated client answers through a mock transport.
 
     Args:
         handler: Callable that answers each request.
         monkeypatch: Pytest monkeypatch fixture.
+        api_base: Provider base URL to pin against.
 
     Returns:
-        LLMProxyService: Service wired to the mock transport.
+        LLMProxyService: Service wired to the mock transport via get_isolated_http_client.
     """
     service = LLMProxyService()
-    service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider, model = _llm_provider_and_model()
+    service._client = httpx.AsyncClient()
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.get_isolated_http_client", _isolated_client_stub(httpx.MockTransport(handler), {}))
+    provider, model = _llm_provider_and_model(api_base)
     monkeypatch.setattr(service, "_resolve_model", lambda _db, _name: (provider, model))
     return service
 
@@ -554,6 +559,73 @@ async def test_llm_proxy_refuses_a_rebound_address(fake_resolver, monkeypatch):
             await service.chat_completion(None, _chat_request())
     finally:
         await service._client.aclose()
+
+
+async def test_llm_proxy_uses_an_isolated_client_per_provider(fake_resolver, monkeypatch):
+    fake_resolver(["93.184.216.34"])
+    clients = []
+
+    payload = {"id": "x", "object": "chat.completion", "created": 0, "model": "gpt-test", "choices": [], "usage": {}}
+
+    @asynccontextmanager
+    async def _tracking_isolated_client(*_args, **kwargs):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=payload)))
+        clients.append((client, kwargs))
+        try:
+            yield client
+        finally:
+            await client.aclose()
+
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.get_isolated_http_client", _tracking_isolated_client)
+
+    service = LLMProxyService()
+    service._client = httpx.AsyncClient()
+
+    try:
+        provider_a, model_a = _llm_provider_and_model(api_base="https://provider-a.example/v1")
+        monkeypatch.setattr(service, "_resolve_model", lambda _db, _name: (provider_a, model_a))
+        await service.chat_completion(None, _chat_request())
+
+        provider_b, model_b = _llm_provider_and_model(api_base="https://provider-b.example/v1")
+        monkeypatch.setattr(service, "_resolve_model", lambda _db, _name: (provider_b, model_b))
+        await service.chat_completion(None, _chat_request())
+    finally:
+        await service._client.aclose()
+
+    assert len(clients) == 2, "each provider request must get its own client"
+    assert clients[0][0] is not clients[1][0]
+    assert clients[0][1].get("follow_redirects") is False, "redirect refusal must be preserved"
+    assert clients[1][1].get("follow_redirects") is False, "redirect refusal must be preserved"
+
+
+async def test_llm_proxy_stream_uses_an_isolated_client(fake_resolver, monkeypatch):
+    fake_resolver(["93.184.216.34"])
+    clients = []
+
+    @asynccontextmanager
+    async def _tracking_isolated_client(*_args, **kwargs):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200, text="data: [DONE]\n\n")))
+        clients.append((client, kwargs))
+        try:
+            yield client
+        finally:
+            await client.aclose()
+
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.get_isolated_http_client", _tracking_isolated_client)
+
+    service = LLMProxyService()
+    service._client = httpx.AsyncClient()
+    provider, model = _llm_provider_and_model()
+    monkeypatch.setattr(service, "_resolve_model", lambda _db, _name: (provider, model))
+
+    try:
+        async for _chunk in service.chat_completion_stream(None, _chat_request()):
+            break
+    finally:
+        await service._client.aclose()
+
+    assert len(clients) == 1, "the streaming request must use an isolated client that stays open for the body"
+    assert clients[0][1].get("follow_redirects") is False, "redirect refusal must be preserved"
 
 
 # First-Party
