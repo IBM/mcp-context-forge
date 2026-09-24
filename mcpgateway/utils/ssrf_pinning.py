@@ -100,16 +100,21 @@ class SniPinningTransport(httpx2.AsyncHTTPTransport):
         request.extensions.setdefault("sni_hostname", self._sni_hostname)
         original_url = request.url
         last_error: Optional[Exception] = None
-        for pinned_host in self._pinned_hosts:
-            # httpx derived the Host header from the hostname URL at construction time; rewriting
-            # the URL afterwards keeps that header while sending the bytes to the pinned address.
-            request.url = original_url.copy_with(host=pinned_host)
-            try:
-                return await super().handle_async_request(request)
-            except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
-                last_error = exc
-        request.url = original_url
-        raise last_error if last_error else httpx2.ConnectError("No pinned address available", request=request)
+        try:
+            for pinned_host in self._pinned_hosts:
+                # httpx derived the Host header from the hostname URL at construction time; rewriting
+                # the URL afterwards keeps that header while sending the bytes to the pinned address.
+                request.url = original_url.copy_with(host=pinned_host)
+                try:
+                    return await super().handle_async_request(request)
+                except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
+                    last_error = exc
+            raise last_error if last_error else httpx2.ConnectError("No pinned address available", request=request)
+        finally:
+            # Restore the logical URL on every exit path. The bytes have already gone to the pinned
+            # address; leaving the address on the request would make `response.url` report it and
+            # would resolve a relative redirect against it.
+            request.url = original_url
 
 
 @dataclass(frozen=True)
