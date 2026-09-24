@@ -324,7 +324,7 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
             # Explicit API bases win over legacy name while upstream identity stays intact.
             for payload, base in (
                 ({"name": "Ignored", "custom_name": "Weekly Report"}, f"weekly{separator}report"),
-                ({"name": "Monthly Report", "custom_name": None}, f"monthly{separator}report"),
+                ({"name": "Stale Derived Name", "custom_name": None, "description": "Legacy name ignored"}, f"weekly{separator}report"),
                 ({"customName": expected}, expected),
             ):
                 response = await http.put(f"/resources/{resource['id']}", json=payload)
