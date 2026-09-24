@@ -18,10 +18,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+# Third-Party
+import httpx2
+from mcp.shared.exceptions import MCPError
 import pytest
 
 from mcpgateway.config import settings
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
 
 _URL = "http://upstream.example.com/mcp"
 _HEADERS = {"Authorization": "Bearer test-token"}
@@ -151,3 +155,45 @@ async def test_factory_failure_raises_runtime_error() -> None:
     with pytest.raises(RuntimeError, match="Failed to create"):
         async with mcp_proxy_client("http://x.example/mcp", httpx_client_factory=bad_factory):
             pass
+
+
+def _response(method: str, status: int) -> httpx2.Response:
+    """Build a response as the httpx2 event hook would see it."""
+    return httpx2.Response(status, request=httpx2.Request(method, "https://upstream.example.com/mcp"))
+
+
+_SDK_STAND_IN = MCPError(code=-32603, message="Server returned an error response")
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_translates_failed_post() -> None:
+    """A POST answered 401 turns the SDK's generic error into HTTPStatusError 401, even when group-wrapped."""
+    hook = ErrorResponseHook()
+    await hook._get_error(_response("POST", 401))  # pylint: disable=protected-access
+
+    status_error = hook.to_http_status_error(BaseExceptionGroup("task group", [_SDK_STAND_IN]))
+
+    assert isinstance(status_error, httpx2.HTTPStatusError)
+    assert status_error.response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_forgets_error_after_successful_post() -> None:
+    """A JSON-RPC error carried by a later 200 POST must not be blamed on an earlier 4xx."""
+    hook = ErrorResponseHook()
+    await hook._get_error(_response("POST", 401))  # pylint: disable=protected-access
+    await hook._get_error(_response("POST", 200))  # pylint: disable=protected-access
+
+    assert hook.to_http_status_error(_SDK_STAND_IN) is None
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_ignores_get_stream_and_delete_and_non_sdk_errors() -> None:
+    """Tolerated 405s on the GET stream / DELETE close, and non-MCPError failures, are left alone."""
+    hook = ErrorResponseHook()
+    await hook._get_error(_response("GET", 405))  # pylint: disable=protected-access
+    await hook._get_error(_response("DELETE", 405))  # pylint: disable=protected-access
+    assert hook.to_http_status_error(_SDK_STAND_IN) is None
+
+    await hook._get_error(_response("POST", 500))  # pylint: disable=protected-access
+    assert hook.to_http_status_error(RuntimeError("not from the SDK")) is None

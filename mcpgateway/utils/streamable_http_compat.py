@@ -29,11 +29,51 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Optional
 
 # Third-Party
 import httpx2
 from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http_client
+from mcp.shared.exceptions import MCPError
+
+
+class ErrorResponseHook:
+    """
+    Keeps the last POST response seen on an httpx2 client, because the
+    mcp 2.x transport drops the HTTP status when a handshake or call fails.
+    Only POST carries JSON-RPC; the transport's GET stream and DELETE on close
+    may get a tolerated 405, so their responses are ignored.
+    """
+
+    def __init__(self) -> None:
+        """Start with no response."""
+        self.response: Optional[httpx2.Response] = None
+
+    def install(self, http_client: httpx2.AsyncClient) -> "ErrorResponseHook":
+        """Register the response hook on ``http_client`` and return self"""
+        http_client.event_hooks.setdefault("response", []).append(self._get_error)
+        return self
+
+    async def _get_error(self, response: httpx2.Response) -> None:
+        """Keep ``response`` if it answers a POST, whatever its status"""
+        if response.request.method == "POST":
+            self.response = response
+
+    def to_http_status_error(self, exc: BaseException) -> Optional[httpx2.HTTPStatusError]:
+        """Translate a failed handshake into an ``httpx2.HTTPStatusError``"""
+        response = self.response
+        if response is None or response.status_code < 400:
+            return None
+        root: BaseException = exc
+        while isinstance(root, BaseExceptionGroup) and root.exceptions:  # pylint: disable=no-member
+            root = root.exceptions[0]  # pylint: disable=no-member
+        if not isinstance(root, MCPError):
+            return None
+        return httpx2.HTTPStatusError(
+            f"{response.status_code} {response.reason_phrase} for url '{response.request.url}'",
+            request=response.request,
+            response=response,
+        )
 
 
 @asynccontextmanager
@@ -77,6 +117,14 @@ async def streamable_http_client(
             kwargs["auth"] = auth
         http_client = httpx2.AsyncClient(**kwargs)
 
+    error_hook = ErrorResponseHook().install(http_client)
     async with http_client:
-        async with _sdk_streamable_http_client(url=url, http_client=http_client) as streams:
-            yield streams
+        try:
+            async with _sdk_streamable_http_client(url=url, http_client=http_client) as streams:
+                yield streams
+        except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
+            # upstream error status surfaced as httpx2.HTTPStatusError
+            status_error = error_hook.to_http_status_error(exc)
+            if status_error is None:
+                raise
+            raise status_error from exc
