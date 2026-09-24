@@ -16,14 +16,19 @@ Services launched by `make prod-up` (docker-compose.prod.yml override, no profil
 | register_fast_time | 1 (one-shot) | — | — | — | — |
 | **Total** | | **32** | **32 G** | **32** | **32 G** |
 
+Reservations equal the limits for every service; `prod-up` ignores the `GATEWAY_*_LIMIT` / `GATEWAY_*_RESERVATION` env knobs, `GATEWAY_REPLICAS` still applies.
 Gateway runs 3 replicas; each replica contributes 4 CPU / 4 G to the totals.
 One-shot containers (migration, register_fast_time) have no resource constraints and are excluded from totals.
+Limits are ceilings, not allocations: the stack only needs a host with 32 CPU / 32 G if every service saturates at once.
+Mem Reservation is the soft floor Docker applies under memory pressure (`--memory-reservation`); it does not preallocate.
+CPU Reservation is declarative only: Docker Compose ignores `reservations.cpus` outside swarm mode.
 
-### Benchmark: `make benchmark-mcp-tools`
+### Benchmark: `MCP_BENCHMARK_RUN_TIME=1800s make benchmark-mcp-tools`
 
 - **Date**: 2026-09-15
 - **Host**: http://localhost:8080
-- **Users**: 125, Spawn: 30/s, Duration: 1800s (30 min)
+- **Users**: 125, Spawn: 30/s, Duration: 1800s (30 min, overrides the 60s default)
+- **Stack**: run on 2026-09-15, before `docker-compose.prod.yml` existed (committed 2026-09-23), so these numbers do not reflect the 4 CPU / 4 G pin above. Re-run under `make prod-up` to compare.
 
 #### Overall
 
