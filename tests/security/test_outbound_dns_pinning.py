@@ -681,6 +681,7 @@ async def test_oauth_token_post_uses_an_isolated_client(fake_resolver, monkeypat
     assert len(clients) == 2, "each token request must get its own client"
     assert clients[0][0] is not clients[1][0]
     assert clients[0][1].get("follow_redirects") is False, "redirect refusal must be preserved"
+    assert clients[1][1].get("follow_redirects") is False, "redirect refusal must be preserved"
 
 
 # First-Party
@@ -1199,3 +1200,49 @@ async def test_transport_restores_the_request_url_after_fallback(monkeypatch):
 
     assert dialled == ["93.184.216.34", "93.184.216.35"]
     assert request.url.host == "example.com"
+
+
+class _MultiChunkAsyncStream(httpx.AsyncByteStream):
+    """A real multi-chunk async byte stream, standing in for a live SSE/streaming body."""
+
+    def __init__(self, chunks: list) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+async def test_transport_restores_the_request_url_while_a_stream_is_still_open(monkeypatch):
+    """The `finally` URL restore must not corrupt or block a still-open response stream.
+
+    `request.url` is mutated back to the validated hostname in `finally`, which runs as
+    soon as `handle_async_request` returns -- before the caller has necessarily read the
+    response body. httpx/httpcore only read `request.url` at connection setup time, inside
+    `super().handle_async_request()`, which has already completed by then; the response's
+    byte stream is held by httpcore independently of the request object. Restoring the URL
+    early must not affect chunks that are still in flight.
+    """
+    chunks = [b"chunk-one-", b"chunk-two-", b"chunk-three"]
+    seen = {}
+
+    async def _capture(_self, request):
+        seen["dialled_host"] = request.url.host
+        return httpx.Response(200, request=request, stream=_MultiChunkAsyncStream(chunks))
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34"])
+    request = httpx.Request("GET", "https://example.com/mcp")
+
+    response = await transport.handle_async_request(request)
+
+    # The finally block has already restored the URL by the time handle_async_request
+    # returns, while the body above is still an unread multi-chunk stream.
+    assert seen["dialled_host"] == "93.184.216.34", "the bytes must still go to the pinned address"
+    assert request.url.host == "example.com", "the request object must not keep the pinned address"
+    assert response.url.host == "example.com", "the response must report the validated hostname, not the pinned address"
+
+    received = [chunk async for chunk in response.aiter_bytes()]
+
+    assert received == chunks, "every chunk must arrive intact and in order after the URL was restored"
+    assert request.url.host == "example.com", "reading the still-open stream must not re-pin the request url"
