@@ -30,7 +30,7 @@ from requests_oauthlib import OAuth2Session
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
-from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
@@ -381,8 +381,11 @@ class OAuthManager:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
                 return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
-        client = await self._get_client()
-        return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
+        # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
+        # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
+        # would reuse a connection whose certificate was verified for that other name.
+        async with get_isolated_http_client(follow_redirects=False) as client:
+            return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token"})

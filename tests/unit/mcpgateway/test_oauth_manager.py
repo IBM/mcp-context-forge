@@ -7,6 +7,7 @@ Unit tests for OAuth Manager and Token Storage Service.
 """
 
 # Standard
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -19,6 +20,23 @@ import pytest
 from mcpgateway.db import OAuthToken
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+
+
+def _isolated_client(mock_client):
+    """Build a stand-in for get_isolated_http_client that yields a fixed mock client.
+
+    Args:
+        mock_client: Mock async client the context manager yields to the caller.
+
+    Returns:
+        An async context manager factory matching get_isolated_http_client's call shape.
+    """
+
+    @asynccontextmanager
+    async def _cm(*_args, **_kwargs):
+        yield mock_client
+
+    return _cm
 
 
 class TestOAuthManager:
@@ -52,7 +70,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager.get_access_token(credentials)
             assert result == "test_token_123"
 
@@ -81,7 +99,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager.get_access_token(credentials)
             assert result == "password_token_456"
 
@@ -134,7 +152,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager.get_access_token(credentials)
             assert result == "encoded_token_789"
 
@@ -176,7 +194,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager.exchange_code_for_token(credentials, "auth_code_123", "state_456")
             assert result == "exchanged_token_456"
 
@@ -239,7 +257,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager._client_credentials_flow(credentials)
                     assert result == "decrypted_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -267,7 +285,7 @@ class TestOAuthManager:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
 
-            with patch.object(manager, "_get_client", return_value=mock_client):
+            with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                 result = await manager._client_credentials_flow(credentials)
                 assert result == "direct_token"
 
@@ -303,7 +321,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager._client_credentials_flow(credentials)
                     assert result == "fallback_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -327,7 +345,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager._client_credentials_flow(credentials)
             assert result == "test_form_token"
 
@@ -351,7 +369,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should raise an error because access_token won't be parsed from raw response
             with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
                 await manager._client_credentials_flow(credentials)
@@ -375,7 +393,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
                 await manager._client_credentials_flow(credentials)
 
@@ -390,7 +408,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should reach the final fallback error on line 162
             with pytest.raises(OAuthError, match="Failed to obtain access token after all retry attempts"):
                 await manager._client_credentials_flow(credentials)
@@ -416,7 +434,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=[fail_response, fail_response, success_response])
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with patch("asyncio.sleep") as mock_sleep:
                 result = await manager._client_credentials_flow(credentials)
                 assert result == "retry_success_token"
@@ -437,7 +455,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=fail_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with patch("asyncio.sleep"):
                 with pytest.raises(OAuthError, match="Failed to obtain access token after 1 attempts"):
                     await manager._client_credentials_flow(credentials)
@@ -724,7 +742,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager._exchange_code_for_tokens(credentials, code)
 
             assert result == expected_response
@@ -746,7 +764,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with pytest.raises(OAuthError, match="Failed to exchange code for token after"):
                 await manager._exchange_code_for_tokens(credentials, code)
 
@@ -781,7 +799,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager._exchange_code_for_tokens(credentials, "auth_code")
                     assert result["access_token"] == "internal_exchange_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -867,7 +885,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                     assert result == "exchange_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -891,7 +909,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
             assert result == "exchange_form_token"
 
@@ -915,7 +933,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should raise an error because access_token won't be found in raw response
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
@@ -939,7 +957,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
 
@@ -965,7 +983,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=[fail_response, success_response])
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with patch("asyncio.sleep") as mock_sleep:
                 result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                 assert result == "retry_success_token"
@@ -985,7 +1003,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=fail_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with patch("asyncio.sleep"):
                 with pytest.raises(OAuthError, match="Failed to exchange code for token after 1 attempts"):
                     await manager.exchange_code_for_token(credentials, "auth_code", "state")
@@ -1001,7 +1019,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should reach the final fallback error on line 270
             with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
@@ -1106,7 +1124,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager._exchange_code_for_tokens(credentials, "auth_code")
                     assert result["access_token"] == "success_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -1142,7 +1160,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager._exchange_code_for_tokens(credentials, "auth_code")
                     assert result["access_token"] == "exception_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -1166,7 +1184,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager._exchange_code_for_tokens(credentials, "auth_code")
             assert result["access_token"] == "internal_form_token"
             assert result["refresh_token"] == "refresh123"
@@ -1191,7 +1209,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should raise an error because access_token won't be found in raw response
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
@@ -1215,7 +1233,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
 
@@ -1230,7 +1248,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # This should reach the final fallback error on line 492
             with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
@@ -1311,7 +1329,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                     assert result == "exchange_success_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -1347,7 +1365,7 @@ class TestOAuthManager:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(manager, "_get_client", return_value=mock_client):
+                with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
                     result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                     assert result == "exchange_exception_token"
                     mock_encryption.decrypt_secret_async.assert_called_once_with(encrypted_secret)
@@ -1369,7 +1387,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             result = await manager.refresh_token("old_refresh_token", credentials)
 
             assert result == {"access_token": "new_access_token", "refresh_token": "new_refresh_token", "expires_in": 7200}
@@ -1403,7 +1421,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             await manager.refresh_token("refresh_token", credentials)
 
             # Verify client secret was included
@@ -1432,7 +1450,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # OAuthInvalidGrantError is a subclass of OAuthError — both assertions hold
             with pytest.raises(OAuthInvalidGrantError) as exc_info:
                 await manager.refresh_token("invalid_token", credentials)
@@ -1457,7 +1475,7 @@ class TestOAuthManager:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with pytest.raises(OAuthError) as exc_info:
                 await manager.refresh_token("refresh_token", credentials)
             assert "No access_token in refresh response" in str(exc_info.value)
