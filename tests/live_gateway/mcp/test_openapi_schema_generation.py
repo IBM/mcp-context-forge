@@ -69,10 +69,10 @@ def test_unreachable_spec_url_is_not_a_server_error() -> None:
 
 
 def test_repeated_failing_fetches_stay_stable() -> None:
-    """Many distinct failing spec URLs leave the endpoint behaving identically.
+    """Many failing spec URLs leave the endpoint behaving identically.
 
-    Regression guard for the ``_spec_locks`` leak: a failed fetch writes no
-    cache entry, so the lock must be released on the failure path.
+    Regression guard for the failure path: a failed fetch writes a short-lived
+    negative cache entry, and neither that entry nor its lock may accumulate.
     """
     token = make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=JWT_SECRET)
     baseline = _post(_unreachable_payload(), token)

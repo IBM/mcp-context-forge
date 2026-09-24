@@ -59,7 +59,10 @@ _MAX_SPEC_BYTES = 10 * 1024 * 1024
 
 _SPEC_CACHE_MAX = 64
 _SPEC_CACHE_TTL = 60.0
-_spec_cache: collections.OrderedDict[str, tuple[float, dict]] = collections.OrderedDict()
+# A failed fetch is cached too, for a much shorter window. Without a negative entry every
+# queued single-flight waiter re-runs the failing fetch in turn, so N waiters pay N × timeout.
+_SPEC_ERROR_TTL = 5.0
+_spec_cache: collections.OrderedDict[str, tuple[float, dict | Exception]] = collections.OrderedDict()
 _spec_locks: dict[str, asyncio.Lock] = {}
 _spec_locks_guard = asyncio.Lock()
 
@@ -67,8 +70,10 @@ _spec_locks_guard = asyncio.Lock()
 async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
     """Fetch an OpenAPI specification from a URL with SSRF protection.
 
-    Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds.  Concurrent
-    callers for the same URL share a single in-flight fetch (single-flight).
+    Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds, failures for
+    ``_SPEC_ERROR_TTL`` seconds.  Concurrent callers for the same URL share a
+    single in-flight fetch (single-flight), and a caller that arrives while a
+    failure is still cached re-raises that failure instead of refetching.
     The cache is bounded to ``_SPEC_CACHE_MAX`` entries; expired and overflow
     entries are evicted on every access.
 
@@ -93,7 +98,7 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
     now = time.monotonic()
 
     # --- evict expired entries on every access ---
-    expired_keys = [k for k, (ts, _) in _spec_cache.items() if (now - ts) >= _SPEC_CACHE_TTL]
+    expired_keys = [k for k, (expires_at, _) in _spec_cache.items() if expires_at <= now]
     for k in expired_keys:
         _spec_cache.pop(k, None)
         _spec_locks.pop(k, None)
@@ -119,37 +124,49 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         logger.debug("OpenAPI spec cache miss, fetching %s", spec_url)
         try:
             result = await _do_fetch(spec_url, timeout)
-        except Exception:
-            # A failed fetch writes no cache entry, so neither the TTL sweep nor
-            # LRU eviction can ever drop this lock. Pop it here to keep
-            # _spec_locks bounded against caller-controlled failing URLs.
-            _spec_locks.pop(spec_url, None)
+        except Exception as exc:
+            _store(spec_url, exc, _SPEC_ERROR_TTL)
             raise
 
-        # --- store and enforce maxsize (LRU eviction) ---
-        _spec_cache[spec_url] = (time.monotonic(), result)
-        _spec_cache.move_to_end(spec_url)
-        while len(_spec_cache) > _SPEC_CACHE_MAX:
-            evicted_key, _ = _spec_cache.popitem(last=False)
-            _spec_locks.pop(evicted_key, None)
-
+        _store(spec_url, result, _SPEC_CACHE_TTL)
         return copy.deepcopy(result)
 
 
+def _store(spec_url: str, value: dict | Exception, ttl: float) -> None:
+    """Cache *value* under *spec_url* for *ttl* seconds, enforcing the LRU bound.
+
+    Args:
+        spec_url: Cache key for the OpenAPI spec.
+        value: Parsed specification, or the exception raised by a failed fetch.
+        ttl: Lifetime of the entry in seconds.
+    """
+    _spec_cache[spec_url] = (time.monotonic() + ttl, value)
+    _spec_cache.move_to_end(spec_url)
+    while len(_spec_cache) > _SPEC_CACHE_MAX:
+        evicted_key, _ = _spec_cache.popitem(last=False)
+        _spec_locks.pop(evicted_key, None)
+
+
 def _fresh_cached_copy(spec_url: str) -> Optional[dict]:
-    """Return an independent copy of the cached spec while it is within its TTL.
+    """Return an independent copy of the cached spec while the entry is live.
 
     Args:
         spec_url: Cache key for the OpenAPI spec.
 
     Returns:
         A deep copy of the cached spec, or ``None`` when absent or expired.
+
+    Raises:
+        Exception: The cached failure, when the live entry is a negative-cache
+            entry written by a recent failed fetch.
     """
     cached = _spec_cache.get(spec_url)
-    if cached and (time.monotonic() - cached[0]) < _SPEC_CACHE_TTL:
-        _spec_cache.move_to_end(spec_url)
-        return copy.deepcopy(cached[1])
-    return None
+    if cached is None or cached[0] <= time.monotonic():
+        return None
+    _spec_cache.move_to_end(spec_url)
+    if isinstance(cached[1], Exception):
+        raise cached[1]
+    return copy.deepcopy(cached[1])
 
 
 async def _do_fetch(spec_url: str, timeout: float) -> dict:

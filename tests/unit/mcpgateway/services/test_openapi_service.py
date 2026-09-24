@@ -21,6 +21,7 @@ from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
     _SPEC_CACHE_MAX,
     _SPEC_CACHE_TTL,
+    _SPEC_ERROR_TTL,
     _spec_cache,
     _spec_locks,
     extract_schemas_from_openapi,
@@ -429,9 +430,9 @@ class TestFetchOpenAPISpec:
                 first = await fetch_openapi_spec(url)
         assert first == mock_spec_v1
 
-        # Expire the cache entry by backdating its timestamp.
-        ts, spec = _spec_cache[url]
-        _spec_cache[url] = (ts - _SPEC_CACHE_TTL - 1, spec)
+        # Expire the cache entry by backdating its expiry.
+        expires_at, spec = _spec_cache[url]
+        _spec_cache[url] = (expires_at - _SPEC_CACHE_TTL - 1, spec)
 
         client_v2 = _mock_httpx_client(orjson.dumps(mock_spec_v2))
         with patch("httpx.AsyncClient", return_value=client_v2):
@@ -465,15 +466,41 @@ class TestFetchOpenAPISpec:
             assert r == mock_spec
 
     @pytest.mark.asyncio
-    async def test_failed_fetch_does_not_leak_lock(self):
-        """A URL that always fails leaves no entry behind in ``_spec_locks``."""
+    async def test_failed_fetch_is_cached_for_error_ttl(self):
+        """Callers arriving after a failure re-raise it without a second upstream fetch."""
+        url = "http://example.com/openapi.json"
+        fetch_count = 0
+
+        async def _failing_fetch(spec_url, timeout):
+            nonlocal fetch_count
+            fetch_count += 1
+            await asyncio.sleep(0.05)  # Simulate network latency.
+            raise ValueError("boom")
+
+        with patch("mcpgateway.services.openapi_service._do_fetch", side_effect=_failing_fetch):
+            waiters = await asyncio.gather(*(fetch_openapi_spec(url) for _ in range(3)), return_exceptions=True)
+            with pytest.raises(ValueError, match="boom"):
+                await fetch_openapi_spec(url)
+
+        assert fetch_count == 1, f"Expected 1 upstream fetch, got {fetch_count}"
+        assert all(isinstance(r, ValueError) for r in waiters)
+
+        # The negative entry expires: backdate it and the next caller refetches.
+        expires_at, err = _spec_cache[url]
+        _spec_cache[url] = (expires_at - _SPEC_ERROR_TTL - 1, err)
+        with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value={"openapi": "3.0.0"}):
+            assert await fetch_openapi_spec(url) == {"openapi": "3.0.0"}
+
+    @pytest.mark.asyncio
+    async def test_failed_fetches_stay_bounded(self):
+        """Distinct failing URLs never grow the cache or lock maps past ``_SPEC_CACHE_MAX``."""
         with patch("mcpgateway.services.openapi_service._do_fetch", side_effect=ValueError("boom")):
-            for i in range(50):
+            for i in range(_SPEC_CACHE_MAX + 10):
                 with pytest.raises(ValueError, match="boom"):
                     await fetch_openapi_spec(f"http://example.com/{i}/openapi.json")
 
-        assert _spec_locks == {}
-        assert _spec_cache == {}
+        assert len(_spec_cache) == _SPEC_CACHE_MAX
+        assert len(_spec_locks) == _SPEC_CACHE_MAX
 
     @pytest.mark.asyncio
     async def test_cache_returns_independent_copy(self):
