@@ -60,6 +60,20 @@ These wrappers target the nginx-exposed compose stack on
 `http://localhost:8080` and use the MCP protocol Locust file under
 `tests/loadtest/locustfile_mcp_protocol.py`.
 
+For the fixed-tool workload, run `make prod-benchmark-tools PROD_BENCH_RUN_TIME=10s`.
+The default duration is 30 minutes. The default `PROD_BENCH_MODE=legacy` sends `initialize`;
+`PROD_BENCH_MODE=modern` skips it.
+
+The HTML report starts with a centered, single-row table of final aggregate RPS, error percentage, request counts,
+and response times: average, minimum, maximum, p50, p90, p95, and p99.
+A centered endpoint breakdown follows, with request counts, failures, RPS, average latency,
+and p99 latency. Its rows use final statistics and sort by descending request count.
+The stats CSV places the aggregate row immediately
+after its header and retains the endpoint rows and standard Locust columns.
+Both summaries include initialization requests in legacy mode.
+Reports use `reports/prod_benchmark_tools_<mode>.html` and
+`reports/prod_benchmark_tools_<mode>_stats.csv` by default.
+
 Recommended Rust MCP validation sequence:
 
 ```bash
