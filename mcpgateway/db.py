@@ -31,7 +31,8 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, case, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+import sqlalchemy as sa
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Connection, Engine
@@ -4934,7 +4935,7 @@ def update_resource_names_on_gateway_update(_mapper: Mapper[Any], connection: Co
         .where(resources.c.gateway_id == target.id)
         .values(
             name=func.substr(
-                case(
+                sa.case(
                     (func.coalesce(resources.c.custom_name_slug, "") == "", gateway_slug),
                     else_=gateway_slug + settings.gateway_tool_name_separator + resources.c.custom_name_slug,
                 ),
