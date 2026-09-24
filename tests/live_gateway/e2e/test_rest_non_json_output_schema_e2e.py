@@ -44,12 +44,20 @@ _TRUNCATED_BODY = ('{"results": ["' + "x" * 6000).encode()
 class _TruncatedJSONHandler(BaseHTTPRequestHandler):
     """Serve a truncated JSON body for the schema-tool parse-error probe."""
 
+    requests: list = []
+
     def do_GET(self):
         """Return 200 with an invalid, truncated JSON body."""
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(_TRUNCATED_BODY)
+
+    def handle_one_request(self):
+        """Dispatch as usual, then record the method and path received."""
+        super().handle_one_request()
+        if self.command:
+            self.requests.append((self.command, self.path))
 
     def log_message(self, format, *args):
         """Keep the fixture HTTP server quiet."""
@@ -123,6 +131,7 @@ def isolated_gateway(tmp_path):
 def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
     """A truncated JSON body on a schema tool surfaces a parse error, not a validation error."""
     client, token = isolated_gateway
+    _TruncatedJSONHandler.requests.clear()
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _TruncatedJSONHandler)
     worker = threading.Thread(target=upstream.serve_forever, daemon=True)
     worker.start()
@@ -168,6 +177,7 @@ def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
         assert result["isError"] is True
         assert "Response body is not valid JSON" in result_text(result)
         assert "Output validation error" not in call_response.text
+        assert _TruncatedJSONHandler.requests == [("GET", "/probe")], _TruncatedJSONHandler.requests
     finally:
         try:
             if server_id:
