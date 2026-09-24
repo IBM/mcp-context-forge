@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1.7
+# Minimal image for the #6629 completion-federation test fixture.
+# Not a production template -- used only by the `testing` compose profile.
+FROM python:3.13-slim
+
+WORKDIR /app
+
+COPY pyproject.toml server.py ./
+
+RUN pip install --no-cache-dir "mcp>=2.0.0" "mcp-types>=2.0.0"
+
+EXPOSE 9102
+
+CMD ["python", "server.py"]
