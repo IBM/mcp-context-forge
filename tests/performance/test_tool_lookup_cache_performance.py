@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Benchmark tool lookup cache latency and database query contracts.
+"""Location: ./tests/performance/test_tool_lookup_cache_performance.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Benchmark tool lookup cache latency and database query contracts.
 
 Run with:
     uv run pytest tests/performance/test_tool_lookup_cache_performance.py -v -s
