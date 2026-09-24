@@ -9319,8 +9319,8 @@ class TestInvokeToolDirect:
 
             # Verify the result is a proper MCP error response
             assert result is not None
-            assert hasattr(result, "isError")
-            assert result.isError is True
+            assert hasattr(result, "is_error")
+            assert result.is_error is True
             assert hasattr(result, "content")
             assert len(result.content) > 0
             # Error message should contain connection failure details
@@ -9550,7 +9550,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client_with_token),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client_with_token),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=_capture_sanitize),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -9573,7 +9573,7 @@ class TestInvokeToolDirect:
         assert secret_token not in content_text, f"Secret leaked in error response: {content_text!r}"
 
         # The result must still be a proper MCP error shape
-        assert result.isError is True
+        assert result.is_error is True
 
 
 class TestInvokeToolDirectProxyViaHeader:

@@ -10230,26 +10230,12 @@ class TestInvokeToolMcpSseRetryOnStatus:
         mock_response.status_code = 429
         http_err = httpx.HTTPStatusError("Too Many Requests", request=MagicMock(), response=mock_response)
 
-        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=http_err)
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -10259,8 +10245,7 @@ class TestInvokeToolMcpSseRetryOnStatus:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -10297,26 +10282,12 @@ class TestInvokeToolMcpStreamableHttpRetryOnStatus:
         mock_response.status_code = 503
         http_err = httpx.HTTPStatusError("Service Unavailable", request=MagicMock(), response=mock_response)
 
-        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=http_err)
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -10326,8 +10297,7 @@ class TestInvokeToolMcpStreamableHttpRetryOnStatus:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
             patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -10388,26 +10358,12 @@ class TestMcpSseTimeoutPostInvokeFiresOnce:
             return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {})
         )
 
-        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -10418,8 +10374,7 @@ class TestMcpSseTimeoutPostInvokeFiresOnce:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -10466,26 +10421,12 @@ class TestMcpStreamableHttpTimeoutPostInvokeFiresOnce:
             return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {})
         )
 
-        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -10496,8 +10437,7 @@ class TestMcpStreamableHttpTimeoutPostInvokeFiresOnce:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -10547,9 +10487,9 @@ class TestMakeToolErrorStructuredContentSurvivesCoercion:
         raw = tool_service._make_mcp_tool_error("Too Many Requests", structured_content=structured)
 
         # The SDK field must be populated (regression guard for the snake-case kwarg bug).
-        assert raw.structuredContent == structured, (
+        assert raw.structured_content == structured, (
             f"_make_mcp_tool_error set structured_content via snake-case kwarg; "
-            f"expected structuredContent={structured!r}, got {raw.structuredContent!r}. "
+            f"expected structured_content={structured!r}, got {raw.structured_content!r}. "
             "The MCP SDK field is camelCase — use structuredContent= to set it."
         )
 
@@ -10564,7 +10504,7 @@ class TestMakeToolErrorStructuredContentSurvivesCoercion:
     def test_make_mcp_tool_error_without_structured_content_returns_none(self, tool_service):
         """_make_mcp_tool_error without structured_content leaves structuredContent as None."""
         raw = tool_service._make_mcp_tool_error("some error")
-        assert raw.structuredContent is None
+        assert raw.structured_content is None
         coerced = tool_service._coerce_to_tool_result(raw)
         assert coerced.structured_content is None
         assert coerced.is_error is True
@@ -11047,14 +10987,7 @@ class TestInvokeToolDirectDecodeAuthException:
         session_mock.call_tool = AsyncMock(return_value=expected_result)
 
         @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            read_stream = MagicMock()
-            write_stream = MagicMock()
-            get_session_id = AsyncMock()
-            yield read_stream, write_stream, get_session_id
-
-        @asynccontextmanager
-        async def mock_client_session(*_args, **_kwargs):
+        async def mock_proxy_client(*_args, **_kwargs):
             yield session_mock
 
         with (
@@ -11064,8 +10997,7 @@ class TestInvokeToolDirectDecodeAuthException:
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
             # decode_auth raises so the except block at line 3920 fires.
             patch("mcpgateway.services.tool_service.decode_auth", side_effect=ValueError("bad cipher")),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", mock_client_session),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_proxy_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -11112,28 +11044,14 @@ class TestInvokeToolMcpSseProcessSignalPropagates:
 
         tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
 
-        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         # SystemExit(42) — str(SystemExit(42)) == "42", so the outer handler sets
         # error_message="42" and raises ToolInvocationError("Tool invocation failed: 42").
         mock_session.call_tool = AsyncMock(side_effect=SystemExit(42))
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -11143,8 +11061,7 @@ class TestInvokeToolMcpSseProcessSignalPropagates:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -11166,26 +11083,12 @@ class TestInvokeToolMcpSseProcessSignalPropagates:
 
         tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
 
-        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=KeyboardInterrupt())
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -11195,8 +11098,7 @@ class TestInvokeToolMcpSseProcessSignalPropagates:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -11238,26 +11140,12 @@ class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
 
         tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
 
-        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=SystemExit(42))
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -11267,8 +11155,7 @@ class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -11290,26 +11177,12 @@ class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
 
         tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
 
-        def fake_streamablehttp_client(url=None, headers=None, httpx_client_factory=None, **_kw):
-            class _CM:
-                async def __aenter__(self):
-                    return (MagicMock(), MagicMock(), AsyncMock())
-
-                async def __aexit__(self, *exc):
-                    return False
-
-            return _CM()
-
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=KeyboardInterrupt())
-
-        class _SessionCM:
-            async def __aenter__(self):
-                return mock_session
-
-            async def __aexit__(self, *exc):
-                return False
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -11319,8 +11192,7 @@ class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", side_effect=fake_streamablehttp_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
