@@ -595,13 +595,17 @@ def _wrap_httpx_client_factory(pinned_target: PinnedTarget, inner_factory: Httpx
         client = inner_factory(headers, timeout, auth)
         if not pinned_target.is_pinned:
             return client
+        # A transport with no connection pool (e.g. an in-process ASGITransport in
+        # tests) never dials the network, so there is no DNS-rebinding surface to pin.
+        inner_pool = getattr(client._transport, "_pool", None)  # pylint: disable=protected-access
+        if inner_pool is None:
+            return client
         # The caller's factory already built the correct TLS trust material (custom CA,
         # client cert) into its transport's connection pool. Reusing it here is what keeps
         # this wrap from silently breaking mTLS gateways. Fail closed rather than fall back
         # to get_default_verify() if that material can't be found: with SKIP_SSL_VERIFY=true,
         # get_default_verify() returns False, so a silent fallback would downgrade a caller's
         # strict custom-CA context to no verification at all.
-        inner_pool = getattr(client._transport, "_pool", None)  # pylint: disable=protected-access
         verify = getattr(inner_pool, "_ssl_context", None)
         if verify is None:
             raise RuntimeError("Cannot pin the caller's httpx client: its TLS context was not found; refusing to dial with default trust material")
