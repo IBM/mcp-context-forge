@@ -484,6 +484,7 @@ async def test_connect_rejects_private_server_url_in_strict_ssrf_mode(monkeypatc
         ssrf_blocked_networks = ["169.254.169.254/32"]
         ssrf_blocked_hosts = []
         ssrf_dns_fail_closed = False
+        validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
 
