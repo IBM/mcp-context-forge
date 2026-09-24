@@ -6109,7 +6109,7 @@ class ToolService(BaseService):
                             try:
                                 result = response.json()
                                 # JSON parsed successfully - format as error message
-                                if "error" in result:
+                                if isinstance(result, dict) and "error" in result:
                                     error_val = result["error"]
                                 else:
                                     error_val = f"HTTP {response.status_code}: {orjson.dumps(result).decode()}"
@@ -6117,7 +6117,7 @@ class ToolService(BaseService):
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler
                                 error_content = _handle_json_parse_error(response, e, is_error_response=True)
-                                # Prepend HTTP status code to error message
+                                # Prefix the parse-error text with the HTTP status
                                 first_text = error_content[0].text if error_content else ""
                                 content = [TextContent(type="text", text=f"HTTP {response.status_code}: {first_text}")]
 
@@ -6139,7 +6139,7 @@ class ToolService(BaseService):
                             try:
                                 result = response.json()
                                 # JSON parsed successfully - extract error message
-                                error_val = result.get("error", "Tool error encountered")
+                                error_val = result["error"] if isinstance(result, dict) and "error" in result else "Tool error encountered"
                                 content = [TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler

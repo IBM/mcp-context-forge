@@ -6874,6 +6874,65 @@ class TestRestToolNonJsonResponses:
             assert result.is_error is True
             assert result.content[0].text == "Empty response body"
 
+    @pytest.mark.asyncio
+    async def test_rest_tool_nonstandard_2xx_json_list_body(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """A 203 with a valid JSON array body is a tool error, not a JSON parse error."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 203
+        mock_response.text = '[{"id": 1}]'
+        mock_response.json = Mock(return_value=[{"id": 1}])
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert result.content[0].text == "Tool error encountered"
+            assert "Failed to parse JSON" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_http_error_json_list_body(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A non-2xx JSON array body containing "error" is reported, not indexed like a dict."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
+        mock_response.status_code = 500
+        mock_response.text = '["error", "boom"]'
+        mock_response.json = Mock(return_value=["error", "boom"])
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert result.content[0].text.startswith("HTTP 500:")
+            assert "boom" in result.content[0].text
+
 
 class TestSchemaValidatorCaching:
     """Tests for JSON Schema validator caching (#1809)."""
