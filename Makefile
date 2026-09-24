@@ -2760,6 +2760,14 @@ MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
 MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
+PROD_BENCH_MODE ?= legacy
+PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)
+PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
+PROD_BENCH_USERS ?= 125
+PROD_BENCH_SPAWN_RATE ?= 30
+PROD_BENCH_RUN_TIME ?= 1800s
+PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE).html
+PROD_BENCH_CSV_PREFIX ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE)
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2846,6 +2854,36 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo ""
 	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
+
+# help: prod-benchmark-tools     - Fixed-tool-list MCP benchmark (PROD_BENCH_MODE=legacy|modern)
+.PHONY: prod-benchmark-tools
+prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
+	@echo "📊 Running production tool benchmark..."
+	@echo "   Mode: $(PROD_BENCH_MODE) (handshake: $(if $(filter modern,$(PROD_BENCH_MODE)),skipped,initialize))"
+	@echo "   Host: $(PROD_BENCH_HOST)"
+	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
+	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(PROD_BENCH_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
+		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
+		PROD_BENCH_MODE=$(PROD_BENCH_MODE) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(PROD_BENCH_HOST) \
+			--users=$(PROD_BENCH_USERS) \
+			--spawn-rate=$(PROD_BENCH_SPAWN_RATE) \
+			--run-time=$(PROD_BENCH_RUN_TIME) \
+			--headless \
+			--exit-code-on-error=0 \
+			--html=$(PROD_BENCH_HTML_REPORT) \
+			--csv=$(PROD_BENCH_CSV_PREFIX) \
+			--only-summary \
+			ProdToolUser'
+	@$(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$(PROD_BENCH_CSV_PREFIX)_stats.csv"
+	@echo ""
+	@echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(PROD_BENCH_CSV_PREFIX)_stats.csv"
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
@@ -5594,6 +5632,8 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
+# help: prod-up              - Start stack with production resource overrides (docker-compose.prod.yml)
+# help: prod-down             - Stop production-override stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
@@ -5677,10 +5717,11 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-compose-siem-up compose-siem-down compose-siem-logs \
+	compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
-	compose-ui-config-check
+	compose-ui-config-check \
+	prod-up prod-down
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5732,6 +5773,27 @@ compose-upgrade-pg18: compose-validate
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+
+PROD_COMPOSE_FILE := docker-compose.prod.yml
+PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
+
+prod-up: compose-validate                 ## Start stack with production resource overrides
+	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🚀  Using $(COMPOSE_CMD) + $(PROD_COMPOSE_FILE); starting production stack..."
+	IMAGE_LOCAL=$(call get_image_name) $(PROD_COMPOSE) up -d
+
+prod-down: compose-validate               ## Stop production-override stack
+	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping production stack..."
+	@$(PROD_COMPOSE) stop -t 10 2>/dev/null || true
+	$(PROD_COMPOSE) down --remove-orphans
+	@echo "✅ Production stack stopped."
 
 compose-sso: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \

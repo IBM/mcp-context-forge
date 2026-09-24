@@ -42,6 +42,8 @@ Environment Variables:
 """
 
 # Standard
+import atexit
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -57,6 +59,7 @@ import warnings
 from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import WorkerRunner
+from locust.stats import PERCENTILES_TO_REPORT, StatsCSV
 
 # =============================================================================
 # Configuration
@@ -116,6 +119,18 @@ try:
     MCP_TOOL_POOL_SIZE: int = max(0, int(_cfg("MCP_BENCHMARK_TOOL_POOL_SIZE", "0") or 0))
 except ValueError:
     MCP_TOOL_POOL_SIZE = 0
+# Fixed tool pool for ProdToolUser. The fast-time-server inventory is stable, so
+# names and arguments are pinned here instead of discovered per run.
+PROD_BENCH_TOOLS: list[tuple[str, dict]] = [
+    ("fast-time-get-system-time", {"timezone": "America/New_York"}),
+    ("fast-time-convert-time", {"time": "09:00", "source_timezone": "Europe/London", "target_timezone": "Asia/Tokyo"}),
+    ("fast-time-echo", {"message": "prod-benchmark"}),
+    ("fast-time-get-stats", {}),
+]
+# Legacy gateways require the initialize handshake before tools/call. Modern
+# stateless gateways do not. Any value other than "modern" keeps the handshake.
+PROD_BENCH_MODE = _cfg("PROD_BENCH_MODE", "legacy").strip().lower()
+PROD_BENCH_HANDSHAKE = PROD_BENCH_MODE != "modern"
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
 logging.basicConfig(level=getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
@@ -453,12 +468,28 @@ def on_locust_init(environment, **kwargs):
     _configure_log_levels()
 
 
+def _write_final_prod_stats(environment) -> None:
+    """Export final statistics after Locust closes its periodic CSV writer.
+
+    Args:
+        environment: Locust environment containing final request statistics.
+    """
+    prefix = environment.parsed_options.csv_prefix
+    if prefix and not isinstance(environment.runner, WorkerRunner):
+        with open(f"{prefix}_stats.csv", "w", encoding="utf-8", newline="") as destination:
+            StatsCSV(environment, PERCENTILES_TO_REPORT).requests_csv(csv.writer(destination))
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     host = environment.host or "http://localhost:4444"
-    # Run auto-detect in every process (master, workers, standalone)
-    # This ensures _server_id / _tool_names are populated in each worker
-    _ensure_detected(host)
+    # ProdToolUser runs against a pinned tool list, so skip the REST discovery
+    # sweep entirely. Every other class needs it in every process (master,
+    # workers, standalone) to populate _server_id / _tool_names.
+    if not (environment.user_classes and all(cls is ProdToolUser for cls in environment.user_classes)):
+        _ensure_detected(host)
+    else:
+        atexit.register(_write_final_prod_stats, environment)
     # Only log banner from master / standalone
     if not isinstance(environment.runner, WorkerRunner):
         logger.info("=" * 70)
@@ -1184,3 +1215,32 @@ class RESTBaselineUser(FastHttpUser):
                 resp.success()
             else:
                 resp.failure(f"HTTP {resp.status_code}")
+
+
+# =============================================================================
+# User 7: ProdToolUser — Pinned tool list, no discovery, legacy or modern spec
+# =============================================================================
+
+
+class ProdToolUser(BaseMCPUser):
+    """Calls a fixed set of fast-time-server tools with no discovery phase.
+
+    Legacy gateways require the ``initialize`` handshake before ``tools/call``.
+    Modern stateless gateways do not. ``PROD_BENCH_MODE=modern`` skips it.
+    """
+
+    weight = 1
+    wait_time = between(0.02, 0.1)
+
+    def on_start(self):
+        """Pin the target server and run the handshake only for legacy mode."""
+        self._server_id = MCP_SERVER_ID
+        if PROD_BENCH_HANDSHAKE:
+            self._ensure_initialized()
+
+    @task
+    @tag("prod", "call")
+    def call_tool(self):
+        """Call one pinned tool with its pinned arguments."""
+        tool, args = random.choice(PROD_BENCH_TOOLS)
+        self._mcp_request("tools/call", {"name": tool, "arguments": args}, f"MCP tools/call [{tool}]")
