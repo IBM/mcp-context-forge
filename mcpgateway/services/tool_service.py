@@ -639,20 +639,13 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     max_length = settings.rest_response_text_max_length
     text = response.text[:max_length] if len(response.text) > max_length else response.text
 
-    # Build error message
     if len(response.text) > max_length:
         logger.warning("Failed to parse JSON %s: %s. Response truncated from %s to %s characters.", msg, error, len(response.text), max_length)
-        error_message = (
-            f"JSON parse error: {error}\n\n"
-            f"Response was {len(response.text)} characters but truncated to {max_length} characters "
-            f"(REST_RESPONSE_TEXT_MAX_LENGTH limit). Increase this limit if tools return large JSON responses.\n\n"
-            f"Truncated response:\n{text}"
-        )
+        error_message = f"Response body is not valid JSON: {error}. Showing the first {max_length} of {len(response.text)} characters:\n{text}"
     else:
         logger.warning("Failed to parse JSON %s: %s", msg, error)
-        error_message = f"JSON parse error: {error}\n\nResponse:\n{text}"
+        error_message = f"Response body is not valid JSON: {error}.\n{text}"
 
-    # Return as list of TextContent to signal error condition to caller
     return [TextContent(type="text", text=error_message)]
 
 
@@ -6112,7 +6105,7 @@ class ToolService(BaseService):
                                 if isinstance(result, dict) and "error" in result:
                                     error_val = result["error"]
                                 else:
-                                    error_val = f"HTTP {response.status_code}: {orjson.dumps(result).decode()}"
+                                    error_val = f"HTTP {response.status_code}: {response.text[: settings.rest_response_text_max_length]}"
                                 content = [TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler
@@ -6156,13 +6149,12 @@ class ToolService(BaseService):
                                 result = response.json()
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 parse_error = _handle_json_parse_error(response, e, is_error_response=False)
-                                # Without an outputSchema a non-JSON body (plain text, HTML, CSV) is still a usable
-                                # result, so pass the raw text through as before (#6199 only concerns schema tools).
+                                # Without an outputSchema, a non-JSON body is still a valid result.
+                                # Pass the truncated raw text through as the tool output.
                                 result = {"response_text": response.text[: settings.rest_response_text_max_length]} if response.text else {"error": "Empty response body"}
                             if parse_error is not None and tool_output_schema:
-                                # A non-JSON body can never satisfy outputSchema. Report the parse error directly
-                                # instead of running jq over TextContent (not JSON-serializable) or letting the
-                                # validator fail with a generic "no structured output" message (#6199).
+                                # A non-JSON body cannot satisfy outputSchema, so report the parse error.
+                                # Skip jq here: TextContent is not JSON-serializable.
                                 tool_result = ToolResult(content=parse_error, is_error=True)
                             else:
                                 logger.debug("REST API tool response: %s", result)
