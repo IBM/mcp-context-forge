@@ -44,7 +44,7 @@ print(json.dumps(env_vars))
 sys.stdout.flush()
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     main()
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
@@ -493,11 +493,11 @@ if __name__ == "__main__":
                 ]
             )
 
-
     @pytest.mark.asyncio
     async def test_large_header_values(self, test_script):
         """Test handling of large header values."""
-        large_value = "x" * 5000  # 5KB value (will be truncated to 4KB)
+        max_length = settings.max_header_value_length
+        large_value = "x" * (max_length + 1000)
         headers = {
             "Authorization": large_value,
             "X-Tenant-Id": "acme-corp",
@@ -511,7 +511,6 @@ if __name__ == "__main__":
         env_vars = extract_env_vars_from_headers(headers, mappings)
 
         # Verify truncation
-        max_length = settings.max_header_value_length
         assert len(env_vars["GITHUB_TOKEN"]) == max_length
         assert env_vars["TENANT_ID"] == "acme-corp"
 
@@ -608,7 +607,7 @@ print(json.dumps(env_vars))
 sys.stdout.flush()
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)

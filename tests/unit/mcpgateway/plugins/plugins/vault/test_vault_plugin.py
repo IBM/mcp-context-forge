@@ -8,6 +8,7 @@ Unit tests for Vault Plugin functionality.
 
 # Standard
 import json
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -569,7 +570,8 @@ class TestVaultPluginLargeToken:
         # Default limit is 4096 — the serialised JSON exceeds it.
         assert len(raw_header) > 4096
 
-        truncated = sanitize_header_value(raw_header, max_length=4096)
+        with patch("mcpgateway.utils.passthrough_headers.settings.max_header_value_length", 4096):
+            truncated = sanitize_header_value(raw_header)
         assert len(truncated) == 4096
         # The truncated value is no longer valid JSON.
         with pytest.raises((json.JSONDecodeError, ValueError)):
@@ -580,7 +582,8 @@ class TestVaultPluginLargeToken:
         token = self._make_atlassian_token(8000)
         raw_header = json.dumps({"atlassian.net": token})
 
-        sanitized = sanitize_header_value(raw_header, max_length=16384)
+        with patch("mcpgateway.utils.passthrough_headers.settings.max_header_value_length", 16384):
+            sanitized = sanitize_header_value(raw_header)
         assert sanitized == raw_header
         # Still valid JSON after sanitization.
         parsed = json.loads(sanitized)
@@ -596,8 +599,8 @@ class TestVaultPluginLargeToken:
         """
         token = self._make_atlassian_token(8000)
         raw_header = json.dumps({"atlassian.net": token})
-        # Pre-sanitize with the raised limit (as HeaderSanitizationMiddleware would).
-        sanitized = sanitize_header_value(raw_header, max_length=16384)
+        with patch("mcpgateway.utils.passthrough_headers.settings.max_header_value_length", 16384):
+            sanitized = sanitize_header_value(raw_header)
         assert sanitized == raw_header, "token must not be truncated before reaching the plugin"
 
         plugin = Vault(plugin_config)

@@ -120,6 +120,9 @@ HEADER_SIZE_VALIDATION_ENABLED=true
 MAX_HEADER_TOTAL_SIZE_BYTES=16384  # 16KB
 MAX_HEADER_FIELD_SIZE_BYTES=8192   # 8KB
 MAX_HEADER_COUNT=100
+
+# Sanitization limit; raise field and total limits too for large OAuth tokens
+MAX_HEADER_VALUE_LENGTH=4096       # 4KB
 ```
 
 ### Example Responses

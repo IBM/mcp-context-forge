@@ -6,9 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 Tests for translate_header_utils helpers.
 """
 
-# Standard
-from unittest.mock import Mock, patch
-
 # Third-Party
 import pytest
 
@@ -97,6 +94,9 @@ def test_config_validation():
     # Valid: default 4KB
     s1 = Settings(max_header_value_length=4096)
     assert s1.max_header_value_length == 4096
+
+    s_min = Settings(max_header_value_length=1)
+    assert s_min.max_header_value_length == 1
 
     # Valid: 16KB (Atlassian Rovo recommended value — must not raise)
     s2 = Settings(max_header_value_length=16384)

@@ -25,7 +25,6 @@ from fastapi.testclient import TestClient
 from mcpgateway.baggage import (
     BaggageConfig,
     BaggageConfigError,
-    BaggageSizeLimitError,
     HeaderMapping,
     extract_baggage_from_headers,
 )
@@ -228,7 +227,7 @@ class TestBaggageSecurityDenyPaths:
             mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
             propagate_to_external=False,
             max_items=32,
-            max_size_bytes=20000,  # Increased to allow the truncated 16KB value
+            max_size_bytes=20000,
             log_rejected=True,
             log_sanitization=True,
         )
