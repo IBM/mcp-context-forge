@@ -10387,6 +10387,11 @@ mod unit_tests {
     use tracing::warn;
     use uuid::Uuid;
 
+    /// Serialises the one test that removes `AUTH_ENCRYPTION_SECRET` against all
+    /// other tests that call `AppState::new`. Hold this lock across the full
+    /// remove → new → restore sequence in that test only.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
     fn ensure_test_auth_secret() {
         if std::env::var("AUTH_ENCRYPTION_SECRET")
             .map(|v| v.trim().is_empty())
@@ -10399,6 +10404,15 @@ mod unit_tests {
                 );
             }
         }
+    }
+
+    /// Acquires `ENV_MUTEX` and ensures `AUTH_ENCRYPTION_SECRET` is set while
+    /// the guard is held. Callers must keep the returned guard alive until after
+    /// the last `AppState::new` call in the test body.
+    fn lock_env_with_auth_secret() -> std::sync::MutexGuard<'static, ()> {
+        let guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        ensure_test_auth_secret();
+        guard
     }
 
     fn generate_test_root_cert_pem() -> Option<String> {
@@ -10558,6 +10572,10 @@ mod unit_tests {
 
     #[tokio::test]
     async fn app_state_new_exposes_derived_urls_and_runtime_flags() {
+        // Drop the guard before any .await point to satisfy clippy::await_holding_lock.
+        {
+            let _guard = lock_env_with_auth_secret();
+        }
         let config = test_config();
         let state = AppState::new(&config).expect("state");
 
@@ -10714,6 +10732,7 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_accepts_sqlite_but_disables_direct_db_pool() {
+        let _guard = lock_env_with_auth_secret();
         let mut config = test_config();
         config.database_url = Some("sqlite:///tmp/runtime.db".to_string());
 
@@ -10724,10 +10743,12 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_rejects_missing_internal_runtime_auth_secret() {
-        ensure_test_auth_secret();
+        // Hold the env lock across the full remove → AppState::new → restore
+        // sequence so no concurrent test can see the missing var.
+        let _guard = lock_env_with_auth_secret();
         let config = test_config();
         let original = std::env::var("AUTH_ENCRYPTION_SECRET").ok();
-        // SAFETY: this test temporarily removes the env var and restores it before returning.
+        // SAFETY: temporarily removes the env var; restored before the lock is dropped.
         unsafe {
             std::env::remove_var("AUTH_ENCRYPTION_SECRET");
         }
@@ -10737,7 +10758,7 @@ mod unit_tests {
         };
 
         if let Some(value) = original {
-            // SAFETY: restore original process-wide env var before the test exits.
+            // SAFETY: restores the env var before the mutex guard drops.
             unsafe {
                 std::env::set_var("AUTH_ENCRYPTION_SECRET", value);
             }
@@ -10753,6 +10774,7 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_rejects_invalid_database_url() {
+        let _guard = lock_env_with_auth_secret();
         let mut config = test_config();
         config.database_url =
             Some("postgresql+psycopg://user:pass@127.0.0.1:notaport/db".to_string()); // pragma: allowlist secret
@@ -10771,6 +10793,7 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_accepts_database_url_with_sslmode_require() {
+        let _guard = lock_env_with_auth_secret();
         let mut config = test_config();
         config.database_url =
             Some("postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require".to_string()); // pragma: allowlist secret
@@ -10782,6 +10805,7 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_rejects_missing_sslrootcert_file() {
+        let _guard = lock_env_with_auth_secret();
         let mut config = test_config();
         config.database_url = Some(
             "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslrootcert=/tmp/contextforge-missing-root-ca.pem".to_string(), // pragma: allowlist secret
@@ -10851,6 +10875,7 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_rejects_unsupported_client_certificate_parameters() {
+        let _guard = lock_env_with_auth_secret();
         let mut config = test_config();
         config.database_url = Some(
             "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslcert=/tmp/client.pem&sslkey=/tmp/client.key".to_string(), // pragma: allowlist secret
@@ -10900,6 +10925,7 @@ mod unit_tests {
 
     #[test]
     fn app_state_new_rejects_invalid_redis_url() {
+        let _guard = lock_env_with_auth_secret();
         let mut config = test_config();
         config.redis_url = Some("not a redis url".to_string());
 
@@ -12799,6 +12825,7 @@ mod unit_tests {
 
     #[test]
     fn accepts_sse_event_store_prefix_and_injection_helpers_cover_edge_cases() {
+        let _guard = lock_env_with_auth_secret();
         let state = AppState::new(&test_config()).expect("state");
         let mut headers = HeaderMap::new();
         assert!(!accepts_sse(&headers));
