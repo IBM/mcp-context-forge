@@ -1577,6 +1577,8 @@ class ToolService(BaseService):
         Raises:
             ToolNotFoundError: If the tool is missing, inactive, or offline.
             ToolInvocationError: If the tool is deprecated.
+
+        Unknown statuses are ignored and resolution continues against the database.
         """
         if status == "missing":
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -1586,6 +1588,49 @@ class ToolService(BaseService):
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
         if status == "deprecated":
             raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+        logger.warning("Ignoring unknown negative tool cache status %r for tool %s", status, name)
+
+    @staticmethod
+    def _server_ids_for_tool_cache_invalidation(db: Session, tool_id: str, gateway_id: Optional[Any]) -> tuple[str, ...]:
+        """Return server IDs that need invalidation for a local tool.
+
+        Args:
+            db: Database session.
+            tool_id: Tool ID.
+            gateway_id: Gateway ID, when the tool belongs to a gateway.
+
+        Returns:
+            Server IDs for a local tool, or an empty tuple for a gateway tool.
+        """
+        if gateway_id:
+            return ()
+        server_ids = db.execute(select(server_tool_association.c.server_id).where(server_tool_association.c.tool_id == tool_id)).scalars().all()
+        return tuple(str(server_id) for server_id in server_ids)
+
+    @staticmethod
+    def _server_ids_for_tool_names_cache_invalidation(db: Session, names: set[str]) -> tuple[str, ...]:
+        """Return server IDs associated with local tools matching given names.
+
+        Args:
+            db: Database session.
+            names: Tool names changed by a bulk operation.
+
+        Returns:
+            Server IDs associated with matching local tools.
+        """
+        if not names:
+            return ()
+        server_ids = (
+            db.execute(
+                select(server_tool_association.c.server_id)
+                .join(DbTool, DbTool.id == server_tool_association.c.tool_id)
+                .where(DbTool.gateway_id.is_(None), or_(DbTool.name.in_(names), DbTool.original_name.in_(names), DbTool.custom_name.in_(names)))
+                .distinct()
+            )
+            .scalars()
+            .all()
+        )
+        return tuple(str(server_id) for server_id in server_ids)
 
     def convert_tool_to_read(
         self,
@@ -2586,8 +2631,9 @@ class ToolService(BaseService):
                         continue
                     gateway_id = getattr(tool, "gateway_id", None)
                     tool_name_map[name] = str(gateway_id) if gateway_id else tool_name_map.get(name)
+                local_server_ids = self._server_ids_for_tool_names_cache_invalidation(db, {name for name, gateway_id in tool_name_map.items() if gateway_id is None})
                 for tool_name, gateway_id in tool_name_map.items():
-                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id)
+                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id, affected_server_ids=local_server_ids if gateway_id is None else None)
                 # Also invalidate tags cache since tool tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3668,6 +3714,7 @@ class ToolService(BaseService):
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
             tool_team_id = tool.team_id
+            tool_gateway_id = tool.gateway_id
 
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
@@ -3677,7 +3724,8 @@ class ToolService(BaseService):
             # Clean up server_tool_association rows referencing this tool.
             # The association table FK has no ondelete cascade, so rows must
             # be removed explicitly before the tool row can be deleted.
-            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id))
+            association_result = db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id).returning(server_tool_association.c.server_id))
+            affected_server_ids = () if tool_gateway_id else tuple(str(server_id) for server_id in association_result.scalars().all())
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
@@ -3724,7 +3772,7 @@ class ToolService(BaseService):
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool_gateway_id) if tool_gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3836,6 +3884,7 @@ class ToolService(BaseService):
 
             if is_activated or is_reachable:
                 tool.updated_at = datetime.now(timezone.utc)
+                affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, tool.gateway_id)
 
                 db.commit()
                 db.refresh(tool)
@@ -3845,7 +3894,11 @@ class ToolService(BaseService):
                     cache = _get_registry_cache()
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
-                    await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+                    await tool_lookup_cache.invalidate(
+                        tool.name,
+                        gateway_id=str(tool.gateway_id) if tool.gateway_id else None,
+                        affected_server_ids=affected_server_ids,
+                    )
 
                 if not tool.enabled:
                     # Inactive
@@ -4526,7 +4579,7 @@ class ToolService(BaseService):
                     tool_payload = cached_tool_payload
                     gateway_payload = cached_payload.get("gateway")
 
-            if not tool_payload and server_id:
+            if not tool_payload and tool_lookup_cache.enabled:
                 negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
                 if negative_payload:
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
@@ -4566,7 +4619,7 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                if server_id and negative_cache_allowed:
+                if negative_cache_allowed:
                     tool_gateway_id = getattr(tool, "gateway_id", None)
                     await tool_lookup_cache.set_negative(
                         name,
@@ -5371,7 +5424,7 @@ class ToolService(BaseService):
                     tool_payload = cached_tool_payload
                     gateway_payload = cached_payload.get("gateway")
 
-            if not tool_payload and server_id:
+            if not tool_payload and tool_lookup_cache.enabled:
                 negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
                 if negative_payload:
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
@@ -5422,7 +5475,7 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                if server_id and negative_cache_allowed:
+                if negative_cache_allowed:
                     tool_gateway_id = getattr(tool, "gateway_id", None)
                     await tool_lookup_cache.set_negative(
                         name,
@@ -5463,7 +5516,7 @@ class ToolService(BaseService):
             # Check deprecated status after RBAC to avoid leaking tool existence
             if tool_payload.get("deprecated") is True:
                 # Cache the deprecated status to avoid repeated DB queries
-                if server_id and negative_cache_allowed:
+                if negative_cache_allowed:
                     await tool_lookup_cache.set_negative(
                         name,
                         "deprecated",
@@ -7905,6 +7958,7 @@ class ToolService(BaseService):
 
             old_tool_name = tool.name
             old_gateway_id = tool.gateway_id
+            affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, old_gateway_id)
 
             # Check ownership if user_email provided
             if user_email:
@@ -8084,8 +8138,8 @@ class ToolService(BaseService):
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None)
-            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None, affected_server_ids=affected_server_ids)
+            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

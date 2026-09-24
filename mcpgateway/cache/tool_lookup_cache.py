@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Collection, Dict, Optional
 
 # Third-Party
 import orjson
@@ -145,18 +145,29 @@ class ToolLookupCache:
         return f"server:{server_id}:{name}" if server_id else name
 
     @classmethod
-    def _negative_cache_key(cls, name: str, caller_scope: str, server_id: str) -> str:
+    def _negative_cache_key(cls, name: str, caller_scope: str, server_id: Optional[str] = None) -> str:
         """Build a caller-scoped negative cache key.
 
         Args:
             name: Requested tool name.
             caller_scope: Opaque digest of caller visibility context.
-            server_id: Virtual server scope.
+            server_id: Optional virtual server scope.
 
         Returns:
             Internal key for one caller scope and virtual server.
         """
         return cls._cache_key(f"negative:{caller_scope}:{name}", server_id)
+
+    def _negative_name_set_key(self, name: str) -> str:
+        """Build the Redis set key for caller-scoped negative entries.
+
+        Args:
+            name: Requested tool name.
+
+        Returns:
+            Redis set key for all negative entries for the name.
+        """
+        return f"{self._cache_prefix}tool_lookup:negative_name:{name}"
 
     def _gateway_set_key(self, gateway_id: str) -> str:
         """Build the Redis set key for tools in a gateway.
@@ -287,6 +298,7 @@ class ToolLookupCache:
         ttl: int,
         gateway_id: Optional[str],
         server_id: Optional[str],
+        negative_name: Optional[str] = None,
     ) -> None:
         """Store one payload by its complete internal cache key.
 
@@ -296,6 +308,7 @@ class ToolLookupCache:
             ttl: Time to live in seconds.
             gateway_id: Optional gateway ID for invalidation tracking.
             server_id: Optional virtual server ID for invalidation tracking.
+            negative_name: Optional tool name for negative-entry invalidation tracking.
         """
         if not self._enabled:
             return
@@ -315,6 +328,10 @@ class ToolLookupCache:
                 for set_key in (self._server_set_key(server_id), self._scoped_set_key()):
                     await redis.sadd(set_key, cache_key)
                     await redis.expire(set_key, max(ttl, self._ttl_seconds))
+            if negative_name:
+                negative_set_key = self._negative_name_set_key(negative_name)
+                await redis.sadd(negative_set_key, cache_key)
+                await redis.expire(negative_set_key, max(ttl, self._ttl_seconds))
         except Exception as exc:
             logger.debug("ToolLookupCache Redis set failed: %s", exc)
 
@@ -343,13 +360,13 @@ class ToolLookupCache:
         cache_key = self._cache_key(name, server_id)
         return await self._get_cached_payload(cache_key, self._ttl_seconds)
 
-    async def get_negative(self, name: str, caller_scope: str, server_id: str) -> Optional[Dict[str, Any]]:
+    async def get_negative(self, name: str, caller_scope: str, server_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a negative entry for one caller visibility context.
 
         Args:
             name: Requested tool name.
             caller_scope: Opaque digest of caller visibility context.
-            server_id: Virtual server scope.
+            server_id: Optional virtual server scope.
 
         Returns:
             Cached negative payload, or None.
@@ -394,7 +411,7 @@ class ToolLookupCache:
         status: str,
         caller_scope: str,
         *,
-        server_id: str,
+        server_id: Optional[str] = None,
         gateway_id: Optional[str] = None,
     ) -> None:
         """Store a caller-scoped negative cache entry.
@@ -404,7 +421,7 @@ class ToolLookupCache:
             status: Negative status (missing, inactive, offline).
             caller_scope: Opaque digest of caller visibility context.
             gateway_id: Optional gateway ID for invalidation tracking.
-            server_id: Virtual server scope.
+            server_id: Optional virtual server scope.
 
         Examples:
             >>> import asyncio
@@ -417,16 +434,25 @@ class ToolLookupCache:
             {'status': 'missing'}
         """
         payload = {"status": status}
+        if gateway_id:
+            payload["gateway_id"] = gateway_id
         cache_key = self._negative_cache_key(name, caller_scope, server_id)
-        await self._set_cached_payload(cache_key, payload, self._negative_ttl_seconds, gateway_id, server_id)
+        await self._set_cached_payload(cache_key, payload, self._negative_ttl_seconds, gateway_id, server_id, negative_name=name)
 
-    async def invalidate(self, name: str, gateway_id: Optional[str] = None, server_id: Optional[str] = None) -> None:
+    async def invalidate(
+        self,
+        name: str,
+        gateway_id: Optional[str] = None,
+        server_id: Optional[str] = None,
+        affected_server_ids: Optional[Collection[str]] = None,
+    ) -> None:
         """Invalidate a tool cache entry by name.
 
         Args:
             name: Tool name.
             gateway_id: Gateway ID. When present, all aliases for that gateway are invalidated.
             server_id: Optional virtual server scope for a targeted invalidation.
+            affected_server_ids: Virtual servers affected by a global tool mutation.
 
         Examples:
             >>> import asyncio
@@ -443,18 +469,18 @@ class ToolLookupCache:
             return
 
         if gateway_id:
-            # A tool mutation can change which gateway wins a name lookup. Clear
-            # that gateway's indexed entries, then continue and clear the name in
-            # every lookup scope as well.
             await self.invalidate_gateway(gateway_id)
+
+        await self.invalidate_negative_name(name)
+
+        if server_id is None:
+            for affected_server_id in sorted(set(affected_server_ids or ())):
+                await self.invalidate_server(affected_server_id)
 
         cache_key = self._cache_key(name, server_id)
 
         with self._lock:
             self._cache.pop(cache_key, None)
-
-        if server_id is None:
-            await self.invalidate_all_scoped()
 
         redis = await self._get_redis_client()
         if not redis:
@@ -468,6 +494,51 @@ class ToolLookupCache:
             await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:key:{cache_key}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
+
+    async def invalidate_negative_name(self, name: str) -> None:
+        """Invalidate caller-scoped negative entries for one tool name.
+
+        Args:
+            name: Requested tool name.
+        """
+        if not self._enabled:
+            return
+
+        with self._lock:
+            for cache_key in [key for key in self._cache if self._negative_key_matches_name(key, name)]:
+                self._cache.pop(cache_key, None)
+
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        set_key = self._negative_name_set_key(name)
+        try:
+            cache_keys = await redis.smembers(set_key)
+            if cache_keys:
+                keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
+                await redis.delete(*keys)
+            await redis.delete(set_key)
+        except Exception as exc:
+            logger.debug("ToolLookupCache Redis negative-name invalidation failed: %s", exc)
+
+    @staticmethod
+    def _negative_key_matches_name(cache_key: str, name: str) -> bool:
+        """Return whether an internal key is a negative entry for a tool name.
+
+        Args:
+            cache_key: Internal cache key.
+            name: Requested tool name.
+
+        Returns:
+            True when the key identifies a negative entry for the name.
+        """
+        if cache_key.startswith("negative:"):
+            return cache_key.split(":", 2)[-1] == name
+        if cache_key.startswith("server:"):
+            parts = cache_key.split(":", 4)
+            return len(parts) == 5 and parts[2] == "negative" and parts[4] == name
+        return False
 
     async def invalidate_all_scoped(self) -> None:
         """Invalidate every virtual-server-scoped tool lookup."""
@@ -546,7 +617,7 @@ class ToolLookupCache:
 
         # L1 invalidation by gateway_id
         with self._lock:
-            to_remove = [name for name, entry in self._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id]
+            to_remove = [name for name, entry in self._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id or entry.value.get("gateway_id") == gateway_id]
             for name in to_remove:
                 self._cache.pop(name, None)
 

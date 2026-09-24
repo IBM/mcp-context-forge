@@ -8880,8 +8880,8 @@ class TestToolServiceBulkImport:
         registry_cache.invalidate_tools.assert_awaited_once()
         lookup_cache.invalidate.assert_has_awaits(
             [
-                call("bulk_tool_a", gateway_id="gw-1"),
-                call("bulk_tool_b", gateway_id=None),
+                call("bulk_tool_a", gateway_id="gw-1", affected_server_ids=None),
+                call("bulk_tool_b", gateway_id=None, affected_server_ids=()),
             ]
         )
         mock_admin_cache.invalidate_tags.assert_awaited_once()
@@ -10099,14 +10099,15 @@ class TestRustMcpExecutionPlan:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("status", "error_match"),
+        ("status", "error_type", "error_match"),
         [
-            ("missing", "Tool not found"),
-            ("inactive", "exists but is inactive"),
-            ("offline", "currently offline"),
+            ("missing", ToolNotFoundError, "Tool not found"),
+            ("inactive", ToolNotFoundError, "exists but is inactive"),
+            ("offline", ToolNotFoundError, "currently offline"),
+            ("deprecated", ToolInvocationError, "is deprecated"),
         ],
     )
-    async def test_prepare_rust_mcp_tool_execution_respects_negative_cache_entries(self, tool_service, status, error_match):
+    async def test_prepare_rust_mcp_tool_execution_respects_negative_cache_entries(self, tool_service, status, error_type, error_match):
         """Caller-scoped negative entries should return the expected error."""
         cache = self._cache_mock(None)
         cache.get_negative.return_value = {"status": status}
@@ -10116,8 +10117,18 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
-            with pytest.raises(ToolNotFoundError, match=error_match):
+            with pytest.raises(error_type, match=error_match):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="server-1")
+
+        caller_scope = tool_service._negative_cache_caller_scope(None, None)
+        cache.get_negative.assert_awaited_once_with("tool-one", caller_scope, "server-1")
+
+    def test_unknown_negative_cache_status_is_logged_and_ignored(self, tool_service, caplog):
+        """Unknown negative statuses must not become an implicit denial."""
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.tool_service"):
+            tool_service._raise_for_negative_tool_status("tool-one", "future-status")
+
+        assert "Ignoring unknown negative tool cache status 'future-status' for tool tool-one" in caplog.text
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_direct_proxy_fallback(self, tool_service):
@@ -10395,8 +10406,8 @@ class TestRustMcpExecutionPlan:
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
     @pytest.mark.asyncio
-    async def test_prepare_rust_mcp_tool_execution_marks_unreachable_tools_offline_and_caches_negative_result(self, tool_service):
-        """Unreachable DB-loaded tools should set a negative cache entry before failing."""
+    async def test_prepare_rust_mcp_tool_execution_caches_global_offline_result_with_gateway(self, tool_service):
+        """Global offline lookups cache caller-scoped negatives with their gateway."""
         cache = self._cache_mock(None)
         tool = SimpleNamespace(
             enabled=True,
@@ -10404,6 +10415,7 @@ class TestRustMcpExecutionPlan:
             visibility="public",
             team_id=None,
             owner_email=None,
+            gateway_id="gw-1",
             gateway=SimpleNamespace(),
         )
 
@@ -10414,10 +10426,11 @@ class TestRustMcpExecutionPlan:
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             with pytest.raises(ToolNotFoundError, match="currently offline"):
-                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="server-1")
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
         caller_scope = tool_service._negative_cache_caller_scope(None, None)
-        cache.set_negative.assert_awaited_once_with("tool-one", "offline", caller_scope, gateway_id=None, server_id="server-1")
+        cache.get_negative.assert_awaited_once_with("tool-one", caller_scope, None)
+        cache.set_negative.assert_awaited_once_with("tool-one", "offline", caller_scope, gateway_id="gw-1", server_id=None)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -10639,7 +10652,7 @@ class TestRustMcpExecutionPlan:
                     None,
                     "a@example.com",
                     ["team-a"],
-                    "server-1",
+                    None,
                     False,
                     False,
                 )
@@ -10650,7 +10663,7 @@ class TestRustMcpExecutionPlan:
                 None,
                 "b@example.com",
                 ["team-b"],
-                "server-1",
+                None,
                 False,
                 False,
             )

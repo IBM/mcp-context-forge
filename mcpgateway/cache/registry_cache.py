@@ -1074,6 +1074,14 @@ class CacheInvalidationSubscriber:
 
                 with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
                     tool_lookup_cache._cache.pop(cache_key, None)  # pyright: ignore[reportPrivateUsage]
+                    tool_name = cache_key.split(":", 2)[2] if cache_key.startswith("server:") else cache_key
+                    negative_keys = [
+                        key
+                        for key in tool_lookup_cache._cache  # pyright: ignore[reportPrivateUsage]
+                        if tool_lookup_cache._negative_key_matches_name(key, tool_name)  # pyright: ignore[reportPrivateUsage]
+                    ]
+                    for negative_key in negative_keys:
+                        tool_lookup_cache._cache.pop(negative_key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup key %s", cache_key)
 
             elif message == "tool_lookup:scoped":
@@ -1108,7 +1116,11 @@ class CacheInvalidationSubscriber:
 
                 # Only clear local L1 cache
                 with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    to_remove = [name for name, entry in tool_lookup_cache._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id]  # pyright: ignore[reportPrivateUsage]
+                    to_remove = [
+                        name
+                        for name, entry in tool_lookup_cache._cache.items()  # pyright: ignore[reportPrivateUsage]
+                        if entry.value.get("tool", {}).get("gateway_id") == gateway_id or entry.value.get("gateway_id") == gateway_id
+                    ]
                     for name in to_remove:
                         tool_lookup_cache._cache.pop(name, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup for gateway %s (%d keys)", gateway_id, len(to_remove))

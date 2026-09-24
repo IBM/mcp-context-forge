@@ -4188,6 +4188,7 @@ class TestDeleteToolServerAssociationCleanup:
         execute_calls = []
         assoc_result = MagicMock()
         assoc_result.rowcount = 1  # One association row removed
+        assoc_result.scalars.return_value.all.return_value = ["server-1"]
         delete_result = MagicMock()
         delete_result.rowcount = 1
 
@@ -4217,6 +4218,7 @@ class TestDeleteToolServerAssociationCleanup:
         # Must have 2 execute calls: association cleanup then tool DELETE
         assert db.execute.call_count == 2
         db.commit.assert_called()
+        mock_tlc.return_value.invalidate.assert_awaited_once_with("a2a_test_agent", gateway_id=None, affected_server_ids=("server-1",))
 
 
 # ============================================================================

@@ -73,6 +73,15 @@ async def test_tool_lookup_cache_isolates_negative_entries_by_caller(tool_lookup
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_global_negative_entries_by_caller(tool_lookup_cache_instance):
+    """Global negative entries must remain isolated by caller visibility."""
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", "caller-a")
+
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-b") is None
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_isolates_server_scopes(tool_lookup_cache_instance):
     global_payload = {"status": "active", "tool": {"name": "global-tool"}}
     server_one_payload = {"status": "active", "tool": {"name": "server-one-tool"}}
@@ -105,16 +114,17 @@ async def test_tool_lookup_cache_invalidate_server(tool_lookup_cache_instance):
 
 
 @pytest.mark.asyncio
-async def test_tool_lookup_cache_local_tool_invalidation_clears_scoped_entries(tool_lookup_cache_instance):
+async def test_tool_lookup_cache_local_tool_invalidation_clears_only_affected_servers(tool_lookup_cache_instance):
     scoped_payload = {"status": "active", "tool": {"id": "local-tool", "name": "local-tool", "gateway_id": None}}
+    unrelated_payload = {"status": "active", "tool": {"id": "other-tool", "name": "other-tool", "gateway_id": None}}
 
     await tool_lookup_cache_instance.set("local-tool", scoped_payload, server_id="srv-1")
-    await tool_lookup_cache_instance.set("local-alias", scoped_payload, server_id="srv-2")
+    await tool_lookup_cache_instance.set("other-tool", unrelated_payload, server_id="srv-2")
 
-    await tool_lookup_cache_instance.invalidate("local-tool")
+    await tool_lookup_cache_instance.invalidate("local-tool", affected_server_ids=["srv-1"])
 
     assert await tool_lookup_cache_instance.get("local-tool", server_id="srv-1") is None
-    assert await tool_lookup_cache_instance.get("local-alias", server_id="srv-2") is None
+    assert await tool_lookup_cache_instance.get("other-tool", server_id="srv-2") == unrelated_payload
 
 
 @pytest.mark.asyncio
@@ -244,6 +254,31 @@ async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_set_negative_updates_all_redis_indexes(tool_lookup_cache_instance):
+    """Negative entries must support gateway, server, and name invalidation."""
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock(setex=AsyncMock(), sadd=AsyncMock(), expire=AsyncMock())
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    await tool_lookup_cache_instance.set_negative("tool-a", "deprecated", "caller-a", gateway_id="gw-1", server_id="srv-1")
+
+    cache_key = "server:srv-1:negative:caller-a:tool-a"
+    payload = {"status": "deprecated", "gateway_id": "gw-1"}
+    redis.setex.assert_awaited_once_with(
+        f"mcpgw:tool_lookup:v3:{cache_key}",
+        tool_lookup_cache_instance._negative_ttl_seconds,
+        orjson.dumps(payload),
+    )
+    assert redis.sadd.await_args_list == [
+        call("mcpgw:tool_lookup:gateway:gw-1", cache_key),
+        call("mcpgw:tool_lookup:server:srv-1", cache_key),
+        call("mcpgw:tool_lookup_index:scoped", cache_key),
+        call("mcpgw:tool_lookup:negative_name:tool-a", cache_key),
+    ]
+    assert redis.expire.await_count == 4
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_set_redis_exception_is_swallowed(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
@@ -258,14 +293,38 @@ async def test_tool_lookup_cache_set_redis_exception_is_swallowed(tool_lookup_ca
 async def test_tool_lookup_cache_invalidate_redis(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
-    redis.smembers = AsyncMock(return_value={b"tool-a", b"server:srv-1:tool-a"})
+    redis.smembers = AsyncMock(
+        side_effect=[
+            {b"tool-a", b"server:srv-1:tool-a"},
+            {b"negative:caller-a:tool-a", b"server:srv-1:negative:caller-a:tool-a"},
+        ]
+    )
     redis.delete = AsyncMock()
     redis.publish = AsyncMock()
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
     await tool_lookup_cache_instance.invalidate("tool-a", gateway_id="gw-1")
-    assert redis.delete.called
-    assert redis.publish.called
+
+    assert redis.smembers.await_args_list == [
+        call("mcpgw:tool_lookup:gateway:gw-1"),
+        call("mcpgw:tool_lookup:negative_name:tool-a"),
+    ]
+    assert redis.delete.await_count == 5
+    assert set(redis.delete.await_args_list[0].args) == {
+        "mcpgw:tool_lookup:v3:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-1:tool-a",
+    }
+    assert redis.delete.await_args_list[1] == call("mcpgw:tool_lookup:gateway:gw-1")
+    assert set(redis.delete.await_args_list[2].args) == {
+        "mcpgw:tool_lookup:v3:negative:caller-a:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-1:negative:caller-a:tool-a",
+    }
+    assert redis.delete.await_args_list[3] == call("mcpgw:tool_lookup:negative_name:tool-a")
+    assert redis.delete.await_args_list[4] == call("mcpgw:tool_lookup:v3:tool-a")
+    assert redis.publish.await_args_list == [
+        call("mcpgw:cache:invalidate", "tool_lookup:gateway:gw-1"),
+        call("mcpgw:cache:invalidate", "tool_lookup:key:tool-a"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -346,6 +405,11 @@ async def test_tool_lookup_cache_invalidate_all_scoped_redis(tool_lookup_cache_i
 
     redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup_index:scoped")
     assert redis.delete.await_count == 2
+    assert set(redis.delete.await_args_list[0].args) == {
+        "mcpgw:tool_lookup:v3:server:srv-1:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-2:tool-b",
+    }
+    assert redis.delete.await_args_list[1] == call("mcpgw:tool_lookup_index:scoped")
     redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:scoped")
 
 

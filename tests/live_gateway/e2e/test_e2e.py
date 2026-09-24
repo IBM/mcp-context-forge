@@ -2344,7 +2344,8 @@ class TestVirtualServerLifecycle:
 
         try:
             detached = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "must-fail"}, server_url=server_url)
-        except McpError:
+        except McpError as exc:
+            assert "not found" in str(exc).lower(), f"Detached tool returned the wrong protocol error: {exc}"
             return
 
         assert detached.isError, f"Detached tool remained invocable: {detached}"
