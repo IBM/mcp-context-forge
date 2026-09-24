@@ -66,6 +66,7 @@ def load_db_data() -> ControlPlaneData:
                 DbGateway.owner_email,
                 DbGateway.team_id,
                 DbGateway.visibility,
+                DbGateway.capabilities,
             ).where(DbGateway.enabled.is_(True))
         ).all()
 
@@ -179,6 +180,7 @@ class UserConfigBuilder:
                 "add_headers": gateway.add_headers or {},
                 "remove_headers": gateway.remove_headers or [],
                 "completion": {},
+                "capabilities": gateway.capabilities or {},
             }
             for gateway in db_data.gateways.rows_by_id.values()
             if (gateway.transport or "").upper() == "STREAMABLEHTTP"
