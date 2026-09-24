@@ -36,6 +36,7 @@ from mcp.client.sse import sse_client
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +115,17 @@ async def mcp_proxy_client(
             ),
         )
 
+    error_hook = ErrorResponseHook().install(http_client)
     async with http_client:
         # SDK b1: Client takes the transport context manager directly.
         # It owns the transport lifecycle and performs auto-initialization.
         transport_acm = streamable_http_client(url, http_client=http_client)
-        async with Client(transport_acm, mode=resolved_mode) as client:
-            yield client
+        try:
+            async with Client(transport_acm, mode=resolved_mode) as client:
+                yield client
+        except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
+            # upstream error status surfaced as httpx2.HTTPStatusError
+            status_error = error_hook.to_http_status_error(exc)
+            if status_error is None:
+                raise
+            raise status_error from exc

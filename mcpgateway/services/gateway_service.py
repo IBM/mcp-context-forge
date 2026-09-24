@@ -5141,10 +5141,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # For SSE transport, httpx raises httpx.HTTPStatusError directly and
                     # e.response.status_code is accessible.
                     #
-                    # For streamablehttp transport, the MCP SDK spawns the POST inside an
-                    # anyio TaskGroup, so Python 3.11+ wraps the original exception in a
-                    # BaseExceptionGroup before it surfaces here. Unwrap one level to
-                    # recover the original httpx.HTTPStatusError before inspecting it.
+                    # For streamablehttp transport, mcp 2.x does not raise on a non-2xx
+                    # handshake response; mcp_proxy_client re-surfaces the recorded status
+                    # as httpx2.HTTPStatusError (see ErrorResponseHook). Transport task
+                    # groups may still wrap it in a BaseExceptionGroup, so unwrap one level
+                    # before inspecting it.
                     is_auth_failure = False
                     is_authorization_code = gateway_oauth_config is not None and gateway_oauth_config.get("grant_type") == "authorization_code"
 
