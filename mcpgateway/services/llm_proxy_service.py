@@ -601,18 +601,21 @@ class LLMProxyService:
             try:
                 # The isolated client is acquired in the same statement as the stream so it stays open
                 # for the whole response body; closing it after headers arrive would truncate the stream.
-                async with get_isolated_http_client(
-                    timeout=settings.llm_request_timeout,
-                    connect_timeout=30.0,
-                    verify=not settings.skip_ssl_verify,
-                    follow_redirects=False,
-                ) as client, client.stream(
-                    "POST",
-                    pinned_target.pin(url),
-                    headers=pinned_target.apply_headers(headers),
-                    json=body,
-                    extensions=pinned_target.extensions,
-                ) as response:
+                async with (
+                    get_isolated_http_client(
+                        timeout=settings.llm_request_timeout,
+                        connect_timeout=30.0,
+                        verify=not settings.skip_ssl_verify,
+                        follow_redirects=False,
+                    ) as client,
+                    client.stream(
+                        "POST",
+                        pinned_target.pin(url),
+                        headers=pinned_target.apply_headers(headers),
+                        json=body,
+                        extensions=pinned_target.extensions,
+                    ) as response,
+                ):
                     response.raise_for_status()
 
                     async for line in response.aiter_lines():
