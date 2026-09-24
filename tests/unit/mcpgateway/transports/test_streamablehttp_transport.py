@@ -628,6 +628,47 @@ async def test_call_tool_empty_dict_structured_content_primary_path(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_empty_dict_snake_case_fallback(monkeypatch):
+    """Preserve empty structured content from forwarded snake_case fallback."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={"result": {"content": [{"type": "text", "text": "ok"}], "structured_content": {}}}
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, tuple), f"Expected tuple, got {type(result)}: {result!r}"
+        unstructured, structured = result
+        assert isinstance(unstructured, list)
+        assert isinstance(unstructured[0], types.TextContent)
+        assert unstructured[0].text == "ok"
+        assert structured == {}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
 async def test_call_tool_preserves_is_error_for_egress(monkeypatch):
     """Egress regression guard for ContextForge #4202 — local (non-pooled) branch.
 
@@ -6903,6 +6944,51 @@ async def test_call_tool_session_affinity_forwarded_empty_dict_structured_conten
         unstructured, structured = result
         assert isinstance(unstructured, list)
         assert structured == {}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_empty_dict_structured_content_is_error_path(monkeypatch):
+    """Preserve empty structured content on forwarded error responses."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [{"type": "text", "text": "failed"}],
+                "structuredContent": {},
+                "isError": True,
+            }
+        }
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.isError is True
+        assert result.structuredContent == {}
+        assert result.content[0].text == "failed"
     finally:
         request_headers_var.reset(h_token)
         user_context_var.reset(u_token)
