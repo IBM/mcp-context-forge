@@ -1272,13 +1272,13 @@ class TestSecurityValidation:
         # Storage is intentionally permitted; the runtime sandbox is the control. Asserting
         # only that the pattern was stored proves the storage works and leaves the control
         # untested, so each stored schema is validated against a hostile subject here.
-        hostile_subject = "a" * 40 + "b"
+        hostile_subject = {"q": "a" * 40 + "b"}
         outcomes = {}
 
         for pattern in redos_patterns:
             logger.debug(f"Testing ReDoS pattern: {pattern}")
             # These patterns in input schema could cause ReDoS
-            schema = {"type": "string", "pattern": pattern}
+            schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": pattern}}}
             # Should either reject or handle safely
             tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
             # Input schema might have defaults
