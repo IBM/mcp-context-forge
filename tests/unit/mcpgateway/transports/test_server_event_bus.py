@@ -18,7 +18,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 # Third-Party
-from mcp.types import JSONRPCMessage, JSONRPCNotification
+from mcp_types import JSONRPCMessage, JSONRPCNotification
 import pytest
 
 # First-Party
@@ -34,7 +34,7 @@ from mcpgateway.transports.server_event_bus import (
 
 
 def _notif(i: int) -> JSONRPCMessage:
-    return JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/test", params={"i": i}))
+    return JSONRPCNotification(jsonrpc="2.0", method="notifications/test", params={"i": i})
 
 
 @pytest.mark.asyncio
@@ -83,7 +83,7 @@ async def test_subscribe_without_last_event_id_replays_buffered_events():
 
     async def consume() -> None:
         async for evt in bus.subscribe(sid):
-            received.append(evt.message.root.params["i"])
+            received.append(evt.message.params["i"])
             if len(received) >= 2:
                 break
 
@@ -106,7 +106,7 @@ async def test_unknown_last_event_id_starts_at_head():
 
     async def consume() -> None:
         async for evt in bus.subscribe(sid, last_event_id="bogus"):
-            received.append(evt.message.root.params["i"])
+            received.append(evt.message.params["i"])
             break
 
     consumer = asyncio.create_task(consume())
@@ -128,7 +128,7 @@ async def test_multiple_subscribers_each_get_every_event():
 
     async def consume(target: list[int]) -> None:
         async for evt in bus.subscribe(sid):
-            target.append(evt.message.root.params["i"])
+            target.append(evt.message.params["i"])
             break
 
     a = asyncio.create_task(consume(received_a))
@@ -154,7 +154,7 @@ async def test_listener_queue_overflow_raises_backlog_overflow():
         with pytest.raises(ListenerBacklogOverflow):
             started.set()
             async for evt in bus.subscribe(sid):
-                received.append(evt.message.root.params["i"])
+                received.append(evt.message.params["i"])
 
     consumer = asyncio.create_task(driver())
     await started.wait()
@@ -190,7 +190,7 @@ async def test_subscribe_unregisters_on_aclose():
     async def consume() -> None:
         started.set()
         async for evt in sub:
-            received.append(evt.message.root.params["i"])
+            received.append(evt.message.params["i"])
             break
 
     task = asyncio.create_task(consume())
@@ -317,7 +317,7 @@ async def test_redis_publish_uses_atomic_store_and_notify(monkeypatch):
     without any other client command interleaving.
     """
     # First-Party
-    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    from mcp_types import JSONRPCMessage, JSONRPCNotification
     from mcpgateway.transports.server_event_bus import RedisServerEventBus
 
     store_and_notify_calls: list[dict] = []
@@ -342,7 +342,7 @@ async def test_redis_publish_uses_atomic_store_and_notify(monkeypatch):
     )
 
     bus = RedisServerEventBus(store=FakeStore())
-    msg = JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/test"))
+    msg = JSONRPCNotification(jsonrpc="2.0", method="notifications/test")
     event_id = await bus.publish("sid-atomic", msg)
 
     assert len(store_and_notify_calls) == 1
@@ -367,7 +367,7 @@ async def test_redis_publish_atomic_failure_evicts_when_server_side_completed(mo
     orphan it for the next reconnect-without-cursor to replay.
     """
     # First-Party
-    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    from mcp_types import JSONRPCMessage, JSONRPCNotification
     from mcpgateway.transports.server_event_bus import BusBackendError, RedisServerEventBus
 
     evict_calls: list[tuple[str, str]] = []
@@ -386,7 +386,7 @@ async def test_redis_publish_atomic_failure_evicts_when_server_side_completed(mo
     )
 
     bus = RedisServerEventBus(store=FakeStore())
-    msg = JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/test"))
+    msg = JSONRPCNotification(jsonrpc="2.0", method="notifications/test")
     with caplog.at_level("WARNING", logger="mcpgateway.transports.server_event_bus"):
         with pytest.raises(BusBackendError, match="Atomic store\\+publish failed"):
             await bus.publish("sid-reply-lost", msg)
@@ -400,7 +400,7 @@ async def test_redis_publish_atomic_failure_evicts_when_server_side_completed(mo
 async def test_redis_publish_atomic_failure_no_orphan_to_evict(monkeypatch):
     """EVAL never reached Redis → evict returns False → no noisy log, just raise."""
     # First-Party
-    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    from mcp_types import JSONRPCMessage, JSONRPCNotification
     from mcpgateway.transports.server_event_bus import BusBackendError, RedisServerEventBus
 
     class FakeStore:
@@ -416,7 +416,7 @@ async def test_redis_publish_atomic_failure_no_orphan_to_evict(monkeypatch):
     )
 
     bus = RedisServerEventBus(store=FakeStore())
-    msg = JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/test"))
+    msg = JSONRPCNotification(jsonrpc="2.0", method="notifications/test")
     with pytest.raises(BusBackendError, match="Atomic store\\+publish failed"):
         await bus.publish("sid-never-sent", msg)
 
@@ -425,7 +425,7 @@ async def test_redis_publish_atomic_failure_no_orphan_to_evict(monkeypatch):
 async def test_redis_publish_eviction_failure_logs_error(monkeypatch, caplog):
     """If the eviction itself fails after a publish error, log at error so operators can investigate."""
     # First-Party
-    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    from mcp_types import JSONRPCMessage, JSONRPCNotification
     from mcpgateway.transports.server_event_bus import BusBackendError, RedisServerEventBus
 
     class FakeStore:
@@ -441,7 +441,7 @@ async def test_redis_publish_eviction_failure_logs_error(monkeypatch, caplog):
     )
 
     bus = RedisServerEventBus(store=FakeStore())
-    msg = JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/test"))
+    msg = JSONRPCNotification(jsonrpc="2.0", method="notifications/test")
     with caplog.at_level("ERROR", logger="mcpgateway.transports.server_event_bus"):
         with pytest.raises(BusBackendError):
             await bus.publish("sid-evict-broken", msg)
@@ -461,7 +461,7 @@ async def test_redis_publish_missing_client_raises_without_eviction(monkeypatch,
     eviction, no misleading orphan warning.
     """
     # First-Party
-    from mcp.types import JSONRPCMessage, JSONRPCNotification
+    from mcp_types import JSONRPCMessage, JSONRPCNotification
     from mcpgateway.transports.server_event_bus import BusBackendError, RedisServerEventBus
 
     class SentinelStore:
@@ -477,7 +477,7 @@ async def test_redis_publish_missing_client_raises_without_eviction(monkeypatch,
     )
 
     bus = RedisServerEventBus(store=SentinelStore())
-    msg = JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/test"))
+    msg = JSONRPCNotification(jsonrpc="2.0", method="notifications/test")
     with caplog.at_level("WARNING", logger="mcpgateway.transports.server_event_bus"):
         with pytest.raises(BusBackendError, match="Redis client not available"):
             await bus.publish("sid-no-client", msg)
