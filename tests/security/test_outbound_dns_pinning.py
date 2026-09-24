@@ -1081,3 +1081,40 @@ async def test_pooled_session_wrap_fails_closed_when_tls_context_missing(fake_re
     # the captured factory directly, outside that flow, isolates the fail-closed check itself.
     with pytest.raises(RuntimeError, match="TLS context was not found"):
         captured["factory"](headers={}, timeout=None, auth=None)
+
+
+async def test_transport_restores_the_request_url_after_success(monkeypatch):
+    seen = {}
+
+    async def _capture(_self, request):
+        seen["dialled_host"] = request.url.host
+        return httpx.Response(200, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34"])
+    request = httpx.Request("GET", "https://example.com/mcp")
+
+    response = await transport.handle_async_request(request)
+
+    assert seen["dialled_host"] == "93.184.216.34", "the bytes must still go to the pinned address"
+    assert request.url.host == "example.com", "the request object must not keep the pinned address"
+    assert response.request.url.host == "example.com"
+
+
+async def test_transport_restores_the_request_url_after_fallback(monkeypatch):
+    dialled = []
+
+    async def _capture(_self, request):
+        dialled.append(request.url.host)
+        if request.url.host == "93.184.216.34":
+            raise httpx.ConnectError("no route", request=request)
+        return httpx.Response(200, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _capture)
+    transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34", "93.184.216.35"])
+    request = httpx.Request("GET", "https://example.com/mcp")
+
+    await transport.handle_async_request(request)
+
+    assert dialled == ["93.184.216.34", "93.184.216.35"]
+    assert request.url.host == "example.com"
