@@ -32,6 +32,7 @@ from mcpgateway.llm_schemas import (
     UsageStats,
 )
 from mcpgateway.observability import create_span, set_span_attribute
+from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.llm_provider_service import (
     decrypt_provider_config_for_runtime,
     LLMModelNotFoundError,
@@ -493,12 +494,21 @@ class LLMProxyService:
 
         with create_span("llm.proxy", span_attributes) as span:
             try:
-                response = await self._client.post(
-                    pinned_target.pin(url),
-                    headers=pinned_target.apply_headers(headers),
-                    json=body,
-                    extensions=pinned_target.extensions,
-                )
+                # An isolated client keeps this pinned request out of the shared pool. httpcore keys
+                # pooled connections by origin and ignores sni_hostname, so two providers pinned to one
+                # address would share a connection whose certificate was verified for only the first.
+                async with get_isolated_http_client(
+                    timeout=settings.llm_request_timeout,
+                    connect_timeout=30.0,
+                    verify=not settings.skip_ssl_verify,
+                    follow_redirects=False,
+                ) as client:
+                    response = await client.post(
+                        pinned_target.pin(url),
+                        headers=pinned_target.apply_headers(headers),
+                        json=body,
+                        extensions=pinned_target.extensions,
+                    )
                 response.raise_for_status()
                 data = response.json()
 
@@ -589,7 +599,14 @@ class LLMProxyService:
 
         with create_span("llm.proxy", span_attributes) as span:
             try:
-                async with self._client.stream(
+                # The isolated client is acquired in the same statement as the stream so it stays open
+                # for the whole response body; closing it after headers arrive would truncate the stream.
+                async with get_isolated_http_client(
+                    timeout=settings.llm_request_timeout,
+                    connect_timeout=30.0,
+                    verify=not settings.skip_ssl_verify,
+                    follow_redirects=False,
+                ) as client, client.stream(
                     "POST",
                     pinned_target.pin(url),
                     headers=pinned_target.apply_headers(headers),
