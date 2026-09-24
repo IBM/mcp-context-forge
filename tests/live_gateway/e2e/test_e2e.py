@@ -58,7 +58,7 @@ import httpx
 import httpx2
 from mcp import ClientSession, MCPError as McpError
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import InitializeResult
 import pytest
 import uvicorn
@@ -200,7 +200,7 @@ def resource_namespacing_upstreams():
     try:
         for index in range(2):
             content = f"upstream-{identifier}-{index}"
-            app = FastMCP(f"namespacing-{index}", host="0.0.0.0", stateless_http=True, json_response=True)
+            app = MCPServer(f"namespacing-{index}")
 
             def make_reader(value: str):
                 """Bind each peer's response independently of the registration loop."""
@@ -216,7 +216,7 @@ def resource_namespacing_upstreams():
             listener = socket.socket()
             listener.bind(("0.0.0.0", 0))
             port = listener.getsockname()[1]
-            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(), log_level="error"))
+            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
             thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
             running.append((server, thread, listener))
             thread.start()
