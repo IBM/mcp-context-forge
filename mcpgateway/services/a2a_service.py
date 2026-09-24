@@ -54,6 +54,7 @@ from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filte
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Cache import (lazy to avoid circular dependencies)
@@ -2775,11 +2776,6 @@ class A2AAgentService(BaseService):
                 "interaction_type": interaction_type,
             }
 
-            # Make HTTP request using shared client
-            # First-Party
-            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
-
-            client = await get_http_client()
             # Stamp the outbound hop count so the receiving gateway can
             # enforce `uaid_max_federation_hops` and break recursion —
             # covers both A→B→A pingpong and self-referential
@@ -2870,7 +2866,22 @@ class A2AAgentService(BaseService):
             )
 
             # Make request
-            http_response = await client.post(url, json=request_data, headers=headers, timeout=30.0)
+            try:
+                pinned_target = await resolve_pinned_target(url, "Cross-gateway URL")
+            except ValueError as pin_exc:
+                raise A2AAgentError(f"Cross-gateway URL blocked by URL policy: {pin_exc}") from pin_exc
+
+            # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
+            # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
+            # would reuse a connection whose certificate was verified for that other name.
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                http_response = await client.post(
+                    pinned_target.pin(url),
+                    json=request_data,
+                    headers=pinned_target.apply_headers(headers),
+                    timeout=30.0,
+                    extensions=pinned_target.extensions,
+                )
             call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
             # Any 2xx is success.  Restricting to status 200 would

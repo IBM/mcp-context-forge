@@ -116,6 +116,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
@@ -3918,6 +3919,44 @@ class ToolService(BaseService):
 
         # Use MCP SDK to connect and call tool
         try:
+            try:
+                pinned_target = await resolve_pinned_target(gateway_url, "Tool URL")
+            except ValueError as pin_exc:
+                raise ToolInvocationError("Outbound URL blocked by URL policy") from pin_exc
+
+            def get_httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx2.Timeout | None = None,
+                auth: httpx2.Auth | None = None,
+            ) -> httpx2.AsyncClient:
+                """Build the SDK's httpx client so it dials the address pinned at validation time.
+
+                Args:
+                    headers: Optional headers for the client
+                    timeout: Optional timeout for the client
+                    auth: Optional auth for the client
+
+                Returns:
+                    httpx2.AsyncClient: Configured HTTPX async client
+                """
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
+
+                return httpx2.AsyncClient(
+                    follow_redirects=False,
+                    headers=headers,
+                    timeout=timeout if timeout else get_httpx2_timeout(),
+                    auth=auth,
+                    **pinned_target.client_kwargs(
+                        verify=get_default_verify(),
+                        limits=httpx2.Limits(
+                            max_connections=settings.httpx_max_connections,
+                            max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                            keepalive_expiry=settings.httpx_keepalive_expiry,
+                        ),
+                    ),
+                )
+
             with create_span(
                 "mcp.client.call",
                 {
@@ -3937,6 +3976,7 @@ class ToolService(BaseService):
                     url=gateway_url,
                     headers=traced_headers,
                     timeout=settings.mcpgateway_direct_proxy_timeout,
+                    httpx_client_factory=get_httpx_client_factory,
                 ) as client:
                     with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                         pass  # Client auto-initializes on first RPC call
@@ -6326,6 +6366,13 @@ class ToolService(BaseService):
                     _client_cert_value = gateway_client_cert
                     _client_key_value = gateway_client_key
 
+                    if gateway_url is None:
+                        raise ToolInvocationError("Outbound URL blocked by URL policy")
+                    try:
+                        pinned_target = await resolve_pinned_target(gateway_url, "Tool URL")
+                    except ValueError as pin_exc:
+                        raise ToolInvocationError("Outbound URL blocked by URL policy") from pin_exc
+
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
                         timeout: httpx2.Timeout | None = None,
@@ -6375,15 +6422,17 @@ class ToolService(BaseService):
                         factory_timeout = timeout if timeout else get_httpx2_timeout(read_timeout=effective_timeout)
 
                         return httpx2.AsyncClient(
-                            verify=ctx if ctx else get_default_verify(),
                             follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
-                            limits=httpx2.Limits(
-                                max_connections=settings.httpx_max_connections,
-                                max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                                keepalive_expiry=settings.httpx_keepalive_expiry,
+                            **pinned_target.client_kwargs(
+                                verify=ctx if ctx else get_default_verify(),
+                                limits=httpx2.Limits(
+                                    max_connections=settings.httpx_max_connections,
+                                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                                ),
                             ),
                         )
 

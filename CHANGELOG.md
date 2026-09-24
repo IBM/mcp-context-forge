@@ -19,6 +19,34 @@
 - **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
 - **`invoke_tool` now enforces input-schema validation** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Live tool invocation (`tools/call`) now validates `arguments` against the tool's `input_schema` before dispatch, raising `ToolInvocationError` on a mismatch, via the same `_validate_tool_input_arguments` check `POST /tools/preview/{name}` uses (#5629). Previously `invoke_tool` never checked `arguments` against `input_schema` at all, so a tool whose callers relied on that gap will now reject calls it previously accepted. To find affected callers before enabling, preview the same arguments against `POST /tools/preview/{name}`: a `validated: false` response with an `invalid_arguments` warning is exactly what live invocation will now reject. Remediate by correcting the caller's arguments or by relaxing the tool's published `input_schema` to match what it actually accepts.
 
+### Security
+
+- **Outbound connection hardening** - Outbound HTTP requests now establish connections against an
+  address that the outbound URL policy validated, while preserving the original hostname for the
+  `Host` header and for TLS certificate verification. No configuration change is required.
+
+  Operators should note the following behavior changes:
+
+  - Outbound URL validation now runs even when `SSRF_PROTECTION_ENABLED=false`. The scheme allowlist,
+    dangerous-protocol, control-character, embedded-credential and XSS checks in `SecurityValidator`
+    apply unconditionally. Disabling SSRF protection previously disabled these unrelated checks as a
+    side effect; it no longer does. A deployment that relied on that side effect to reach a
+    non-HTTP(S) URL will now see it rejected.
+  - Pooled upstream MCP sessions no longer follow HTTP redirects. An upstream that answers `/sse`
+    with a 307 redirect to `/sse/` now fails instead of following it. Register the redirected URL
+    directly if you rely on that behavior.
+  - Connection setup fails closed when a caller-supplied HTTP client's TLS context cannot be read,
+    rather than continuing with default trust material. Under `SKIP_SSL_VERIFY=true` the previous
+    fallback would have meant no certificate verification at all.
+  - Some outbound requests now connect to a single validated address instead of retrying every
+    address returned by DNS. A dual-stack upstream whose first-sorted address is unreachable may now
+    fail where a plain resolution previously fell through to the next address.
+  - Requests that connect to a validated address now use a dedicated connection rather than a shared
+    pool, so two destinations that resolve to the same address can no longer share a connection whose
+    certificate was verified for only one of them.
+  - Connection handling is unchanged when an environment proxy (`HTTP_PROXY`, `HTTPS_PROXY`,
+    `ALL_PROXY`) applies to the target, since the proxy performs name resolution.
+
 ### Fixed
 
 - **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly.

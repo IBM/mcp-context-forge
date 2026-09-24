@@ -5295,8 +5295,12 @@ class TestCrossGatewayRoutingCoverage:
         assert mock_client.post.called
         call_args = mock_client.post.call_args
 
-        # Check URL is the body-based invoke endpoint (not path-based)
-        assert "https://agent.example.com/a2a/invoke" in str(call_args)
+        # Check URL is the body-based invoke endpoint (not path-based). The
+        # dialled URL is now pinned to the resolved address (outbound DNS
+        # pinning), so the path is asserted on the URL and the original
+        # hostname is asserted on the Host header instead of the raw URL.
+        assert call_args.args[0].endswith("/a2a/invoke")
+        assert call_args.kwargs["headers"]["Host"] == "agent.example.com"
 
         # Check UAID is in request body as agent_id
         sent_json = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
@@ -5501,9 +5505,12 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert result == {"result": "mcp success"}
-        # Verify MCP endpoint was used
+        # Verify MCP endpoint was used. The dialled URL is pinned to the
+        # resolved address, so the path is asserted on the URL and the
+        # original hostname is asserted on the Host header.
         call_args = mock_client.post.call_args
-        assert "https://mcp.example.com/mcp/tools/call" in str(call_args)
+        assert call_args.args[0].endswith("/mcp/tools/call")
+        assert call_args.kwargs["headers"]["Host"] == "mcp.example.com"
 
     async def test_invoke_remote_agent_http_error(self, service, monkeypatch):
         """Test _invoke_remote_agent with HTTP error."""
@@ -5916,9 +5923,12 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert result == {"result": "success"}
-        # Verify URL was constructed with port
+        # Verify URL was constructed with port. The dialled URL is pinned to
+        # the resolved address, so the port is asserted on the URL and the
+        # original hostname:port is asserted on the Host header.
         call_args = mock_client.post.call_args
-        assert "gateway.example.com:8443" in call_args[0][0]
+        assert call_args.args[0].endswith(":8443/a2a/invoke")
+        assert call_args.kwargs["headers"]["Host"] == "gateway.example.com:8443"
 
 
 # Module-level fixtures for cross-gateway routing tests
@@ -6150,15 +6160,7 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info="user@example.com",
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info="user@example.com", team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with the string email
             mock_team_service.return_value.get_user_teams.assert_called_once_with("user@example.com")
@@ -6170,21 +6172,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": "admin@example.com",
-                "full_name": "Admin User",
-                "is_admin": True
-            }
+            user_dict = {"email": "admin@example.com", "full_name": "Admin User", "is_admin": True}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should extract email string and call get_user_teams
             mock_team_service.return_value.get_user_teams.assert_called_once_with("admin@example.com")
@@ -6197,22 +6187,10 @@ class TestListAgentsForUserTypeValidation:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
             # Simulate the bug: email key contains a dict instead of string
-            user_dict = {
-                "email": {"nested": "dict", "value": "admin@example.com"},
-                "full_name": "Admin User",
-                "is_admin": True
-            }
+            user_dict = {"email": {"nested": "dict", "value": "admin@example.com"}, "full_name": "Admin User", "is_admin": True}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type dict" in record.message for record in caplog.records)
@@ -6228,21 +6206,10 @@ class TestListAgentsForUserTypeValidation:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
             # Email key contains a list instead of string
-            user_dict = {
-                "email": ["admin@example.com", "backup@example.com"],
-                "full_name": "Admin User"
-            }
+            user_dict = {"email": ["admin@example.com", "backup@example.com"], "full_name": "Admin User"}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type list" in record.message for record in caplog.records)
@@ -6257,20 +6224,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": None,
-                "full_name": "Anonymous User"
-            }
+            user_dict = {"email": None, "full_name": "Anonymous User"}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with empty string (None is not a string)
             # Note: None.get() would fail, but user_dict.get("email") returns None,
@@ -6284,20 +6240,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "full_name": "User Without Email",
-                "is_admin": False
-            }
+            user_dict = {"full_name": "User Without Email", "is_admin": False}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with empty string (default from .get())
             mock_team_service.return_value.get_user_teams.assert_called_once_with("")
@@ -6309,21 +6254,10 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": 12345,
-                "full_name": "User With Integer Email"
-            }
+            user_dict = {"email": 12345, "full_name": "User With Integer Email"}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type int" in record.message for record in caplog.records)

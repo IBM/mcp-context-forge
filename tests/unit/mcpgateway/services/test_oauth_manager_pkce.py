@@ -12,6 +12,7 @@ Tests will FAIL until implementation is complete.
 """
 
 # Standard
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +22,28 @@ import pytest
 
 # First-Party
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+
+def _isolated_client(mock_client, captured_kwargs=None):
+    """Build a stand-in for get_isolated_http_client that yields a fixed mock client.
+
+    Args:
+        mock_client: Mock async client the context manager yields to the caller.
+        captured_kwargs: Optional dict populated with the call's keyword arguments,
+            so a test can assert on how the isolated client was configured (e.g.
+            ``follow_redirects``).
+
+    Returns:
+        An async context manager factory matching get_isolated_http_client's call shape.
+    """
+
+    @asynccontextmanager
+    async def _cm(*_args, **kwargs):
+        if captured_kwargs is not None:
+            captured_kwargs.update(kwargs)
+        yield mock_client
+
+    return _cm
 
 
 class TestPKCEGeneration:
@@ -291,7 +314,7 @@ class TestExchangeCodeForTokensWithPKCE:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response_obj)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             await manager._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
 
         # Verify code_verifier was included in request
@@ -324,7 +347,7 @@ class TestExchangeCodeForTokensWithPKCE:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response_obj)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             # Should not raise error
             result = await manager._exchange_code_for_tokens(credentials, code)
 
@@ -481,7 +504,7 @@ class TestRFC8707MultipleResources:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             await manager._exchange_code_for_tokens(credentials, "auth_code", "code_verifier")
 
             # Verify the request was made
@@ -517,7 +540,7 @@ class TestRFC8707MultipleResources:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(manager, "_get_client", return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             await manager.refresh_token("refresh_token", credentials)
 
             mock_client.post.assert_called_once()
@@ -647,7 +670,7 @@ class TestOAuthManagerClientCredentialsFlow:
         )
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager._client_credentials_flow(credentials)
         assert token == "abc"
@@ -666,7 +689,7 @@ class TestOAuthManagerClientCredentialsFlow:
         )
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await manager._client_credentials_flow(credentials)
@@ -680,7 +703,7 @@ class TestOAuthManagerClientCredentialsFlow:
         response.raise_for_status.side_effect = httpx.HTTPError("bad")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="Failed to obtain access token"):
             await manager._client_credentials_flow(credentials)
@@ -717,7 +740,7 @@ class TestOAuthManagerPasswordFlow:
         )
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager._password_flow(credentials)
         assert token == "pwdtok"
@@ -738,7 +761,7 @@ class TestOAuthManagerPasswordFlow:
         )
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="No access_token"):
             await manager._password_flow(credentials)
@@ -762,7 +785,7 @@ class TestOAuthManagerPasswordFlow:
         response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=ok")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
         assert await manager._password_flow(credentials) == "ok"
 
         decryptor.decrypt_secret_async = AsyncMock(side_effect=RuntimeError("boom"))
@@ -780,7 +803,7 @@ class TestOAuthManagerPasswordFlow:
         response.raise_for_status.side_effect = httpx.HTTPError("bad")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="Failed to obtain access token"):
             await manager._password_flow(credentials)
@@ -913,7 +936,7 @@ class TestOAuthManagerAuthorizationCodeExchange:
         )
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "code123"
@@ -930,7 +953,7 @@ class TestOAuthManagerAuthorizationCodeExchange:
         response = _make_response(headers={"content-type": "application/json"}, text="nope", json_exc=ValueError("bad"))
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="No access_token"):
             await manager.exchange_code_for_token(credentials, code="c", state="s")
@@ -944,7 +967,7 @@ class TestOAuthManagerRefreshToken:
         response = _make_response(status_code=200, json_data={"access_token": "new"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
@@ -968,7 +991,7 @@ class TestOAuthManagerRefreshToken:
         response = _make_response(status_code=400, text="bad")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="Refresh token invalid or expired"):
             await manager.refresh_token("refresh", credentials)
@@ -981,7 +1004,7 @@ class TestOAuthManagerRefreshToken:
         response = _make_response(status_code=500, text="oops")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="Failed to refresh token"):
             await manager.refresh_token("refresh", credentials)
@@ -1054,7 +1077,7 @@ class TestPasswordFlowHTTPErrorRetry:
         success_response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "ok"})
         client = AsyncMock()
         client.post = AsyncMock(side_effect=[httpx.HTTPError("fail"), success_response])
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with patch("asyncio.sleep") as mock_sleep:
             token = await manager._password_flow(credentials)
@@ -1084,7 +1107,7 @@ class TestExchangeCodeForTokenDecrypt:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "tok"
@@ -1108,7 +1131,7 @@ class TestExchangeCodeForTokenDecrypt:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "tok"
@@ -1130,7 +1153,7 @@ class TestExchangeCodeForTokenDecrypt:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "tok"
@@ -1156,7 +1179,7 @@ class TestExchangeCodeFinalFallback:
         response.raise_for_status.side_effect = httpx.HTTPError("bad")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="Failed to exchange code for token after 1 attempts"):
             await manager.exchange_code_for_token(credentials, code="c", state="s")
@@ -1958,7 +1981,7 @@ class TestExchangeCodeForTokensEdgeCases:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
@@ -1981,7 +2004,7 @@ class TestExchangeCodeForTokensEdgeCases:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
@@ -2002,7 +2025,7 @@ class TestExchangeCodeForTokensEdgeCases:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
@@ -2020,7 +2043,7 @@ class TestExchangeCodeForTokensEdgeCases:
         response = _make_response(headers={"content-type": "application/json"}, text="bad", json_exc=ValueError("bad json"))
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="No access_token"):
             await manager._exchange_code_for_tokens(credentials, "code")
@@ -2049,7 +2072,7 @@ class TestExchangeCodeForTokensEdgeCases:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
@@ -2063,7 +2086,7 @@ class TestExchangeCodeForTokensEdgeCases:
         response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&token_type=Bearer")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
@@ -2077,7 +2100,7 @@ class TestExchangeCodeForTokensEdgeCases:
         success_response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "tok"})
         client = AsyncMock()
         client.post = AsyncMock(side_effect=[httpx.HTTPError("fail"), success_response])
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with patch("asyncio.sleep") as mock_sleep:
             result = await manager._exchange_code_for_tokens(credentials, "code")
@@ -2097,7 +2120,7 @@ class TestRefreshTokenEdgeCases:
         response = _make_response(status_code=200, json_data={"access_token": "new"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
@@ -2113,7 +2136,7 @@ class TestRefreshTokenEdgeCases:
         response = _make_response(status_code=200, json_data={"token_type": "Bearer"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="No access_token in refresh response"):
             await manager.refresh_token("refresh", credentials)
@@ -2127,7 +2150,7 @@ class TestRefreshTokenEdgeCases:
         response = _make_response(status_code=500, text="server error")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with pytest.raises(OAuthError, match="Failed to refresh token after all retry attempts"):
             await manager.refresh_token("refresh", credentials)
@@ -2141,7 +2164,7 @@ class TestRefreshTokenEdgeCases:
         success_response = _make_response(status_code=200, json_data={"access_token": "new"})
         client = AsyncMock()
         client.post = AsyncMock(side_effect=[httpx.HTTPError("fail"), success_response])
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         with patch("asyncio.sleep") as mock_sleep:
             result = await manager.refresh_token("refresh", credentials)
@@ -2157,7 +2180,7 @@ class TestRefreshTokenEdgeCases:
         response = _make_response(status_code=200, json_data={"access_token": "new"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
@@ -2174,7 +2197,7 @@ class TestRefreshTokenEdgeCases:
         response = _make_response(status_code=200, json_data={"access_token": "new"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager.refresh_token("refresh", credentials)
         assert result["access_token"] == "new"
@@ -2194,7 +2217,7 @@ class TestFormEncodedParseBranches:
         response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&badpair&token_type=Bearer")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager._client_credentials_flow(credentials)
         assert token == "tok"
@@ -2208,7 +2231,7 @@ class TestFormEncodedParseBranches:
         response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&noequalssign&token_type=Bearer")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager._password_flow(credentials)
         assert token == "tok"
@@ -2222,7 +2245,7 @@ class TestFormEncodedParseBranches:
         response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&orphan&token_type=Bearer")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "tok"
@@ -2236,7 +2259,7 @@ class TestFormEncodedParseBranches:
         response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&noeq&token_type=Bearer")
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         result = await manager._exchange_code_for_tokens(credentials, "code")
         assert result["access_token"] == "tok"
@@ -2253,7 +2276,7 @@ class TestExchangeCodeNoClientSecret:
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
         client.post = AsyncMock(return_value=response)
-        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client))
 
         token = await manager.exchange_code_for_token(credentials, code="c", state="s")
         assert token == "tok"
