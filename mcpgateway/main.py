@@ -2286,17 +2286,17 @@ def validate_uaid_security_config() -> None:
     """Validate UAID security configuration at startup.
 
     Behavior:
-    - Logs ERROR if A2A enabled but UAID allowlist not configured
-    - Fails startup if UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true (strict mode)
+    - Logs WARNING if A2A enabled but UAID allowlist not configured
+    - Logs ERROR and fails startup if UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true (strict mode)
 
     Design Decision (Issue #4236, Task #5):
-    Default behavior is ERROR logging (non-blocking) to maintain backward compatibility
-    and avoid breaking existing deployments. Operators can opt into fail-fast behavior
+    Default behavior is WARNING logging (non-blocking) to avoid treating an optional,
+    fail-closed feature as an application error. Operators can opt into fail-fast behavior
     via UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true for stricter security posture.
 
     Rationale:
-    - ERROR logging: Visible in logs, doesn't break deployments
-    - Fail-fast (opt-in): Best for production, catches misconfig early
+    - WARNING logging: Visible in logs without triggering error-based alerts
+    - Fail-fast (opt-in): Best for production, catches misconfiguration early
     - Not implemented: Admin UI banner (requires UI work, not always enabled)
 
     Raises:
@@ -2310,7 +2310,10 @@ def validate_uaid_security_config() -> None:
                 "Cross-gateway UAID calls will fail until allowlist is configured."
             )
 
-            logger.error(error_msg)
+            if settings.uaid_require_allowlist_on_startup:
+                logger.error(error_msg)
+            else:
+                logger.warning(error_msg)
 
             # Check for strict mode (fail-fast on misconfiguration)
             if settings.uaid_require_allowlist_on_startup:
