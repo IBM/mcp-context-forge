@@ -644,9 +644,10 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
 # preview route and from every live invocation. Two layers close it: non-local refs are refused
 # outright, by ``_assert_local_refs_only`` below, before any validator sees the schema; and
 # ``validate_safely`` (``mcpgateway.utils.safe_jsonschema``) builds every validator — inline and
-# inside the sandbox worker — against an empty ``referencing.Registry()``, which holds only the
-# bundled metaschemas and has no ``retrieve`` callable, so any residual resolution attempt raises
-# ``referencing.exceptions.Unresolvable`` instead of hitting the network.
+# inside the sandbox worker — against the module-level ``_NO_RETRIEVE_REGISTRY``, an empty
+# ``referencing.Registry()`` that holds only the bundled metaschemas and has no ``retrieve``
+# callable, so any residual resolution attempt raises ``referencing.exceptions.Unresolvable``
+# instead of hitting the network.
 
 # Every keyword whose value is a reference URI, across the drafts we accept.
 _REFERENCE_KEYWORDS = ("$ref", "$dynamicRef", "$recursiveRef")

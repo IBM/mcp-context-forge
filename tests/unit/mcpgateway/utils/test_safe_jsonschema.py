@@ -23,6 +23,7 @@ import pytest
 # First-Party
 from mcpgateway.utils import safe_jsonschema
 from mcpgateway.utils.safe_jsonschema import (
+    _start_method_for,
     sandbox_unavailable,
     schema_uses_regex,
     shutdown_validation_pool,
@@ -400,3 +401,22 @@ def test_warn_unprovable_pattern_source_never_raises_by_construction(pattern, br
     if fallback_logged:
         assert "Regex pattern compile warning failed" in caplog.text
         assert "simulated internal failure" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("linux", "fork"),
+        ("linux2", "fork"),
+        ("darwin", "spawn"),
+        ("win32", "spawn"),
+    ],
+)
+def test_start_method_is_fork_only_on_linux(platform, expected):
+    """The sandbox picks fork only on Linux, matching jq_runner.subprocess_mode_available().
+
+    Args:
+        platform: A sys.platform value under test.
+        expected: The start method _start_method_for must return for it.
+    """
+    assert _start_method_for(platform) == expected
