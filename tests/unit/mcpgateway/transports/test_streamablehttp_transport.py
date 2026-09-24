@@ -6986,8 +6986,8 @@ async def test_call_tool_empty_dict_structured_content_is_error_path(monkeypatch
         ):
             result = await call_tool("my_tool", {})
         assert isinstance(result, types.CallToolResult)
-        assert result.isError is True
-        assert result.structuredContent == {}
+        assert result.is_error is True
+        assert result.structured_content == {}
         assert result.content[0].text == "failed"
     finally:
         request_headers_var.reset(h_token)

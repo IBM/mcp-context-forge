@@ -3649,7 +3649,6 @@ class TestToolService:
         registry for a DIFFERENT upstream session.
         """
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         # First-Party
@@ -3750,7 +3749,6 @@ class TestToolService:
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
         """Test MCP tool invocation falls back to isError when is_error is None."""
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         mock_gateway = SimpleNamespace(
@@ -3923,7 +3921,6 @@ class TestToolService:
         This is a valid MCP response for tools with outputSchema.
         """
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         mock_gateway = SimpleNamespace(
@@ -3982,18 +3979,12 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
@@ -4008,7 +3999,6 @@ class TestToolService:
     async def test_invoke_tool_mcp_preserves_empty_dict_snake_case_fallback(self, tool_service, mock_tool, test_db):
         """Preserve empty structured content from snake_case dump fallback."""
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         mock_gateway = SimpleNamespace(
@@ -4065,18 +4055,12 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
