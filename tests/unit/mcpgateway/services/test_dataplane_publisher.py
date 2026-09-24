@@ -19,7 +19,7 @@ import pytest
 from mcpgateway.services.dataplane_publisher import dataplane_publisher as dp_module
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import (
     DataplanePublisherService,
-    PUBLISHER_RETRY_SECONDS,
+    PUBLISHER_RETRY_RAND_SECONDS,
     get_publisher_interval,
 )
 from mcpgateway.services.dataplane_publisher.db_loader import (
@@ -692,6 +692,7 @@ async def test_publisher_tries_again_after_redis_error(pending_notification, fai
     redis.eval = AsyncMock()
     redis.pipeline.return_value.execute = AsyncMock(side_effect=service._shutdown_event.set)
     error = ConnectionError("Redis unavailable")
+    retry_delay = 3.5
     client_results = [error, redis] if failure_stage == "client" else [redis, redis]
     if failure_stage == "lock":
         redis.set.side_effect = [error, True]
@@ -700,7 +701,7 @@ async def test_publisher_tries_again_after_redis_error(pending_notification, fai
         """Check retained work and lock ownership before allowing the retry."""
         if service._shutdown_event.is_set():
             return True
-        assert timeout == (PUBLISHER_RETRY_SECONDS if pending_notification else 60)
+        assert timeout == (retry_delay if pending_notification else 60)
         assert service._publish_requested.is_set() is pending_notification
         redis.eval.assert_not_awaited()
         return False
@@ -710,12 +711,17 @@ async def test_publisher_tries_again_after_redis_error(pending_notification, fai
     with (
         patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock, side_effect=client_results) as get_client,
         patch("mcpgateway.services.dataplane_publisher.dataplane_publisher.get_publisher_interval", return_value=60),
+        patch.object(dp_module.random, "uniform", return_value=retry_delay) as random_delay,
         patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value=payload) as fetch_payload,
         patch.object(service, wait_method, new_callable=AsyncMock, side_effect=wait_after_failure) as wait,
     ):
         await asyncio.wait_for(service.publish_to_redis(), timeout=1)
 
     assert get_client.await_count == 2
+    if pending_notification:
+        random_delay.assert_called_once_with(*PUBLISHER_RETRY_RAND_SECONDS)
+    else:
+        random_delay.assert_not_called()
     fetch_payload.assert_awaited_once()
     redis.eval.assert_awaited_once()
     redis.pipeline.return_value.set.assert_called_once_with(ANY, ANY, ex=130)
