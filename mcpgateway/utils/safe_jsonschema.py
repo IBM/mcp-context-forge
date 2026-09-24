@@ -23,7 +23,7 @@ from __future__ import annotations
 # Standard
 from collections.abc import Mapping
 import logging
-import multiprocessing
+import sys
 from typing import Any, List, Optional
 
 # Third-Party
@@ -62,6 +62,9 @@ _DRAFTS = {
 }
 _DRAFT_NAMES = {cls: name for name, cls in _DRAFTS.items()}
 
+# An empty registry refuses remote $ref retrieval.
+_NO_RETRIEVE_REGISTRY: referencing.Registry = referencing.Registry()
+
 _SANDBOX_DOWN = False
 
 # Names the real cause, because "unavailable on this platform" sends an operator to the
@@ -70,8 +73,30 @@ _SANDBOX_DOWN_MESSAGE = (
     "Schema validation sandbox could not start (%s). A schema carrying a regex keyword will be refused rather than validated. Tools and prompts using such a schema will fail validation here."
 )
 
-# The Task 1 gate establishes which start methods work here.
-_START_METHOD = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+
+def _start_method_for(platform: str) -> str:
+    """Choose the multiprocessing start method for a platform.
+
+    ``fork`` is unsafe on Darwin; mirrors ``jq_runner.subprocess_mode_available()``.
+
+    Args:
+        platform: A ``sys.platform`` value.
+
+    Returns:
+        ``"fork"`` on Linux, ``"spawn"`` elsewhere.
+
+    Examples:
+        >>> _start_method_for("linux")
+        'fork'
+        >>> _start_method_for("darwin")
+        'spawn'
+        >>> _start_method_for("win32")
+        'spawn'
+    """
+    return "fork" if platform.startswith("linux") else "spawn"
+
+
+_START_METHOD = _start_method_for(sys.platform)
 
 _SANDBOX = SandboxPool(
     name="schema validation",
@@ -127,7 +152,7 @@ def _validate_in_worker(draft_name: str, schema_json: bytes, instance_json: byte
     """
     schema = orjson.loads(schema_json)
     instance = orjson.loads(instance_json)
-    validator = _DRAFTS[draft_name](schema, registry=referencing.Registry())
+    validator = _DRAFTS[draft_name](schema, registry=_NO_RETRIEVE_REGISTRY)
     error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
     return None if error is None else str(error)
 
@@ -180,7 +205,7 @@ def validate_safely(instance: Any, schema: dict, validator_cls: type) -> None:
             cannot be completed safely. A truncated validation is a failure, never a pass.
     """
     if not schema_uses_regex(schema):
-        error = jsonschema.exceptions.best_match(validator_cls(schema, registry=referencing.Registry()).iter_errors(instance))
+        error = jsonschema.exceptions.best_match(validator_cls(schema, registry=_NO_RETRIEVE_REGISTRY).iter_errors(instance))
         if error is not None:
             raise error
         return
