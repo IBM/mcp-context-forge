@@ -457,17 +457,88 @@ Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An ad
 When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
 When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
 
-### MCP Client Authentication
+### MCP Protocol & Authentication
+
+ContextForge sits between MCP clients and MCP servers, acting as both a **server** (to inbound clients) and a **client** (to upstream servers):
+
+```
+┌────────────┐         ┌──────────────────────────────────────┐         ┌────────────┐
+│            │         │           ContextForge               │         │            │
+│ MCP Client │ ──────▶ │  (inbound)  Gateway  (outbound)  │ ──────▶ │ MCP Server │
+│ (e.g. IDE, │ ◀────── │   /mcp endpoints   MCP client    │ ◀────── │ (upstream)  │
+│  Claude)   │         │                                      │         │            │
+└────────────┘         └──────────────────────────────────────┘         └────────────┘
+     INBOUND side:                                              OUTBOUND side:
+     Gateway acts as                                            Gateway acts as
+     an MCP server                                              an MCP client
+```
+
+- **Inbound** = MCP clients (IDEs, Claude Desktop, agents) connecting **to** the gateway's `/mcp` endpoints. The gateway is the **server**.
+- **Outbound** = The gateway connecting **to** upstream MCP servers (registered via `/gateways`). The gateway is the **client**.
+
+#### Inbound Authentication (MCP Clients → Gateway)
+
+These settings control how the gateway authenticates inbound MCP client connections:
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
-| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
+| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
+| `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
+| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
 !!! warning "MCP Access Control Dependencies"
     Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
+
+#### Inbound MCP Protocol Mode (MCP Clients → Gateway)
+
+`MCP_INBOUND_PROTOCOL_MODE` controls which protocol versions the gateway accepts from **inbound** MCP clients connecting to its `/mcp` server endpoints.
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_INBOUND_PROTOCOL_MODE`   | Protocol versions accepted from inbound MCP clients | `legacy`              | `auto`, `legacy` |
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
+| `legacy` (default) | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
+
+#### Outbound MCP Connect Mode (Gateway → MCP Servers)
+
+`MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens **outbound** connections to upstream MCP servers. It applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_CLIENT_CONNECT_MODE`     | Protocol negotiation for outbound connections to upstream MCP servers | `legacy`              | `auto`, `legacy` |
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` | Outbound connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
+| `legacy` (default) | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
+
+!!! note "Upgrading the MCP SDK"
+    The upstream transport health check reads SDK-internal dispatcher flags. The compatibility spike tests in `tests/unit/mcpgateway/utils/test_sdk_client_compat.py` fail loudly if a future SDK release changes those internals, so run them before adopting a new SDK pin.
+
+#### Full Legacy Mode (Both Sides)
+
+To force legacy-only protocol on both the inbound and outbound sides:
+
+```bash
+MCP_INBOUND_PROTOCOL_MODE=legacy      # inbound: clients must use initialize handshake
+MCP_CLIENT_CONNECT_MODE=legacy        # outbound: gateway uses initialize only
+```
+
+#### Compatibility Guidance
+
+Choose each mode independently for its direction: `MCP_INBOUND_PROTOCOL_MODE` applies to MCP clients connecting to the gateway, while `MCP_CLIENT_CONNECT_MODE` applies to upstream MCP servers.
+
+| Peer capability | `MCP_INBOUND_PROTOCOL_MODE` | `MCP_CLIENT_CONNECT_MODE` | Guidance |
+| ---------------- | --------------------------- | ------------------------- | -------- |
+| Legacy-only | `legacy` | `legacy` | Use the pre-2026 `initialize` handshake only. |
+| Dual-era | `legacy` | `legacy` | Sufficient for compatibility; dual-era clients should retry with legacy after the gateway returns `400` for a modern handshake. |
+| Modern-only | `auto` | `auto` | Required because there is no strict `modern` mode; `auto` negotiates modern protocol revisions and retains legacy fallback. |
+
+For dual-era peers, use `auto` instead of `legacy` only when modern protocol negotiation or modern-only features are required. `auto` is not modern-only.
 
 ### SSO (Single Sign-On) Configuration
 
@@ -1018,6 +1089,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
+
+Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#upstream-mcp-connect-mode).
 
 ### Resources
 

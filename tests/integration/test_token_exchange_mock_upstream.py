@@ -24,6 +24,44 @@ pytestmark = pytest.mark.integration
 _FAKE_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
 
 
+@pytest.fixture(autouse=True)
+def _isolate_token_exchange_cache():
+    """Guarantee a clean token-exchange cache for every test in this module.
+
+    ``ToolService`` builds its ``TokenExchangeCache`` from ``settings.redis_url``;
+    when a live Redis is reachable (e.g. the local compose stack), cached
+    exchanged tokens outlive a single test and leak across tests and runs —
+    both tests here intentionally share the same gateway/user/audience cache
+    key. Purging the ``token_exchange:`` namespace before and after each test
+    restores the isolation the per-instance in-memory fallback provides when
+    Redis is absent (e.g. CI).
+    """
+    # First-Party
+    from mcpgateway.config import settings
+
+    client = None
+    redis_url = getattr(settings, "redis_url", None)
+    if redis_url:
+        try:
+            # Third-Party
+            import redis as sync_redis
+
+            client = sync_redis.from_url(redis_url, decode_responses=True)
+            client.ping()
+        except Exception:  # Redis unreachable -> per-instance memory cache already isolates
+            client = None
+
+    def _purge() -> None:
+        if client is None:
+            return
+        for key in client.scan_iter("token_exchange:*"):
+            client.delete(key)
+
+    _purge()
+    yield
+    _purge()
+
+
 @pytest.mark.asyncio
 async def test_upstream_receives_exchanged_token_not_user_jwt():
     """The upstream call must carry the exchanged token, never the user's inbound JWT."""
