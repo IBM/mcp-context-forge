@@ -37,6 +37,7 @@ class TestFilterLoopbackSkipHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_strips_proxy_user_header(self, mock_settings):
         """Deny-path: proxy_user_header is stripped even if present in passthrough dict."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.proxy_user_header = "X-Authenticated-User"
 
         headers = {
@@ -52,6 +53,7 @@ class TestFilterLoopbackSkipHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_strips_custom_proxy_user_header(self, mock_settings):
         """Deny-path: custom proxy_user_header name is also stripped."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.proxy_user_header = "X-Custom-Identity"
 
         headers = {"x-custom-identity": "spoofed", "x-tenant-id": "acme"}
@@ -63,6 +65,7 @@ class TestFilterLoopbackSkipHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_strips_static_skip_headers(self, mock_settings):
         """All static skip headers are removed."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.proxy_user_header = "X-Authenticated-User"
 
         headers = {
@@ -80,6 +83,7 @@ class TestFilterLoopbackSkipHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_strips_hop_by_hop_and_routing_headers(self, mock_settings):
         """Deny-path: loopback filtering removes request-routing and hop-by-hop headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.proxy_user_header = "X-Authenticated-User"
 
         headers = {
@@ -104,6 +108,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_extracts_x_upstream_authorization_always(self, mock_settings):
         """X-Upstream-Authorization is always forwarded even when passthrough is disabled."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -115,6 +120,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_case_insensitive_x_upstream_authorization(self, mock_settings):
         """Header matching is case-insensitive."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -126,6 +132,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_returns_empty_when_no_relevant_headers(self, mock_settings):
         """Returns empty dict when no passthrough-relevant headers present."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -137,6 +144,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_returns_empty_for_none_input(self, mock_settings):
         """Returns empty dict for None input."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -146,6 +154,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_returns_empty_for_empty_dict(self, mock_settings):
         """Returns empty dict for empty input."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -157,6 +166,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_forwards_allowlist_headers_when_enabled(self, mock_settings, mock_cache, _mock_sl):
         """When passthrough is enabled, configured allowlist headers are also forwarded."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
         mock_cache.get.return_value = frozenset(["X-Tenant-Id", "X-Trace-Id"])
@@ -169,6 +179,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_does_not_forward_allowlist_when_disabled(self, mock_settings):
         """When passthrough is disabled, only x-upstream-authorization is forwarded."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
 
@@ -182,6 +193,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_skips_authorization_and_content_type_from_allowlist(self, mock_settings, mock_cache, _mock_sl):
         """Authorization and Content-Type are skipped even if in allowlist."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Authorization", "Content-Type", "X-Tenant-Id"]
         mock_cache.get.return_value = frozenset(["Authorization", "Content-Type", "X-Tenant-Id"])
@@ -198,6 +210,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_combined_upstream_auth_and_allowlist(self, mock_settings, mock_cache, _mock_sl):
         """Both X-Upstream-Authorization and allowlist headers are forwarded together."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
         mock_cache.get.return_value = frozenset(["X-Tenant-Id"])
@@ -212,6 +225,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_none_default_passthrough_headers(self, mock_settings, mock_cache, _mock_sl):
         """Handles None default_passthrough_headers gracefully."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = None
         mock_cache.get.return_value = frozenset()
@@ -226,6 +240,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_never_returns_authorization_regardless_of_config(self, mock_settings, mock_cache, _mock_sl):
         """Deny-path: authorization is never returned, even with passthrough enabled."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Authorization", "X-Tenant-Id"]
         mock_cache.get.return_value = frozenset(["Authorization", "X-Tenant-Id"])
@@ -241,6 +256,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_never_returns_content_type_regardless_of_config(self, mock_settings, mock_cache, _mock_sl):
         """Deny-path: content-type is never returned, even with passthrough enabled."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["Content-Type"]
         mock_cache.get.return_value = frozenset(["Content-Type"])
@@ -254,6 +270,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_never_returns_authorization_when_passthrough_disabled(self, mock_settings):
         """Deny-path: authorization is not returned even when passthrough is disabled."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -268,6 +285,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_never_returns_gateway_internal_headers(self, mock_settings, mock_cache, _mock_sl):
         """Deny-path: gateway-internal headers (including mcp-session-id) are never returned."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         allowlist = frozenset(["Mcp-Session-Id", "X-Mcp-Session-Id", "X-Forwarded-Internally", "X-Tenant-Id"])
         mock_cache.get.return_value = allowlist
@@ -290,6 +308,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_never_returns_proxy_user_header(self, mock_settings, mock_cache, _mock_sl):
         """Deny-path: proxy_user_header is never returned, even if in the allowlist."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.proxy_user_header = "X-Authenticated-User"
         mock_cache.get.return_value = frozenset(["X-Authenticated-User", "X-Tenant-Id"])
@@ -305,6 +324,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_never_returns_custom_proxy_user_header(self, mock_settings, mock_cache, _mock_sl):
         """Deny-path: custom proxy_user_header is blocked regardless of name."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.proxy_user_header = "X-Custom-Proxy-User"
         mock_cache.get.return_value = frozenset(["X-Custom-Proxy-User", "X-Tenant-Id"])
@@ -320,6 +340,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_uses_cached_allowlist(self, mock_settings, mock_cache, _mock_sl):
         """Allowlist is resolved via _loopback_allowlist_cache."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_cache.get.return_value = frozenset(["X-Tenant-Id"])
 
@@ -334,6 +355,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_includes_gateway_specific_passthrough_headers(self, mock_settings, mock_cache, _mock_sl):
         """Headers allowed only by gateway-specific config are preserved for /rpc."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         # Cache returns merged set including gateway-specific headers
         mock_cache.get.return_value = frozenset(["X-Custom-Auth", "X-Org-Id"])
@@ -348,6 +370,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_merges_global_and_gateway_allowlists(self, mock_settings, mock_cache, _mock_sl):
         """Union of global and gateway-specific headers are all preserved."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         # Cache already contains the merged global + gateway set
         mock_cache.get.return_value = frozenset(["X-Tenant-Id", "X-Custom-Auth"])
@@ -360,6 +383,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_sanitizes_header_values(self, mock_settings):
         """Header values are sanitized (CRLF stripped) for defense-in-depth."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -373,6 +397,7 @@ class TestExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_settings_error_still_forwards_upstream_auth(self, mock_settings):
         """If settings access fails, x-upstream-authorization is still forwarded."""
+        mock_settings.max_header_value_length = 4096
         type(mock_settings).enable_header_passthrough = property(lambda self: (_ for _ in ()).throw(RuntimeError("settings broken")))
 
         headers = {"X-Upstream-Authorization": "Bearer tok"}
@@ -392,6 +417,7 @@ class TestSSEHeaderOverrideOrdering:
     @patch("mcpgateway.cache.session_registry.settings")
     async def test_passthrough_cannot_overwrite_internal_jwt(self, mock_settings, mock_client_cls):
         """Even if _passthrough_headers contains Authorization (title-case), the internal JWT wins."""
+        mock_settings.max_header_value_length = 4096
         # First-Party
         from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -455,6 +481,7 @@ class TestSSEGenerateResponsePassthroughHeaders:
     @patch("mcpgateway.cache.session_registry.settings")
     async def test_passthrough_headers_forwarded_in_sse_loopback(self, mock_settings, mock_client_cls):
         """Passthrough headers from user dict are included in the /rpc loopback request."""
+        mock_settings.max_header_value_length = 4096
         # First-Party
         from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -512,6 +539,7 @@ class TestSSEGenerateResponsePassthroughHeaders:
     @patch("mcpgateway.cache.session_registry.settings")
     async def test_no_passthrough_headers_key_is_safe(self, mock_settings, mock_client_cls):
         """When _passthrough_headers is absent, loopback call still works normally."""
+        mock_settings.max_header_value_length = 4096
         # First-Party
         from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -559,6 +587,7 @@ class TestWebSocketPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_extract_headers_for_loopback_with_websocket_headers(self, mock_settings):
         """Simulates extracting passthrough headers from a WebSocket handshake."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -580,6 +609,7 @@ class TestWebSocketPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_websocket_headers_with_passthrough_enabled(self, mock_settings, mock_cache, _mock_sl):
         """WebSocket headers with passthrough feature enabled."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
         mock_cache.get.return_value = frozenset(["X-Tenant-Id"])
@@ -604,6 +634,7 @@ class TestStreamableHTTPAffinityPassthrough:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_extract_from_streamable_http_headers(self, mock_settings):
         """Simulates header extraction from Streamable HTTP request for affinity loopback."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -628,6 +659,7 @@ class TestSSEEndpointHeaderCapture:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_extract_captures_upstream_auth_from_sse_request(self, mock_settings):
         """Simulates SSE endpoint capturing headers from the connection request."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -823,6 +855,7 @@ class TestLoopbackSkipSet:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_returns_base_set_when_proxy_already_in_skip(self, mock_settings):
         """When proxy_user_header is already in the skip set, return the base frozenset."""
+        mock_settings.max_header_value_length = 4096
         # First-Party
         from mcpgateway.utils.passthrough_headers import _LOOPBACK_SKIP_HEADERS, _loopback_skip_set  # pylint: disable=import-outside-toplevel
 
@@ -842,6 +875,7 @@ class TestFilterLoopbackSkipHeadersSanitization:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_drops_header_on_sanitization_failure(self, mock_settings, mock_sanitize):
         """Headers whose values fail sanitization are dropped with a warning."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.proxy_user_header = "X-Authenticated-User"
         mock_sanitize.side_effect = ValueError("CRLF injection detected")
 
@@ -853,6 +887,7 @@ class TestFilterLoopbackSkipHeadersSanitization:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_keeps_good_headers_drops_bad(self, mock_settings, mock_sanitize):
         """Good headers survive while bad ones are dropped."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.proxy_user_header = "X-Authenticated-User"
         mock_sanitize.side_effect = lambda v: v if "\r" not in v else (_ for _ in ()).throw(ValueError("bad"))
 
@@ -872,6 +907,7 @@ class TestExtractHeadersSanitizationErrors:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_drops_upstream_auth_on_sanitization_failure(self, mock_settings, mock_sanitize):
         """x-upstream-authorization is dropped when sanitization fails."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_sanitize.side_effect = ValueError("CRLF injection detected")
 
@@ -886,6 +922,7 @@ class TestExtractHeadersSanitizationErrors:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_skips_allowlist_header_on_sanitization_failure(self, mock_settings, mock_sanitize, mock_cache, _mock_sl):
         """Individual allowlist headers that fail sanitization are skipped."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_cache.get.return_value = frozenset(["X-Tenant-Id"])
         mock_sanitize.side_effect = ValueError("CRLF injection")
@@ -904,6 +941,7 @@ class TestSafeExtractHeadersForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_returns_headers_on_success(self, mock_settings):
         """Happy path: returns extracted headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
 
@@ -939,6 +977,7 @@ class TestSafeExtractAndFilterForLoopback:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_returns_filtered_headers_on_success(self, mock_settings):
         """Happy path: returns extracted and filtered headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.default_passthrough_headers = []
         mock_settings.proxy_user_header = "X-Authenticated-User"

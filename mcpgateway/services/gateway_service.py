@@ -94,8 +94,9 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
+from mcpgateway.db import ResourceMetric, ResourceSubscription
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
@@ -4975,7 +4976,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                 # Get user-specific OAuth token only if user_email is provided
                                 if user_email:
@@ -8104,6 +8105,7 @@ async def test_server_handshake(
 
     # Deferred import: `main` imports this module at load time, so importing the
     # ASGI `app` singleton at module scope here would be circular.
+    # First-Party
     from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
 
     def get_httpx_client_factory(
@@ -8227,7 +8229,7 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                     # SECURITY: Use token_teams from the authenticated user dict — this is
                     # already resolved by auth middleware and must not be widened by
