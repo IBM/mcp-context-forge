@@ -11844,6 +11844,7 @@ class TestProxyFunctions:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = True
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(mock_gateway, request_headers, {}, None)
@@ -11937,6 +11938,7 @@ class TestProxyFunctions:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = True
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_resources_to_gateway(mock_gateway, request_headers, {}, None)
@@ -12114,6 +12116,7 @@ class TestProxyFunctions:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = True
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
@@ -12200,6 +12203,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12233,6 +12237,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_resources_to_gateway(gw, request_headers, {}, None)
@@ -12267,6 +12272,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_read_resource_to_gateway(gw, "file:///test.txt", {}, None)
@@ -12300,6 +12306,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12332,6 +12339,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False  # Explicitly disabled
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12359,6 +12367,7 @@ class TestProxyUpstreamAuthorizationRename:
                         mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
                         mock_settings.mcpgateway_direct_proxy_timeout = 30
                         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                            mock_ph_settings.max_header_value_length = 4096
                             mock_ph_settings.enable_header_passthrough = True
                             mock_ph_settings.enable_overwrite_base_headers = False
                             await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12394,6 +12403,7 @@ class TestProxyUpstreamAuthorizationRename:
                             mock_settings.default_passthrough_headers = []
                             mock_settings.mcpgateway_direct_proxy_timeout = 30
                             with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                mock_ph_settings.max_header_value_length = 4096
                                 mock_ph_settings.enable_header_passthrough = True
                                 mock_ph_settings.enable_overwrite_base_headers = False
                                 await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)

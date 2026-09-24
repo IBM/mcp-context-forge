@@ -25,10 +25,10 @@ from fastapi.testclient import TestClient
 from mcpgateway.baggage import (
     BaggageConfig,
     BaggageConfigError,
-    BaggageSizeLimitError,
     HeaderMapping,
     extract_baggage_from_headers,
 )
+from mcpgateway.config import settings
 from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
 
 
@@ -221,18 +221,20 @@ class TestBaggageSecurityDenyPaths:
 
     def test_oversized_value_truncated(self):
         """Test that oversized values are truncated."""
+        # Use larger baggage size limit to accommodate the truncated value
         config = BaggageConfig(
             enabled=True,
             mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
             propagate_to_external=False,
             max_items=32,
-            max_size_bytes=8192,
+            max_size_bytes=20000,
             log_rejected=True,
             log_sanitization=True,
         )
 
-        # Create value larger than MAX_HEADER_VALUE_LENGTH (4096)
-        large_value = "a" * 5000
+        # Create value larger than configured max header value length
+        max_length = settings.max_header_value_length
+        large_value = "a" * (max_length + 1000)
 
         headers = {
             "X-Tenant-ID": large_value,
@@ -240,8 +242,8 @@ class TestBaggageSecurityDenyPaths:
 
         result = extract_baggage_from_headers(headers, config)
 
-        # Value should be truncated
-        assert len(result["tenant.id"]) <= 4096
+        # Value should be truncated to configured max length
+        assert len(result["tenant.id"]) <= max_length
 
 
 class TestBaggageConfigurationSecurity:

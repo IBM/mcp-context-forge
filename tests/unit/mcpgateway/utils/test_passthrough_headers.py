@@ -33,6 +33,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_basic_header_passthrough_global_config(self, mock_settings):
         """Test basic header passthrough with global configuration."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         # Mock database and global config
@@ -52,6 +53,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_gateway_specific_override(self, mock_settings):
         """Test that gateway-specific headers override global configuration."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -75,6 +77,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_conflict_basic_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses basic auth."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -103,6 +106,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_conflict_bearer_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses bearer auth."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -131,6 +135,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_base_header_conflict_prevention(self, mock_settings, caplog):
         """Test that request headers don't override base headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False
 
@@ -155,6 +160,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_case_insensitive_header_matching(self, mock_settings):
         """Test that header matching works with lowercase request headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -175,6 +181,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_missing_request_headers(self, mock_settings, caplog):
         """Test behavior when configured headers are missing from request."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -202,6 +209,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_empty_allowed_headers(self, mock_settings):
         """Test behavior with empty allowed headers configuration."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -230,6 +238,7 @@ class TestPassthroughHeaders:
 
         # Mock settings fallback
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
             mock_settings.default_passthrough_headers = ["X-Default"]
 
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
@@ -248,6 +257,7 @@ class TestPassthroughHeaders:
 
         # Mock settings fallback
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = 4096
             mock_settings.default_passthrough_headers = ["X-Default"]
 
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
@@ -277,6 +287,7 @@ class TestPassthroughHeaders:
         should be passed through even if ENABLE_HEADER_PASSTHROUGH is False.
         This behavior is handled before the main allowlist processing.
         """
+        mock_settings.max_header_value_length = 4096
         # Feature disabled globally
         mock_settings.enable_header_passthrough = False
 
@@ -295,6 +306,7 @@ class TestPassthroughHeaders:
 
         # Authorization should be present because gateway is configured with auth_type 'none'
         assert result.get("Authorization") == "Bearer client-token"
+
 
     def test_none_request_headers(self):
         """Test behavior with None request headers."""
@@ -315,6 +327,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_base_headers_not_modified(self, mock_settings):
         """Test that original base_headers dictionary is not modified."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -338,6 +351,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_multiple_auth_type_conflicts(self, mock_settings, caplog):
         """Test various auth type conflict scenarios."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -374,6 +388,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_complex_mixed_scenario(self, mock_settings):
         """Test complex scenario with multiple headers, conflicts, and overrides."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -403,6 +418,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_database_query_called_correctly(self, mock_settings):
         """Test that database is queried correctly for GlobalConfig."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
 
         mock_db = Mock()
@@ -425,6 +441,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_logging_levels(self, mock_settings, caplog):
         """Test that appropriate log levels are used for different scenarios."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False
 
@@ -454,6 +471,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_enable_overwrite_base_headers(self, mock_settings):
         """Test that enable_overwrite_base_headers allows overriding base headers."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = True  # Enable override
         mock_settings.default_passthrough_headers = ["X-Custom-Type", "X-Tenant-Id"]
@@ -477,6 +495,7 @@ class TestPassthroughHeaders:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_disable_overwrite_base_headers_prevents_conflicts(self, mock_settings, caplog):
         """Test that when overwrite is disabled, base header conflicts are prevented."""
+        mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False  # Disable override (default)
         mock_settings.default_passthrough_headers = ["X-Custom-Type", "X-Tenant-Id"]
