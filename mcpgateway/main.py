@@ -242,6 +242,7 @@ from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
@@ -1490,6 +1491,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # mode) is a hard startup failure and must propagate rather than letting
     # the gateway boot with a broken or absent sandbox.
     start_jq_pool()
+    start_validation_pool()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -2073,6 +2075,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Shut down the sandboxed jq worker pool
         shutdown_jq_pool()
+
+        # Shut down the sandboxed schema-validation worker pool
+        shutdown_validation_pool()
 
         logger.info("Shutdown complete")
 

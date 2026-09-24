@@ -2749,6 +2749,26 @@ class Settings(BaseSettings):
         description="Number of forked jq worker processes per gateway worker. Default: 2.",
     )
 
+    # Schema validation sandbox: bounds a JSON Schema regex keyword in a killable worker.
+    regex_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=60,
+        description="Wall-clock limit for one schema validation that carries a regex keyword. Exceeding it kills the worker and fails validation. Default: 1.0 seconds.",
+    )
+    regex_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked schema-validation worker processes per gateway worker. Default: 2.",
+    )
+    regex_max_subject_bytes: int = Field(
+        default=262144,
+        ge=1024,
+        le=10485760,
+        description="Maximum serialized instance size sent to the validation sandbox. A larger instance fails validation closed. Default: 256KB.",
+    )
+
     # Content Security - Size Limits
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
     content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB

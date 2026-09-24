@@ -19,9 +19,6 @@ import re
 from typing import Any, Dict, Iterable, List, Pattern, Tuple
 
 # Third-Party
-from pydantic import BaseModel, ConfigDict
-
-# Third-Party
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -32,6 +29,10 @@ from cpex.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+from pydantic import BaseModel, ConfigDict
+
+# First-Party
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_pattern_source
 
 DEFAULT_LEXICONS: Dict[str, List[str]] = {
     "self_harm": [
@@ -73,7 +74,14 @@ class HarmfulContentConfig(BaseModel):
         if "categories" in data:
             compiled_cats = {}
             for cat, patterns in data["categories"].items():
-                compiled_cats[cat] = [re.compile(p, re.IGNORECASE) if isinstance(p, str) else p for p in patterns]
+                compiled_patterns = []
+                for p in patterns:
+                    if isinstance(p, str):
+                        warn_unprovable_pattern_source(p, source="plugin:harmful_content_detector")
+                        compiled_patterns.append(re.compile(p, re.IGNORECASE))
+                    else:
+                        compiled_patterns.append(p)
+                compiled_cats[cat] = compiled_patterns
             data["categories"] = compiled_cats
         else:
             # Use default lexicons and compile them

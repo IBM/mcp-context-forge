@@ -1,0 +1,422 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/utils/test_safe_jsonschema.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Routing and fail-closed tests for bounded schema validation.
+
+The corpus covers every category that broke the v1 design: nested quantifiers, quantified
+alternation, adjacent unbounded repeats, negated classes, dot-based polynomial patterns,
+and patterns reachable only through additionalProperties.
+"""
+
+# Standard
+from contextlib import nullcontext
+import logging
+import time
+from unittest.mock import patch
+
+# Third-Party
+import jsonschema
+import pytest
+
+# First-Party
+from mcpgateway.utils import safe_jsonschema
+from mcpgateway.utils.safe_jsonschema import (
+    _start_method_for,
+    sandbox_unavailable,
+    schema_uses_regex,
+    shutdown_validation_pool,
+    start_validation_pool,
+    validate_safely,
+    warn_unprovable_pattern_source,
+    warn_unprovable_patterns,
+)
+
+DRAFT = jsonschema.Draft202012Validator
+
+# Every one of these froze a gateway worker under the v1 design.
+HOSTILE = [
+    ("nested quantifier", r"^(a+)+$", "a" * 40 + "b"),
+    ("quantified alternation", r"^(a|aa)+$", "a" * 40 + "b"),
+    ("adjacent repeats", r"^(a+)(a+)(a+)(a+)(a+)(a+)(a+)(a+)(a+)(a+)$", "a" * 45 + "b"),
+    ("negated class", r"^[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*[^,]*$", "a" * 40 + ","),
+    ("dot polynomial", r"^.*a.*a.*a$", "a" * 3000 + "!"),
+]
+
+# The phrase the timeout path alone contributes. validate_safely wraps every sandbox fault,
+# this one included, in "schema validation could not be completed safely", so that outer
+# text does not discriminate. This inner phrase comes from SandboxTimeout only, so it
+# separates "the budget stopped it" from both "it rejected quickly" and "the pool was
+# broken".
+BOUNDED = "exceeded the execution time limit"
+
+
+@pytest.fixture(autouse=True)
+def _pool():
+    """Start and stop the validation pool around each test.
+
+    Yields:
+        None.
+    """
+    start_validation_pool()
+    yield
+    shutdown_validation_pool()
+
+
+def test_schema_without_regex_is_detected():
+    """A schema with no regex keyword takes the inline path."""
+    assert schema_uses_regex({"type": "object", "properties": {"a": {"type": "string"}}}) is False
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"pattern": "^a$"},
+        {"properties": {"x": {"pattern": "^a$"}}},
+        {"patternProperties": {"^a$": {"type": "string"}}},
+        {"$defs": {"d": {"pattern": "^a$"}}},
+        {"items": [{"anyOf": [{"pattern": "^a$"}]}]},
+    ],
+)
+def test_regex_keyword_is_detected_at_any_depth(schema):
+    """Any regex keyword anywhere routes the whole validation to the sandbox.
+
+    Args:
+        schema: A JSON Schema that carries a regex keyword at some depth.
+    """
+    assert schema_uses_regex(schema) is True
+
+
+def test_regex_schema_is_submitted_to_the_sandbox_and_plain_schema_is_not():
+    """The regex keyword, and only the regex keyword, puts a validation in the sandbox.
+
+    A timing test can only ever be circumstantial about routing. This asserts the
+    submission itself, so a change that validates a regex schema inline fails here even
+    when every elapsed-time ceiling still holds.
+    """
+    original = safe_jsonschema._SANDBOX.submit  # pylint: disable=protected-access
+    with patch.object(safe_jsonschema._SANDBOX, "submit", wraps=original) as submit:  # pylint: disable=protected-access
+        validate_safely({"n": 1}, {"type": "object", "properties": {"n": {"type": "integer"}}}, DRAFT)
+        assert submit.call_count == 0, "a schema with no regex keyword must not reach the sandbox"
+
+        validate_safely({"q": "abc"}, {"type": "object", "properties": {"q": {"type": "string", "pattern": "^[a-z]+$"}}}, DRAFT)
+        assert submit.call_count == 1, "a schema carrying a regex keyword must be validated in the sandbox, never inline"
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("label,pattern,subject", HOSTILE, ids=[c[0] for c in HOSTILE])
+def test_hostile_pattern_is_bounded_and_fails_closed(label, pattern, subject):
+    """Every category that broke v1 must now be bounded and reported as a failure.
+
+    Elapsed time alone cannot prove this. A pattern that rejects quickly also finishes
+    under the ceiling, so the message must show the safety budget stopped the work.
+
+    Args:
+        label: Short name of the hostile category, used in the failure message.
+        pattern: The regex the schema carries.
+        subject: The instance value that drives the pattern into backtracking.
+    """
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": pattern}}}
+    start = time.perf_counter()
+    with pytest.raises(jsonschema.exceptions.ValidationError) as excinfo:
+        validate_safely({"q": subject}, schema, DRAFT)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 10.0, f"{label} took {elapsed:.1f}s; the sandbox did not bound it"
+    assert BOUNDED in str(excinfo.value), f"{label} failed for another reason, so nothing proves the sandbox bounded it: {excinfo.value}"
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("escape", ["additionalProperties", "unevaluatedProperties"])
+def test_pattern_properties_escape_is_bounded(escape):
+    """jsonschema reaches stock re through these keywords, not through the pattern keyword.
+
+    ``jsonschema/_utils.py:82`` joins the patternProperties keys with ``|`` and calls stock
+    ``re.search`` on behalf of each of them. That escape defeated the v1 keyword override,
+    and the whole-validation process boundary is the only thing that closes it. The
+    assertion must name the timeout, because a bare except would equally absorb a refusal
+    from an absent sandbox and leave the escape untested.
+
+    Args:
+        escape: The keyword that reaches stock re on behalf of patternProperties.
+    """
+    schema = {"type": "object", "patternProperties": {r"^(a+)+$": {"type": "string"}}, escape: False}
+    start = time.perf_counter()
+    with pytest.raises(jsonschema.exceptions.ValidationError) as excinfo:
+        validate_safely({"a" * 40 + "b": "x"}, schema, DRAFT)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 10.0, f"{escape} took {elapsed:.1f}s; the sandbox did not bound it"
+    assert BOUNDED in str(excinfo.value), f"{escape} failed for another reason, so nothing proves the sandbox bounded the escape: {excinfo.value}"
+
+
+@pytest.mark.timeout(30)
+def test_valid_subject_still_validates():
+    """A matching subject keeps working and stays fast."""
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}}}
+    start = time.perf_counter()
+    validate_safely({"q": "a" * 5000}, schema, DRAFT)
+    assert time.perf_counter() - start < 5.0
+
+
+def test_ordinary_schema_behaves_as_before():
+    """A normal regex schema still accepts and rejects correctly."""
+    schema = {"type": "object", "properties": {"name": {"type": "string", "pattern": "^[a-z]+$"}}}
+    validate_safely({"name": "alice"}, schema, DRAFT)
+    with pytest.raises(jsonschema.exceptions.ValidationError):
+        validate_safely({"name": "Alice"}, schema, DRAFT)
+
+
+def test_extended_validator_class_is_refused_for_a_regex_schema():
+    """An extended validator is refused, rather than silently validated as another draft.
+
+    A class from ``validators.extend()`` may carry a custom keyword or a format checker.
+    Substituting a stock draft would give the sandbox different semantics from the inline
+    path for the same class, which weakens the boundary without saying so.
+    """
+    extended = jsonschema.validators.extend(DRAFT, {})
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^a+$"}}}
+
+    with pytest.raises(jsonschema.exceptions.ValidationError) as excinfo:
+        validate_safely({"q": "aaa"}, schema, extended)
+    assert "not a stock jsonschema draft" in str(excinfo.value)
+
+
+def test_extended_validator_class_still_works_without_a_regex_keyword():
+    """The refusal is scoped to the sandbox path, so the inline path keeps its own class."""
+    extended = jsonschema.validators.extend(DRAFT, {})
+    validate_safely({"n": 1}, {"type": "object", "properties": {"n": {"type": "integer"}}}, extended)
+
+
+def test_oversized_instance_fails_closed():
+    """An instance above the cap is refused rather than submitted."""
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^a+$"}}}
+    with pytest.raises(jsonschema.exceptions.ValidationError):
+        validate_safely({"q": "a" * (512 * 1024)}, schema, DRAFT)
+
+
+def test_broken_pool_fails_closed():
+    """A pool failure surfaces an error; it never reports success."""
+    # First-Party
+    from mcpgateway.utils.sandbox_pool import SandboxError
+
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^a+$"}}}
+    with patch("mcpgateway.utils.safe_jsonschema._SANDBOX.submit", side_effect=SandboxError("boom")):
+        with pytest.raises(jsonschema.exceptions.ValidationError):
+            validate_safely({"q": "aaa"}, schema, DRAFT)
+
+
+def test_no_sandbox_refuses_regex_schema():
+    """With no sandbox, a regex-bearing schema is refused, never executed inline."""
+    schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}}}
+    with patch("mcpgateway.utils.safe_jsonschema.sandbox_unavailable", return_value=True):
+        with pytest.raises(jsonschema.exceptions.ValidationError):
+            validate_safely({"q": "aaa"}, schema, DRAFT)
+
+
+def test_start_failure_names_its_cause(caplog):
+    """A start failure names the real cause, rather than blaming the platform.
+
+    A configuration fault and an unsupported platform both stop the sandbox. An operator
+    reading only "unavailable on this platform" investigates the wrong thing.
+
+    Args:
+        caplog: The pytest log capture fixture.
+    """
+    with patch.object(safe_jsonschema._SANDBOX, "start", side_effect=RuntimeError("settings rejected a placeholder")):  # pylint: disable=protected-access
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+            start_validation_pool()
+
+    assert sandbox_unavailable() is True
+    assert "RuntimeError: settings rejected a placeholder" in caplog.text
+    start_validation_pool()
+
+
+def test_no_sandbox_still_validates_schema_without_regex():
+    """A schema with no regex keyword is unaffected by sandbox availability."""
+    schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
+    with patch("mcpgateway.utils.safe_jsonschema.sandbox_unavailable", return_value=True):
+        validate_safely({"n": 1}, schema, DRAFT)
+
+
+def _break_schema_uses_regex():
+    """Make the routing call inside warn_unprovable_patterns raise.
+
+    Returns:
+        A patch context manager.
+    """
+    return patch("mcpgateway.utils.safe_jsonschema.schema_uses_regex", side_effect=RuntimeError("simulated internal failure"))
+
+
+def _break_warning_matching(prefix):
+    """Make one log statement raise and pass every other logging call through.
+
+    The fallback warning in the except handler still reaches the real logger, so a test can
+    assert the function reported the failure it swallowed.
+
+    Args:
+        prefix: The start of the message to break.
+
+    Returns:
+        A patch context manager.
+    """
+    real_warning = safe_jsonschema.logger.warning
+
+    def _warning(msg, *args, **kwargs):
+        """Raise for the targeted message and pass every other call through.
+
+        Args:
+            msg: The log message or format string.
+            *args: Format arguments.
+            **kwargs: Logging keyword arguments.
+
+        Returns:
+            Whatever the real logger returns for a pass-through call.
+
+        Raises:
+            RuntimeError: When the targeted message is logged.
+        """
+        if str(msg).startswith(prefix):
+            raise RuntimeError("simulated internal failure")
+        return real_warning(msg, *args, **kwargs)
+
+    return patch.object(safe_jsonschema.logger, "warning", _warning)
+
+
+def _break_success_path_warning():
+    """Make the success-path log statement inside warn_unprovable_patterns raise.
+
+    Returns:
+        A patch context manager.
+    """
+    return _break_warning_matching("Schema carries a regex keyword")
+
+
+def _break_source_warning():
+    """Make the success-path log statement inside warn_unprovable_pattern_source raise.
+
+    Returns:
+        A patch context manager.
+    """
+    return _break_warning_matching("Operator-supplied regex compiled")
+
+
+def _break_all_logging():
+    """Make every logging call raise, including the fallback in the except handler.
+
+    Returns:
+        A patch context manager.
+    """
+    return patch.object(safe_jsonschema.logger, "warning", side_effect=RuntimeError("simulated internal failure"))
+
+
+def _no_break():
+    """Patch nothing, for a case whose argument alone makes a statement raise.
+
+    Returns:
+        A context manager that changes nothing.
+    """
+    return nullcontext()
+
+
+class _UnmeasurablePattern(str):
+    """A pattern whose length cannot be taken, standing in for a caller passing a bad value."""
+
+    def __len__(self):
+        """Refuse to report a length.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        raise RuntimeError("simulated internal failure")
+
+
+@pytest.mark.parametrize(
+    ("break_statement", "fallback_logged"),
+    [
+        (_break_schema_uses_regex, True),
+        (_break_success_path_warning, True),
+        (_break_all_logging, False),
+    ],
+    ids=["schema_uses_regex", "success_path_warning", "all_logging"],
+)
+def test_warn_unprovable_patterns_never_raises_by_construction(break_statement, fallback_logged, caplog):
+    """warn_unprovable_patterns swallows any internal failure and returns normally.
+
+    This pins the function's contract: every caller (a SQLAlchemy listener, a federation
+    sync loop, an OpenAPI import response) relies on this call never failing, so the
+    guarantee must live inside the function rather than at each call site. Breaking this
+    test is the signal that someone removed the guard rather than the call-site discipline
+    the guard was written to replace.
+
+    Each raisable statement in the function body is broken in turn. Pinning only the
+    ``schema_uses_regex`` call would let a narrowed guard pass: moving the success-path
+    warning out of the ``try`` reintroduces an unguarded statement that one case cannot see.
+    The ``all_logging`` case covers the fallback warning, which the docstring claims is
+    guarded too and which sits outside the ``try`` that guards everything else.
+
+    Args:
+        break_statement: A factory returning a patch that makes one statement raise.
+        fallback_logged: Whether the except handler can still reach the logger.
+        caplog: The pytest log capture fixture.
+    """
+    with break_statement():
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+            result = warn_unprovable_patterns({"pattern": "^a$"}, source="tool:pinning-test")
+
+    assert result is None
+    if fallback_logged:
+        assert "Schema regex inventory check failed" in caplog.text
+        assert "simulated internal failure" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("pattern", "break_statement", "fallback_logged"),
+    [
+        ("^a$", _break_source_warning, True),
+        ("^a$", _break_all_logging, False),
+        (_UnmeasurablePattern("^a$"), _no_break, True),
+    ],
+    ids=["success_path_warning", "all_logging", "pattern_length"],
+)
+def test_warn_unprovable_pattern_source_never_raises_by_construction(pattern, break_statement, fallback_logged, caplog):
+    """warn_unprovable_pattern_source swallows any internal failure and returns normally.
+
+    The function sits immediately before a plugin's ``re.compile`` call, which must not fail
+    to load because a diagnostic failed. It carries the same never-raises claim as
+    ``warn_unprovable_patterns`` and needs the same pinning, one raisable statement at a
+    time: the ``len(pattern)`` the log call evaluates, the log call itself, and the fallback
+    log in the except handler.
+
+    Args:
+        pattern: The pattern argument to pass.
+        break_statement: A factory returning a patch that makes one statement raise.
+        fallback_logged: Whether the except handler can still reach the logger.
+        caplog: The pytest log capture fixture.
+    """
+    with break_statement():
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+            result = warn_unprovable_pattern_source(pattern, source="plugin:pinning-test")
+
+    assert result is None
+    if fallback_logged:
+        assert "Regex pattern compile warning failed" in caplog.text
+        assert "simulated internal failure" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("linux", "fork"),
+        ("linux2", "fork"),
+        ("darwin", "spawn"),
+        ("win32", "spawn"),
+    ],
+)
+def test_start_method_is_fork_only_on_linux(platform, expected):
+    """The sandbox picks fork only on Linux, matching jq_runner.subprocess_mode_available().
+
+    Args:
+        platform: A sys.platform value under test.
+        expected: The start method _start_method_for must return for it.
+    """
+    assert _start_method_for(platform) == expected

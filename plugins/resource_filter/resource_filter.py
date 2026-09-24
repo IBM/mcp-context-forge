@@ -21,7 +21,6 @@ from typing import List, Pattern
 from urllib.parse import unquote, urlparse
 
 # Third-Party
-import idna
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -35,6 +34,10 @@ from cpex.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+import idna
+
+# First-Party
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_pattern_source
 
 
 def _canonical_host(value: str) -> str:
@@ -140,6 +143,7 @@ class ResourceFilterPlugin(Plugin):
             replacement = filter_rule.get("replacement", "***")
             if pattern:
                 try:
+                    warn_unprovable_pattern_source(pattern, source="plugin:resource_filter")
                     compiled_pattern = re.compile(pattern, re.IGNORECASE)
                     self.content_filters.append((compiled_pattern, replacement))
                 except re.error:

@@ -30,6 +30,7 @@ import logging
 from pathlib import Path
 import subprocess
 import sys
+import time
 from unittest.mock import patch
 
 # Third-Party
@@ -38,12 +39,32 @@ import pytest
 
 # First-Party
 from mcpgateway.schemas import AdminToolCreate, encode_datetime, GatewayCreate, PromptArgument, PromptCreate, ResourceCreate, RPCRequest, ServerCreate, ToolCreate, ToolInvocation
+from mcpgateway.services.tool_service import _validate_tool_input_arguments
 from mcpgateway.utils.base_models import to_camel_case
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 
 # Configure logging for better test debugging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def _pool():
+    """Start and stop the validation pool around one test.
+
+    Scoped to the single test that needs it, not module-autouse: this file carries
+    hundreds of unrelated security tests, and starting a worker pool for each of them
+    would be pure overhead. Without this, the ReDoS test relied on lazy ``_ensure()`` and
+    on no other module having left ``_SANDBOX_DOWN`` true, which is order-dependent luck,
+    not a guarantee.
+
+    Yields:
+        None.
+    """
+    start_validation_pool()
+    yield
+    shutdown_validation_pool()
 
 
 class TestSecurityValidation:
@@ -1228,11 +1249,14 @@ class TestSecurityValidation:
             must_fail(payload, f"SSTI #{i + 1} ({payload[:20]}...)")
 
     @pytest.mark.timeout(30)
-    def test_regex_dos_prevention(self):
+    def test_regex_dos_prevention(self, _pool):
         """Test prevention of ReDoS attacks.
 
         Uses pytest-timeout for deterministic timeout instead of wall-clock assertions.
         If this test times out, it indicates a ReDoS vulnerability in the regex patterns.
+
+        Args:
+            _pool: Starts and stops the validation worker pool for this test.
         """
         logger.debug("Testing ReDoS prevention")
 
@@ -1245,14 +1269,32 @@ class TestSecurityValidation:
             "((a*)*)*b",
         ]
 
+        # Storage is intentionally permitted; the runtime sandbox is the control. Asserting
+        # only that the pattern was stored proves the storage works and leaves the control
+        # untested, so each stored schema is validated against a hostile subject here.
+        hostile_subject = {"q": "a" * 40 + "b"}
+        outcomes = {}
+
         for pattern in redos_patterns:
             logger.debug(f"Testing ReDoS pattern: {pattern}")
             # These patterns in input schema could cause ReDoS
-            schema = {"type": "string", "pattern": pattern}
+            schema = {"type": "object", "properties": {"q": {"type": "string", "pattern": pattern}}}
             # Should either reject or handle safely
             tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
             # Input schema might have defaults
             assert tool.input_schema is not None
+
+            start = time.perf_counter()
+            outcomes[pattern] = _validate_tool_input_arguments(hostile_subject, tool.input_schema)
+            elapsed = time.perf_counter() - start
+            assert elapsed < 10.0, f"pattern {pattern!r} ran {elapsed:.1f}s; the sandbox did not bound it"
+
+        # Four of these patterns match or reject in microseconds, so a suite-wide time bound
+        # says nothing about them. Only the nested quantifier backtracks, and it must be the
+        # budget that stops it, never a mismatch and never a broken pool.
+        runaway = outcomes["(a+)+$"]
+        assert runaway is not None, "a truncated validation must fail closed"
+        assert "exceeded the execution time limit" in runaway, f"the budget must be what stopped it; got {runaway!r}"
 
         # Test 2: SSTI validation patterns should not be vulnerable to ReDoS
         # The SSTI patterns previously used .* which could cause catastrophic backtracking

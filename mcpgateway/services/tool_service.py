@@ -53,7 +53,6 @@ from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, valida
 import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
-import referencing
 import referencing.exceptions
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -113,6 +112,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
@@ -642,10 +642,12 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
 # own input/output schema — and jsonschema's default registry resolves remote ``$ref`` URIs by
 # fetching them with ``urllib.request.urlopen``. That is an SSRF primitive reachable from the
 # preview route and from every live invocation. Two layers close it: non-local refs are refused
-# outright (below), and validators are built against this registry, which holds only the bundled
-# metaschemas and has no ``retrieve`` callable, so any residual resolution attempt raises
-# ``referencing.exceptions.Unresolvable`` instead of hitting the network.
-_NO_RETRIEVE_REGISTRY: referencing.Registry = referencing.Registry()
+# outright, by ``_assert_local_refs_only`` below, before any validator sees the schema; and
+# ``validate_safely`` (``mcpgateway.utils.safe_jsonschema``) builds every validator — inline and
+# inside the sandbox worker — against the module-level ``_NO_RETRIEVE_REGISTRY``, an empty
+# ``referencing.Registry()`` that holds only the bundled metaschemas and has no ``retrieve``
+# callable, so any residual resolution attempt raises ``referencing.exceptions.Unresolvable``
+# instead of hitting the network.
 
 # Every keyword whose value is a reference URI, across the drafts we accept.
 _REFERENCE_KEYWORDS = ("$ref", "$dynamicRef", "$recursiveRef")
@@ -742,19 +744,21 @@ def _canonicalize_schema(schema: dict) -> str:
 
 
 def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
-    """Validate instance against schema using cached validator class.
+    """Validate instance against schema using the cached validator class.
 
-    Creates a fresh validator instance for thread safety, but reuses
-    the cached validator class and schema check. Uses best_match to
-    preserve jsonschema.validate() error selection semantics.
+    Reuses the cached validator class and schema check, then delegates the actual
+    validation to ``validate_safely``, which runs it inline for a regex-free schema and
+    behind a killable sandbox process for a schema that carries a regex keyword.
 
     Args:
         instance: The data to validate.
         schema: The JSON Schema to validate against.
 
     Raises:
-        error: The best matching ValidationError from jsonschema validation.
-        jsonschema.exceptions.ValidationError: If validation fails.
+        jsonschema.exceptions.ValidationError: If validation fails, or if the sandbox path
+            could not complete safely (timeout, busy pool, broken pool, an oversized
+            instance, unserializable input, or the sandbox being unavailable) — ``validate_safely``
+            never fails open.
         jsonschema.exceptions.SchemaError: If the schema itself is invalid or carries a
             non-local ``$ref``.
         referencing.exceptions.Unresolvable: If a reference cannot be resolved from the
@@ -762,13 +766,10 @@ def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
     """
     schema_json = _canonicalize_schema(schema)
     validator_cls, checked_schema = _get_validator_class_and_check(schema_json)
-    # Create fresh validator instance for thread safety. The registry never retrieves,
-    # so an unresolvable reference fails closed instead of triggering a network fetch.
-    validator = validator_cls(checked_schema, registry=_NO_RETRIEVE_REGISTRY)
-    # Use best_match to match jsonschema.validate() error selection behavior
-    error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
-    if error is not None:
-        raise error
+    # Validation runs behind a process boundary when the schema carries a regex keyword,
+    # because jsonschema reaches Python's backtracking engine from several places and a
+    # non-terminating match holds the GIL for the whole worker.
+    validate_safely(instance, checked_schema, validator_cls)
 
 
 def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -5342,7 +5343,12 @@ class ToolService(BaseService):
         # Input-schema validation (#5629): shared by invoke_tool and preview_tool_invocation
         # so the two can never disagree about whether a given set of arguments is acceptable.
         # Reported, not raised -- see ResolvedTool.schema_validation_error.
-        schema_validation_error = _validate_tool_input_arguments(arguments, tool_payload.get("input_schema")) if arguments is not None else None
+        #
+        # Offloaded to a thread because a regex-bearing schema blocks on
+        # SandboxPool.submit().result(), which is a synchronous wait on the worker
+        # process. Without this, a hostile request holds the event loop for the
+        # sandbox's timeout budget instead of returning to it immediately.
+        schema_validation_error = await asyncio.to_thread(_validate_tool_input_arguments, arguments, tool_payload.get("input_schema")) if arguments is not None else None
 
         return ResolvedTool(
             is_direct_proxy=is_direct_proxy,
@@ -6141,8 +6147,14 @@ class ToolService(BaseService):
                             # The validator skips for isError=true (per #4202) and, on validation
                             # failure, mutates tool_result in place with is_error=True, so the
                             # single post-validation read below covers all cases uniformly.
+                            #
+                            # Offloaded to a thread: _extract_and_validate_structured_content is
+                            # entirely synchronous, and a regex-bearing output_schema blocks on
+                            # SandboxPool.submit().result() inside it. Running it directly here
+                            # would hold the event loop for the sandbox's timeout budget instead
+                            # of returning to it immediately -- the method itself is unchanged.
                             if tool_output_schema:
-                                self._extract_and_validate_structured_content(tool_for_validation, tool_result)
+                                await asyncio.to_thread(self._extract_and_validate_structured_content, tool_for_validation, tool_result)
                             # ``success`` must reflect both upstream ``isError`` *and* any
                             # validator-imposed error state. Previously this path set
                             # ``success = bool(valid)``, which clobbered an upstream
