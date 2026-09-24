@@ -21,6 +21,7 @@ Tests cover:
 """
 
 # Standard
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,6 +40,29 @@ from mcpgateway.utils.identity_propagation import (
     build_identity_meta,
     filter_sensitive_attributes,
 )
+
+
+def _isolated_client(mock_client, captured_kwargs=None):
+    """Build a stand-in for get_isolated_http_client that yields a fixed mock client.
+
+    Args:
+        mock_client: Mock async client the context manager yields to the caller.
+        captured_kwargs: Optional dict populated with the call's keyword arguments,
+            so a test can assert on how the isolated client was configured (e.g.
+            ``follow_redirects``).
+
+    Returns:
+        An async context manager factory matching get_isolated_http_client's call shape.
+    """
+
+    @asynccontextmanager
+    async def _cm(*_args, **kwargs):
+        if captured_kwargs is not None:
+            captured_kwargs.update(kwargs)
+        yield mock_client
+
+    return _cm
+
 
 # ---------------------------------------------------------------------------
 # UserContext model tests
@@ -1033,7 +1057,7 @@ class TestOAuthTokenExchange:
     """Tests for OAuthManager.token_exchange() RFC 8693."""
 
     @pytest.mark.asyncio
-    async def test_successful_exchange(self):
+    async def test_successful_exchange(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthManager
 
@@ -1050,7 +1074,7 @@ class TestOAuthTokenExchange:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         result = await manager.token_exchange(
             token_url="https://auth.example.com/token",
@@ -1073,7 +1097,7 @@ class TestOAuthTokenExchange:
         assert post_data["scope"] == "read write"
 
     @pytest.mark.asyncio
-    async def test_subject_token_type_defaults_to_jwt(self):
+    async def test_subject_token_type_defaults_to_jwt(self, monkeypatch):
         """RFC 8693 §3: CF's inbound subject token is a CF-issued JWT, not an
         AS-issued access_token, so subject_token_type defaults to "...:jwt"."""
         # First-Party
@@ -1086,7 +1110,7 @@ class TestOAuthTokenExchange:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         await manager.token_exchange(
             token_url="https://auth.example.com/token",
@@ -1100,7 +1124,7 @@ class TestOAuthTokenExchange:
         assert post_data["subject_token_type"] == "urn:ietf:params:oauth:token-type:jwt"
 
     @pytest.mark.asyncio
-    async def test_subject_token_type_override(self):
+    async def test_subject_token_type_override(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthManager
 
@@ -1111,7 +1135,7 @@ class TestOAuthTokenExchange:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         await manager.token_exchange(
             token_url="https://auth.example.com/token",
@@ -1126,7 +1150,7 @@ class TestOAuthTokenExchange:
         assert post_data["subject_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
 
     @pytest.mark.asyncio
-    async def test_non_bearer_token_type_raises(self):
+    async def test_non_bearer_token_type_raises(self, monkeypatch):
         """RFC 8693 §2.2.1: token_type "N_A" means the issued token isn't usable
         as an OAuth Bearer token. CF only forwards "Authorization: Bearer <token>",
         so a non-Bearer token_type must fail closed rather than mislabel the token."""
@@ -1140,7 +1164,7 @@ class TestOAuthTokenExchange:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         with pytest.raises(OAuthError, match="Unsupported or missing token_type"):
             await manager.token_exchange(
@@ -1151,7 +1175,7 @@ class TestOAuthTokenExchange:
             )
 
     @pytest.mark.asyncio
-    async def test_missing_token_type_raises(self):
+    async def test_missing_token_type_raises(self, monkeypatch):
         """RFC 8693 §2.2.1: token_type is REQUIRED. An AS that omits it must fail
         closed rather than have CF silently assume Bearer."""
         # First-Party
@@ -1164,7 +1188,7 @@ class TestOAuthTokenExchange:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         with pytest.raises(OAuthError, match="Unsupported or missing token_type"):
             await manager.token_exchange(
@@ -1175,7 +1199,7 @@ class TestOAuthTokenExchange:
             )
 
     @pytest.mark.asyncio
-    async def test_missing_access_token_raises(self):
+    async def test_missing_access_token_raises(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
@@ -1188,7 +1212,7 @@ class TestOAuthTokenExchange:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         with pytest.raises(OAuthError, match="No access_token"):
             await manager.token_exchange(
@@ -1199,7 +1223,7 @@ class TestOAuthTokenExchange:
             )
 
     @pytest.mark.asyncio
-    async def test_missing_access_token_error_redacts_sensitive_fields(self):
+    async def test_missing_access_token_error_redacts_sensitive_fields(self, monkeypatch):
         """CWE-532: a malformed response missing access_token may still carry other
         credential-bearing fields (e.g. refresh_token); those must never be echoed
         verbatim into the OAuthError raised for this case."""
@@ -1213,7 +1237,7 @@ class TestOAuthTokenExchange:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         with pytest.raises(OAuthError) as exc_info:
             await manager.token_exchange(
@@ -1227,7 +1251,7 @@ class TestOAuthTokenExchange:
         assert "[REDACTED]" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_http_error_retries_and_raises(self):
+    async def test_http_error_retries_and_raises(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
@@ -1237,7 +1261,7 @@ class TestOAuthTokenExchange:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(side_effect=httpx.HTTPError("connection failed"))
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         with pytest.raises(OAuthError, match="Token exchange failed"):
             await manager.token_exchange(
@@ -1250,7 +1274,7 @@ class TestOAuthTokenExchange:
         assert mock_client.post.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_no_audience_or_scope(self):
+    async def test_no_audience_or_scope(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthManager
 
@@ -1263,7 +1287,7 @@ class TestOAuthTokenExchange:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         result = await manager.token_exchange(
             token_url="https://auth.example.com/token",
@@ -1279,7 +1303,7 @@ class TestOAuthTokenExchange:
         assert "scope" not in post_data
 
     @pytest.mark.asyncio
-    async def test_client_secret_decryption_failure_continues(self):
+    async def test_client_secret_decryption_failure_continues(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthManager
 
@@ -1292,7 +1316,7 @@ class TestOAuthTokenExchange:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         # Even with a non-empty secret that causes decryption to fail,
         # the original secret is used
@@ -1374,7 +1398,7 @@ class TestRBACProxyUserContextFailure:
 class TestTokenExchangeEncryptedSecret:
 
     @pytest.mark.asyncio
-    async def test_encrypted_secret_is_decrypted(self):
+    async def test_encrypted_secret_is_decrypted(self, monkeypatch):
         """When client_secret is encrypted, it should be decrypted before token exchange."""
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthManager
@@ -1395,7 +1419,7 @@ class TestTokenExchangeEncryptedSecret:
         mgr = OAuthManager.__new__(OAuthManager)
         mgr.request_timeout = 30
         mgr.max_retries = 1
-        mgr._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         with (
             patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings,
@@ -1719,7 +1743,7 @@ class TestOAuthManagerAdditionalTokenExchangeCoverage:
     """Cover additional token exchange branches."""
 
     @pytest.mark.asyncio
-    async def test_encrypted_client_secret_is_decrypted_before_exchange(self):
+    async def test_encrypted_client_secret_is_decrypted_before_exchange(self, monkeypatch):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthManager
 
@@ -1732,7 +1756,7 @@ class TestOAuthManagerAdditionalTokenExchangeCoverage:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
-        manager._get_client = AsyncMock(return_value=mock_client)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client))
 
         mock_encryption = MagicMock()
         mock_encryption.is_encrypted.return_value = True
