@@ -124,3 +124,21 @@ MCPGATEWAY_UI_AIRGAPPED=true make dev
 All vendor JavaScript is installed via npm and bundled/chunked with Vite for local serving.
 
 ---
+
+## 🌐 Standalone ContextForge Web UI
+
+In addition to the built-in Admin UI, ContextForge provides a standalone BFF-style Web UI — [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui).
+
+### Running with Docker Compose
+
+Enable the Web UI and its dedicated session store using the `ui` profile:
+
+```bash
+docker compose --profile ui up -d
+```
+
+- **Web UI URL:** [http://localhost:3001](http://localhost:3001)
+- **Session Redis:** Dedicated Redis instance (`web_ui_redis`)
+- **Gateway connection:** Connects to gateway over the internal network (`http://gateway:4444`)
+
+---
