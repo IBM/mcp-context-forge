@@ -3832,6 +3832,28 @@ class ToolService(BaseService):
             )
             raise ToolError(f"Failed to set tool state: {str(e)}")
 
+    @staticmethod
+    def _make_mcp_tool_error(
+        sanitized_message: str,
+        structured_content: Optional[Dict[str, Any]] = None,
+    ) -> "types.CallToolResult":
+        """Build a CallToolResult with isError=True.
+
+        Args:
+            sanitized_message: Pre-sanitized error text to include in the result.
+            structured_content: Optional dict attached to the result (e.g. ``{"status_code": 429}``
+                for retry-plugin status matching).
+
+        Returns:
+            A ``CallToolResult`` that conforms to the MCP protocol error shape.
+
+        """
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=f"MCP server error: {sanitized_message}")],
+            isError=True,
+            structuredContent=structured_content,
+        )
+
     async def invoke_tool_direct(
         self,
         gateway_id: str,
@@ -3861,10 +3883,11 @@ class ToolService(BaseService):
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
+            Returns a CallToolResult with isError=True if the tool invocation fails at runtime.
 
         Raises:
             ToolNotFoundError: If gateway not found or access denied.
-            ToolInvocationError: If invocation fails.
+            ToolInvocationError: If gateway is not in direct_proxy mode.
         """
         logger.info("Direct proxy tool invocation: %s via gateway %s", name, SecurityValidator.sanitize_log_message(gateway_id))
         # Look up gateway
@@ -3898,6 +3921,21 @@ class ToolService(BaseService):
                 meta_data = build_identity_meta(user_context, meta_data, gateway)
 
             gateway_url = gateway.url
+
+            # Snapshot auth_query_params while the ORM session is still open so
+            # sanitize_exception_message can redact secrets if the downstream call fails.
+            _gw_auth_type = getattr(gateway, "auth_type", None)
+            _gw_auth_query_params: Optional[Dict[str, str]] = None
+            if _gw_auth_type == "query_param":
+                raw_qp = getattr(gateway, "auth_query_params", None)
+                if isinstance(raw_qp, dict):
+                    _gw_auth_query_params = {}
+                    for _pk, _ev in raw_qp.items():
+                        if _ev:
+                            try:
+                                _gw_auth_query_params[_pk] = decode_auth(_ev).get(_pk, "")
+                            except Exception:  # noqa: S110
+                                logger.debug("Failed to decrypt query param '%s' for direct proxy error sanitization", _pk)
 
             # Resolve the original (unprefixed) tool name for the remote server.
             # Tools registered via gateways are stored as "{gateway_slug}{separator}{slugified_name}",
@@ -3975,7 +4013,10 @@ class ToolService(BaseService):
                     return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
-            raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
+            # Sanitize before returning — exception text may contain auth tokens embedded in
+            # gateway URLs (CWE-209).  Matches the SSE/StreamableHTTP error paths.
+            sanitized = sanitize_exception_message(str(e), _gw_auth_query_params)
+            return self._make_mcp_tool_error(sanitized)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code
@@ -4992,8 +5033,9 @@ class ToolService(BaseService):
         Called from each transport-specific timeout handler so the retry plugin
         can record the failure and (optionally) request a retry.  If the plugin
         sets ``retry_delay_ms > 0``, a ``ToolTimeoutError`` carrying the delay
-        is raised immediately; otherwise control returns to the caller which
-        raises a plain ``ToolTimeoutError``.
+        is raised immediately; otherwise this method returns normally and the
+        caller must raise a plain ``ToolTimeoutError`` to reach the outer
+        ``invoke_tool`` handler.
 
         Args:
             name: Tool name.
@@ -6395,12 +6437,13 @@ class ToolService(BaseService):
                             headers: HTTP headers to include in the request
 
                         Returns:
-                            ToolResult: Result of tool call
+                            CallToolResult: Result of tool call. Returns ``isError=True`` on
+                            timeouts, connection errors, and communication failures instead of
+                            raising, so the MCP protocol ``content`` contract is always satisfied.
 
                         Raises:
-                            ToolInvocationError: If the tool invocation fails during execution.
-                            ToolTimeoutError: If the tool invocation times out.
-                            BaseException: On connection or communication errors
+                            asyncio.CancelledError: Propagated without wrapping.
+                            SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
                         # Get correlation ID for distributed tracing
@@ -6550,7 +6593,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
-                            # Handle timeout specifically - log and raise ToolInvocationError
+                            # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6578,12 +6621,21 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
+                            # Raise ToolTimeoutError so the outer handler at the invoke_tool level
+                            # fires TOOL_POST_INVOKE exactly once.  Using return here would fall
+                            # through into the post-process block and fire it a second time.
+                            # _run_timeout_post_invoke already raised if retry_delay_ms > 0, so
+                            # this raise carries no retry signal (retry_delay_ms=0).
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
                         except ToolInputRequired:
                             # 2026 MRTR control flow, not a failure - let the transport handle it.
+                            raise
+                        except (SystemExit, GeneratorExit, KeyboardInterrupt):
+                            # Process-control signals must propagate; they are not tool failures.
+                            # Mirrors the CancelledError guard above — see PR #3202 review B7.
                             raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -6608,7 +6660,12 @@ class ToolService(BaseService):
                                 error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
-                            raise
+                            # Include HTTP status code in structured_content so the retry plugin can
+                            # honour retry_on_status (e.g. 429, 503) on this transport.
+                            exc_structured: Optional[Dict[str, Any]] = None
+                            if isinstance(root_cause, httpx.HTTPStatusError):
+                                exc_structured = {"status_code": root_cause.response.status_code}
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -6618,12 +6675,14 @@ class ToolService(BaseService):
                             headers: HTTP headers to include in the request
 
                         Returns:
-                            ToolResult: Result of tool call
+                            CallToolResult: Result of tool call. Returns ``isError=True`` on
+                            timeouts, connection errors, and communication failures instead of
+                            raising, so the MCP protocol ``content`` contract is always satisfied.
 
                         Raises:
-                            ToolInvocationError: If the tool invocation fails during execution.
-                            ToolTimeoutError: If the tool invocation times out.
-                            BaseException: On connection or communication errors
+                            asyncio.CancelledError: Propagated without wrapping.
+                            SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
+
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
@@ -6767,7 +6826,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
-                            # Handle timeout specifically - log and raise ToolInvocationError
+                            # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6795,12 +6854,21 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
+                            # Raise ToolTimeoutError so the outer handler at the invoke_tool level
+                            # fires TOOL_POST_INVOKE exactly once.  Using return here would fall
+                            # through into the post-process block and fire it a second time.
+                            # _run_timeout_post_invoke already raised if retry_delay_ms > 0, so
+                            # this raise carries no retry signal (retry_delay_ms=0).
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
                         except ToolInputRequired:
                             # 2026 MRTR control flow, not a failure - let the transport handle it.
+                            raise
+                        except (SystemExit, GeneratorExit, KeyboardInterrupt):
+                            # Process-control signals must propagate; they are not tool failures.
+                            # Mirrors the CancelledError guard above — see PR #3202 review B7.
                             raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -6825,7 +6893,12 @@ class ToolService(BaseService):
                                 error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
-                            raise
+                            # Include HTTP status code in structured_content so the retry plugin can
+                            # honour retry_on_status (e.g. 429, 503) on this transport.
+                            exc_structured: Optional[Dict[str, Any]] = None
+                            if isinstance(root_cause, httpx.HTTPStatusError):
+                                exc_structured = {"status_code": root_cause.response.status_code}
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
 
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)

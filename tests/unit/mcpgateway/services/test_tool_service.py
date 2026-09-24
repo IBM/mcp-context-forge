@@ -9463,14 +9463,26 @@ class TestInvokeToolDirect:
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
 
-            with pytest.raises(ToolInvocationError, match="Direct proxy tool invocation failed"):
-                await tool_service.invoke_tool_direct(
-                    gateway_id="gw-direct-1",
-                    name="remote_tool",
-                    arguments={},
-                    user_email="user@example.com",
-                    token_teams=["team-1"],
-                )
+            # After the MCP protocol fix, connection errors return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert hasattr(result, "is_error")
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # Error message should contain connection failure details
+            content_text = str(result.content[0])
+            assert "MCP server error" in content_text
+            assert "Connection refused" in content_text
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_passthrough_headers(self, tool_service, mock_direct_gateway):
@@ -9645,6 +9657,79 @@ class TestInvokeToolDirect:
                     name="some_tool",
                     arguments={},
                 )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_error_is_sanitized(self, tool_service, mock_direct_gateway):
+        """Connection error in invoke_tool_direct must be sanitized before reaching the client.
+
+        A gateway whose URL contains an auth token (query_param auth type) must not
+        leak that token verbatim in the returned error message.  The error text must
+        pass through sanitize_exception_message before being placed in the CallToolResult.
+        """
+        # Use a gateway with query_param auth so the snapshot code in invoke_tool_direct
+        # builds a decrypted param dict that sanitize_exception_message can redact.
+        from mcpgateway.utils.services_auth import encode_auth  # pylint: disable=import-outside-toplevel
+
+        secret_token = "super-secret-api-key"  # pragma: allowlist secret
+        encrypted = encode_auth({"apiKey": secret_token})
+
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "gw-direct-1"
+        gw.name = "direct_gateway"
+        gw.slug = "direct-gateway"
+        gw.url = f"http://remote-mcp:8080/mcp?apiKey={secret_token}"
+        gw.gateway_mode = "direct_proxy"
+        gw.auth_type = "query_param"
+        gw.auth_query_params = {"apiKey": encrypted}
+        gw.passthrough_headers = None
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.owner_email = None
+
+        @asynccontextmanager
+        async def mock_streamable_client_with_token(*_args, **_kwargs):
+            # Simulate connection error whose message contains the secret URL
+            raise ConnectionError(f"Connection refused: http://remote-mcp:8080/mcp?apiKey={secret_token}")
+            yield  # pragma: no cover
+
+        redacted_calls = []
+
+        def _capture_sanitize(msg, params=None):
+            redacted_calls.append((msg, params))
+            # Replace the secret value with REDACTED to prove sanitization ran
+            if params and secret_token in msg:
+                return msg.replace(secret_token, "REDACTED")
+            return msg
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(gw)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client_with_token),
+            patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=_capture_sanitize),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.gateway_tool_name_separator = "--"
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # sanitize_exception_message must have been called (proving the fix is exercised)
+        assert redacted_calls, "sanitize_exception_message was not called — sanitization was skipped"
+
+        # The secret token must NOT appear in the returned content
+        content_text = result.content[0].text if result.content else ""
+        assert secret_token not in content_text, f"Secret leaked in error response: {content_text!r}"
+
+        # The result must still be a proper MCP error shape
+        assert result.is_error is True
 
 
 class TestInvokeToolDirectProxyViaHeader:
