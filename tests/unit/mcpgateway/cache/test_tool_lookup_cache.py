@@ -57,10 +57,19 @@ async def test_tool_lookup_cache_isolates_same_name_by_server_l1(tool_lookup_cac
 @pytest.mark.asyncio
 async def test_tool_lookup_cache_isolates_negative_entries_by_server(tool_lookup_cache_instance):
     """One server's offline result must not poison another server's lookup."""
-    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", server_id="server-a")
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", "caller-a", server_id="server-a")
 
-    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-a") == {"status": "offline"}
-    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-b") is None
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a", "server-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a", "server-b") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_negative_entries_by_caller(tool_lookup_cache_instance):
+    """One caller's result must not affect another caller on the same server."""
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", "caller-a", server_id="server-a")
+
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a", "server-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-b", "server-a") is None
 
 
 @pytest.mark.asyncio
@@ -123,9 +132,9 @@ async def test_tool_lookup_cache_lru_eviction(tool_lookup_cache_instance):
 
 @pytest.mark.asyncio
 async def test_tool_lookup_cache_negative_entry(tool_lookup_cache_instance):
-    await tool_lookup_cache_instance.set_negative("tool-missing", "missing")
+    await tool_lookup_cache_instance.set_negative("tool-missing", "missing", "caller-a", server_id="server-a")
 
-    payload = await tool_lookup_cache_instance.get("tool-missing")
+    payload = await tool_lookup_cache_instance.get_negative("tool-missing", "caller-a", "server-a")
     assert payload["status"] == "missing"
 
 
@@ -225,7 +234,7 @@ async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_
 
     await tool_lookup_cache_instance.set("tool-a", payload, gateway_id="gw-1", server_id="srv-1")
 
-    redis.setex.assert_awaited_once_with("mcpgw:tool_lookup:v2:server:srv-1:tool-a", tool_lookup_cache_instance._ttl_seconds, orjson.dumps(payload))
+    redis.setex.assert_awaited_once_with("mcpgw:tool_lookup:v3:server:srv-1:tool-a", tool_lookup_cache_instance._ttl_seconds, orjson.dumps(payload))
     assert redis.sadd.await_args_list == [
         call("mcpgw:tool_lookup:gateway:gw-1", "server:srv-1:tool-a"),
         call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:tool-a"),
@@ -271,7 +280,7 @@ async def test_tool_lookup_cache_invalidate_exact_server_scope_redis(tool_lookup
 
     await tool_lookup_cache_instance.invalidate("shared-tool", server_id="srv-1")
 
-    redis.delete.assert_awaited_once_with("mcpgw:tool_lookup:v2:server:srv-1:shared-tool")
+    redis.delete.assert_awaited_once_with("mcpgw:tool_lookup:v3:server:srv-1:shared-tool")
     assert redis.srem.await_args_list == [
         call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:shared-tool"),
         call("mcpgw:tool_lookup_index:scoped", "server:srv-1:shared-tool"),

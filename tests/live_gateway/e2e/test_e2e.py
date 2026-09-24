@@ -2319,6 +2319,37 @@ class TestVirtualServerLifecycle:
         assert observed == expected_names, f"MCP tools/list mismatch: missing={sorted(expected_names - observed)} unexpected={sorted(observed - expected_names)}"
         assert held_back not in observed, f"held-back tool {held_back} leaked into the scoped MCP catalog"
 
+    def test_detached_tool_cannot_use_warmed_lookup(self, admin_api: APIRequestContext, create_server: Any, lifecycle_tools: list[dict[str, Any]], admin_token: str) -> None:
+        """A detached tool must fail after its server-scoped lookup is warmed.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        server_url = _server_mcp_base(server_id)
+
+        warmed = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "warm-cache"}, server_url=server_url)
+        assert not warmed.isError, f"Initial tools/call failed: {warmed}"
+
+        updated = admin_api.put(f"/servers/{server_id}", data={"associated_tools": []})
+        assert updated.status == 200, f"PUT /servers/{server_id} returned {updated.status}: {updated.text()[:500]}"
+
+        try:
+            detached = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "must-fail"}, server_url=server_url)
+        except McpError:
+            return
+
+        assert detached.isError, f"Detached tool remained invocable: {detached}"
+        assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
+
     def test_associated_resources_reachable_via_mcp(self, admin_api: APIRequestContext, create_server: Any, create_resource: Any, admin_token: str) -> None:
         """The per-server REST records and the MCP catalog both report the associated resource.
 

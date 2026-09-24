@@ -1268,6 +1268,7 @@ class ServerService(BaseService):
             )
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
+            original_server_id = str(server.id)
 
             # Check ownership if user_email provided
             if user_email:
@@ -1378,7 +1379,11 @@ class ServerService(BaseService):
             # Invalidate cache after successful update
             cache = _get_registry_cache()
             await cache.invalidate_servers()
-            await _get_tool_lookup_cache().invalidate_server(str(server.id))
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_server(original_server_id)
+            updated_server_id = str(server.id)
+            if updated_server_id != original_server_id:
+                await tool_lookup_cache.invalidate_server(updated_server_id)
             # Also invalidate tags cache since server tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

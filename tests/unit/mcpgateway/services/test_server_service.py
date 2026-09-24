@@ -8,7 +8,7 @@ Tests for server service implementation.
 
 # Standard
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -1391,9 +1391,11 @@ class TestServerService:
         server_update = ServerUpdate(id=new_standard_uuid, name="Updated Server", description="Updated description")
 
         test_user_email = "user@example.com"
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
         # Call the service method
-        result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
+        with patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache):
+            result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
 
         # Verify UUID was set correctly (note: actual normalization happens at create time)
         # The update method currently just sets the ID directly
@@ -1401,6 +1403,7 @@ class TestServerService:
         assert result.id == expected_hex_uuid
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
+        assert tool_lookup_cache.invalidate_server.await_args_list == [call("oldserverid"), call(expected_hex_uuid)]
 
     def test_uuid_normalization_edge_cases(self, server_service):
         """Test edge cases in UUID normalization logic."""

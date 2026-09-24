@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
-from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.cache.tool_lookup_cache import ToolLookupCache, tool_lookup_cache
 from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
@@ -9735,6 +9735,7 @@ class TestRustMcpExecutionPlan:
         mock_cache = AsyncMock()
         mock_cache.enabled = True
         mock_cache.get = AsyncMock(return_value=payload)
+        mock_cache.get_negative = AsyncMock(return_value=None)
         mock_cache.set = AsyncMock()
         mock_cache.set_negative = AsyncMock()
         return mock_cache
@@ -10106,8 +10107,9 @@ class TestRustMcpExecutionPlan:
         ],
     )
     async def test_prepare_rust_mcp_tool_execution_respects_negative_cache_entries(self, tool_service, status, error_match):
-        """Negative cache entries should short-circuit with the expected error."""
-        cache = self._cache_mock({"status": status})
+        """Caller-scoped negative entries should return the expected error."""
+        cache = self._cache_mock(None)
+        cache.get_negative.return_value = {"status": status}
 
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
@@ -10414,7 +10416,8 @@ class TestRustMcpExecutionPlan:
             with pytest.raises(ToolNotFoundError, match="currently offline"):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="server-1")
 
-        cache.set_negative.assert_awaited_once_with("tool-one", "offline", gateway_id=None, server_id="server-1")
+        caller_scope = tool_service._negative_cache_caller_scope(None, None)
+        cache.set_negative.assert_awaited_once_with("tool-one", "offline", caller_scope, gateway_id=None, server_id="server-1")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -10552,6 +10555,109 @@ class TestRustMcpExecutionPlan:
         load_invocable_tools.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_detached_stale_cache_hit(self, tool_service):
+        """Rust resolution must reject stale cache data after failed cross-worker invalidation."""
+        cache = self._cache_mock(self._cache_payload(id="detached-tool"))
+        db = MagicMock()
+        db.execute.return_value.first.return_value = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]) as load_invocable_tools,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", server_id="server-1")
+
+        load_invocable_tools.assert_called_once_with(db, "tool-one", server_id="server-1")
+
+    @pytest.mark.asyncio
+    async def test_python_resolution_rejects_detached_stale_cache_hit(self, tool_service):
+        """Python resolution must reject stale cache data after failed cross-worker invalidation."""
+        cache = self._cache_mock(self._cache_payload(id="detached-tool"))
+        db = MagicMock()
+        db.execute.return_value.first.return_value = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]) as load_invocable_tools,
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service._resolve_tool_for_invocation(
+                    db,
+                    "tool-one",
+                    None,
+                    None,
+                    None,
+                    "server-1",
+                    False,
+                    False,
+                )
+
+        load_invocable_tools.assert_called_once_with(db, "tool-one", server_id="server-1")
+
+    @pytest.mark.asyncio
+    async def test_python_resolution_isolates_negative_cache_by_caller(self, tool_service):
+        """One caller's offline result must not block another caller's valid lookup."""
+        cache = ToolLookupCache()
+        cache._enabled = True
+        cache._l2_enabled = False
+        offline_tool = SimpleNamespace(
+            id="tool-a",
+            name="tool-one",
+            enabled=True,
+            reachable=False,
+            gateway_id="gw-a",
+            gateway=SimpleNamespace(id="gw-a"),
+        )
+        online_tool = SimpleNamespace(
+            id="tool-b",
+            name="tool-one",
+            enabled=True,
+            reachable=True,
+            gateway_id="gw-b",
+            gateway=SimpleNamespace(id="gw-b"),
+        )
+        online_payload = self._cache_payload(
+            id="tool-b",
+            visibility="private",
+            owner_email="b@example.com",
+            gateway_id="gw-b",
+            gateway={"id": "gw-b"},
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", side_effect=[[offline_tool], [online_tool]]),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=online_payload),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="currently offline"):
+                await tool_service._resolve_tool_for_invocation(
+                    MagicMock(),
+                    "tool-one",
+                    None,
+                    "a@example.com",
+                    ["team-a"],
+                    "server-1",
+                    False,
+                    False,
+                )
+
+            resolved = await tool_service._resolve_tool_for_invocation(
+                MagicMock(),
+                "tool-one",
+                None,
+                "b@example.com",
+                ["team-b"],
+                "server-1",
+                False,
+                False,
+            )
+
+        assert resolved.tool_payload["id"] == "tool-b"
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_uses_server_scoped_cache_for_aliases(self, tool_service):
         """Server aliases should use their isolated server-scoped cache entries."""
         cache = self._cache_mock(self._cache_payload())
@@ -10570,7 +10676,7 @@ class TestRustMcpExecutionPlan:
         assert plan["eligible"] is True
         cache.get.assert_awaited_once_with("tool-one", server_id="srv-1")
         load_invocable_tools.assert_not_called()
-        db.execute.assert_not_called()
+        db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_uses_live_gateway_auth_fields_for_loaded_tools(self, tool_service):
