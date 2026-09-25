@@ -3318,6 +3318,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway=gateway,
                         catalog_sync=catalog_sync,
                         log_context="gateway update",
+                        stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
                     )
 
                     gateway.capabilities = capabilities
@@ -4560,6 +4561,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway lifecycle worker",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
             )
 
             if not self._finalize_pending_gateway_success(db, gateway, capabilities):
@@ -6891,6 +6893,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["resources_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - pending_resources_before)
             result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - pending_prompts_before)
 
+            # Only delete MCP-discovered items (not user-created entries)
+            # Excludes "api", "ui", None (legacy/user-created) to preserve user entries
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,

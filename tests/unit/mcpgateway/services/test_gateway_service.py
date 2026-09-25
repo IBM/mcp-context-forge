@@ -1608,6 +1608,86 @@ class TestGatewayService:
         assert mock_gateway.name == "updated_gateway"
         assert result.name == "updated_gateway"
 
+    @pytest.mark.parametrize("created_via", ["api", "ui"])
+    @pytest.mark.asyncio
+    async def test_update_gateway_preserves_user_created_catalog_items(self, gateway_service, mock_gateway, test_db, created_via):
+        """Updating a gateway must not remove user-created prompts."""
+        custom_prompt = MagicMock(spec=DbPrompt, id="custom-prompt", original_name="custom-prompt", created_via=created_via)
+        federated_prompt = MagicMock(spec=DbPrompt, id="federated-prompt", original_name="federated-prompt", created_via="federation")
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = None
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = [custom_prompt, federated_prompt]
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.gateway_service.get_for_update", return_value=mock_gateway),
+            patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"),
+        ):
+            await gateway_service.update_gateway(test_db, mock_gateway.id, GatewayUpdate(description="Updated description"))
+
+        assert mock_gateway.description == "Updated description"
+        assert mock_gateway.prompts == [custom_prompt]
+
+    @pytest.mark.parametrize("created_via", ["api", "ui"])
+    @pytest.mark.asyncio
+    async def test_process_pending_gateway_preserves_user_created_catalog_items(self, gateway_service, test_db, monkeypatch, created_via):
+        """Async lifecycle processing must not remove user-created prompts."""
+        custom_prompt = MagicMock(spec=DbPrompt, id="custom-prompt", original_name="custom-prompt", created_via=created_via)
+        federated_prompt = MagicMock(spec=DbPrompt, id="federated-prompt", original_name="federated-prompt", created_via="federation")
+        pending_gateway = _make_gateway(
+            id="pending-gateway",
+            url="http://example.com/gateway",
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            client_cert=None,
+            client_key=None,
+            tools=[],
+            resources=[],
+            prompts=[custom_prompt, federated_prompt],
+            lifecycle_claimed_by=gateway_service._instance_id,
+            registration_attempts=0,
+        )
+
+        test_db.execute = Mock()
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+
+        connection_material = SimpleNamespace(url=pending_gateway.url, auth_query_params_decrypted=None, client_cert=None, client_key=None)
+        gateway_service._prepare_gateway_connection_material = AsyncMock(return_value=connection_material)
+        gateway_service._initialize_gateway_with_timeout = AsyncMock(return_value=({}, [], [], [], None))
+        gateway_service._finalize_pending_gateway_success = Mock(return_value=True)
+        gateway_service._active_gateways = set()
+
+        registry_cache = SimpleNamespace(
+            invalidate_gateways=AsyncMock(),
+            invalidate_tools=AsyncMock(),
+            invalidate_resources=AsyncMock(),
+            invalidate_prompts=AsyncMock(),
+        )
+        tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+        with patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"):
+            await gateway_service._process_pending_gateway(test_db, pending_gateway)
+
+        assert pending_gateway.prompts == [custom_prompt]
+
     @pytest.mark.asyncio
     async def test_update_gateway_not_found(self, gateway_service, test_db):
         """Updating a non-existent gateway surfaces GatewayError with message."""
