@@ -11,7 +11,7 @@ from collections import defaultdict
 import logging
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -54,6 +54,10 @@ def load_db_data() -> ControlPlaneData:
 
         servers = db.execute(select(DbServer.id, DbServer.owner_email, DbServer.team_id, DbServer.visibility).where(DbServer.enabled.is_(True))).all()
 
+        inactive_owner = exists().where(
+            EmailUser.email == DbGateway.owner_email,
+            EmailUser.is_active.is_(False),
+        )
         gateways = db.execute(
             select(
                 DbGateway.id,
@@ -67,7 +71,7 @@ def load_db_data() -> ControlPlaneData:
                 DbGateway.team_id,
                 DbGateway.visibility,
                 DbGateway.capabilities,
-            ).where(DbGateway.enabled.is_(True))
+            ).where(DbGateway.enabled.is_(True), ~inactive_owner)
         ).all()
 
         prompts = db.execute(select(DbPrompt.id, DbPrompt.name, DbPrompt.original_name, DbPrompt.owner_email, DbPrompt.team_id, DbPrompt.visibility).where(DbPrompt.enabled.is_(True))).all()
