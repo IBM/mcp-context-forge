@@ -82,6 +82,7 @@ from mcpgateway.plugins.utils import build_request_extensions, record_plugin_met
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
@@ -2482,6 +2483,7 @@ class ToolService(BaseService):
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
+            notify_dataplane()
             await self._notify_tool_added(db_tool)
 
             # Structured logging: Audit trail for tool creation
@@ -2880,6 +2882,7 @@ class ToolService(BaseService):
 
             # Commit the chunk
             db.commit()
+            notify_dataplane()
 
             # Refresh tools for notifications and audit trail
             for db_tool in tools_to_add:
@@ -3886,6 +3889,7 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
             db.commit()
+            notify_dataplane()
             await self._notify_tool_deleted(tool_info)
             logger.info("Permanently deleted tool: %s", tool_info["name"])
 
@@ -4039,6 +4043,7 @@ class ToolService(BaseService):
 
                 db.commit()
                 db.refresh(tool)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -7896,6 +7901,7 @@ class ToolService(BaseService):
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(tool)
+            notify_dataplane()
             await self._notify_tool_updated(tool)
             logger.info("Updated tool: %s", tool.name)
 
