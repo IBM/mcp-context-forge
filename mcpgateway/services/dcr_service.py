@@ -12,9 +12,10 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 """
 
 # Standard
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
 # Third-Party
@@ -23,17 +24,33 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.services.http_client_service import get_isolated_http_client
+from mcpgateway.utils.origin import is_same_origin, origin_from_url
 
 logger = logging.getLogger(__name__)
 
 # In-memory cache for AS metadata
 # Format: {issuer: {"metadata": dict, "cached_at": datetime}}
 _metadata_cache: Dict[str, Dict[str, Any]] = {}
+
+
+@dataclass(frozen=True)
+class _PinnedDcrTarget:
+    """An outbound DCR request target that is validated and pinned to one address.
+
+    Attributes:
+        url: Request URL whose host is the address resolved at validation time.
+        headers: Headers that restore the original authority.
+        extensions: httpx extensions that bind TLS verification to the original hostname.
+    """
+
+    url: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    extensions: Dict[str, str] = field(default_factory=dict)
 
 
 class DcrService:
@@ -43,14 +60,6 @@ class DcrService:
         """Initialize DCR service."""
         self.settings = get_settings()
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get the shared singleton HTTP client.
-
-        Returns:
-            Shared httpx.AsyncClient instance with connection pooling
-        """
-        return await get_http_client()
-
     def _get_timeout(self) -> float:
         """Get the OAuth request timeout from settings.
 
@@ -58,6 +67,52 @@ class DcrService:
             Timeout in seconds for OAuth/DCR requests
         """
         return float(self.settings.oauth_request_timeout)
+
+    async def _prepare_pinned_request(self, url: Optional[str], issuer: Optional[str], field_name: str) -> _PinnedDcrTarget:
+        """Validate an outbound DCR URL and pin its connection to one address.
+
+        The authorization server controls its own metadata document, so a URL
+        read from that document is untrusted input. Two gates apply. The URL
+        must share the issuer origin, which the request schema already
+        validated. The URL must then pass the outbound URL policy, and the
+        connection dials the address resolved during that check. Pinning closes
+        the DNS rebinding window that GHSA-9hgc-g3w5-67cm describes.
+
+        Args:
+            url: URL read from the AS metadata, the registration response, or the issuer.
+            issuer: Normalized issuer URL for this authorization server.
+            field_name: Field name, used in error messages.
+
+        Returns:
+            _PinnedDcrTarget: The pinned URL with its authority headers and TLS extensions.
+
+        Raises:
+            DcrError: If the URL leaves the issuer origin or the URL policy blocks it.
+        """
+        if not url or not issuer or not is_same_origin(url, origin_from_url(issuer)):
+            raise DcrError(f"{field_name} must share the issuer origin")
+
+        try:
+            validated_target = await SecurityValidator.validate_url_for_connection_pinning(url, field_name)
+        except ValueError as validation_error:
+            raise DcrError(f"{field_name} blocked by URL policy") from validation_error
+
+        resolved_ip = validated_target.get("resolved_ip")
+        original_hostname = validated_target.get("hostname")
+        original_authority = validated_target.get("original_authority")
+        pinning_available = bool(resolved_ip and original_hostname and original_authority)
+
+        if self.settings.ssrf_protection_enabled and not pinning_available:
+            raise DcrError(f"{field_name} blocked by URL policy")
+
+        if not pinning_available:
+            return _PinnedDcrTarget(url=url)
+
+        return _PinnedDcrTarget(
+            url=pin_url_to_resolved_ip(url, resolved_ip),
+            headers={"Host": original_authority},
+            extensions={"sni_hostname": original_hostname},
+        )
 
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
         """Discover AS metadata via RFC 8414.
@@ -103,50 +158,72 @@ class DcrService:
         if parsed.path:
             rfc8414_url += parsed.path
 
+        rfc8414_target = await self._prepare_pinned_request(rfc8414_url, normalized_issuer, "AS metadata discovery URL")
+
         try:
-            client = await self._get_client()
-            response = await client.get(rfc8414_url, timeout=self._get_timeout(), follow_redirects=False)
-            if 300 <= response.status_code < 400:
-                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
-            if response.status_code == 200:
-                metadata = response.json()
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.get(
+                    rfc8414_target.url,
+                    timeout=self._get_timeout(),
+                    follow_redirects=False,
+                    headers=rfc8414_target.headers,
+                    extensions=rfc8414_target.extensions,
+                )
+                if 300 <= response.status_code < 400:
+                    raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
+                if response.status_code == 200:
+                    try:
+                        metadata = response.json()
+                    except ValueError:
+                        raise DcrError(f"AS metadata discovery returned a non-JSON body for {normalized_issuer} (status: {response.status_code})")
 
-                # Validate issuer matches (normalize metadata issuer for comparison)
-                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
-                if metadata_issuer != normalized_issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                    # Validate issuer matches (normalize metadata issuer for comparison)
+                    metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                    if metadata_issuer != normalized_issuer:
+                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
-                # Cache the metadata
-                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                    # Cache the metadata
+                    _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info("Discovered AS metadata for %s via RFC 8414", normalized_issuer)
-                return metadata
+                    logger.info("Discovered AS metadata for %s via RFC 8414", normalized_issuer)
+                    return metadata
         except httpx.HTTPError as e:
             logger.debug("RFC 8414 discovery failed for %s: %s, trying OIDC fallback", normalized_issuer, e)
 
         # Try OIDC discovery fallback
         oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
 
+        oidc_target = await self._prepare_pinned_request(oidc_url, normalized_issuer, "AS metadata discovery URL")
+
         try:
-            client = await self._get_client()
-            response = await client.get(oidc_url, timeout=self._get_timeout(), follow_redirects=False)
-            if 300 <= response.status_code < 400:
-                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
-            if response.status_code == 200:
-                metadata = response.json()
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.get(
+                    oidc_target.url,
+                    timeout=self._get_timeout(),
+                    follow_redirects=False,
+                    headers=oidc_target.headers,
+                    extensions=oidc_target.extensions,
+                )
+                if 300 <= response.status_code < 400:
+                    raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
+                if response.status_code == 200:
+                    try:
+                        metadata = response.json()
+                    except ValueError:
+                        raise DcrError(f"AS metadata discovery returned a non-JSON body for {normalized_issuer} (status: {response.status_code})")
 
-                # Validate issuer matches (normalize metadata issuer for comparison)
-                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
-                if metadata_issuer != normalized_issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
+                    # Validate issuer matches (normalize metadata issuer for comparison)
+                    metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                    if metadata_issuer != normalized_issuer:
+                        raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
-                # Cache the metadata
-                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                    # Cache the metadata
+                    _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info("Discovered AS metadata for %s via OIDC discovery", normalized_issuer)
-                return metadata
+                    logger.info("Discovered AS metadata for %s via OIDC discovery", normalized_issuer)
+                    return metadata
 
-            raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
+                raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
 
@@ -209,18 +286,32 @@ class DcrService:
             "scope": " ".join(scopes),
         }
 
+        pinned_target = await self._prepare_pinned_request(registration_endpoint, normalized_issuer, "DCR registration_endpoint")
+
         # Send registration request
         try:
-            client = await self._get_client()
-            response = await client.post(registration_endpoint, json=registration_request, timeout=self._get_timeout())
-            # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
-            if response.status_code in (200, 201):
-                registration_response = response.json()
-            else:
-                error_data = response.json()
-                error_msg = error_data.get("error", "unknown_error")
-                error_desc = error_data.get("error_description", str(error_data))
-                raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.post(
+                    pinned_target.url,
+                    json=registration_request,
+                    headers=pinned_target.headers,
+                    extensions=pinned_target.extensions,
+                    timeout=self._get_timeout(),
+                )
+                # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
+                if response.status_code in (200, 201):
+                    try:
+                        registration_response = response.json()
+                    except ValueError:
+                        raise DcrError(f"Client registration succeeded but the response body is not valid JSON (status: {response.status_code})")
+                else:
+                    try:
+                        error_data = response.json()
+                    except ValueError:
+                        raise DcrError(f"Client registration failed: upstream returned status {response.status_code} with a non-JSON body")
+                    error_msg = error_data.get("error", "unknown_error")
+                    error_desc = error_data.get("error_description", str(error_data))
+                    raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to register client with {normalized_issuer}: {e}")
 
@@ -342,26 +433,40 @@ class DcrService:
         # Build update request
         update_request = {"client_id": client_record.client_id, "redirect_uris": orjson.loads(client_record.redirect_uris), "grant_types": orjson.loads(client_record.grant_types)}
 
+        pinned_target = await self._prepare_pinned_request(client_record.registration_client_uri, client_record.issuer, "DCR registration_client_uri")
+
         # Send update request
         try:
-            client = await self._get_client()
-            headers = {"Authorization": f"Bearer {registration_access_token}"}
-            response = await client.put(client_record.registration_client_uri, json=update_request, headers=headers, timeout=self._get_timeout())
-            if response.status_code == 200:
-                updated_response = response.json()
+            headers = {"Authorization": f"Bearer {registration_access_token}", **pinned_target.headers}
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.put(
+                    pinned_target.url,
+                    json=update_request,
+                    headers=headers,
+                    extensions=pinned_target.extensions,
+                    timeout=self._get_timeout(),
+                )
+                if response.status_code == 200:
+                    try:
+                        updated_response = response.json()
+                    except ValueError:
+                        raise DcrError(f"Client registration update succeeded but the response body is not valid JSON (status: {response.status_code})")
 
-                # Update encrypted secret if changed
-                if "client_secret" in updated_response:
-                    client_record.client_secret_encrypted = await encryption.encrypt_secret_async(updated_response["client_secret"])
+                    # Update encrypted secret if changed
+                    if "client_secret" in updated_response:
+                        client_record.client_secret_encrypted = await encryption.encrypt_secret_async(updated_response["client_secret"])
 
-                db.commit()
-                db.refresh(client_record)
+                    db.commit()
+                    db.refresh(client_record)
 
-                logger.info("Successfully updated client registration for %s", client_record.client_id)
-                return client_record
+                    logger.info("Successfully updated client registration for %s", client_record.client_id)
+                    return client_record
 
-            error_data = response.json()
-            raise DcrError(f"Failed to update client: {error_data}")
+                try:
+                    error_data = response.json()
+                except ValueError:
+                    raise DcrError(f"Failed to update client: upstream returned status {response.status_code} with a non-JSON body")
+                raise DcrError(f"Failed to update client: {error_data}")
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to update client registration: {e}")
 
@@ -395,17 +500,28 @@ class DcrService:
             logger.error("Failed to decrypt registration access token; cannot authenticate delete request to AS")
             return False
 
+        try:
+            pinned_target = await self._prepare_pinned_request(client_record.registration_client_uri, client_record.issuer, "DCR registration_client_uri")
+        except DcrError as policy_error:
+            logger.error("Refused to delete a client registration at a blocked URL: %s", SecurityValidator.sanitize_log_message(str(policy_error)))
+            return False
+
         # Send delete request
         try:
-            client = await self._get_client()
-            headers = {"Authorization": f"Bearer {registration_access_token}"}
-            response = await client.delete(client_record.registration_client_uri, headers=headers, timeout=self._get_timeout())
-            if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
-                logger.info("Successfully deleted client registration for %s", client_record.client_id)
-                return True
+            headers = {"Authorization": f"Bearer {registration_access_token}", **pinned_target.headers}
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                response = await client.delete(
+                    pinned_target.url,
+                    headers=headers,
+                    extensions=pinned_target.extensions,
+                    timeout=self._get_timeout(),
+                )
+                if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
+                    logger.info("Successfully deleted client registration for %s", client_record.client_id)
+                    return True
 
-            logger.warning("Unexpected status when deleting client: %s", response.status_code)
-            return False
+                logger.warning("Unexpected status when deleting client: %s", response.status_code)
+                return False
         except httpx.HTTPError as e:
             logger.error("Failed to delete client at AS: %s", e)
             return False

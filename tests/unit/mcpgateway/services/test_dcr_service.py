@@ -10,6 +10,9 @@ Tests will FAIL until implementation is complete.
 """
 
 # Standard
+from contextlib import contextmanager
+import socket
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -17,6 +20,65 @@ import pytest
 
 # First-Party
 from mcpgateway.services.dcr_service import DcrError, DcrService
+
+PUBLIC_TEST_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def clear_as_metadata_cache():
+    """Clear the module-global AS metadata cache around every test.
+
+    ``_metadata_cache`` in ``dcr_service`` lives for the process, so a cached
+    document from another test module leaks into these tests and makes them
+    order-dependent.
+
+    Yields:
+        None: The cache is empty for the test and cleared again afterwards.
+    """
+    # First-Party
+    from mcpgateway.services.dcr_service import _metadata_cache
+
+    _metadata_cache.clear()
+    yield
+    _metadata_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def stub_dns_for_pinning(monkeypatch):
+    """Resolve every hostname in this module to one public address.
+
+    Connection pinning resolves DNS for real. The test hostnames do not exist,
+    so without this stub every pinned request fails to resolve.
+
+    This patches the global ``socket`` module, because ``validators.py`` uses a
+    plain ``import socket``. Every consumer of ``getaddrinfo`` in the process is
+    redirected while a test runs.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    def _fake_getaddrinfo(_host, port, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_TEST_IP, port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _fake_getaddrinfo)
+
+
+@contextmanager
+def patch_isolated_client(mock_client):
+    """Patch the isolated HTTP client factory so it yields ``mock_client``.
+
+    Args:
+        mock_client: Mock standing in for ``httpx.AsyncClient``.
+
+    Yields:
+        None: The patch stays active for the duration of the block.
+    """
+    context_manager = MagicMock()
+    context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+    context_manager.__aexit__ = AsyncMock(return_value=False)
+    with patch("mcpgateway.services.dcr_service.get_isolated_http_client", return_value=context_manager):
+        yield
 
 
 class TestDiscoverASMetadata:
@@ -43,7 +105,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.discover_as_metadata("https://as.example.com")
 
             assert result["issuer"] == "https://as.example.com"
@@ -53,11 +115,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_tries_rfc8414_first(self):
         """Test that RFC 8414 path is tried first."""
-        # Clear cache to ensure test isolation
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -68,12 +125,13 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata("https://as.example.com")
 
             # First call should be RFC 8414 path
             first_call_url = mock_client.get.call_args_list[0][0][0]
             assert "/.well-known/oauth-authorization-server" in first_call_url
+            assert first_call_url.startswith(f"https://{PUBLIC_TEST_IP}")
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_normalizes_trailing_slash(self):
@@ -82,11 +140,6 @@ class TestDiscoverASMetadata:
         This tests the fix for MCP Python SDK issue #1919 where Pydantic's AnyHttpUrl
         adds trailing slashes to bare hostnames, causing issuer mismatch errors.
         """
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -100,7 +153,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # Call with trailing slash (simulating MCP SDK behavior)
             result = await dcr_service.discover_as_metadata("https://as.example.com/")
 
@@ -109,16 +162,12 @@ class TestDiscoverASMetadata:
 
             # Verify the discovery URL was constructed correctly (no double slashes)
             call_url = mock_client.get.call_args_list[0][0][0]
-            assert call_url == "https://as.example.com/.well-known/oauth-authorization-server"
+            assert call_url == f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server"
             assert "//.well-known" not in call_url
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_cache_uses_normalized_issuer(self):
         """Test that cache lookup uses normalized issuer to avoid cache misses."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -131,7 +180,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First call with trailing slash
             await dcr_service.discover_as_metadata("https://as.example.com/")
 
@@ -144,11 +193,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_falls_back_to_oidc(self):
         """Test fallback to OIDC discovery if RFC 8414 fails."""
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -174,7 +218,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=get_side_effect)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.discover_as_metadata("https://as.example.com")
 
             # Should have tried both paths
@@ -183,11 +227,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_not_found(self):
         """Test when metadata endpoints return 404."""
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -198,18 +237,13 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response_404)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError, match="not found|Failed to discover"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_caches_result(self):
         """Test that metadata is cached to avoid repeated requests."""
-        # Clear cache first
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -222,7 +256,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First call
             result1 = await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -236,11 +270,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_validates_issuer(self):
         """Test that discovered metadata validates issuer matches."""
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -256,7 +285,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError, match="issuer mismatch"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -267,11 +296,6 @@ class TestDiscoverASMetadata:
         Per RFC 8414 Section 3.1, the well-known suffix MUST be inserted between
         the host and the path.
         """
-        # Clear cache
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -285,21 +309,17 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             # Verify the discovery URL was constructed correctly (suffix between host and path)
             call_url = mock_client.get.call_args_list[0][0][0]
-            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            expected_url = f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant1"
             assert call_url == expected_url
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_rfc8414_multi_level_path(self):
         """Test RFC 8414 URL construction for issuers with multi-level paths."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
         issuer = "https://as.example.com/tenant1/realm1"
@@ -311,11 +331,11 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             call_url = mock_client.get.call_args_list[0][0][0]
-            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1/realm1"
+            expected_url = f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant1/realm1"
             assert call_url == expected_url
 
     @pytest.mark.asyncio
@@ -325,10 +345,6 @@ class TestDiscoverASMetadata:
         urlparse() strips ;params from the last path segment into a separate
         attribute, losing data. urlsplit() preserves the full path.
         """
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
         issuer = "https://as.example.com/tenant;v=1"
@@ -340,11 +356,11 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             call_url = mock_client.get.call_args_list[0][0][0]
-            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant;v=1"
+            expected_url = f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant;v=1"
             assert call_url == expected_url
 
     @pytest.mark.asyncio
@@ -355,10 +371,6 @@ class TestDiscoverASMetadata:
         appends to the issuer. Verify both URLs are constructed correctly when the
         RFC 8414 attempt fails and falls back to OIDC.
         """
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
         issuer = "https://as.example.com/tenant1"
@@ -381,24 +393,20 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=get_side_effect)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.discover_as_metadata(issuer)
 
             calls = mock_client.get.call_args_list
             assert len(calls) == 2
 
             # RFC 8414: inserted between host and path
-            assert calls[0][0][0] == "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            assert calls[0][0][0] == f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server/tenant1"
             # OIDC: appended to issuer
-            assert calls[1][0][0] == "https://as.example.com/tenant1/.well-known/openid-configuration"
+            assert calls[1][0][0] == f"https://{PUBLIC_TEST_IP}/tenant1/.well-known/openid-configuration"
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_does_not_follow_redirects_rfc8414(self):
         """RFC 8414 discovery must not follow redirects (SSRF protection)."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -409,7 +417,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -420,10 +428,6 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_does_not_follow_redirects_oidc(self):
         """OIDC fallback discovery must not follow redirects (SSRF protection)."""
-        # First-Party
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
 
         dcr_service = DcrService()
 
@@ -439,7 +443,7 @@ class TestDiscoverASMetadata:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[not_found, redirect])
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             with pytest.raises(DcrError):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -476,7 +480,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
@@ -511,7 +515,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             await dcr_service.register_client(
@@ -547,7 +551,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             await dcr_service.register_client(
@@ -578,7 +582,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
@@ -614,7 +618,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             # Should not raise TypeError
@@ -649,7 +653,7 @@ class TestRegisterClient:
         with (
             patch.object(dcr_service.settings, "dcr_request_refresh_token_when_unsupported", True),
             patch.object(dcr_service, "discover_as_metadata") as mock_discover,
-            patch.object(dcr_service, "_get_client", return_value=mock_client),
+            patch_isolated_client(mock_client),
         ):
             mock_discover.return_value = mock_metadata
 
@@ -694,7 +698,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             with pytest.raises(DcrError, match="invalid_redirect_uri"):
@@ -715,7 +719,7 @@ class TestRegisterClient:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch_isolated_client(mock_client):
             mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
@@ -854,7 +858,7 @@ class TestUpdateClientRegistration:
         mock_client = AsyncMock()
         mock_client.put = AsyncMock(return_value=mock_response_obj)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.update_client_registration(client_record, test_db)
 
             assert result.client_id == "test-client-update"
@@ -901,7 +905,7 @@ class TestUpdateClientRegistration:
         mock_client = AsyncMock()
         mock_client.put = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             await dcr_service.update_client_registration(client_record, test_db)
 
             # Verify Bearer token was used
@@ -975,7 +979,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
 
             assert result is True
@@ -1006,7 +1010,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # Should still return True (client is gone)
             result = await dcr_service.delete_client_registration(client_record, test_db)
 
@@ -1110,7 +1114,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
             assert result is False
 
@@ -1140,7 +1144,7 @@ class TestDeleteClientRegistration:
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(side_effect=httpx.HTTPError("Network error"))
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
             assert result is False
 
@@ -1206,7 +1210,7 @@ class TestIssuerValidation:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
 
-            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with patch_isolated_client(mock_client):
                 # Should not raise error
                 result = await dcr_service.register_client(
                     gateway_id="test-gw-issuer-auth",
@@ -1248,7 +1252,7 @@ class TestIssuerValidation:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_response)
 
-            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with patch_isolated_client(mock_client):
                 # Should not raise error - trailing slash should be normalized
                 result = await dcr_service.register_client(
                     gateway_id="test-gw-issuer-slash",
@@ -1277,6 +1281,670 @@ class TestDcrError:
             raise DcrError("Custom error message")
         except DcrError as e:
             assert str(e) == "Custom error message"
+
+
+class TestPreparePinnedRequest:
+    """Test the same-origin and connection-pinning gate for AS metadata URLs."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_cross_origin_endpoint(self):
+        """A metadata URL on another origin is refused."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError) as exc_info:
+            await dcr_service._prepare_pinned_request(
+                "http://169.254.169.254/latest/meta-data/",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+        assert "origin" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_scheme_downgrade_on_same_host(self):
+        """A metadata URL that drops TLS is a different origin and is refused."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError):
+            await dcr_service._prepare_pinned_request(
+                "http://as.example.com/register",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_issuer(self):
+        """An empty issuer is refused instead of raising TypeError."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError):
+            await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                "",
+                "DCR registration_endpoint",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_none_issuer(self):
+        """A None issuer is refused instead of raising TypeError."""
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError):
+            await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                None,
+                "DCR registration_endpoint",
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_same_origin_host_resolving_to_link_local(self, monkeypatch):
+        """Same-origin does not exempt a host that resolves into a blocked range."""
+
+        def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _link_local_getaddrinfo)
+        dcr_service = DcrService()
+
+        with pytest.raises(DcrError) as exc_info:
+            await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+        assert "url policy" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_pins_same_origin_endpoint(self):
+        """A valid metadata URL is dialled at the resolved address."""
+        dcr_service = DcrService()
+
+        target = await dcr_service._prepare_pinned_request(
+            "https://as.example.com/register",
+            "https://as.example.com",
+            "DCR registration_endpoint",
+        )
+
+        assert target.url == f"https://{PUBLIC_TEST_IP}/register"
+        assert target.headers == {"Host": "as.example.com"}
+        assert target.extensions == {"sni_hostname": "as.example.com"}
+
+    @pytest.mark.asyncio
+    async def test_accepts_default_port_against_explicit_port(self):
+        """An explicit default port matches the issuer's implicit one."""
+        dcr_service = DcrService()
+
+        target = await dcr_service._prepare_pinned_request(
+            "https://as.example.com:443/register",
+            "https://as.example.com",
+            "DCR registration_endpoint",
+        )
+
+        assert target.url == f"https://{PUBLIC_TEST_IP}:443/register"
+
+    @pytest.mark.asyncio
+    async def test_preserves_port_and_path_when_pinning(self):
+        """Pinning replaces only the host, never the port, path, or query."""
+        dcr_service = DcrService()
+
+        target = await dcr_service._prepare_pinned_request(
+            "https://as.example.com:8443/oauth/register?v=2",
+            "https://as.example.com:8443",
+            "DCR registration_endpoint",
+        )
+
+        assert target.url == f"https://{PUBLIC_TEST_IP}:8443/oauth/register?v=2"
+        assert target.headers == {"Host": "as.example.com:8443"}
+
+    @pytest.mark.asyncio
+    async def test_passes_through_when_ssrf_protection_disabled(self, monkeypatch):
+        """With SSRF protection off and DNS failing, the URL is used unchanged."""
+
+        def _failing_getaddrinfo(*_args, **_kwargs):
+            raise socket.gaierror("stubbed resolution failure")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _failing_getaddrinfo)
+
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(ssrf_protection_enabled=False)
+
+        permissive = MagicMock()
+        permissive.ssrf_protection_enabled = False
+        permissive.gateway_test_dns_timeout = 5.0
+
+        with patch("mcpgateway.common.validators.settings", permissive):
+            target = await dcr_service._prepare_pinned_request(
+                "https://as.example.com/register",
+                "https://as.example.com",
+                "DCR registration_endpoint",
+            )
+
+        assert target.url == "https://as.example.com/register"
+        assert target.headers == {}
+        assert target.extensions == {}
+
+
+class TestRegistrationClientUriSsrfDenyPath:
+    """Test that a hostile registration_client_uri cannot receive the bearer token."""
+
+    @staticmethod
+    def _make_record(test_db, suffix, registration_client_uri, issuer):
+        """Create a gateway and a registered client row for these tests.
+
+        Args:
+            test_db: Database session fixture.
+            suffix: Unique suffix for the generated identifiers.
+            registration_client_uri: Value to store for the management URL.
+            issuer: Value to store for the issuer.
+
+        Returns:
+            RegisteredOAuthClient: The persisted client row.
+        """
+        # First-Party
+        from mcpgateway.config import get_settings
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+        from mcpgateway.services.encryption_service import get_encryption_service
+
+        gateway = Gateway(id=f"gw-{suffix}", name=f"GW {suffix}", slug=f"gw-{suffix}", url=f"http://{suffix}.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")  # pragma: allowlist secret
+
+        client_record = RegisteredOAuthClient(
+            id=f"client-{suffix}",
+            gateway_id=f"gw-{suffix}",
+            issuer=issuer,
+            client_id=f"client-id-{suffix}",
+            client_secret_encrypted="encrypted",  # pragma: allowlist secret
+            registration_client_uri=registration_client_uri,
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+        )
+        test_db.add(client_record)
+        test_db.commit()
+        return client_record
+
+    @pytest.mark.asyncio
+    async def test_update_refuses_cross_origin_uri(self, test_db):
+        """A cross-origin management URL is refused before the PUT."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-deny", "http://169.254.169.254/register/c", "https://as.example.com")
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock()
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service.update_client_registration(client_record, test_db)
+
+        assert "origin" in str(exc_info.value).lower()
+        mock_client.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_puts_to_pinned_address_with_bearer_token(self, test_db):
+        """A valid update reaches the pinned address and keeps its Authorization header."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-ok", "https://as.example.com/register/c", "https://as.example.com")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"client_id": "client-id-upd-ok"})
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            await dcr_service.update_client_registration(client_record, test_db)
+
+        call_args, call_kwargs = mock_client.put.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register/c"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["headers"]["Authorization"] == "Bearer registration-access-token"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+
+    @pytest.mark.asyncio
+    async def test_delete_refuses_cross_origin_uri(self, test_db):
+        """A cross-origin management URL returns False and sends nothing."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "del-deny", "http://169.254.169.254/register/c", "https://as.example.com")
+
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock()
+
+        with patch_isolated_client(mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+
+        assert result is False
+        mock_client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_sends_to_pinned_address(self, test_db):
+        """A valid delete reaches the pinned address with the original authority."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "del-ok", "https://as.example.com/register/c", "https://as.example.com")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 204
+
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+
+        assert result is True
+        call_args, call_kwargs = mock_client.delete.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register/c"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+
+
+class TestDiscoverAsMetadataSsrfDenyPath:
+    """Test that metadata discovery refuses an issuer host in a blocked range."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_refuses_issuer_resolving_to_link_local(self, monkeypatch):
+        """An issuer that resolves into a blocked range sends no request."""
+
+        def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _link_local_getaddrinfo)
+        dcr_service = DcrService()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock()
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+        assert "url policy" in str(exc_info.value).lower()
+        mock_client.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discovery_gets_pinned_address_with_original_authority(self):
+        """Discovery dials the resolved address and keeps the original authority."""
+        dcr_service = DcrService()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": "https://as.example.com"})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            await dcr_service.discover_as_metadata("https://as.example.com")
+
+        call_args, call_kwargs = mock_client.get.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/.well-known/oauth-authorization-server"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+        assert call_kwargs["follow_redirects"] is False
+
+
+class TestRegisterClientSsrfDenyPath:
+    """Test that a hostile registration_endpoint cannot drive an outbound request."""
+
+    @pytest.mark.asyncio
+    async def test_register_client_refuses_cross_origin_registration_endpoint(self, test_db):
+        """A registration_endpoint on another origin is refused before any request."""
+        dcr_service = DcrService()
+
+        hostile_metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "http://169.254.169.254/internal/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=hostile_metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service.register_client(
+                    gateway_id="gw-ssrf",
+                    gateway_name="SSRF Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+        assert "origin" in str(exc_info.value).lower()
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_client_refuses_endpoint_resolving_to_link_local(self, test_db, monkeypatch):
+        """A same-origin endpoint that resolves into a blocked range is refused."""
+
+        def _link_local_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _link_local_getaddrinfo)
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError):
+                await dcr_service.register_client(
+                    gateway_id="gw-rebind",
+                    gateway_name="Rebind Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_client_posts_to_pinned_address(self, test_db):
+        """A valid registration goes to the pinned address with the original authority."""
+        # First-Party
+        from mcpgateway.db import Gateway
+
+        gateway = Gateway(id="gw-pinned", name="Pinned", slug="gw-pinned", url="http://pinned.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "pinned-client", "redirect_uris": ["http://localhost:4444/callback"]})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            await dcr_service.register_client(
+                gateway_id="gw-pinned",
+                gateway_name="Pinned Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+        call_args, call_kwargs = mock_client.post.call_args
+        assert call_args[0] == f"https://{PUBLIC_TEST_IP}/register"
+        assert call_kwargs["headers"]["Host"] == "as.example.com"
+        assert call_kwargs["extensions"] == {"sni_hostname": "as.example.com"}
+
+
+class TestPreparePinnedRequestIncompletePinning:
+    """Test the defensive guard when validation succeeds but pinning data is incomplete."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_incomplete_pinning_data_with_ssrf_enabled(self):
+        """SSRF protection on, but the validator returns partial data: refused, not silently accepted."""
+        dcr_service = DcrService()
+        dcr_service.settings = SimpleNamespace(ssrf_protection_enabled=True)
+
+        incomplete = {"validated_url": "https://as.example.com/register", "hostname": "as.example.com", "original_authority": None, "resolved_ip": None}
+
+        with patch("mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning", AsyncMock(return_value=incomplete)):
+            with pytest.raises(DcrError) as exc_info:
+                await dcr_service._prepare_pinned_request(
+                    "https://as.example.com/register",
+                    "https://as.example.com",
+                    "DCR registration_endpoint",
+                )
+
+        assert "url policy" in str(exc_info.value).lower()
+
+
+class TestDiscoverAsMetadataNonJsonBody:
+    """Test that a non-JSON discovery response raises DcrError instead of an unguarded ValueError."""
+
+    @pytest.mark.asyncio
+    async def test_rfc8414_non_json_body_raises_dcr_error(self):
+        """A 200 response from the RFC 8414 endpoint with a non-JSON body raises DcrError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+    @pytest.mark.asyncio
+    async def test_oidc_fallback_non_json_body_raises_dcr_error(self):
+        """A 200 response from the OIDC fallback endpoint with a non-JSON body raises DcrError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        rfc8414_404 = MagicMock()
+        rfc8414_404.status_code = 404
+
+        oidc_bad_json = MagicMock()
+        oidc_bad_json.status_code = 200
+        oidc_bad_json.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[rfc8414_404, oidc_bad_json])
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+    @pytest.mark.asyncio
+    async def test_oidc_fallback_issuer_mismatch_raises_dcr_error(self):
+        """The OIDC fallback path also validates the issuer, independently of the RFC 8414 path."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        rfc8414_404 = MagicMock()
+        rfc8414_404.status_code = 404
+
+        oidc_mismatch = MagicMock()
+        oidc_mismatch.status_code = 200
+        oidc_mismatch.json = MagicMock(return_value={"issuer": "https://attacker.example.com"})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[rfc8414_404, oidc_mismatch])
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="issuer mismatch"):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+
+class TestRegisterClientNonJsonBody:
+    """Test that a non-JSON registration response raises DcrError instead of an unguarded ValueError."""
+
+    @pytest.mark.asyncio
+    async def test_success_status_non_json_body_raises_dcr_error(self, test_db):
+        """A 201 response with a non-JSON body raises DcrError instead of escaping as ValueError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="not valid JSON"):
+                await dcr_service.register_client(
+                    gateway_id="gw-badjson",
+                    gateway_name="Bad JSON Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+    @pytest.mark.asyncio
+    async def test_error_status_non_json_body_raises_dcr_error(self, test_db):
+        """A non-2xx response with a non-JSON error body raises DcrError instead of escaping as ValueError."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.register_client(
+                    gateway_id="gw-badjson-err",
+                    gateway_name="Bad JSON Error Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+
+class TestUpdateClientRegistrationErrorPaths:
+    """Test the non-200 and non-JSON response paths of update_client_registration."""
+
+    @staticmethod
+    def _make_record(test_db, suffix):
+        """Create a gateway and a registered client row for these tests.
+
+        Args:
+            test_db: Database session fixture.
+            suffix: Unique suffix for the generated identifiers.
+
+        Returns:
+            RegisteredOAuthClient: The persisted client row.
+        """
+        # First-Party
+        from mcpgateway.config import get_settings
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+        from mcpgateway.services.encryption_service import get_encryption_service
+
+        gateway = Gateway(id=f"gw-{suffix}", name=f"GW {suffix}", slug=f"gw-{suffix}", url=f"http://{suffix}.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")  # pragma: allowlist secret
+
+        client_record = RegisteredOAuthClient(
+            id=f"client-{suffix}",
+            gateway_id=f"gw-{suffix}",
+            issuer="https://as.example.com",
+            client_id=f"client-id-{suffix}",
+            client_secret_encrypted="encrypted",  # pragma: allowlist secret
+            registration_client_uri="https://as.example.com/register/c",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+        )
+        test_db.add(client_record)
+        test_db.commit()
+        return client_record
+
+    @pytest.mark.asyncio
+    async def test_success_status_non_json_body_raises_dcr_error(self, test_db):
+        """A 200 response with a non-JSON body raises DcrError instead of escaping as ValueError."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-badjson")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="not valid JSON"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
+    @pytest.mark.asyncio
+    async def test_error_status_with_json_body_raises_dcr_error(self, test_db):
+        """A non-200 response with a valid JSON error body raises DcrError describing it."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-err-json")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json = MagicMock(return_value={"error": "invalid_client_metadata"})
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="invalid_client_metadata"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
+    @pytest.mark.asyncio
+    async def test_error_status_non_json_body_raises_dcr_error(self, test_db):
+        """A non-200 response with a non-JSON error body raises DcrError instead of escaping as ValueError."""
+        dcr_service = DcrService()
+        client_record = self._make_record(test_db, "upd-err-badjson")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.json = MagicMock(side_effect=ValueError("not JSON"))
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="non-JSON"):
+                await dcr_service.update_client_registration(client_record, test_db)
 
 
 if __name__ == "__main__":
