@@ -1043,6 +1043,19 @@ mcpContextForge:
   ##           key: secret-key
   extraEnv: []
 
+  ## -- Override the gateway container entrypoint (e.g. to source an env file
+  ## produced by an init container before exec'ing the stock entrypoint).
+  command: []
+  args: []
+
+  ## -- Additional init containers, sidecar containers, volumes and volume
+  ## mounts for the gateway pod (e.g. a secrets bootstrapper or a
+  ## cloud-sql-proxy sidecar).
+  extraInitContainers: []
+  extraContainers: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
 ########################################################################
 # DATABASE MIGRATION (Alembic)
 # Runs as a Job before mcpgateway deployment
