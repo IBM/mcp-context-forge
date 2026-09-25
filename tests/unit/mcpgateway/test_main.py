@@ -2422,6 +2422,46 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         mock_create.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_accepts_private_key_jwt_config(self, mock_create, test_client, auth_headers):
+        """Valid private_key_jwt config passes schema validation and reaches the service."""
+        mock_create.return_value = MOCK_GATEWAY_READ
+        req = {
+            "name": "test_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "client_id": "client-1",
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": "private_key_jwt",
+                "private_key": "dummy-private-key-material",  # pragma: allowlist secret
+                "token_endpoint_auth_signing_alg": "ES256",
+                "private_key_jwt_kid": "kid-1",
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        parsed: GatewayCreate = mock_create.call_args.args[1]
+        assert parsed.oauth_config["token_endpoint_auth_method"] == "private_key_jwt"
+        assert parsed.oauth_config["token_endpoint_auth_signing_alg"] == "ES256"
+        assert parsed.oauth_config["private_key_jwt_kid"] == "kid-1"
+
+    @pytest.mark.parametrize(
+        "oauth_config",
+        [
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "client_secret_digest"},
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "private_key_jwt", "token_endpoint_auth_signing_alg": "HS256", "private_key": "k"},
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "private_key_jwt"},
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "private_key_jwt", "private_key": "k", "private_key_jwt_kid": "  "},
+        ],
+    )
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_rejects_invalid_private_key_jwt_config(self, mock_create, test_client, auth_headers, oauth_config):
+        """Invalid token endpoint auth config is rejected with 422 before any service call."""
+        req = {"name": "test_gateway", "url": "http://example.com", "oauth_config": oauth_config}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        mock_create.assert_not_called()
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint_secondary(self, mock_get, test_client, auth_headers):
         """Test retrieving a specific gateway."""

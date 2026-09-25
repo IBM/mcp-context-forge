@@ -9,13 +9,18 @@ Unit tests for OAuthManager service.
 # Standard
 import json
 import logging
+from typing import Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 # First-Party
+from mcpgateway.common.oauth import CLIENT_ASSERTION_TYPE_JWT_BEARER, MAX_CLIENT_ASSERTION_TTL_SECONDS
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, parse_expires_in
 
 
@@ -739,6 +744,7 @@ async def test_exchange_code_for_token_basic_auth_without_secret(oauth_manager):
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
 
+
 @pytest.mark.asyncio
 async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
     """Test exchange_code_for_token with explicit token_endpoint_auth_method='none' (RFC 7591 §2)."""
@@ -767,7 +773,6 @@ async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
     assert "client_secret" not in call_kwargs["data"]
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
-
 
 
 # ---------- refresh_token ----------
@@ -2307,3 +2312,363 @@ def test_redact_token_response_returns_new_dict():
     payload = {"access_token": "AT", "scope": "repo"}
     OAuthManager._redact_token_response(payload)
     assert payload["access_token"] == "AT"
+
+
+# ---------- private_key_jwt client authentication ----------
+
+
+def _make_rsa_keypair():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = private_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    return private_pem, public_pem
+
+
+def _make_ec_keypair():
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = private_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    return private_pem, public_pem
+
+
+def _private_key_jwt_credentials(**overrides):
+    private_pem, public_pem = _make_rsa_keypair()
+    credentials = {
+        "client_id": "test-client",
+        "token_url": "https://issuer.example.com/token",
+        "redirect_uri": "https://gateway.example.com/callback",
+        "private_key": private_pem,
+        "token_endpoint_auth_method": "private_key_jwt",
+        "_test_public_pem": public_pem,
+    }
+    credentials.update(overrides)
+    return credentials
+
+
+def _success_json_response():
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "tok"}
+    return mock_response
+
+
+@pytest.fixture
+def private_key_credentials():
+    return _private_key_jwt_credentials()
+
+
+class TestBuildClientAssertion:
+    @pytest.mark.asyncio
+    async def test_default_rs256_with_expected_claims(self, oauth_manager, private_key_credentials):
+        public_pem = private_key_credentials.pop("_test_public_pem")
+
+        assertion = await oauth_manager._build_client_assertion(private_key_credentials)
+
+        header = jwt.get_unverified_header(assertion)
+        assert header["alg"] == "RS256"
+        assert "kid" not in header
+
+        decoded = jwt.decode(assertion, public_pem, algorithms=["RS256"], audience="https://issuer.example.com/token")
+        assert decoded["iss"] == "test-client"
+        assert decoded["sub"] == "test-client"
+        assert decoded["aud"] == "https://issuer.example.com/token"
+        assert decoded["iat"] <= decoded["exp"]
+        assert decoded["exp"] - decoded["iat"] <= MAX_CLIENT_ASSERTION_TTL_SECONDS
+        assert decoded["exp"] > decoded["iat"]
+        assert decoded["jti"]
+
+    @pytest.mark.asyncio
+    async def test_custom_rsa_alg(self, oauth_manager, private_key_credentials):
+        private_key_credentials["token_endpoint_auth_signing_alg"] = "PS256"
+        public_pem = private_key_credentials.pop("_test_public_pem")
+
+        assertion = await oauth_manager._build_client_assertion(private_key_credentials)
+
+        assert jwt.get_unverified_header(assertion)["alg"] == "PS256"
+        decoded = jwt.decode(assertion, public_pem, algorithms=["PS256"], audience="https://issuer.example.com/token")
+        assert decoded["iss"] == "test-client"
+
+    @pytest.mark.asyncio
+    async def test_es256_alg(self, oauth_manager):
+        private_pem, public_pem = _make_ec_keypair()
+        credentials = _private_key_jwt_credentials(private_key=private_pem, token_endpoint_auth_signing_alg="ES256")
+
+        assertion = await oauth_manager._build_client_assertion(credentials)
+
+        assert jwt.get_unverified_header(assertion)["alg"] == "ES256"
+        decoded = jwt.decode(assertion, public_pem, algorithms=["ES256"], audience="https://issuer.example.com/token")
+        assert decoded["aud"] == "https://issuer.example.com/token"
+
+    @pytest.mark.asyncio
+    async def test_optional_kid_header_injected(self, oauth_manager, private_key_credentials):
+        private_key_credentials["private_key_jwt_kid"] = "kid-abc"
+
+        assertion = await oauth_manager._build_client_assertion(private_key_credentials)
+
+        assert jwt.get_unverified_header(assertion)["kid"] == "kid-abc"
+
+    @pytest.mark.asyncio
+    async def test_blank_kid_not_injected(self, oauth_manager, private_key_credentials):
+        private_key_credentials["private_key_jwt_kid"] = "   "
+
+        assertion = await oauth_manager._build_client_assertion(private_key_credentials)
+
+        assert "kid" not in jwt.get_unverified_header(assertion)
+
+    @pytest.mark.asyncio
+    async def test_missing_private_key_fails_closed(self, oauth_manager):
+        credentials = _private_key_jwt_credentials(private_key=None)
+
+        with pytest.raises(OAuthError, match="no private_key is configured"):
+            await oauth_manager._build_client_assertion(credentials)
+
+    @pytest.mark.asyncio
+    async def test_empty_private_key_fails_closed(self, oauth_manager):
+        credentials = _private_key_jwt_credentials(private_key="   ")
+
+        with pytest.raises(OAuthError, match="no private_key is configured"):
+            await oauth_manager._build_client_assertion(credentials)
+
+    @pytest.mark.asyncio
+    async def test_unsupported_alg_rejected(self, oauth_manager, private_key_credentials):
+        private_key_credentials["token_endpoint_auth_signing_alg"] = "HS256"
+
+        with pytest.raises(OAuthError, match="Unsupported token_endpoint_auth_signing_alg"):
+            await oauth_manager._build_client_assertion(private_key_credentials)
+
+    @pytest.mark.asyncio
+    async def test_invalid_key_material_raised_as_oautherror(self, oauth_manager, private_key_credentials):
+        private_key_credentials["private_key"] = "not-a-pem-key"  # pragma: allowlist secret
+
+        with pytest.raises(OAuthError, match="Failed to sign client assertion"):
+            await oauth_manager._build_client_assertion(private_key_credentials)
+
+    @pytest.mark.asyncio
+    async def test_missing_client_id_fails_closed(self, oauth_manager, private_key_credentials):
+        private_key_credentials.pop("client_id")
+
+        with pytest.raises(OAuthError, match="missing client_id"):
+            await oauth_manager._build_client_assertion(private_key_credentials)
+
+    @pytest.mark.asyncio
+    async def test_missing_token_url_fails_closed(self, oauth_manager, private_key_credentials):
+        private_key_credentials.pop("token_url")
+
+        with pytest.raises(OAuthError, match="missing token_url"):
+            await oauth_manager._build_client_assertion(private_key_credentials)
+
+
+class TestApplyTokenEndpointAuth:
+    @pytest.mark.asyncio
+    async def test_unknown_method_fails_closed(self, oauth_manager, private_key_credentials):
+        private_key_credentials["token_endpoint_auth_method"] = "client_secret_snake_oil"
+
+        with pytest.raises(OAuthError, match="Unsupported token_endpoint_auth_method"):
+            await oauth_manager._apply_token_endpoint_auth({}, {}, private_key_credentials)
+
+    @pytest.mark.asyncio
+    async def test_missing_client_id_fails_closed(self, oauth_manager, private_key_credentials):
+        private_key_credentials.pop("client_id")
+
+        with pytest.raises(OAuthError, match="missing client_id"):
+            await oauth_manager._apply_token_endpoint_auth({}, {}, private_key_credentials)
+
+    @pytest.mark.asyncio
+    async def test_none_public_client_posts_client_id_only(self, oauth_manager, private_key_credentials):
+        private_key_credentials["token_endpoint_auth_method"] = "none"
+        private_key_credentials["client_secret"] = "should-not-leak"  # pragma: allowlist secret
+        token_data: Dict[str, str] = {}
+
+        await oauth_manager._apply_token_endpoint_auth(token_data, {}, private_key_credentials)
+
+        assert token_data["client_id"] == "test-client"
+        assert "client_secret" not in token_data
+        assert "client_assertion" not in token_data
+
+    @pytest.mark.asyncio
+    async def test_default_post_posts_client_id_and_secret(self, oauth_manager, private_key_credentials):
+        private_key_credentials["token_endpoint_auth_method"] = "client_secret_post"
+        private_key_credentials["client_secret"] = "secret-value"  # pragma: allowlist secret
+        token_data: Dict[str, str] = {}
+
+        await oauth_manager._apply_token_endpoint_auth(token_data, {}, private_key_credentials)
+
+        assert token_data["client_id"] == "test-client"
+        assert token_data["client_secret"] == "secret-value"  # pragma: allowlist secret
+
+    @pytest.mark.asyncio
+    async def test_basic_auth_sets_header(self, oauth_manager, private_key_credentials):
+        private_key_credentials["token_endpoint_auth_method"] = "client_secret_basic"
+        private_key_credentials["client_secret"] = "secret-value"  # pragma: allowlist secret
+        token_data: Dict[str, str] = {}
+        headers: Dict[str, str] = {}
+
+        await oauth_manager._apply_token_endpoint_auth(token_data, headers, private_key_credentials)
+
+        assert headers["Authorization"].startswith("Basic ")
+        assert "client_secret" not in token_data
+
+
+class TestPrivateKeyJwtFlows:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "flow,flow_kwargs",
+        [
+            ("client_credentials", {}),
+            ("password", {}),
+            ("authorization_code", {"code": "authcode", "state": "state-1"}),
+            ("authorization_code_pkce", {"code": "authcode", "code_verifier": "verifier-1"}),
+            ("refresh_token", {"refresh_token": "refresh-1"}),
+        ],
+    )
+    async def test_private_key_jwt_applied_across_all_flows(self, oauth_manager, private_key_credentials, flow, flow_kwargs):
+        mock_client = AsyncMock()
+        mock_client.post.return_value = _success_json_response()
+        public_pem = private_key_credentials.pop("_test_public_pem")
+
+        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+            if flow == "client_credentials":
+                await oauth_manager._client_credentials_flow(private_key_credentials)
+            elif flow == "password":
+                private_key_credentials["username"] = "u"
+                private_key_credentials["password"] = "p"  # pragma: allowlist secret
+                await oauth_manager._password_flow(private_key_credentials)
+            elif flow == "authorization_code":
+                await oauth_manager.exchange_code_for_token(private_key_credentials, **flow_kwargs)
+            elif flow == "authorization_code_pkce":
+                await oauth_manager._exchange_code_for_tokens(private_key_credentials, code=flow_kwargs["code"], code_verifier=flow_kwargs["code_verifier"])
+            elif flow == "refresh_token":
+                await oauth_manager.refresh_token(credentials=private_key_credentials, **flow_kwargs)
+
+        assert mock_client.post.called
+        form = mock_client.post.call_args.kwargs["data"]
+        assert form["client_id"] == "test-client"
+        assert form["client_assertion_type"] == CLIENT_ASSERTION_TYPE_JWT_BEARER
+        assertion = form["client_assertion"]
+        assert jwt.get_unverified_header(assertion)["alg"] == "RS256"
+        decoded = jwt.decode(assertion, public_pem, algorithms=["RS256"], audience="https://issuer.example.com/token")
+        assert decoded["iss"] == "test-client"
+        assert decoded["sub"] == "test-client"
+        assert decoded["aud"] == "https://issuer.example.com/token"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "flow,flow_kwargs",
+        [
+            ("client_credentials", {}),
+            ("password", {}),
+            ("authorization_code", {"code": "authcode", "state": "state-1"}),
+            ("authorization_code_pkce", {"code": "authcode", "code_verifier": "verifier-1"}),
+            ("refresh_token", {"refresh_token": "refresh-1"}),
+        ],
+    )
+    async def test_private_key_jwt_missing_key_fails_closed_in_every_flow(self, oauth_manager, flow, flow_kwargs):
+        credentials = _private_key_jwt_credentials(private_key=None)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = _success_json_response()
+
+        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+            with pytest.raises(OAuthError, match="no private_key is configured"):
+                if flow == "client_credentials":
+                    await oauth_manager._client_credentials_flow(credentials)
+                elif flow == "password":
+                    credentials["username"] = "u"
+                    credentials["password"] = "p"  # pragma: allowlist secret
+                    await oauth_manager._password_flow(credentials)
+                elif flow == "authorization_code":
+                    await oauth_manager.exchange_code_for_token(credentials, **flow_kwargs)
+                elif flow == "authorization_code_pkce":
+                    await oauth_manager._exchange_code_for_tokens(credentials, code=flow_kwargs["code"], code_verifier=flow_kwargs["code_verifier"])
+                elif flow == "refresh_token":
+                    await oauth_manager.refresh_token(credentials=credentials, **flow_kwargs)
+
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "flow,flow_kwargs",
+        [
+            ("client_credentials", {}),
+            ("password", {}),
+            ("authorization_code", {"code": "authcode", "state": "state-1"}),
+            ("authorization_code_pkce", {"code": "authcode", "code_verifier": "verifier-1"}),
+            ("refresh_token", {"refresh_token": "refresh-1"}),
+        ],
+    )
+    async def test_private_key_jwt_kid_forwarded_in_every_flow(self, oauth_manager, flow, flow_kwargs):
+        credentials = _private_key_jwt_credentials(private_key_jwt_kid="kid-from-config")
+        mock_client = AsyncMock()
+        mock_client.post.return_value = _success_json_response()
+
+        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+            if flow == "client_credentials":
+                await oauth_manager._client_credentials_flow(credentials)
+            elif flow == "password":
+                credentials["username"] = "u"
+                credentials["password"] = "p"  # pragma: allowlist secret
+                await oauth_manager._password_flow(credentials)
+            elif flow == "authorization_code":
+                await oauth_manager.exchange_code_for_token(credentials, **flow_kwargs)
+            elif flow == "authorization_code_pkce":
+                await oauth_manager._exchange_code_for_tokens(credentials, code=flow_kwargs["code"], code_verifier=flow_kwargs["code_verifier"])
+            elif flow == "refresh_token":
+                await oauth_manager.refresh_token(credentials=credentials, **flow_kwargs)
+
+        form = mock_client.post.call_args.kwargs["data"]
+        assertion = form["client_assertion"]
+        assert jwt.get_unverified_header(assertion)["kid"] == "kid-from-config"
+
+
+def test_redact_token_response_masks_client_assertion():
+    payload = {"client_assertion": "eyJhbGciOiJSUzI1NiJ9.sig", "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}
+    out = OAuthManager._redact_token_response(payload)
+    assert out["client_assertion"] == "[REDACTED]"
+    assert "eyJhbGci" not in out["client_assertion"]
+
+
+class TestPrivateKeyJwtWireFormat:
+    """End-to-end HTTP shape of a private_key_jwt token request via a real httpx transport."""
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_sends_verifyable_assertion_over_the_wire(self, oauth_manager, private_key_credentials):
+        from urllib.parse import parse_qs
+
+        public_pem = private_key_credentials.pop("_test_public_pem")
+        captured = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = parse_qs(request.content.decode("utf-8"))
+            captured["url"] = str(request.url)
+            return httpx.Response(200, json={"access_token": "tok", "token_type": "bearer", "expires_in": 3600}, headers={"content-type": "application/json"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        async def _stub_client_factory():
+            return client
+
+        with patch.object(oauth_manager, "_get_client", new=_stub_client_factory):
+            token = await oauth_manager._client_credentials_flow(private_key_credentials)
+        await client.aclose()
+
+        assert token == "tok"
+        assert captured["url"] == "https://issuer.example.com/token"
+        body = captured["body"]
+        assert body["grant_type"] == ["client_credentials"]
+        assert body["client_id"] == ["test-client"]
+        assert body["client_assertion_type"] == [CLIENT_ASSERTION_TYPE_JWT_BEARER]
+        assertion = body["client_assertion"][0]
+        assert jwt.get_unverified_header(assertion)["alg"] == "RS256"
+        decoded = jwt.decode(assertion, public_pem, algorithms=["RS256"], audience="https://issuer.example.com/token")
+        assert decoded["iss"] == "test-client"
+        assert decoded["sub"] == "test-client"
+        assert decoded["aud"] == "https://issuer.example.com/token"
