@@ -6064,6 +6064,77 @@ class TestSetGatewayState:
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_repeated_last_error_without_state_change_writes_nothing(self, gateway_service, _mock_caches):
+        """The same reason reported twice must not produce a second commit.
+
+        Guards the ``gateway.last_error != last_error`` half of the elif condition:
+        without it every health check would dirty the row and bump updated_at.
+        """
+        gw = _make_gateway(
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            last_error="connection refused",
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._event_service = AsyncMock()
+        updated_at = gw.updated_at
+
+        await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True, last_error="connection refused")
+
+        assert gw.last_error == "connection refused"
+        assert gw.updated_at == updated_at
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_absent_last_error_without_state_change_preserves_stored_reason(self, gateway_service, _mock_caches):
+        """A state-only call reports no new reason and must not clear the stored one.
+
+        Guards the ``last_error is not None`` half of the elif condition: dropping it
+        turns the health-check path's ``None`` default into a write that wipes the
+        outage reason the UI shows.
+        """
+        gw = _make_gateway(
+            id="gw-1",
+            name="test",
+            url="http://example.com",
+            enabled=True,
+            reachable=True,
+            last_error="certificate has expired",
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="test",
+            auth_type=None,
+            auth_query_params=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._event_service = AsyncMock()
+        updated_at = gw.updated_at
+
+        await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
+
+        assert gw.last_error == "certificate has expired"
+        assert gw.updated_at == updated_at
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_activation_with_init_failure(self, gateway_service, _mock_caches):
         gw = _make_gateway(
             id="gw-1",
@@ -6464,6 +6535,25 @@ class TestHandleGatewayFailureThreshold:
         await gateway_service._handle_gateway_failure(gw, BlankError())
         _, kwargs = gateway_service.set_gateway_state.await_args
         assert kwargs["last_error"] == "BlankError"
+
+    @pytest.mark.asyncio
+    async def test_threshold_without_error_persists_unknown_fallback(self, gateway_service, monkeypatch):
+        """error=None is the pre-#6343 call shape and must not persist a null reason."""
+        gw = SimpleNamespace(id="gw-null", name="test", enabled=True, reachable=True, auth_query_params=None)
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        await gateway_service._handle_gateway_failure(gw)
+
+        _, kwargs = gateway_service.set_gateway_state.await_args
+        assert kwargs["last_error"] == "Unknown health-check failure"
+        assert gateway_service._gateway_failure_counts["gw-null"] == 0
 
 
 class TestMarkGatewayReachableErrorCleanup:
