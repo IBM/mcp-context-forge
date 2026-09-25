@@ -20,5 +20,6 @@ nav:
       - architecture
       - security
   - "📖 Reference":
+      - reference
       - "⚠️ Deprecations": deprecations.md
       - media
