@@ -182,7 +182,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
-from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
