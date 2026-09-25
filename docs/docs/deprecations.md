@@ -163,14 +163,15 @@ predate this policy. They used a 26-day window.
 |---|---|---|
 | Legacy unversioned API shim | 2026-09-26 | Default `LEGACY_API_SUNSET_DATE`. `legacy_api_enabled` still defaults to `true`. Tools, resources, prompts, teams, and tokens still call legacy paths internally. See [terminology](overview/terminology.md). |
 
-### Version-bound removals
+### Makefile aliases
 
-Current released version: 1.0.10.
+Deprecated as of 2026-09-30. They sunset on 2026-12-29. Each Makefile call
+site states both dates.
 
-| Item | Removal version | Status |
+| Item | Earliest removal | Status |
 |---|---|---|
-| Makefile aliases `black-check`, `isort-check`, `ruff-check`, `ruff-fix`, `ruff-format`, `container-run-host`, `container-run-ssl`, `container-run-ssl-host`, `container-run-ssl-jwt` | v1.2.0 | Pending. |
-| Makefile aliases `test-mcp-protocol-e2e`, `test-mcp-cli`, `test-mcp-rbac` | v1.3.0 | Pending. |
+| Makefile aliases `black-check`, `isort-check`, `ruff-check`, `ruff-fix`, `ruff-format`, `container-run-host`, `container-run-ssl`, `container-run-ssl-host`, `container-run-ssl-jwt` | 2026-12-29 | Pending. |
+| Makefile alias `test-mcp-protocol-e2e` | 2026-12-29 | Pending. |
 
 ### No sunset date assigned
 

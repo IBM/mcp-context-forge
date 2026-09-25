@@ -58,7 +58,8 @@ make htmlcov                      # Coverage HTML → docs/docs/coverage/index.h
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
 make test-e2e                     # Consolidated MCP protocol and RBAC E2E (needs live gateway)
-# Deprecated aliases: test-mcp-protocol-e2e and test-mcp-rbac also run test-e2e.
+# test-mcp-cli and test-mcp-rbac are plain aliases for test-e2e.
+# test-mcp-protocol-e2e is a deprecated alias for test-e2e (sunsets 2026-12-29).
 make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack (requires test-specific plugin config)
 make test-mcp-access-matrix       # Rust-only MCP role/access matrix with strong sentinels
 make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
