@@ -1,6 +1,6 @@
 # gRPC Services (Deprecated)
 
-!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+!!! warning "Deprecated as of 2026-10-20. Sunsets on 2027-01-18."
     gRPC service registration is deprecated. Do not adopt it in new
     deployments. Existing registrations keep working until the sunset date.
     No replacement exists. See [Deprecations](../deprecations.md).

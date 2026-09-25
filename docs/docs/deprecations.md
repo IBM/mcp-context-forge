@@ -160,7 +160,7 @@ Migration:
 
 ## gRPC upstream services
 
-!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+!!! warning "Deprecated as of 2026-10-20. Sunsets on 2027-01-18."
     Registering gRPC services as upstreams is deprecated. The support is
     experimental and disabled by default (`MCPGATEWAY_GRPC_ENABLED=false`).
     Do not adopt it in new deployments. Existing registrations keep working
@@ -174,7 +174,7 @@ See [gRPC services](using/grpc-services.md).
 
 ## WebSocket upstreams
 
-!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+!!! warning "Deprecated as of 2026-10-20. Sunsets on 2027-01-18."
     Registering MCP servers over WebSocket is deprecated. This covers
     `ws://` and `wss://` URLs and `transport=WEBSOCKET` in gateway and
     catalog registrations.
@@ -187,7 +187,7 @@ See [catalog registration](manage/catalog.md).
 
 ## Local observability data store
 
-!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+!!! warning "Deprecated as of 2026-10-20. Sunsets on 2027-01-18."
     The internal observability database is deprecated. This covers the
     trace, span, and metric tables that `OBSERVABILITY_ENABLED=true`
     writes, and the Admin UI views that read them.
@@ -218,19 +218,19 @@ predate this policy. They used a 26-day window.
 | Item | Earliest removal | Status |
 |---|---|---|
 | Legacy unversioned API shim | 2026-09-26 | Default `LEGACY_API_SUNSET_DATE`. `legacy_api_enabled` still defaults to `true`. Tools, resources, prompts, teams, and tokens still call legacy paths internally. See [terminology](overview/terminology.md). |
-| gRPC upstream services | 2026-12-29 | Experimental, disabled by default. No replacement. |
-| WebSocket upstreams | 2026-12-29 | Use Streamable HTTP or SSE registrations instead. |
-| Local observability data store | 2026-12-29 | Use OTel export instead. |
+| gRPC upstream services | 2027-01-18 | Experimental, disabled by default. No replacement. |
+| WebSocket upstreams | 2027-01-18 | Use Streamable HTTP or SSE registrations instead. |
+| Local observability data store | 2027-01-18 | Use OTel export instead. |
 
 ### Makefile aliases
 
-Deprecated as of 2026-09-30. They sunset on 2026-12-29. Each Makefile call
+Deprecated as of 2026-10-20. They sunset on 2027-01-18. Each Makefile call
 site states both dates.
 
 | Item | Earliest removal | Status |
 |---|---|---|
-| Makefile aliases `black-check`, `isort-check`, `ruff-check`, `ruff-fix`, `ruff-format`, `container-run-host`, `container-run-ssl`, `container-run-ssl-host`, `container-run-ssl-jwt` | 2026-12-29 | Pending. |
-| Makefile alias `test-mcp-protocol-e2e` | 2026-12-29 | Pending. |
+| Makefile aliases `black-check`, `isort-check`, `ruff-check`, `ruff-fix`, `ruff-format`, `container-run-host`, `container-run-ssl`, `container-run-ssl-host`, `container-run-ssl-jwt` | 2027-01-18 | Pending. |
+| Makefile alias `test-mcp-protocol-e2e` | 2027-01-18 | Pending. |
 
 ### Removed
 

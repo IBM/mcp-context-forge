@@ -1,6 +1,6 @@
 # Internal Observability System
 
-!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+!!! warning "Deprecated as of 2026-10-20. Sunsets on 2027-01-18."
     The internal observability database is deprecated. Export telemetry over
     OTLP instead. See [Deprecations](../../deprecations.md).
 
