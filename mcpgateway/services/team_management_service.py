@@ -31,6 +31,7 @@ from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -925,6 +926,7 @@ class TeamManagementService:
             memberships, invitations = await self._seed_members(team, seeds, created_by)
 
             self.db.commit()
+            notify_dataplane()
 
             team_id = str(team.id)
 
@@ -1085,6 +1087,7 @@ class TeamManagementService:
 
             team.updated_at = utc_now()
             self.db.commit()
+            notify_dataplane()
 
             self._invalidate_team_member_caches(team_id)
 
@@ -1151,6 +1154,7 @@ class TeamManagementService:
             )
 
             self.db.commit()
+            notify_dataplane()
 
             # Invalidate all role caches for this team
             try:
@@ -1281,6 +1285,7 @@ class TeamManagementService:
         try:
             member, action = self._upsert_membership(team_id, user_email, role, invited_by=invited_by, grant_source=grant_source, existing=existing_membership)
             self.db.commit()
+            notify_dataplane()
             self._log_team_member_action(member.id, team_id, user_email, role, action, invited_by)
 
             await self._assign_team_rbac_role(user_email, team_id, role, granted_by=invited_by)
@@ -1342,6 +1347,7 @@ class TeamManagementService:
             # Remove membership (soft delete)
             membership.is_active = False
             self.db.commit()
+            notify_dataplane()
             self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
 
             # Revoke all team-scoped RBAC roles from removed member defensively
