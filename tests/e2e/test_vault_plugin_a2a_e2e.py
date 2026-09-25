@@ -332,7 +332,7 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": {"name": a2a_tool["name"], "arguments": {"message": "hi"}},
+                "params": {"name": a2a_tool["name"], "arguments": {"query": "hi"}},
             },
         )
         assert r.status_code == 200, r.text
