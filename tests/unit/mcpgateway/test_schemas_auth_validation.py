@@ -989,3 +989,69 @@ def test_tool_update_bearer_token_leaves_other_non_ascii_untouched():
     tool = ToolUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
     decoded = decode_auth(tool.auth.auth_value)
     assert decoded["Authorization"] == "Bearer café-token"
+
+
+# ---------- private_key_jwt token endpoint auth validation ----------
+
+
+def _rsa_private_key_stub():
+    # Opaque placeholder: schema validation checks structural presence of the
+    # key, not its format. Real keys are generated ephemerally in the runtime
+    # unit tests.
+    return "dummy-private-key-material"  # pragma: allowlist secret
+
+
+def _oauth_config(**overrides):
+    config = {
+        "client_id": "client-1",
+        "token_url": "https://issuer.example.com/token",
+        "token_endpoint_auth_method": "private_key_jwt",
+        "private_key": _rsa_private_key_stub(),
+    }
+    config.update(overrides)
+    return config
+
+
+class TestOauthConfigPrivateKeyJwtValidation:
+    def test_valid_private_key_jwt_config_accepted(self):
+        gateway = GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config())
+        assert gateway.oauth_config["token_endpoint_auth_method"] == "private_key_jwt"
+        assert "private_key" in gateway.oauth_config
+
+    def test_custom_alg_and_kid_accepted(self):
+        gateway = GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config(token_endpoint_auth_signing_alg="ES256", private_key_jwt_kid="kid-1"))
+        assert gateway.oauth_config["token_endpoint_auth_signing_alg"] == "ES256"
+        assert gateway.oauth_config["private_key_jwt_kid"] == "kid-1"
+
+    @pytest.mark.parametrize("method", ["none", "client_secret_basic", "client_secret_post"])
+    def test_all_supported_methods_accepted(self, method):
+        gateway = GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config(token_endpoint_auth_method=method))
+        assert gateway.oauth_config["token_endpoint_auth_method"] == method
+
+    def test_unknown_method_rejected(self):
+        with pytest.raises(ValidationError, match="token_endpoint_auth_method"):
+            GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config(token_endpoint_auth_method="client_secret_digest"))
+
+    def test_hs256_alg_rejected(self):
+        with pytest.raises(ValidationError, match="token_endpoint_auth_signing_alg"):
+            GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config(token_endpoint_auth_signing_alg="HS256"))
+
+    def test_missing_private_key_rejected(self):
+        with pytest.raises(ValidationError, match="private_key is required"):
+            GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config(private_key=None))
+
+    def test_blank_kid_rejected(self):
+        with pytest.raises(ValidationError, match="private_key_jwt_kid"):
+            GatewayCreate(name="gw", url="https://example.com", oauth_config=_oauth_config(private_key_jwt_kid="  "))
+
+    def test_masked_private_key_placeholder_accepted_for_update(self):
+        gateway = GatewayUpdate(oauth_config=_oauth_config(private_key=settings.masked_auth_value))
+        assert gateway.oauth_config["private_key"] == settings.masked_auth_value
+
+    def test_encrypted_private_key_value_accepted(self):
+        gateway = GatewayUpdate(oauth_config=_oauth_config(private_key="enc:v1:ABCDEF1234567890"))  # pragma: allowlist secret
+        assert gateway.oauth_config["private_key"].startswith("enc:")
+
+    def test_non_private_key_method_ignores_private_key_requirement(self):
+        gateway = GatewayUpdate(oauth_config=_oauth_config(token_endpoint_auth_method="client_secret_post"))
+        assert gateway.oauth_config["token_endpoint_auth_method"] == "client_secret_post"

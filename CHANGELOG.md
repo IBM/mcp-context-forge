@@ -11,6 +11,8 @@
 
 ### Added
 
+- **`private_key_jwt` token endpoint client authentication** ([#6988](https://github.com/IBM/mcp-context-forge/issues/6988)) - `oauth_config.token_endpoint_auth_method` now supports RFC 7523 `private_key_jwt`. Token requests on the client-credentials, authorization-code, refresh, and password flows include `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and a signed `client_assertion` carrying `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, and an optional `kid`. Configuration is validated at the API boundary, and an unknown method now fails closed instead of silently falling back to `client_secret_post`. Supported signing algorithms are asymmetric only (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`); `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` are optional.
+
 - **Tool preview endpoint** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Added `POST /tools/preview/{name}` (and its `/v1` mount), a dry-run counterpart to tool invocation that validates arguments against the tool's `input_schema`, resolves local vs. federated targeting, and reports which plugin pre-invoke hooks would run, without ever dispatching the tool. Gated behind `MCPGATEWAY_TOOL_PREVIEW_ENABLED` (off by default) and the `tools.preview` RBAC permission. Only plugins tagged `preview_safe` actually run during a preview; every other hook that would run live is reported as a warning instead.
 
 ### Breaking Changes

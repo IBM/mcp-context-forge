@@ -23,10 +23,18 @@ from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
 import httpx
+import jwt
 import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
+from mcpgateway.common.oauth import (
+    CLIENT_ASSERTION_TYPE_JWT_BEARER,
+    DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG,
+    MAX_CLIENT_ASSERTION_TTL_SECONDS,
+    SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
+    SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS,
+)
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
@@ -373,7 +381,7 @@ class OAuthManager:
         return await client.post(url, data=data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
 
     # Keys whose values must never be echoed in error messages or logs.
-    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token"})
+    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "client_assertion"})
 
     # Cap on raw_response excerpts and any other string values surfaced via
     # OAuthError / logs (defense-in-depth against unbounded provider bodies).
@@ -388,7 +396,7 @@ class OAuthManager:
     # secrets embedded in HTML error pages or stack traces don't survive the
     # length cap (the value can fit entirely inside the truncation window).
     _LEAKY_PARAM_RE = re.compile(
-        r"(?i)\b(access_token|refresh_token|id_token|token|code|secret|key|password|api[_-]?key)=[^&\s\"'<>]+",
+        r"(?i)\b(access_token|refresh_token|id_token|token|code|secret|key|password|api[_-]?key|client_assertion)=[^&\s\"'<>]+",
     )
 
     @staticmethod
@@ -519,6 +527,130 @@ class OAuthManager:
         encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
         return f"Basic {encoded_credentials}"
 
+    async def _build_client_assertion(self, runtime_credentials: Dict[str, Any]) -> str:
+        """Sign a JWT bearer client assertion for private_key_jwt (RFC 7523 Section 2.2).
+
+        Args:
+            runtime_credentials: Runtime-ready OAuth configuration after decryption.
+
+        Returns:
+            Signed ``client_assertion`` for the token request.
+
+        Raises:
+            OAuthError: If the signing key, algorithm, or token URL is missing
+                or invalid. Never falls back to another authentication method.
+        """
+        client_id = runtime_credentials.get("client_id")
+        token_url = runtime_credentials.get("token_url")
+        if not isinstance(client_id, str) or not client_id:
+            raise OAuthError("OAuth configuration missing client_id required for private_key_jwt client authentication")
+        if not isinstance(token_url, str) or not token_url:
+            raise OAuthError("OAuth configuration missing token_url required as the aud claim of the client assertion")
+
+        private_key = runtime_credentials.get("private_key")
+        if not isinstance(private_key, str) or not private_key.strip():
+            raise OAuthError("token_endpoint_auth_method is private_key_jwt but no private_key is configured")
+
+        alg = runtime_credentials.get("token_endpoint_auth_signing_alg") or DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG
+        if alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
+            raise OAuthError(f"Unsupported token_endpoint_auth_signing_alg '{sanitize_for_log(alg)}'. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS))}")
+
+        now = datetime.now(timezone.utc)
+        payload = {
+            "iss": client_id,
+            "sub": client_id,
+            "aud": token_url,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(seconds=MAX_CLIENT_ASSERTION_TTL_SECONDS)).timestamp()),
+            "jti": secrets.token_hex(16),
+        }
+
+        # Some identity providers (Entra ID, Keycloak) match the assertion
+        # against the client's public JWKS by key ID; the kid is optional.
+        headers: Dict[str, str] = {}
+        raw_kid = runtime_credentials.get("private_key_jwt_kid")
+        if isinstance(raw_kid, str) and raw_kid.strip():
+            headers["kid"] = raw_kid.strip()
+
+        try:
+            return await asyncio.to_thread(jwt.encode, payload, private_key, algorithm=alg, headers=headers)
+        except Exception as exc:
+            raise OAuthError("Failed to sign client assertion for private_key_jwt client authentication") from exc
+
+    async def _apply_token_endpoint_auth(
+        self,
+        token_data: Dict[str, Any],
+        headers: Dict[str, str],
+        runtime_credentials: Dict[str, Any],
+        *,
+        require_client_id: bool = True,
+    ) -> None:
+        """Apply the configured token endpoint client authentication method in place.
+
+        Mutates ``token_data`` (form body) and ``headers`` (request headers)
+        with the client mechanism selected by ``token_endpoint_auth_method``.
+        When ``require_client_id`` is false, a missing client_id is not an
+        error and the id is sent only when configured. The password grant
+        (RFC 6749 Section 4.3) historically allowed a client without
+        credentials, so it calls this method with ``require_client_id=False``.
+
+        Args:
+            token_data: Token request form data to extend.
+            headers: Token request headers to extend.
+            runtime_credentials: Runtime-ready OAuth configuration after decryption.
+            require_client_id: Whether a missing client_id is an error.
+                True for all flows except the password grant.
+
+        Raises:
+            OAuthError: If the configured method is unknown or required signing
+                material is missing. The method never silently falls back to a
+                different authentication mechanism than the one configured.
+        """
+        auth_method = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post")
+        client_id = runtime_credentials.get("client_id")
+        client_secret = runtime_credentials.get("client_secret")
+
+        if require_client_id and (not isinstance(client_id, str) or not client_id):
+            raise OAuthError("OAuth configuration missing client_id required for token endpoint authentication")
+
+        if auth_method == "none":
+            # RFC 7591 Section 2: public client with no authentication.
+            if client_id:
+                token_data["client_id"] = client_id
+            logger.debug("Using no authentication for token endpoint (public client)")
+            return
+
+        if auth_method == "client_secret_basic":
+            if client_id and client_secret:
+                headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
+                logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+            else:
+                # Public PKCE clients have no secret to encode; POST body mode is the fallback.
+                logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
+                if client_id:
+                    token_data["client_id"] = client_id
+                if client_secret:
+                    token_data["client_secret"] = client_secret
+            return
+
+        if auth_method == "private_key_jwt":
+            token_data["client_assertion_type"] = CLIENT_ASSERTION_TYPE_JWT_BEARER
+            token_data["client_assertion"] = await self._build_client_assertion(runtime_credentials)
+            if client_id:
+                token_data["client_id"] = client_id
+            logger.debug("Using private_key_jwt client assertion for token endpoint authentication")
+            return
+
+        if auth_method not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+            raise OAuthError(f"Unsupported token_endpoint_auth_method '{sanitize_for_log(auth_method)}'. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+
+        # Default: client_secret_post with a shared secret (RFC 6749 Section 2.3.1).
+        if client_id:
+            token_data["client_id"] = client_id
+        if client_secret:
+            token_data["client_secret"] = client_secret
+        logger.debug("Using POST body for token endpoint authentication")
+
     async def _client_credentials_flow(
         self,
         credentials: Dict[str, Any],
@@ -541,29 +673,16 @@ class OAuthManager:
             OAuthError: If token acquisition fails after all retries
         """
         runtime_credentials = await self._prepare_runtime_credentials(credentials, "client_credentials")
-        client_id = runtime_credentials["client_id"]
-        client_secret = runtime_credentials["client_secret"]
         token_url = runtime_credentials["token_url"]
         if not isinstance(token_url, str):
             raise OAuthError("OAuth configuration missing valid token_url")
         scopes = runtime_credentials.get("scopes", [])
 
-        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
-        # Default to form-based auth for backward compatibility
-        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
-
-        # Prepare token request data and headers
-        token_data = {"grant_type": "client_credentials"}
-        headers = {}
-
-        if use_basic_auth:
-            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
-            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
-        else:
-            # Default: client credentials in POST body (client_secret_post)
-            token_data["client_id"] = client_id
-            token_data["client_secret"] = client_secret
-            logger.debug("Using POST body for token endpoint authentication")
+        # Prepare token request data and apply the configured client
+        # authentication method (RFC 6749 Section 2.3.1 / RFC 7523).
+        token_data: Dict[str, Any] = {"grant_type": "client_credentials"}
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials)
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
@@ -616,8 +735,6 @@ class OAuthManager:
             OAuthError: If token acquisition fails after all retries
         """
         runtime_credentials = await self._prepare_runtime_credentials(credentials, "password")
-        client_id = runtime_credentials.get("client_id")
-        client_secret = runtime_credentials.get("client_secret")
         token_url = runtime_credentials["token_url"]
         username = runtime_credentials.get("username")
         password = runtime_credentials.get("password")
@@ -626,20 +743,15 @@ class OAuthManager:
         if not username or not password:
             raise OAuthError("Username and password are required for password grant type")
 
-        # Prepare token request data
-        token_data = {
+        # Prepare token request data and apply the configured client
+        # authentication method.
+        token_data: Dict[str, Any] = {
             "grant_type": "password",
             "username": username,
             "password": password,
         }
-
-        # Add client_id (required by most providers including Keycloak)
-        if client_id:
-            token_data["client_id"] = client_id
-
-        # Add client_secret if present (some providers require it, others don't)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials, require_client_id=False)
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
@@ -647,7 +759,7 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=headers)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -706,43 +818,18 @@ class OAuthManager:
             OAuthError: If token exchange fails
         """
         runtime_credentials = await self._prepare_runtime_credentials(credentials, "authorization_code_exchange")
-        client_id = runtime_credentials["client_id"]
-        client_secret = runtime_credentials.get("client_secret")  # Optional for public clients (PKCE-only)
         token_url = runtime_credentials["token_url"]
         redirect_uri = runtime_credentials["redirect_uri"]
 
-        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
-        # Default to form-based auth for backward compatibility
-        auth_method = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post")
-
-        # Prepare token exchange data and headers
-        token_data = {
+        # Prepare token exchange data and apply the configured client
+        # authentication method (RFC 6749 / RFC 7591 / RFC 7523).
+        token_data: Dict[str, Any] = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
         }
-        headers = {}
-
-        if auth_method == "none":
-            # RFC 7591 §2: Public client with no authentication
-            token_data["client_id"] = client_id
-            logger.debug("Using no authentication for token endpoint (public client)")
-        elif auth_method == "client_secret_basic" and client_secret:
-            # RFC 6749 §2.3.1: HTTP Basic Authentication
-            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
-            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
-        elif auth_method == "client_secret_basic" and not client_secret:
-            # Public PKCE clients can't use Basic Auth (no secret to encode)
-            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode (public client)")
-            token_data["client_id"] = client_id
-            logger.debug("Using POST body for token endpoint authentication")
-        else:
-            # Default: client credentials in POST body (client_secret_post)
-            token_data["client_id"] = client_id
-            # Only include client_secret if present (public clients don't have secrets)
-            if client_secret:
-                token_data["client_secret"] = client_secret
-            logger.debug("Using POST body for token endpoint authentication")
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials)
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
@@ -1764,38 +1851,18 @@ class OAuthManager:
             OAuthError: If token exchange fails
         """
         runtime_credentials = await self._prepare_runtime_credentials(credentials, "authorization_code_exchange_with_pkce")
-        client_id = runtime_credentials["client_id"]
-        client_secret = runtime_credentials.get("client_secret")  # Optional for public clients (PKCE-only)
         token_url = runtime_credentials["token_url"]
         redirect_uri = runtime_credentials["redirect_uri"]
 
-        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
-        # Default to form-based auth for backward compatibility
-        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
-
-        # Prepare token exchange data and headers
-        token_data = {
+        # Prepare token exchange data and apply the configured client
+        # authentication method (RFC 6749 / RFC 7591 / RFC 7523).
+        token_data: Dict[str, Any] = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
         }
-        headers = {}
-
-        if use_basic_auth and client_secret:
-            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
-            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
-        elif use_basic_auth and not client_secret:
-            # Public PKCE clients can't use Basic Auth (no secret to encode)
-            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode (public client)")
-            token_data["client_id"] = client_id
-            logger.debug("Using POST body for token endpoint authentication")
-        else:
-            # Default: client credentials in POST body (client_secret_post)
-            token_data["client_id"] = client_id
-            # Only include client_secret if present (public clients don't have secrets)
-            if client_secret:
-                token_data["client_secret"] = client_secret
-            logger.debug("Using POST body for token endpoint authentication")
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials)
 
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
@@ -1880,37 +1947,18 @@ class OAuthManager:
             raise OAuthError("No token URL configured for OAuth provider")
 
         client_id = runtime_credentials.get("client_id")
-        client_secret = runtime_credentials.get("client_secret")
 
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
 
-        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
-        # Default to form-based auth for backward compatibility
-        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
-
-        # Prepare token refresh request and headers
-        token_data = {
+        # Prepare token refresh request and apply the configured client
+        # authentication method (RFC 6749 / RFC 7523).
+        token_data: Dict[str, Any] = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
         }
-        headers = {}
-
-        if use_basic_auth and client_secret:
-            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
-            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
-        elif use_basic_auth and not client_secret:
-            # Misconfiguration: Basic Auth requested but no secret available
-            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
-            token_data["client_id"] = client_id
-            logger.debug("Using POST body for token endpoint authentication")
-        else:
-            # Default: client credentials in POST body (client_secret_post)
-            token_data["client_id"] = client_id
-            # Add client_secret if available (some providers require it)
-            if client_secret:
-                token_data["client_secret"] = client_secret
-            logger.debug("Using POST body for token endpoint authentication")
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials)
 
         # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
         audience = self._validate_and_extract_audience(runtime_credentials)
@@ -2034,10 +2082,7 @@ class OAuthManager:
         if not access_token:
             return {}
         try:
-            # Third-Party
-            import jwt as pyjwt  # pylint: disable=import-outside-toplevel
-
-            claims = pyjwt.decode(
+            claims = jwt.decode(
                 access_token,
                 options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False},
                 algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "HS256", "HS384", "HS512", "EdDSA"],
