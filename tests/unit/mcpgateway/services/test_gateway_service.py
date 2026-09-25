@@ -16,6 +16,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
@@ -25,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import httpx
 from pydantic import ValidationError
 import pytest
+from sqlalchemy import Delete
 from url_normalize import url_normalize
 
 # First-Party
@@ -5147,15 +5149,95 @@ async def test_fetch_tools_after_oauth_streamablehttp(gateway_service, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_empty_catalog_preserves_existing_items(gateway_service, monkeypatch, caplog):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "streamablehttp"
+    gateway.tools = [SimpleNamespace(id=1, original_name="existing-tool", created_via="oauth")]
+    gateway.resources = [SimpleNamespace(id=2, uri="existing://resource", created_via="oauth")]
+    gateway.prompts = [SimpleNamespace(id=3, original_name="existing-prompt", created_via="oauth")]
+
+    db = MagicMock()
+    # Mock the EmailUser lookup used to build user_context for token storage
+    mock_user = MagicMock()
+    mock_user.is_admin = False
+
+    gateway_result = MagicMock()
+    gateway_result.scalar_one_or_none.return_value = gateway
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = mock_user
+
+    # Record every statement so the test can assert that no DELETE is issued.
+    executed_statements = []
+    lookup_results = [gateway_result, user_result]
+
+    def mock_execute(statement, *args, **kwargs):
+        executed_statements.append(statement)
+        if len(executed_statements) <= len(lookup_results):
+            return lookup_results[len(executed_statements) - 1]
+        # Any further statement would be part of the stale cleanup this guard prevents
+        return MagicMock()
+
+    db.execute.side_effect = mock_execute
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
+
+    class DummyTokenStorage:
+        def __init__(self, _db, user_context=None):
+            self.db = _db
+            self.user_context = user_context
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "token"
+
+        async def get_user_learned_audience(self, _gateway_id, _email):
+            return (None, None)
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({}, [], [], [], []))
+    gateway_service._update_or_create_tools = MagicMock(return_value=[])
+    gateway_service._update_or_create_resources = MagicMock(return_value=[])
+    gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+    registry_cache = SimpleNamespace(
+        invalidate_tools=AsyncMock(),
+        invalidate_resources=AsyncMock(),
+        invalidate_prompts=AsyncMock(),
+    )
+    tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    with caplog.at_level(logging.WARNING):
+        await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+    assert gateway.tools[0].original_name == "existing-tool"
+    assert gateway.resources[0].uri == "existing://resource"
+    assert gateway.prompts[0].original_name == "existing-prompt"
+    assert [statement for statement in executed_statements if isinstance(statement, Delete)] == []
+    assert "preserving existing items" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch):
     gateway = MagicMock(spec=DbGateway)
     gateway.id = "gw-1"
     gateway.name = "gw"
     gateway.oauth_config = {"grant_type": "authorization_code"}
     gateway.transport = "sse"
-    gateway.tools = [SimpleNamespace(id=1, original_name="old-tool"), SimpleNamespace(id=2, original_name="keep-tool")]
-    gateway.resources = [SimpleNamespace(id=3, uri="old://res"), SimpleNamespace(id=4, uri="keep://res")]
-    gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt"), SimpleNamespace(id=6, original_name="keep-prompt")]
+    gateway.tools = [
+        SimpleNamespace(id=1, original_name="old-tool", created_via="oauth"),
+        SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth"),
+        SimpleNamespace(id=7, original_name="ui-tool", created_via="ui"),
+    ]
+    gateway.resources = [SimpleNamespace(id=3, uri="old://res", created_via="oauth"), SimpleNamespace(id=4, uri="keep://res", created_via="oauth")]
+    gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth"), SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth")]
     gateway.capabilities = {}
     gateway.last_seen = None
 
@@ -5226,7 +5308,7 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
 
     assert result_data["capabilities"]["resources"] is True
-    assert len(gateway.tools) == 1
+    assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool"}
     assert len(gateway.resources) == 1
     assert len(gateway.prompts) == 1
 
