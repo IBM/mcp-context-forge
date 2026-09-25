@@ -1368,7 +1368,10 @@ class ToolService(BaseService):
                 "slug": gateway.slug,
                 "transport": gateway.transport,
                 "capabilities": gateway.capabilities or {},
-                "passthrough_headers": gateway.passthrough_headers or [],
+                # Keep None distinct from []: compute_passthrough_headers_cached() treats any list here
+                # as a per-gateway allowlist that replaces the global one, so coercing an unset value
+                # to [] silently disabled global passthrough headers for every gateway tool.
+                "passthrough_headers": gateway.passthrough_headers,
                 "auth_type": gateway.auth_type,
                 "ca_certificate": getattr(gateway, "ca_certificate", None),
                 "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
