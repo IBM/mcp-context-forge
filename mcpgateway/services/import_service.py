@@ -1663,7 +1663,7 @@ class ImportService:
                 existing, _ = await self.gateway_service.list_gateways(db)
                 item_info["conflicts_with"] = any(g.name == item_name for g in existing)
             elif entity_type == "servers":
-                existing = await self.server_service.list_servers(db)
+                existing, _ = await self.server_service.list_servers(db)
                 item_info["conflicts_with"] = any(s.name == item_name for s in existing)
             elif entity_type == "prompts":
                 existing, _ = await self.prompt_service.list_prompts(db)
