@@ -6106,7 +6106,10 @@ class ToolService(BaseService):
                                     error_val = result["error"]
                                 else:
                                     error_val = f"HTTP {response.status_code}: {response.text[: settings.rest_response_text_max_length]}"
-                                content = [TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())]
+                                # A non-string "error" value is serialized fresh here and was never
+                                # bounded by _handle_json_parse_error, so bound it to the same limit.
+                                serialized_error = error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode()[: settings.rest_response_text_max_length]
+                                content = [TextContent(type="text", text=serialized_error)]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler
                                 error_content = _handle_json_parse_error(response, e, is_error_response=True)
@@ -6133,7 +6136,8 @@ class ToolService(BaseService):
                                 result = response.json()
                                 # JSON parsed successfully - extract error message
                                 error_val = result["error"] if isinstance(result, dict) and "error" in result else "Tool error encountered"
-                                content = [TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())]
+                                serialized_error = error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode()[: settings.rest_response_text_max_length]
+                                content = [TextContent(type="text", text=serialized_error)]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler
                                 content = _handle_json_parse_error(response, e, is_error_response=True)
