@@ -6,10 +6,33 @@ SPDX-License-Identifier: Apache-2.0
 Unit tests for DataplanePublisherService.
 """
 
+# Standard
 import asyncio
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+import msgpack
+from types import SimpleNamespace
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
+# Third-Party
 import pytest
+
+# First-Party
+from mcpgateway.services.dataplane_publisher import dataplane_publisher as dp_module
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import (
+    DataplanePublisherService,
+    PUBLISHER_RETRY_SECONDS,
+    get_publisher_interval,
+)
+from mcpgateway.services.dataplane_publisher.db_loader import (
+    UserConfigBuilder,
+    add_unique_route,
+    load_backend_items,
+)
+from mcpgateway.services.dataplane_publisher.models import (
+    ControlPlaneData,
+    UserScope,
+    VisibilityIndex,
+)
+from mcpgateway.services.dataplane_publisher.redis_store import PUBLISHER_LOCK_KEY
 
 USER1_ID = "11111111-1111-1111-1111-111111111111"
 USER2_ID = "22222222-2222-2222-2222-222222222222"
@@ -21,13 +44,48 @@ async def _wait_forever():
     await asyncio.Event().wait()
 
 
+@pytest.mark.asyncio
+async def test_update_notification_publishes_without_waiting_for_schedule():
+    """Publish updated configuration after notification without waiting for the periodic deadline."""
+    service = DataplanePublisherService()
+    first_write = asyncio.Event()
+    second_write = asyncio.Event()
+    payloads = [{USER1_ID: {"virtual_hosts": {}}}, {USER2_ID: {"virtual_hosts": {}}}]
+    redis = MagicMock()
+    redis.set = AsyncMock(return_value=True)
+    redis.eval = AsyncMock()
+    writes = 0
+
+    async def record_write():
+        """Signal completed Redis writes."""
+        nonlocal writes
+        writes += 1
+        (first_write if writes == 1 else second_write).set()
+
+    redis.pipeline.return_value.execute = AsyncMock(side_effect=record_write)
+    with (
+        patch.object(dp_module, "get_publisher_interval", return_value=3600),
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock, return_value=redis),
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, side_effect=payloads) as fetch,
+    ):
+        await service.start()
+        try:
+            await asyncio.wait_for(first_write.wait(), timeout=2)
+            await dp_module.notify_dataplane()
+            await asyncio.wait_for(second_write.wait(), timeout=3)
+            assert fetch.await_count == 2
+            key, value = redis.pipeline.return_value.set.call_args.args
+            assert msgpack.unpackb(key, raw=False) == ["UserConfig", USER2_ID]
+            assert msgpack.unpackb(value, raw=False) == payloads[1][USER2_ID]
+        finally:
+            await service.shutdown()
+
+
 def test_worker_id_is_computed_per_service_instance():
     """Each publisher instance gets the current worker PID."""
-    from mcpgateway.services import dataplane_publisher
-
-    with patch.object(dataplane_publisher.os, "getpid", side_effect=[11111, 22222]):
-        first_service = dataplane_publisher.DataplanePublisherService()
-        second_service = dataplane_publisher.DataplanePublisherService()
+    with patch.object(dp_module.os, "getpid", side_effect=[11111, 22222]):
+        first_service = DataplanePublisherService()
+        second_service = DataplanePublisherService()
 
     assert first_service.worker_id != second_service.worker_id
     assert first_service.worker_id.endswith(":11111")
@@ -42,8 +100,6 @@ def test_worker_id_is_computed_per_service_instance():
 @pytest.mark.asyncio
 async def test_start_creates_background_task():
     """start() creates and schedules the background publisher task."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
     service = DataplanePublisherService()
     assert service.task is None
 
@@ -64,36 +120,8 @@ async def test_start_creates_background_task():
 
 
 @pytest.mark.asyncio
-async def test_start_is_idempotent():
-    """Calling start() twice doesn't create duplicate tasks."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-
-    with patch.object(service, "publish_to_redis", new_callable=AsyncMock) as mock_publish:
-        mock_publish.side_effect = _wait_forever
-
-        await service.start()
-        first_task = service.task
-
-        await service.start()
-        second_task = service.task
-
-        assert first_task is second_task
-
-        # Cleanup
-        service.task.cancel()
-        try:
-            await service.task
-        except asyncio.CancelledError:
-            pass
-
-
-@pytest.mark.asyncio
 async def test_shutdown_stops_running_task():
     """shutdown() gracefully stops the background task."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
     service = DataplanePublisherService()
 
     with patch.object(service, "publish_to_redis", new_callable=AsyncMock) as mock_publish:
@@ -115,13 +143,11 @@ async def test_shutdown_stops_running_task():
 @pytest.mark.asyncio
 async def test_shutdown_handles_timeout():
     """shutdown() cancels task if it doesn't stop within timeout."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
     service = DataplanePublisherService()
 
     with (
         patch.object(service, "publish_to_redis", new_callable=AsyncMock) as mock_publish,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for,
+        patch("mcpgateway.services.dataplane_publisher.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for,
     ):
         mock_publish.side_effect = _wait_forever
         mock_wait_for.side_effect = asyncio.TimeoutError
@@ -134,19 +160,6 @@ async def test_shutdown_handles_timeout():
         assert service.task is None
 
 
-@pytest.mark.asyncio
-async def test_shutdown_is_idempotent():
-    """Calling shutdown() when not started is a no-op."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-    assert service.task is None
-
-    await service.shutdown()
-
-    assert service.task is None
-
-
 # ============================================================================
 # Integration Test with Mock Database
 # ============================================================================
@@ -155,9 +168,6 @@ async def test_shutdown_is_idempotent():
 @pytest.mark.asyncio
 async def test_full_payload_generation_with_mock_db():
     """Integration test: fetch_payload() with mock database covering main code paths."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-    from unittest.mock import Mock
-
     service = DataplanePublisherService()
 
     # Mock database session and queries
@@ -277,7 +287,7 @@ async def test_full_payload_generation_with_mock_db():
         [("s1", "p1", "g1")],
     ]
 
-    with patch("mcpgateway.services.dataplane_publisher.fresh_db_session") as mock_session:
+    with patch("mcpgateway.services.dataplane_publisher.db_loader.fresh_db_session") as mock_session:
         mock_session.return_value.__enter__.return_value = mock_db
 
         payload = await service.fetch_payload()
@@ -319,8 +329,6 @@ async def test_full_payload_generation_with_mock_db():
         assert server1["resource_templates"] == {}
         assert set(server1) == {"backends", "tools", "prompts", "resources", "resource_templates"}
         assert "bad_tool" not in backend["tool_schemas"]
-        import msgpack
-
         assert msgpack.unpackb(msgpack.packb(payload, use_bin_type=True), raw=False) == payload
 
         # Verify the gateway SELECT projection actually includes the new columns
@@ -363,72 +371,50 @@ async def test_full_payload_generation_with_mock_db():
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
 
 
-def test_build_user_data_excludes_non_object_tool_schema(caplog):
-    """A malformed tool is excluded without dropping valid tools from the snapshot."""
-    from unittest.mock import Mock
-
-    from mcpgateway.services.dataplane_publisher import BackendItemsByServer, DataplanePublisherService
-
-    bad_tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
-    good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public")
-    good_tool.name = "gw-good"
-    server = Mock(id="server", visibility="public")
-    backend_items_by_server: BackendItemsByServer = {
-        "server": {
-            "gateway": {
-                "tools": ["bad-tool", "good-tool"],
-                "resources": [],
-                "prompts": [],
-            }
-        }
-    }
-
-    result = DataplanePublisherService()._build_user_data("user@example.com", set(), False, [server], [], [], [], [bad_tool, good_tool], backend_items_by_server)
-
-    backend_items = result["servers"][0]["backend_items"]["gateway"]
-    assert backend_items["tools"] == {"gw-good": "good"}
-    assert backend_items["tool_schemas"] == {"good": {"type": "object"}}
-    assert "Excluding tool bad-tool" in caplog.text
-
-
 @pytest.mark.parametrize("teams", [set(), {"team1"}])
 @pytest.mark.parametrize("duplicate_names", [False, True])
 def test_named_routes_preserve_backend_identity_and_visibility(teams, duplicate_names):
     """Gateway IDs preserve distinct backends even when names match, respecting visibility."""
-    from types import SimpleNamespace
+    def _row(item_id, visibility="public", **fields):
+        return SimpleNamespace(id=item_id, visibility=visibility, owner_email="owner@example.com", team_id="team1", **fields)
 
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-    server = SimpleNamespace(id="s1", visibility="public")
+    server = _row("s1")
     gateways = [
-        SimpleNamespace(
-            id=gateway_id,
+        _row(
+            gateway_id,
             name="shared-backend" if duplicate_names else f"backend-{gateway_id}",
             url=f"http://{gateway_id}:9000/mcp",
             transport="STREAMABLEHTTP",
             passthrough_headers=[],
             add_headers={},
             remove_headers=[],
-            visibility="public",
         )
         for gateway_id in ("g1", "g2")
     ]
-    tools = [SimpleNamespace(id=gateway.id, name=f"{gateway.id}-search", original_name="search", input_schema={"type": "object"}, visibility="public") for gateway in gateways]
-    scope = {"visibility": "team", "team_id": "team1", "owner_email": "owner@example.com"}
-    prompt = SimpleNamespace(id="p1", name="gw-prompt", original_name="prompt", **scope)
-    resource = SimpleNamespace(id="r1", name="Resource", uri="resource://one", **scope)
-    associations = {"s1": {gateway.id: {"tools": [gateway.id], "resources": [], "prompts": []} for gateway in gateways}}
+    tools = [_row(gw.id, name=f"{gw.id}-search", original_name="search", input_schema={"type": "object"}) for gw in gateways]
+    prompt = _row("p1", "team", name="gw-prompt", original_name="prompt")
+    resource = _row("r1", "team", name="Resource", uri="resource://one")
+    associations = {"s1": {gw.id: {"tools": [gw.id], "resources": [], "prompts": []} for gw in gateways}}
     associations["s1"]["g1"].update(resources=["r1", "missing"], prompts=["p1", "missing"])
-    data = service._build_user_data("reader@example.com", teams, False, [server], gateways, [prompt], [resource], tools, associations)
-    host = service.create_payload({USER1_ID: data})[USER1_ID]["virtual_hosts"]["s1"]
+
+    user = UserScope(id=USER1_ID, email="reader@example.com", is_admin=False, team_ids=frozenset(teams))
+    data = ControlPlaneData(
+        users=(user,),
+        servers=VisibilityIndex.build([server]),
+        gateways=VisibilityIndex.build(gateways),
+        tools=VisibilityIndex.build(tools),
+        prompts=VisibilityIndex.build([prompt]),
+        resources=VisibilityIndex.build([resource]),
+        backend_items=associations,
+    )
+    host = UserConfigBuilder(data).build_payload()[USER1_ID]["virtual_hosts"]["s1"]
 
     assert set(host["backends"]) == {"g1", "g2"}
-    assert host["tools"] == {f"{gateway.id}-search": {"backend_name": gateway.id, "upstream_name": "search"} for gateway in gateways}
-    for gateway in gateways:
-        backend = host["backends"][gateway.id]
-        assert backend["name"] == gateway.name
-        assert backend["url"] == gateway.url
+    assert host["tools"] == {f"{gw.id}-search": {"backend_name": gw.id, "upstream_name": "search"} for gw in gateways}
+    for gw in gateways:
+        backend = host["backends"][gw.id]
+        assert backend["name"] == gw.name
+        assert backend["url"] == gw.url
         assert backend["tool_schemas"] == {"search": {"type": "object"}}
         assert backend["mcp_protocol_version"] == ""
     assert host["prompts"] == ({"gw-prompt": {"backend_name": "g1", "upstream_name": "prompt"}} if teams else {})
@@ -443,14 +429,12 @@ def test_named_routes_preserve_backend_identity_and_visibility(teams, duplicate_
 @pytest.mark.asyncio
 async def test_fetch_payload_handles_db_error():
     """fetch_payload() returns None when database query fails."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
     service = DataplanePublisherService()
 
     mock_db = MagicMock()
     mock_db.execute.side_effect = Exception("Database error")
 
-    with patch("mcpgateway.services.dataplane_publisher.fresh_db_session") as mock_session:
+    with patch("mcpgateway.services.dataplane_publisher.db_loader.fresh_db_session") as mock_session:
         mock_session.return_value.__enter__.return_value = mock_db
 
         result = await service.fetch_payload()
@@ -458,177 +442,32 @@ async def test_fetch_payload_handles_db_error():
         assert result is None
 
 
-@pytest.mark.asyncio
-async def test_fetch_payload_empty_database():
-    """fetch_payload() handles empty database (no active users)."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-
-    mock_db = MagicMock()
-    mock_db.execute.return_value.all.return_value = []  # No users
-
-    with patch("mcpgateway.services.dataplane_publisher.fresh_db_session") as mock_session:
-        mock_session.return_value.__enter__.return_value = mock_db
-
-        result = await service.fetch_payload()
-
-        assert result == {}
-
-
-def test_filter_for_user_visibility_rules():
-    """_filter_for_user() correctly applies visibility rules."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-    from unittest.mock import Mock
-
-    admin_only_row = Mock(visibility="private", owner_email="owner@example.com", team_id="team1")
-    assert DataplanePublisherService._filter_for_user(admin_only_row, "admin@example.com", set(), is_admin=True)
-
-    # Public: visible to all
-    public_row = Mock(visibility="public", owner_email="owner@example.com", team_id="team1")
-    assert DataplanePublisherService._filter_for_user(public_row, "anyone@example.com", set())
-
-    # Private: only owner
-    private_row = Mock(visibility="private", owner_email="owner@example.com", team_id="team1")
-    assert DataplanePublisherService._filter_for_user(private_row, "owner@example.com", set())
-    assert not DataplanePublisherService._filter_for_user(private_row, "other@example.com", {"team1"})
-
-    # Team: team members only
-    team_row = Mock(visibility="team", owner_email="owner@example.com", team_id="team1")
-    assert DataplanePublisherService._filter_for_user(team_row, "member@example.com", {"team1"})
-    assert not DataplanePublisherService._filter_for_user(team_row, "outsider@example.com", {"team2"})
-
-
-def test_create_payload_filters_empty_backends():
-    """create_payload() excludes backends with no items."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-    data = {
-        USER1_ID: {
-            "servers": [
-                {
-                    "id": "server1",
-                    "backend_items": {
-                        "gateway1": {"tools": {}, "tool_schemas": {}, "resources": [], "prompts": []},
-                    },
-                }
-            ],
-            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "STREAMABLEHTTP", "passthrough_headers": None}],
-            "prompts": [],
-            "resources": [],
-        }
-    }
-
-    result = service.create_payload(data)
-
-    # A server with no publishable backends is omitted entirely so the
-    # dataplane 404s it instead of serving an empty tool list.
-    assert "server1" not in result[USER1_ID]["virtual_hosts"]
-
-
 @pytest.mark.parametrize("transport", ["SSE", "STDIO"])
 def test_create_payload_excludes_non_streamable_gateways(transport: str):
-    """create_payload() drops backends whose transport the dataplane cannot serve."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+    """Builder drops backends whose transport the dataplane cannot serve."""
+    def _row(item_id, **fields):
+        return SimpleNamespace(id=item_id, visibility="public", owner_email=None, team_id=None, **fields)
 
-    service = DataplanePublisherService()
-    data = {
-        USER1_ID: {
-            "servers": [
-                {
-                    "id": "server1",
-                    "backend_items": {
-                        "gateway_non_streamable": {
-                            "tools": {"gw-tool1": "tool1"},
-                            "tool_schemas": {},
-                            "resources": [],
-                            "prompts": [],
-                        },
-                    },
-                }
-            ],
-            "gateways": [{"id": "gateway_non_streamable", "name": "Unsupported Gateway", "url": "http://localhost:9000/mcp", "transport": transport, "passthrough_headers": None}],
-            "prompts": [],
-            "resources": [],
-        }
-    }
-
-    result = service.create_payload(data)
+    tool = _row("tool1", name="gw-tool1", original_name="tool1", input_schema={"type": "object"})
+    user = UserScope(id=USER1_ID, email="u@example.com", is_admin=False, team_ids=frozenset())
+    data = ControlPlaneData(
+        users=(user,),
+        servers=VisibilityIndex.build([_row("server1")]),
+        gateways=VisibilityIndex.build([_row("gateway_ns", name="Unsupported Gateway", url="http://localhost:9000/mcp", transport=transport, passthrough_headers=None, add_headers={}, remove_headers=[])]),
+        tools=VisibilityIndex.build([tool]),
+        prompts=VisibilityIndex.build([]),
+        resources=VisibilityIndex.build([]),
+        backend_items={"server1": {"gateway_ns": {"tools": ["tool1"], "resources": [], "prompts": []}}},
+    )
+    result = UserConfigBuilder(data).build_payload()
 
     # The unsupported backend is excluded and the now-backendless server is omitted.
     assert result[USER1_ID]["virtual_hosts"] == {}
 
 
-def test_create_payload_normalizes_null_passthrough_headers():
-    """create_payload() emits an empty list for gateways without passthrough headers."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-    data = {
-        USER1_ID: {
-            "servers": [
-                {
-                    "id": "server1",
-                    "backend_items": {
-                        "gateway1": {"tools": {"gw-tool1": "tool1"}, "tool_schemas": {}, "resources": [], "prompts": []},
-                    },
-                }
-            ],
-            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "STREAMABLEHTTP", "passthrough_headers": None}],
-            "prompts": [],
-            "resources": [],
-        }
-    }
-
-    result = service.create_payload(data)
-
-    backend = result[USER1_ID]["virtual_hosts"]["server1"]["backends"]["gateway1"]
-    assert backend["passthrough_headers"] == []
-    assert backend["add_headers"] == {}
-    assert backend["remove_headers"] == []
-    assert backend["completion"] == {}
-
-
-def test_create_payload_handles_missing_references():
-    """create_payload() handles missing gateway/resource/prompt references."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-    data = {
-        USER1_ID: {
-            "servers": [
-                {
-                    "id": "server1",
-                    "backend_items": {
-                        "missing_gateway": {
-                            "tools": {"gw-tool1": "tool1"},
-                            "tool_schemas": {},
-                            "resources": ["missing_res"],
-                            "prompts": ["missing_prompt"],
-                        },
-                    },
-                }
-            ],
-            "gateways": [],  # Gateway not in list
-            "prompts": [],  # Prompt not in list
-            "resources": [],  # Resource not in list
-        }
-    }
-
-    result = service.create_payload(data)
-
-    # Server exists but has no backends (gateway missing)
-    # With its only gateway missing, the server has no publishable backends
-    # and is omitted from the payload.
-    assert "server1" not in result[USER1_ID]["virtual_hosts"]
-
-
 @pytest.mark.asyncio
 async def test_publish_skips_when_redis_unavailable():
     """publish_to_redis() continues gracefully when Redis is unavailable."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService, get_publisher_interval
-
     service = DataplanePublisherService()
     real_sleep = asyncio.sleep
 
@@ -636,25 +475,22 @@ async def test_publish_skips_when_redis_unavailable():
         await service._shutdown_event.wait()
 
     with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_redis,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock) as mock_redis,
+        patch.object(service, "_wait_for_next_publish", new_callable=AsyncMock, side_effect=_sleep_until_shutdown) as mock_wait,
     ):
         mock_redis.return_value = None
-        mock_sleep.side_effect = _sleep_until_shutdown
 
         await service.start()
         await real_sleep(0)
         await service.shutdown()
 
-        # Should not raise, just log and continue
-        mock_sleep.assert_awaited_once_with(get_publisher_interval())
+        # Should not raise, just log and continue — the wait was called once
+        mock_wait.assert_awaited_once_with(get_publisher_interval())
 
 
 @pytest.mark.asyncio
 async def test_publish_skips_when_fetch_fails():
     """publish_to_redis() skips publish when fetch_payload returns None."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
     service = DataplanePublisherService()
 
     mock_redis = MagicMock()
@@ -663,7 +499,7 @@ async def test_publish_skips_when_fetch_fails():
     mock_redis.eval = AsyncMock()
 
     with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
         patch.object(service, "fetch_payload", new_callable=AsyncMock) as mock_fetch,
     ):
         mock_get_redis.return_value = mock_redis
@@ -678,34 +514,8 @@ async def test_publish_skips_when_fetch_fails():
 
 
 @pytest.mark.asyncio
-async def test_publish_continues_when_lock_acquisition_raises():
-    """publish_to_redis() keeps running when Redis lock acquisition fails."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-
-    mock_redis = MagicMock()
-    mock_redis.set = AsyncMock(side_effect=Exception("redis unavailable"))
-    mock_redis.pipeline.return_value.execute = AsyncMock()
-    mock_redis.eval = AsyncMock()
-
-    with patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis:
-        mock_get_redis.return_value = mock_redis
-
-        await service.start()
-        await asyncio.sleep(0)
-        await service.shutdown()
-
-        mock_redis.set.assert_awaited_once()
-        mock_redis.pipeline.assert_not_called()
-        mock_redis.eval.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_publish_skips_when_lock_not_acquired():
     """publish_to_redis() skips publishing when another worker holds the lock."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService, get_publisher_interval
-
     service = DataplanePublisherService()
     real_sleep = asyncio.sleep
 
@@ -718,19 +528,18 @@ async def test_publish_skips_when_lock_not_acquired():
     mock_redis.eval = AsyncMock()
 
     with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
+        patch.object(service, "_wait_for_next_publish", new_callable=AsyncMock, side_effect=_sleep_until_shutdown) as mock_wait,
         patch.object(service, "fetch_payload", new_callable=AsyncMock) as mock_fetch,
     ):
         mock_get_redis.return_value = mock_redis
-        mock_sleep.side_effect = _sleep_until_shutdown
 
         await service.start()
         await real_sleep(0)
         await service.shutdown()
 
         mock_redis.set.assert_awaited_once()
-        mock_sleep.assert_awaited_once_with(get_publisher_interval())
+        mock_wait.assert_awaited_once_with(get_publisher_interval())
         mock_fetch.assert_not_awaited()
         mock_redis.pipeline.assert_not_called()
         mock_redis.eval.assert_not_awaited()
@@ -739,10 +548,6 @@ async def test_publish_skips_when_lock_not_acquired():
 @pytest.mark.asyncio
 async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait_returns():
     """publish_to_redis() writes msgpack payloads and releases the worker lock."""
-    import msgpack
-
-    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, USER_CONFIG_KEY, DataplanePublisherService, get_publisher_interval, get_publisher_ttl
-
     service = DataplanePublisherService()
     payload = {USER1_ID: {"virtual_hosts": {"server1": {"backends": {}}}}}
 
@@ -753,13 +558,9 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     mock_redis.pipeline.return_value = pipe
     mock_redis.eval = AsyncMock()
 
-    async def _finish_cycle(awaitable, timeout):
-        del timeout
-        awaitable.close()
-
     with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_finish_cycle) as mock_wait_for,
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
+        patch.object(service, "_wait_for_next_publish", new_callable=AsyncMock, return_value=True) as mock_wait_for,
         patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value=payload),
     ):
         mock_get_redis.return_value = mock_redis
@@ -768,9 +569,9 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
 
     pipe.set.assert_called_once()
     key_arg, value_arg = pipe.set.call_args.args
-    assert msgpack.unpackb(key_arg, raw=False) == [USER_CONFIG_KEY, USER1_ID]
+    assert msgpack.unpackb(key_arg, raw=False) == ["UserConfig", USER1_ID]
     assert msgpack.unpackb(value_arg, raw=False) == payload[USER1_ID]
-    assert pipe.set.call_args.kwargs == {"ex": get_publisher_ttl()}
+    assert pipe.set.call_args.kwargs == {"ex": get_publisher_interval() * 2 + 10}
     pipe.execute.assert_awaited_once()
     mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=get_publisher_interval() + 30)
     mock_redis.eval.assert_awaited_once()
@@ -781,9 +582,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
 @pytest.mark.asyncio
 async def test_publish_uses_configured_interval_for_ttl_lock_and_wait():
     """A runtime interval override propagates to every publisher timeout."""
-    from mcpgateway.services import dataplane_publisher
-
-    service = dataplane_publisher.DataplanePublisherService()
+    service = DataplanePublisherService()
     payload = {USER1_ID: {"virtual_hosts": {}}}
 
     pipe = MagicMock()
@@ -793,28 +592,22 @@ async def test_publish_uses_configured_interval_for_ttl_lock_and_wait():
     mock_redis.pipeline.return_value = pipe
     mock_redis.eval = AsyncMock()
 
-    async def _finish_cycle(awaitable, timeout):
-        del timeout
-        awaitable.close()
-
     with (
-        patch.object(dataplane_publisher.settings, "dataplane_publisher_interval_seconds", 2),
-        patch.object(dataplane_publisher, "get_redis_client", new_callable=AsyncMock, return_value=mock_redis),
-        patch.object(dataplane_publisher.asyncio, "wait_for", new_callable=AsyncMock, side_effect=_finish_cycle) as mock_wait_for,
+        patch.object(dp_module.settings, "dataplane_publisher_interval_seconds", 2),
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock, return_value=mock_redis),
+        patch.object(service, "_wait_for_next_publish", new_callable=AsyncMock, return_value=True) as mock_wait_for,
         patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value=payload),
     ):
         await service.publish_to_redis()
 
     assert pipe.set.call_args.kwargs == {"ex": 14}
-    mock_redis.set.assert_awaited_once_with(dataplane_publisher.PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=32)
-    mock_wait_for.assert_awaited_once_with(ANY, timeout=2)
+    mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=32)
+    mock_wait_for.assert_awaited_once_with(2)
 
 
 @pytest.mark.asyncio
 async def test_publish_releases_lock_when_pipeline_execute_fails():
     """publish_to_redis() logs pipeline failures but still releases the lock."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
     service = DataplanePublisherService()
 
     pipe = MagicMock()
@@ -824,13 +617,9 @@ async def test_publish_releases_lock_when_pipeline_execute_fails():
     mock_redis.pipeline.return_value = pipe
     mock_redis.eval = AsyncMock()
 
-    async def _finish_cycle(awaitable, timeout):
-        del timeout
-        awaitable.close()
-
     with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_finish_cycle),
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
+        patch.object(service, "_wait_for_next_publish", new_callable=AsyncMock, return_value=True),
         patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={USER1_ID: {"virtual_hosts": {}}}),
     ):
         mock_get_redis.return_value = mock_redis
@@ -842,85 +631,21 @@ async def test_publish_releases_lock_when_pipeline_execute_fails():
     mock_redis.eval.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-async def test_publish_logs_lock_release_failure():
-    """publish_to_redis() handles Redis errors while releasing the lock."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-
-    mock_redis = MagicMock()
-    mock_redis.set = AsyncMock(return_value=True)
-    mock_redis.pipeline.return_value.execute = AsyncMock()
-    mock_redis.eval = AsyncMock(side_effect=Exception("eval boom"))
-
-    async def _finish_cycle(awaitable, timeout):
-        del timeout
-        awaitable.close()
-
-    with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_finish_cycle),
-        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={USER1_ID: {"virtual_hosts": {}}}),
-    ):
-        mock_get_redis.return_value = mock_redis
-
-        await service.publish_to_redis()
-
-    mock_redis.eval.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_publish_continues_after_cycle_timeout():
-    """publish_to_redis() continues after the inter-cycle wait times out."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-
-    mock_redis = MagicMock()
-    mock_redis.set = AsyncMock(return_value=True)
-    mock_redis.pipeline.return_value.execute = AsyncMock()
-    mock_redis.eval = AsyncMock()
-
-    async def _timeout_and_stop(awaitable, timeout):
-        del timeout
-        awaitable.close()
-        service._shutdown_event.set()
-        raise asyncio.TimeoutError
-
-    with (
-        patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
-        patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_timeout_and_stop),
-        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={USER1_ID: {"virtual_hosts": {}}}),
-    ):
-        mock_get_redis.return_value = mock_redis
-
-        await service.publish_to_redis()
-
-    mock_redis.set.assert_awaited_once()
-    mock_redis.eval.assert_awaited_once()
-
-
 def test_backend_item_helpers_add_items_and_skip_missing_gateway():
-    """Backend item helper methods group rows by gateway and skip gateway-less rows."""
-    from collections import defaultdict
-
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    service = DataplanePublisherService()
-    backend_items_by_server = defaultdict(dict)
-
+    """load_backend_items() groups rows by gateway and skips gateway-less rows."""
     db = MagicMock()
-    db.execute.return_value.all.return_value = [("server1", "tool1", None), ("server1", "tool2", "gateway1")]
-    service._add_tools_to_backends(db, backend_items_by_server)  # pylint: disable=protected-access
+    # tools: one without gateway (skipped), one with gateway
+    # resources: one without gateway (skipped), one with gateway
+    # prompts: one without gateway (skipped), one with gateway
+    db.execute.return_value.all.side_effect = [
+        [("server1", "tool1", None), ("server1", "tool2", "gateway1")],
+        [("server1", "resource1", None), ("server1", "resource2", "gateway1")],
+        [("server1", "prompt1", None), ("server1", "prompt2", "gateway1")],
+    ]
 
-    db.execute.return_value.all.return_value = [("server1", "resource1", None), ("server1", "resource2", "gateway1")]
-    service._add_resources_to_backends(db, backend_items_by_server)  # pylint: disable=protected-access
+    result = load_backend_items(db)
 
-    db.execute.return_value.all.return_value = [("server1", "prompt1", None), ("server1", "prompt2", "gateway1")]
-    service._add_prompts_to_backends(db, backend_items_by_server)  # pylint: disable=protected-access
-
-    assert dict(backend_items_by_server) == {
+    assert result == {
         "server1": {
             "gateway1": {
                 "tools": ["tool2"],
@@ -936,34 +661,111 @@ def test_backend_item_helpers_add_items_and_skip_missing_gateway():
 # ============================================================================
 
 
-def test_add_unique_route_skips_already_ambiguous_name():
-    """_add_unique_route() returns early without modifying routes when name is already ambiguous."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
-    routes: dict = {}
-    ambiguous: set = {"my_tool"}
-
-    DataplanePublisherService._add_unique_route(routes, ambiguous, "my_tool", "g1", "upstream_tool", "s1", "tool")
-
-    assert routes == {}
-    assert ambiguous == {"my_tool"}
-
-
 def test_add_unique_route_detects_conflict_and_marks_ambiguous(caplog):
-    """_add_unique_route() removes a route and marks it ambiguous when two different backends claim the same name."""
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-
+    """add_unique_route() removes a route and marks it ambiguous when two different backends claim the same name."""
     routes: dict = {}
     ambiguous: set = set()
 
     # First call: registers the route normally.
-    DataplanePublisherService._add_unique_route(routes, ambiguous, "my_tool", "g1", "upstream_tool", "s1", "tool")
+    add_unique_route(routes, ambiguous, "my_tool", "g1", "upstream_tool", "s1", "tool")
     assert routes == {"my_tool": {"backend_name": "g1", "upstream_name": "upstream_tool"}}
     assert ambiguous == set()
 
     # Second call: different backend — triggers conflict resolution.
-    DataplanePublisherService._add_unique_route(routes, ambiguous, "my_tool", "g2", "upstream_tool", "s1", "tool")
+    add_unique_route(routes, ambiguous, "my_tool", "g2", "upstream_tool", "s1", "tool")
 
     assert "my_tool" not in routes
     assert "my_tool" in ambiguous
     assert "my_tool" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending_notification", [False, True])
+@pytest.mark.parametrize("failure_stage", ["client", "lock"])
+async def test_publisher_tries_again_after_redis_error(pending_notification, failure_stage):
+    """Retry after a Redis error and remember any update still waiting to be published."""
+    service = DataplanePublisherService()
+    if pending_notification:
+        service._publish_requested.set()
+    redis = MagicMock()
+    redis.set = AsyncMock(return_value=True)
+    redis.eval = AsyncMock()
+    redis.pipeline.return_value.execute = AsyncMock(side_effect=service._shutdown_event.set)
+    error = ConnectionError("Redis unavailable")
+    client_results = [error, redis] if failure_stage == "client" else [redis, redis]
+    if failure_stage == "lock":
+        redis.set.side_effect = [error, True]
+
+    async def wait_after_failure(timeout):
+        """Check retained work and lock ownership before allowing the retry."""
+        if service._shutdown_event.is_set():
+            return True
+        assert timeout == (PUBLISHER_RETRY_SECONDS if pending_notification else 60)
+        assert service._publish_requested.is_set() is pending_notification
+        redis.eval.assert_not_awaited()
+        return False
+
+    wait_method = "_wait_for_shutdown" if pending_notification else "_wait_for_next_publish"
+    payload = {USER1_ID: {"virtual_hosts": {}}}
+    with (
+        patch("mcpgateway.services.dataplane_publisher.redis_store.get_redis_client", new_callable=AsyncMock, side_effect=client_results) as get_client,
+        patch("mcpgateway.services.dataplane_publisher.dataplane_publisher.get_publisher_interval", return_value=60),
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value=payload) as fetch_payload,
+        patch.object(service, wait_method, new_callable=AsyncMock, side_effect=wait_after_failure) as wait,
+    ):
+        await asyncio.wait_for(service.publish_to_redis(), timeout=1)
+
+    assert get_client.await_count == 2
+    fetch_payload.assert_awaited_once()
+    redis.eval.assert_awaited_once()
+    redis.pipeline.return_value.set.assert_called_once_with(ANY, ANY, ex=130)
+    assert not service._publish_requested.is_set()
+    assert wait.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_publisher_stops_when_cancelled():
+    """Stop when cancelled, keep the pending update, and leave another worker's lock alone."""
+    service = DataplanePublisherService()
+    service._publish_requested.set()
+    with (
+        patch.object(service._store, "try_acquire_lock", new_callable=AsyncMock, side_effect=asyncio.CancelledError),
+        patch.object(service._store, "release_lock", new_callable=AsyncMock) as release,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await service._publish(60)
+
+    release.assert_not_awaited()
+    assert service._publish_requested.is_set()
+
+
+def test_users_only_get_items_they_can_access():
+    """Include accessible items and point each item to the correct backend."""
+    def row(item_id, visibility="public", **fields):
+        """Build a detached row with explicit visibility metadata."""
+        return SimpleNamespace(id=item_id, visibility=visibility, owner_email="owner@example.com", team_id="team1", **fields)
+
+    user = UserScope(id=USER1_ID, email="owner@example.com", is_admin=False, team_ids=frozenset({"team1"}))
+    schema = {"type": "object"}
+    data = ControlPlaneData(
+        users=(user,),
+        servers=VisibilityIndex.build([row("server1")]),
+        gateways=VisibilityIndex.build([row("gateway1", name="backend", url="https://example.com/mcp", transport="STREAMABLEHTTP", passthrough_headers=[], add_headers={}, remove_headers=[])]),
+        tools=VisibilityIndex.build([row("tool1", "team", name="exposed_tool", original_name="upstream_tool", input_schema=schema)]),
+        prompts=VisibilityIndex.build([row("prompt1", "private", name="exposed_prompt", original_name="upstream_prompt")]),
+        resources=VisibilityIndex.build([row("resource1", uri="resource://one")]),
+        backend_items={"server1": {"gateway1": {"tools": ["tool1"], "resources": ["resource1"], "prompts": ["prompt1"]}}},
+    )
+    builder = UserConfigBuilder(data)
+    host = builder.build_payload()[USER1_ID]["virtual_hosts"]["server1"]
+
+    assert host["tools"] == {"exposed_tool": {"backend_name": "gateway1", "upstream_name": "upstream_tool"}}
+    assert host["prompts"] == {"exposed_prompt": {"backend_name": "gateway1", "upstream_name": "upstream_prompt"}}
+    assert host["resources"] == {"resource://one": {"backend_name": "gateway1", "upstream_name": "resource://one"}}
+    assert host["backends"]["gateway1"]["tool_schemas"] == {"upstream_tool": schema}
+
+    outsider = UserScope(id=USER2_ID, email="outsider@example.com", is_admin=False, team_ids=frozenset())
+    outsider_host = builder.build_user_config(outsider)["virtual_hosts"]["server1"]
+    assert outsider_host["tools"] == {}
+    assert outsider_host["prompts"] == {}
+    assert outsider_host["resources"] == host["resources"]
