@@ -369,8 +369,7 @@ def validate_for_overage(info: dict[str, Any]) -> list[str]:
     return problems
 
 
-OVERAGE_GROUP_COUNT = 201
-"""Memberships required to push a user past Entra's 200-group inline-claim limit."""
+OVERAGE_GROUP_COUNT = 201  # memberships required to push a user past Entra's 200-group inline-claim limit
 
 
 def provision_entra_overage_identity() -> tuple[str, dict]:
@@ -548,9 +547,14 @@ def provision_entra_app_only_identity() -> tuple[str, dict[str, str]]:
             raise _ProvisioningError(f"service-principal creation failed with HTTP {sp.status_code if sp else 'n/a'}")
         sp_id = sp.json()["id"]
         cleanup["sp_id"] = sp_id
-        password = httpx.post(f"https://graph.microsoft.com/v1.0/applications/{cleanup['app_object_id']}/addPassword", headers={"Authorization": f"Bearer {_azure_graph_token(client_id, client_secret, tenant_id)}", "Content-Type": "application/json"}, json={"passwordCredential": {"displayName": "e2e"}}, timeout=30)
-        if password.status_code not in (200, 201):
-            raise _ProvisioningError(f"client-secret creation failed with HTTP {password.status_code}")
+        password = None
+        for _attempt in range(6):
+            password = httpx.post(f"https://graph.microsoft.com/v1.0/applications/{cleanup['app_object_id']}/addPassword", headers={"Authorization": f"Bearer {_azure_graph_token(client_id, client_secret, tenant_id)}", "Content-Type": "application/json"}, json={"passwordCredential": {"displayName": "e2e"}}, timeout=30)
+            if password.status_code in (200, 201):
+                break
+            time.sleep(10)  # a fresh application can 404 on addPassword until directory replication lands
+        if password is None or password.status_code not in (200, 201):
+            raise _ProvisioningError(f"client-secret creation failed with HTTP {password.status_code if password else 'n/a'}")
         app_secret = password.json()["secretText"]
         token = acquire_entra_app_only_token(app_id, app_secret, tenant_id)
         problems = validate_for_app_only(inspect_token(token))
