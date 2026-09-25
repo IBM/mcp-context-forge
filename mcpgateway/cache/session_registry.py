@@ -1414,7 +1414,8 @@ class SessionRegistry(SessionBackend):
             # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
 
-            tool_info = await tool_lookup_cache.get(tool_name)
+            server_id = params.get("server_id")
+            tool_info = await tool_lookup_cache.get(tool_name, server_id=server_id)
             if not tool_info:
                 logger.debug(f"Tool {tool_name} not found in cache, skipping session mapping registration")
                 return

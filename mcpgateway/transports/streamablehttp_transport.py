@@ -1929,7 +1929,7 @@ async def call_tool(
             # Register session mapping BEFORE checking forwarding (same pattern as SSE)
             # This ensures ownership is registered atomically so forward_request_to_owner() works
             try:
-                cached = await tool_lookup_cache.get(name)
+                cached = await tool_lookup_cache.get(name, server_id=server_id)
                 if cached and cached.get("status") == "active":
                     gateway_info = cached.get("gateway")
                     if gateway_info:

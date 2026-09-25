@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+import hashlib
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
 import logging
 import os
@@ -148,7 +149,7 @@ def _get_registry_cache():
 _downstream_session_id_from_request = downstream_session_id_from_request_context
 
 
-def _get_tool_lookup_cache():
+def _get_tool_lookup_cache() -> Any:
     """Get tool lookup cache singleton lazily.
 
     Returns:
@@ -1489,6 +1490,148 @@ class ToolService(BaseService):
 
         return False
 
+    async def _cached_tool_is_usable(
+        self,
+        db: Session,
+        tool_payload: Dict[str, Any],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
+    ) -> bool:
+        """Return whether a cached tool can satisfy this exact invocation scope.
+
+        Cache entries are performance hints, not authorization decisions. A
+        stale or differently scoped entry must fall through to the scoped DB
+        lookup instead of terminating resolution.
+
+        Args:
+            db: Database session used by visibility checks.
+            tool_payload: Cached tool metadata.
+            user_email: Effective caller email.
+            token_teams: Effective caller team scope.
+            server_id: Optional virtual-server scope.
+            require_app_visible: Require MCP Apps visibility.
+            require_model_visible: Require model visibility.
+
+        Returns:
+            True when the cache entry is safe to use for this invocation.
+        """
+        if not tool_payload:
+            return False
+        if server_id:
+            tool_id = tool_payload.get("id")
+            if not tool_id:
+                return False
+            server_match = db.execute(
+                select(server_tool_association.c.tool_id).where(
+                    server_tool_association.c.server_id == server_id,
+                    server_tool_association.c.tool_id == tool_id,
+                )
+            ).first()
+            if not server_match:
+                return False
+        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
+            return False
+        if require_app_visible and not is_app_visible_tool(tool_payload):
+            return False
+        if require_model_visible and not is_model_visible_tool(tool_payload):
+            return False
+        return True
+
+    @staticmethod
+    def _negative_cache_caller_scope(
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
+    ) -> str:
+        """Return an opaque digest for caller-dependent tool resolution.
+
+        Args:
+            user_email: Effective caller email.
+            token_teams: Effective caller team scope.
+            require_app_visible: Require MCP Apps visibility.
+            require_model_visible: Require model visibility.
+
+        Returns:
+            SHA-256 digest of caller visibility inputs.
+        """
+        scope = {
+            "user_email": user_email,
+            "token_teams": None if token_teams is None else sorted(str(team_id) for team_id in token_teams),
+            "require_app_visible": require_app_visible,
+            "require_model_visible": require_model_visible,
+        }
+        return hashlib.sha256(orjson.dumps(scope, option=orjson.OPT_SORT_KEYS)).hexdigest()
+
+    @staticmethod
+    def _raise_for_negative_tool_status(name: str, status: Optional[str]) -> None:
+        """Raise the error represented by a negative tool cache status.
+
+        Args:
+            name: Requested tool name.
+            status: Cached negative status.
+
+        Raises:
+            ToolNotFoundError: If the tool is missing, inactive, or offline.
+            ToolInvocationError: If the tool is deprecated.
+
+        Unknown statuses are ignored and resolution continues against the database.
+        """
+        if status == "missing":
+            raise ToolNotFoundError(f"Tool not found: {name}")
+        if status == "inactive":
+            raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+        if status == "offline":
+            raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+        if status == "deprecated":
+            raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+        logger.warning("Ignoring unknown negative tool cache status %r for tool %s", status, name)
+
+    @staticmethod
+    def _server_ids_for_tool_cache_invalidation(db: Session, tool_id: str, gateway_id: Optional[Any]) -> tuple[str, ...]:
+        """Return server IDs that need invalidation for a local tool.
+
+        Args:
+            db: Database session.
+            tool_id: Tool ID.
+            gateway_id: Gateway ID, when the tool belongs to a gateway.
+
+        Returns:
+            Server IDs for a local tool, or an empty tuple for a gateway tool.
+        """
+        if gateway_id:
+            return ()
+        server_ids = db.execute(select(server_tool_association.c.server_id).where(server_tool_association.c.tool_id == tool_id)).scalars().all()
+        return tuple(str(server_id) for server_id in server_ids)
+
+    @staticmethod
+    def _server_ids_for_tool_names_cache_invalidation(db: Session, names: set[str]) -> tuple[str, ...]:
+        """Return server IDs associated with local tools matching given names.
+
+        Args:
+            db: Database session.
+            names: Tool names changed by a bulk operation.
+
+        Returns:
+            Server IDs associated with matching local tools.
+        """
+        if not names:
+            return ()
+        server_ids = (
+            db.execute(
+                select(server_tool_association.c.server_id)
+                .join(DbTool, DbTool.id == server_tool_association.c.tool_id)
+                .where(DbTool.gateway_id.is_(None), or_(DbTool.name.in_(names), DbTool.original_name.in_(names), DbTool.custom_name.in_(names)))
+                .distinct()
+            )
+            .scalars()
+            .all()
+        )
+        return tuple(str(server_id) for server_id in server_ids)
+
     def convert_tool_to_read(
         self,
         tool: DbTool,
@@ -2488,8 +2631,9 @@ class ToolService(BaseService):
                         continue
                     gateway_id = getattr(tool, "gateway_id", None)
                     tool_name_map[name] = str(gateway_id) if gateway_id else tool_name_map.get(name)
+                local_server_ids = self._server_ids_for_tool_names_cache_invalidation(db, {name for name, gateway_id in tool_name_map.items() if gateway_id is None})
                 for tool_name, gateway_id in tool_name_map.items():
-                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id)
+                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id, affected_server_ids=local_server_ids if gateway_id is None else None)
                 # Also invalidate tags cache since tool tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3570,6 +3714,7 @@ class ToolService(BaseService):
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
             tool_team_id = tool.team_id
+            tool_gateway_id = tool.gateway_id
 
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
@@ -3579,7 +3724,8 @@ class ToolService(BaseService):
             # Clean up server_tool_association rows referencing this tool.
             # The association table FK has no ondelete cascade, so rows must
             # be removed explicitly before the tool row can be deleted.
-            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id))
+            association_result = db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id).returning(server_tool_association.c.server_id))
+            affected_server_ids = () if tool_gateway_id else tuple(str(server_id) for server_id in association_result.scalars().all())
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
@@ -3626,7 +3772,7 @@ class ToolService(BaseService):
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool_gateway_id) if tool_gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3738,6 +3884,7 @@ class ToolService(BaseService):
 
             if is_activated or is_reachable:
                 tool.updated_at = datetime.now(timezone.utc)
+                affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, tool.gateway_id)
 
                 db.commit()
                 db.refresh(tool)
@@ -3747,7 +3894,11 @@ class ToolService(BaseService):
                     cache = _get_registry_cache()
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
-                    await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+                    await tool_lookup_cache.invalidate(
+                        tool.name,
+                        gateway_id=str(tool.gateway_id) if tool.gateway_id else None,
+                        affected_server_ids=affected_server_ids,
+                    )
 
                 if not tool.enabled:
                     # Inactive
@@ -4415,7 +4566,10 @@ class ToolService(BaseService):
         is_direct_proxy = False
         tool = None
         gateway = None
-        tool_selected_from_server_scope = False
+        tool_lookup_cache = _get_tool_lookup_cache()
+        tool_membership_verified = False
+        negative_cache_allowed = False
+        negative_cache_caller_scope = self._negative_cache_caller_scope(user_email, token_teams, require_model_visible=require_model_visible)
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
         if gateway_id_from_header:
@@ -4449,28 +4603,37 @@ class ToolService(BaseService):
                 }
 
         if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
 
-            if cached_payload:
-                status = cached_payload.get("status", "active")
-                if status == "missing":
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                if status == "inactive":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                if status == "offline":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-                tool_payload = cached_payload.get("tool") or {}
-                gateway_payload = cached_payload.get("gateway")
+            if cached_payload and cached_payload.get("status", "active") == "active":
+                cached_tool_payload = cached_payload.get("tool") or {}
+                if await self._cached_tool_is_usable(
+                    db,
+                    cached_tool_payload,
+                    user_email,
+                    token_teams,
+                    server_id,
+                    require_model_visible=require_model_visible,
+                ):
+                    tool_membership_verified = bool(server_id)
+                    negative_cache_allowed = True
+                    tool_payload = cached_tool_payload
+                    gateway_payload = cached_payload.get("gateway")
+
+            if not tool_payload and tool_lookup_cache.enabled:
+                negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
+                if negative_payload:
+                    self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
             tools = self._load_invocable_tools(db, name, server_id=server_id)
-            tool_selected_from_server_scope = bool(server_id)
+            tool_membership_verified = bool(server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
             multiple_found = len(tools) > 1
+            negative_cache_allowed = not multiple_found
             if not multiple_found:
                 tool = tools[0]
             else:
@@ -4497,15 +4660,27 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if negative_cache_allowed:
+                    tool_gateway_id = getattr(tool, "gateway_id", None)
+                    await tool_lookup_cache.set_negative(
+                        name,
+                        "offline",
+                        negative_cache_caller_scope,
+                        gateway_id=str(tool_gateway_id) if tool_gateway_id else None,
+                        server_id=server_id,
+                    )
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+                gateway_id = tool_payload.get("gateway_id")
+                if server_id:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
+                else:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -4521,7 +4696,7 @@ class ToolService(BaseService):
         if require_model_visible and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        if server_id and not tool_selected_from_server_scope:
+        if server_id and not tool_membership_verified:
             tool_id_for_check = tool_payload.get("id")
             if not tool_id_for_check:
                 raise ToolNotFoundError(f"Tool not found: {name}")
@@ -5215,6 +5390,15 @@ class ToolService(BaseService):
         is_direct_proxy = False
         tool = None
         gateway = None
+        tool_lookup_cache = _get_tool_lookup_cache()
+        tool_membership_verified = False
+        negative_cache_allowed = False
+        negative_cache_caller_scope = self._negative_cache_caller_scope(
+            user_email,
+            token_teams,
+            require_app_visible=require_app_visible,
+            require_model_visible=require_model_visible,
+        )
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
 
@@ -5264,19 +5448,28 @@ class ToolService(BaseService):
 
         # Normal mode: look up tool in database/cache
         if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
 
-            if cached_payload:
-                status = cached_payload.get("status", "active")
-                if status == "missing":
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                if status == "inactive":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                if status == "offline":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-                tool_payload = cached_payload.get("tool") or {}
-                gateway_payload = cached_payload.get("gateway")
+            if cached_payload and cached_payload.get("status", "active") == "active":
+                cached_tool_payload = cached_payload.get("tool") or {}
+                if await self._cached_tool_is_usable(
+                    db,
+                    cached_tool_payload,
+                    user_email,
+                    token_teams,
+                    server_id,
+                    require_app_visible=require_app_visible,
+                    require_model_visible=require_model_visible,
+                ):
+                    tool_membership_verified = bool(server_id)
+                    negative_cache_allowed = True
+                    tool_payload = cached_tool_payload
+                    gateway_payload = cached_payload.get("gateway")
+
+            if not tool_payload and tool_lookup_cache.enabled:
+                negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
+                if negative_payload:
+                    self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1
@@ -5284,11 +5477,13 @@ class ToolService(BaseService):
             # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
             # tool names across teams without crashing on MultipleResultsFound.
             tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tool_membership_verified = bool(server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
             multiple_found = len(tools) > 1
+            negative_cache_allowed = not multiple_found
             if not multiple_found:
                 tool = tools[0]
             else:
@@ -5322,7 +5517,15 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if negative_cache_allowed:
+                    tool_gateway_id = getattr(tool, "gateway_id", None)
+                    await tool_lookup_cache.set_negative(
+                        name,
+                        "offline",
+                        negative_cache_caller_scope,
+                        gateway_id=str(tool_gateway_id) if tool_gateway_id else None,
+                        server_id=server_id,
+                    )
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
@@ -5331,8 +5534,12 @@ class ToolService(BaseService):
             gateway_payload = cache_payload.get("gateway")
             # Skip caching when multiple tools share a name — resolution is
             # user-dependent, so a cached result could be wrong for other users.
-            if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+                gateway_id = tool_payload.get("gateway_id")
+                if server_id:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
+                else:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -5351,14 +5558,21 @@ class ToolService(BaseService):
             # Check deprecated status after RBAC to avoid leaking tool existence
             if tool_payload.get("deprecated") is True:
                 # Cache the deprecated status to avoid repeated DB queries
-                await tool_lookup_cache.set_negative(name, "deprecated")
+                if negative_cache_allowed:
+                    await tool_lookup_cache.set_negative(
+                        name,
+                        "deprecated",
+                        negative_cache_caller_scope,
+                        gateway_id=tool_payload.get("gateway_id"),
+                        server_id=server_id,
+                    )
                 raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided
             # Tool must be attached to the specified virtual server
             # ═══════════════════════════════════════════════════════════════════════════
-            if server_id:
+            if server_id and not tool_membership_verified:
                 tool_id_for_check = tool_payload.get("id")
                 if not tool_id_for_check:
                     # Cannot verify server membership without tool ID - deny access
@@ -7820,6 +8034,7 @@ class ToolService(BaseService):
 
             old_tool_name = tool.name
             old_gateway_id = tool.gateway_id
+            affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, old_gateway_id)
 
             # Check ownership if user_email provided
             if user_email:
@@ -7999,8 +8214,8 @@ class ToolService(BaseService):
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None)
-            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None, affected_server_ids=affected_server_ids)
+            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

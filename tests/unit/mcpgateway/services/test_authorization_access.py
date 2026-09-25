@@ -656,64 +656,41 @@ class TestServerScoping:
     @pytest.mark.asyncio
     async def test_invoke_tool_requires_server_membership(self, tool_service, mock_db):
         """Tool must be attached to server when server_id is provided."""
-        mock_tool = create_mock_tool(visibility="public")
+        cached_payload = {
+            "status": "active",
+            "tool": {"id": "tool-123", "name": "test_tool", "enabled": True, "reachable": True},
+            "gateway": None,
+        }
+        cache = MagicMock(enabled=True, get=AsyncMock(return_value=cached_payload), get_negative=AsyncMock(return_value=None))
+        mock_db.execute = Mock(return_value=MagicMock(first=Mock(return_value=None)))
 
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = mock_tool
-        mock_scalar.scalars.return_value = mock_scalar
-        mock_scalar.all.return_value = [mock_tool]
-        # First call returns tool, second call (server membership check) returns None
-        mock_db.execute = Mock(side_effect=[mock_scalar, MagicMock(first=Mock(return_value=None))])
-
-        with pytest.raises(ToolNotFoundError) as exc_info:
-            await tool_service.invoke_tool(
-                mock_db,
-                "test_tool",
-                {},
-                user_email=None,
-                token_teams=None,  # Admin
-                server_id="server-123",  # But tool not attached to this server
-            )
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]),
+            pytest.raises(ToolNotFoundError) as exc_info,
+        ):
+            await tool_service.invoke_tool(mock_db, "test_tool", {}, user_email=None, token_teams=None, server_id="server-123")
 
         assert "Tool not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_denies_when_tool_id_missing(self, tool_service, mock_db):
         """Should deny access when tool has no ID (can't verify server membership)."""
-        mock_tool = create_mock_tool(visibility="public")
-        mock_tool.id = None  # No ID - will fail server membership check
+        cached_payload = {
+            "status": "active",
+            "tool": {"name": "test_tool", "enabled": True, "reachable": True},
+            "gateway": None,
+        }
+        cache = MagicMock(enabled=True, get=AsyncMock(return_value=cached_payload), get_negative=AsyncMock(return_value=None))
 
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = mock_tool
-        mock_scalar.scalars.return_value = mock_scalar
-        mock_scalar.all.return_value = [mock_tool]
-        mock_db.execute = Mock(return_value=mock_scalar)
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]),
+            pytest.raises(ToolNotFoundError) as exc_info,
+        ):
+            await tool_service.invoke_tool(mock_db, "test_tool", {}, user_email=None, token_teams=None, server_id="server-123")
 
-        # The _build_tool_cache_payload will set id to "None" (string), not None
-        # So we need to patch it to return a payload with no id
-        with patch.object(tool_service, "_build_tool_cache_payload") as mock_build:
-            mock_build.return_value = {
-                "tool": {
-                    "name": "test_tool",
-                    "visibility": "public",
-                    "enabled": True,
-                    "reachable": True,
-                    # No "id" key - triggers the denial
-                },
-                "gateway": None,
-            }
-
-            with pytest.raises(ToolNotFoundError) as exc_info:
-                await tool_service.invoke_tool(
-                    mock_db,
-                    "test_tool",
-                    {},
-                    user_email=None,
-                    token_teams=None,
-                    server_id="server-123",
-                )
-
-            assert "Tool not found" in str(exc_info.value)
+        assert "Tool not found" in str(exc_info.value)
 
 
 class TestCachePoisoningPrevention:

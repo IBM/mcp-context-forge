@@ -1,8 +1,11 @@
 # ADR-033: Tool Lookup Cache for invoke_tool
 
-- *Status:* Accepted
+- *Status:* Superseded by ADR-055
 - *Date:* 2025-01-20
 - *Deciders:* Platform Team
+
+!!! warning
+    [ADR-055](055-scope-tool-lookup-cache.md) supersedes this decision. It adds virtual-server and caller visibility scopes to tool lookup caching.
 
 ## Context
 

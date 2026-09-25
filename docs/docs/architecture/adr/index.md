@@ -37,7 +37,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0030  | Metrics Cleanup and Rollup | Accepted | Performance | 2025-01-15 |
 | 0031  | Parallel Session Cleanup with asyncio.gather() | Accepted | Performance | 2025-01-15 |
 | 0032  | MCP Session Pool for Connection Reuse | Accepted | Performance | 2025-01-05 |
-| 0033  | Tool Lookup Cache for invoke_tool | Accepted | Performance | 2025-01-20 |
+| 0033  | Tool Lookup Cache for invoke_tool | Superseded by ADR-055 | Performance | 2025-01-20 |
 | 0035  | Query Parameter Authentication for Gateways | Accepted | Security | 2026-01-19 |
 | 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
 | 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Superseded | Performance | 2025-12-26 |
@@ -57,5 +57,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0052  | GET /mcp Stream and Server-Initiated Request Correlation | Proposed | MCP Protocol | 2026-04-19 |
 | 0053  | Governed MCP Extension Framework                     | Proposed | Security       | 2026-05-29 |
 | 0054  | Remove Granian HTTP Server (supersedes ADR-0025)     | Accepted  | Performance   | 2026-07-22 |
+| 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

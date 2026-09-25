@@ -4188,6 +4188,7 @@ class TestDeleteToolServerAssociationCleanup:
         execute_calls = []
         assoc_result = MagicMock()
         assoc_result.rowcount = 1  # One association row removed
+        assoc_result.scalars.return_value.all.return_value = ["server-1"]
         delete_result = MagicMock()
         delete_result.rowcount = 1
 
@@ -4217,6 +4218,7 @@ class TestDeleteToolServerAssociationCleanup:
         # Must have 2 execute calls: association cleanup then tool DELETE
         assert db.execute.call_count == 2
         db.commit.assert_called()
+        mock_tlc.return_value.invalidate.assert_awaited_once_with("a2a_test_agent", gateway_id=None, affected_server_ids=("server-1",))
 
 
 # ============================================================================
@@ -5495,42 +5497,45 @@ class TestSetToolStatePermissionCheck:
 class TestInvokeToolCachePaths:
     @pytest.mark.asyncio
     async def test_cached_status_missing(self, tool_service):
-        """Cached status 'missing' raises ToolNotFoundError."""
+        """Scoped cached status 'missing' raises ToolNotFoundError."""
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "missing"})
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value={"status": "missing"})
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
             with pytest.raises(ToolNotFoundError):
-                await tool_service.invoke_tool(db, "missing_tool", {})
+                await tool_service.invoke_tool(db, "missing_tool", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_cached_status_inactive(self, tool_service):
-        """Cached status 'inactive' raises ToolNotFoundError."""
+        """Scoped cached status 'inactive' raises ToolNotFoundError."""
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "inactive"})
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value={"status": "inactive"})
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
             with pytest.raises(ToolNotFoundError, match="inactive"):
-                await tool_service.invoke_tool(db, "inactive_tool", {})
+                await tool_service.invoke_tool(db, "inactive_tool", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_cached_status_offline(self, tool_service):
-        """Cached status 'offline' raises ToolNotFoundError."""
+        """Scoped cached status 'offline' raises ToolNotFoundError."""
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "offline"})
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value={"status": "offline"})
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
             with pytest.raises(ToolNotFoundError, match="offline"):
-                await tool_service.invoke_tool(db, "offline_tool", {})
+                await tool_service.invoke_tool(db, "offline_tool", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_db_tool_unreachable_sets_negative_cache(self, tool_service):
@@ -5546,6 +5551,7 @@ class TestInvokeToolCachePaths:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
             mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value=None)
             mock_cache.set_negative = AsyncMock()
             mock_cache_fn.return_value = mock_cache
 
@@ -5553,7 +5559,7 @@ class TestInvokeToolCachePaths:
             db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[tool])))))
 
             with pytest.raises(ToolNotFoundError, match="offline"):
-                await tool_service.invoke_tool(db, "unreachable", {})
+                await tool_service.invoke_tool(db, "unreachable", {}, server_id="server-1")
             mock_cache.set_negative.assert_called_once()
 
     @pytest.mark.asyncio
@@ -5595,6 +5601,7 @@ class TestInvokeToolCachePaths:
                     "gateway": None,
                 }
             )
+            mock_cache.get_negative = AsyncMock(return_value=None)
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
@@ -5604,20 +5611,15 @@ class TestInvokeToolCachePaths:
     @pytest.mark.asyncio
     async def test_server_scoping_denies_unattached_tool(self, tool_service):
         """Tool not attached to specified server raises not found."""
-        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn, patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)):
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            # Disable cache to force DB lookup path
             mock_cache = AsyncMock()
-            mock_cache.enabled = True
-            mock_cache.get = AsyncMock(
-                return_value={
-                    "status": "active",
-                    "tool": {"enabled": True, "reachable": True, "id": "t1", "visibility": "public", "integration_type": "REST", "annotations": {}},
-                    "gateway": None,
-                }
-            )
+            mock_cache.enabled = False
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
-            db.execute = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+            # Mock DB to return empty result for tool lookup
+            db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
 
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "tool", {}, server_id="srv-1")
