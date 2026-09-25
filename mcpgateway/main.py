@@ -137,6 +137,8 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AInvokeResponse,
+    A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
@@ -5368,7 +5370,9 @@ def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = N
     return body_session_id if isinstance(body_session_id, str) and body_session_id else None
 
 
-@a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
+# response_model_exclude_unset keeps the passthrough contract: only the keys the agent
+# actually returned are serialized, instead of the whole envelope with nulls filled in.
+@a2a_router.post("/{agent_name}/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
     agent_name: str,
@@ -5416,7 +5420,7 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@a2a_router.post("/invoke", response_model=Dict[str, Any])
+@a2a_router.post("/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_by_id(
     request: Request,
@@ -5469,7 +5473,7 @@ async def invoke_a2a_agent_by_id(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@a2a_router.post("/{agent_name}/jsonrpc", response_model=Dict[str, Any])
+@a2a_router.post("/{agent_name}/jsonrpc", response_model=A2AJsonRpcResponse, response_model_exclude_unset=True)
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_jsonrpc(
     agent_name: str,
