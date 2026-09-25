@@ -40,6 +40,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -641,6 +642,7 @@ class ServerService(BaseService):
             # Commit the new record and refresh.
             db.commit()
             db.refresh(db_server)
+            notify_dataplane()
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
 
@@ -1356,6 +1358,7 @@ class ServerService(BaseService):
 
             db.commit()
             db.refresh(server)
+            notify_dataplane()
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
@@ -1546,6 +1549,7 @@ class ServerService(BaseService):
                 server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
+                notify_dataplane()
 
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
@@ -1666,6 +1670,7 @@ class ServerService(BaseService):
                     delete_metrics_in_batches(db, ServerMetricsHourly, ServerMetricsHourly.server_id, server_id)
             db.delete(server)
             db.commit()
+            notify_dataplane()
 
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()

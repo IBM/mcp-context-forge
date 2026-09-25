@@ -39,7 +39,7 @@ def unregister_publisher(event: asyncio.Event) -> None:
     _listeners.discard(event)
 
 
-async def notify_dataplane() -> None:
+def notify_dataplane() -> None:
     """Request a new db read and publish"""
     for event in tuple(_listeners):
         event.set()

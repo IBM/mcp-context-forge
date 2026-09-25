@@ -8,6 +8,7 @@ Unit tests for DataplanePublisherService.
 
 # Standard
 import asyncio
+from contextlib import nullcontext
 import msgpack
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
@@ -16,6 +17,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 import pytest
 
 # First-Party
+from mcpgateway.db import EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.dataplane_publisher import dataplane_publisher as dp_module
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import (
     DataplanePublisherService,
@@ -25,6 +27,7 @@ from mcpgateway.services.dataplane_publisher.dataplane_publisher import (
 from mcpgateway.services.dataplane_publisher.db_loader import (
     UserConfigBuilder,
     add_unique_route,
+    get_user_configs,
     load_backend_items,
 )
 from mcpgateway.services.dataplane_publisher.models import (
@@ -71,7 +74,7 @@ async def test_update_notification_publishes_without_waiting_for_schedule():
         await service.start()
         try:
             await asyncio.wait_for(first_write.wait(), timeout=2)
-            await dp_module.notify_dataplane()
+            dp_module.notify_dataplane()
             await asyncio.wait_for(second_write.wait(), timeout=3)
             assert fetch.await_count == 2
             key, value = redis.pipeline.return_value.set.call_args.args
@@ -79,6 +82,96 @@ async def test_update_notification_publishes_without_waiting_for_schedule():
             assert msgpack.unpackb(value, raw=False) == payloads[1][USER2_ID]
         finally:
             await service.shutdown()
+
+
+@pytest.fixture(params=[False, True], ids=["regular-reader", "admin-reader"])
+def gateway_owner_setup(test_db, request):
+    """Create public routes through owned, active, ownerless, and disabled gateways."""
+    owner = EmailUser(email="publisher-owner@example.com", is_active=True)
+    reader = EmailUser(email="publisher-reader@example.com", is_active=True, is_admin=request.param)
+    server = Server(name="publisher-server", visibility="public", enabled=True)
+    test_db.add_all([owner, reader, server])
+    test_db.flush()
+
+    gateways = {}
+    route_names = {}
+    for label, owner_email, enabled in (
+        ("owned", owner.email, True),
+        ("active", reader.email, True),
+        ("ownerless", None, True),
+        ("disabled", reader.email, False),
+    ):
+        gateway = Gateway(
+            name=label,
+            slug=label,
+            url=f"https://{label}.example.com/mcp",
+            capabilities={},
+            transport="STREAMABLEHTTP",
+            visibility="public",
+            owner_email=owner_email,
+            enabled=enabled,
+        )
+        test_db.add(gateway)
+        test_db.flush()
+        gateways[label] = gateway.id
+        item_fields = {"gateway_id": gateway.id, "visibility": "public", "enabled": True}
+        named_fields = {"name": label, "original_name": label, "custom_name": label, "custom_name_slug": label}
+        server.tools.append(Tool(**item_fields, **named_fields, input_schema={"type": "object"}))
+        server.prompts.append(Prompt(**item_fields, **named_fields, template="Hello", argument_schema={}))
+        server.resources.append(Resource(**item_fields, name=label, uri=f"resource://{label}"))
+        test_db.flush()
+        route_names[label] = {"tools": server.tools[-1].name, "prompts": server.prompts[-1].name, "resources": f"resource://{label}"}
+    test_db.flush()
+
+    with patch("mcpgateway.services.dataplane_publisher.db_loader.fresh_db_session", side_effect=lambda: nullcontext(test_db)):
+        yield SimpleNamespace(owner=owner, reader=reader, server=server, gateways=gateways, route_names=route_names)
+
+
+def _assert_published_gateway_routes(payload, setup, expected_labels):
+    """Check the exact backend and route sets visible to the reader."""
+    host = payload[str(setup.reader.id)]["virtual_hosts"][setup.server.id]
+    assert set(host["backends"]) == {setup.gateways[label] for label in expected_labels}
+    assert host["tools"] == {
+        setup.route_names[label]["tools"]: {"backend_name": setup.gateways[label], "upstream_name": label} for label in expected_labels
+    }
+    assert host["prompts"] == {
+        setup.route_names[label]["prompts"]: {"backend_name": setup.gateways[label], "upstream_name": label} for label in expected_labels
+    }
+    assert host["resources"] == {
+        setup.route_names[label]["resources"]: {"backend_name": setup.gateways[label], "upstream_name": f"resource://{label}"} for label in expected_labels
+    }
+
+
+def test_deactivating_gateway_owner_removes_published_routes(test_db, gateway_owner_setup):
+    """Deactivation removes the owner configuration and owned routes while preserving other eligible routes."""
+    setup = gateway_owner_setup
+    payload = get_user_configs()
+    assert str(setup.owner.id) in payload
+    _assert_published_gateway_routes(payload, setup, {"owned", "active", "ownerless"})
+
+    setup.owner.is_active = False
+    test_db.flush()
+
+    payload = get_user_configs()
+    assert str(setup.owner.id) not in payload
+    _assert_published_gateway_routes(payload, setup, {"active", "ownerless"})
+
+
+def test_reactivating_gateway_owner_restores_published_routes(test_db, gateway_owner_setup):
+    """Reactivation restores the owner configuration and owned routes while keeping disabled gateways excluded."""
+    setup = gateway_owner_setup
+    setup.owner.is_active = False
+    test_db.flush()
+    payload = get_user_configs()
+    assert str(setup.owner.id) not in payload
+    _assert_published_gateway_routes(payload, setup, {"active", "ownerless"})
+
+    setup.owner.is_active = True
+    test_db.flush()
+
+    payload = get_user_configs()
+    assert str(setup.owner.id) in payload
+    _assert_published_gateway_routes(payload, setup, {"owned", "active", "ownerless"})
 
 
 def test_worker_id_is_computed_per_service_instance():
