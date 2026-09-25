@@ -10,11 +10,12 @@ the test process; run the suite once with the gateway stack in default mode
 and once with the stack started with ``JWT_TRUST_MODE=jwt-trust``.
 
 - Trust mode OFF (``db``): a ``token_use="trusted"`` token is rejected with
-  401 and never enters the default funnel.
+  401 at both Layer-1 scoping and the authentication choke point, so the
+  marker never enters the default funnel.
 - Trust mode ON (``jwt-trust``): the same token authenticates from its
-  claims alone; ``token_teams`` on the request comes from the claims and the
-  group-mapping resolver, and RBAC evaluation proceeds with the
-  claims-derived identity.
+  claims alone. A role-less claims principal is denied by RBAC Layer-2
+  with 403 (never 401), and a claims role of ``developer`` grants
+  ``tools.read`` for a 200 listing.
 
 Requirements:
     - ContextForge running with docker-compose (default: http://localhost:8080)
@@ -52,25 +53,28 @@ TRUST_EMAIL = "live.trust.user@example.com"
 TRUST_TEAMS = ["live-trust-team"]
 
 
-def _trust_token() -> str:
+def _trust_token(roles: list[str]) -> str:
     """Mint a trust-marker token with the shared gateway secret."""
     return make_trusted_test_jwt(
         TRUST_USER_ID,
         email=TRUST_EMAIL,
         teams=TRUST_TEAMS,
-        roles=[],
+        roles=roles,
         secret=JWT_SECRET,
     )
 
 
 def test_trust_token_dispatches_per_mode() -> None:
-    """A trust-marker token gets 401 in db mode and authenticates in jwt-trust mode."""
-    token = _trust_token()
+    """A trust-marker token gets 401 in db mode and claims-derived RBAC in jwt-trust mode."""
+    token = _trust_token(roles=[])
     response = httpx.get(f"{BASE_URL}/tools", headers={"Authorization": f"Bearer {token}"}, timeout=10)
 
     if EXPECTED_TRUST_MODE == "jwt-trust":
-        # Claims-derived principal: the request is authenticated.
-        assert response.status_code == 200, f"trust token rejected in jwt-trust mode: {response.status_code} {response.text[:200]}"
+        # Claims-derived principal authenticated: RBAC Layer-2, not
+        # authentication, denies the role-less token.
+        assert response.status_code == 403, f"role-less trust token must hit RBAC deny, got: {response.status_code} {response.text[:200]}"
+        authorized = httpx.get(f"{BASE_URL}/tools", headers={"Authorization": f"Bearer {_trust_token(roles=['developer'])}"}, timeout=10)
+        assert authorized.status_code == 200, f"developer-role trust token rejected in jwt-trust mode: {authorized.status_code} {authorized.text[:200]}"
     else:
         # The marker must never enter the default funnel.
         assert response.status_code == 401, f"trust token not rejected in db mode: {response.status_code}"
