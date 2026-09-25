@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Collection, Dict, Optional
 
 # Third-Party
 import orjson
@@ -54,7 +54,7 @@ class CacheEntry:
 
 
 class ToolLookupCache:
-    """Two-tier cache for tool lookups by name.
+    """Two-tier cache for global or virtual-server-scoped tool lookups.
 
     L1: in-memory LRU/TTL per worker.
     L2: Redis (optional, shared across workers).
@@ -129,7 +129,45 @@ class ToolLookupCache:
         Returns:
             Redis key for the tool lookup entry.
         """
-        return f"{self._cache_prefix}tool_lookup:{name}"
+        return f"{self._cache_prefix}tool_lookup:v3:{name}"
+
+    @staticmethod
+    def _cache_key(name: str, server_id: Optional[str] = None) -> str:
+        """Build an internal cache key for a global or server-scoped lookup.
+
+        Args:
+            name: Requested tool name.
+            server_id: Optional virtual server scope.
+
+        Returns:
+            An internal cache key that isolates aliases between virtual servers.
+        """
+        return f"server:{server_id}:{name}" if server_id else name
+
+    @classmethod
+    def _negative_cache_key(cls, name: str, caller_scope: str, server_id: Optional[str] = None) -> str:
+        """Build a caller-scoped negative cache key.
+
+        Args:
+            name: Requested tool name.
+            caller_scope: Opaque digest of caller visibility context.
+            server_id: Optional virtual server scope.
+
+        Returns:
+            Internal key for one caller scope and virtual server.
+        """
+        return cls._cache_key(f"negative:{caller_scope}:{name}", server_id)
+
+    def _negative_name_set_key(self, name: str) -> str:
+        """Build the Redis sorted-set key for caller-scoped negative entries.
+
+        Args:
+            name: Requested tool name.
+
+        Returns:
+            Redis sorted-set key for all negative entries for the name.
+        """
+        return f"{self._cache_prefix}tool_lookup:negative_name:{name}"
 
     def _gateway_set_key(self, gateway_id: str) -> str:
         """Build the Redis set key for tools in a gateway.
@@ -142,7 +180,26 @@ class ToolLookupCache:
         """
         return f"{self._cache_prefix}tool_lookup:gateway:{gateway_id}"
 
-    async def _get_redis_client(self):
+    def _server_set_key(self, server_id: str) -> str:
+        """Build the Redis set key for cached lookups in a virtual server.
+
+        Args:
+            server_id: Virtual server ID.
+
+        Returns:
+            Redis set key for server-scoped lookup keys.
+        """
+        return f"{self._cache_prefix}tool_lookup:server:{server_id}"
+
+    def _scoped_set_key(self) -> str:
+        """Build the Redis set key for all virtual-server-scoped lookups.
+
+        Returns:
+            Redis set key for all server-scoped lookup keys.
+        """
+        return f"{self._cache_prefix}tool_lookup_index:scoped"
+
+    async def _get_redis_client(self) -> Any:
         """Return a Redis client if L2 is enabled and available.
 
         Returns:
@@ -201,11 +258,91 @@ class ToolLookupCache:
                 self._cache.popitem(last=False)
             self._cache[name] = CacheEntry(value=value, expiry=time.time() + ttl)
 
-    async def get(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get cached payload for a tool name, checking L1 then L2.
+    async def _get_cached_payload(self, cache_key: str, l1_ttl: int) -> Optional[Dict[str, Any]]:
+        """Get one payload by its complete internal cache key.
+
+        Args:
+            cache_key: Complete internal cache key.
+            l1_ttl: L1 TTL applied after an L2 hit.
+
+        Returns:
+            Cached payload, or None.
+        """
+        if not self._enabled:
+            return None
+
+        cached = self._get_l1(cache_key)
+        if cached is not None:
+            return cached
+
+        redis = await self._get_redis_client()
+        if not redis:
+            return None
+
+        try:
+            data = await redis.get(self._redis_key(cache_key))
+            if data:
+                self._l2_hit_count += 1
+                payload: Dict[str, Any] = orjson.loads(data)
+                self._set_l1(cache_key, payload, l1_ttl)
+                return payload
+            self._l2_miss_count += 1
+        except Exception as exc:
+            logger.debug("ToolLookupCache Redis get failed: %s", exc)
+        return None
+
+    async def _set_cached_payload(
+        self,
+        cache_key: str,
+        payload: Dict[str, Any],
+        ttl: int,
+        gateway_id: Optional[str],
+        server_id: Optional[str],
+        negative_name: Optional[str] = None,
+    ) -> None:
+        """Store one payload by its complete internal cache key.
+
+        Args:
+            cache_key: Complete internal cache key.
+            payload: Payload to cache.
+            ttl: Time to live in seconds.
+            gateway_id: Optional gateway ID for invalidation tracking.
+            server_id: Optional virtual server ID for invalidation tracking.
+            negative_name: Optional tool name for negative-entry invalidation tracking.
+        """
+        if not self._enabled:
+            return
+
+        self._set_l1(cache_key, payload, ttl)
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        try:
+            await redis.setex(self._redis_key(cache_key), ttl, orjson.dumps(payload))
+            if gateway_id:
+                gateway_set_key = self._gateway_set_key(gateway_id)
+                await redis.sadd(gateway_set_key, cache_key)
+                await redis.expire(gateway_set_key, max(ttl, self._ttl_seconds))
+            if server_id:
+                for set_key in (self._server_set_key(server_id), self._scoped_set_key()):
+                    await redis.sadd(set_key, cache_key)
+                    await redis.expire(set_key, max(ttl, self._ttl_seconds))
+            if negative_name:
+                negative_set_key = self._negative_name_set_key(negative_name)
+                now = time.time()
+                await redis.zadd(negative_set_key, {cache_key: now + ttl})
+                await redis.zremrangebyscore(negative_set_key, "-inf", now)
+                await redis.expire(negative_set_key, max(ttl, self._ttl_seconds))
+        except Exception as exc:
+            logger.debug("ToolLookupCache Redis set failed: %s", exc)
+
+    async def get(self, name: str, server_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a cached payload for a global or server-scoped tool name.
 
         Args:
             name: Tool name.
+            server_id: Optional virtual server scope.
 
         Returns:
             Cached payload dict or None.
@@ -222,37 +359,39 @@ class ToolLookupCache:
             >>> asyncio.run(cache.get("t1"))["tool"]["name"]
             't1'
         """
-        if not self._enabled:
-            return None
+        cache_key = self._cache_key(name, server_id)
+        return await self._get_cached_payload(cache_key, self._ttl_seconds)
 
-        cached = self._get_l1(name)
-        if cached is not None:
-            return cached
+    async def get_negative(self, name: str, caller_scope: str, server_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a negative entry for one caller visibility context.
 
-        redis = await self._get_redis_client()
-        if not redis:
-            return None
+        Args:
+            name: Requested tool name.
+            caller_scope: Opaque digest of caller visibility context.
+            server_id: Optional virtual server scope.
 
-        try:
-            data = await redis.get(self._redis_key(name))
-            if data:
-                self._l2_hit_count += 1
-                payload = orjson.loads(data)
-                self._set_l1(name, payload, self._ttl_seconds)
-                return payload
-            self._l2_miss_count += 1
-        except Exception as exc:
-            logger.debug("ToolLookupCache Redis get failed: %s", exc)
-        return None
+        Returns:
+            Cached negative payload, or None.
+        """
+        cache_key = self._negative_cache_key(name, caller_scope, server_id)
+        return await self._get_cached_payload(cache_key, self._negative_ttl_seconds)
 
-    async def set(self, name: str, payload: Dict[str, Any], ttl: Optional[int] = None, gateway_id: Optional[str] = None) -> None:
-        """Store a payload in cache and update gateway index if provided.
+    async def set(
+        self,
+        name: str,
+        payload: Dict[str, Any],
+        ttl: Optional[int] = None,
+        gateway_id: Optional[str] = None,
+        server_id: Optional[str] = None,
+    ) -> None:
+        """Store a payload in cache and update invalidation indexes.
 
         Args:
             name: Tool name.
             payload: Payload to cache.
             ttl: Time to live in seconds (defaults to configured TTL).
             gateway_id: Gateway ID for invalidation set tracking.
+            server_id: Optional virtual server scope and invalidation index.
 
         Examples:
             >>> import asyncio
@@ -264,31 +403,27 @@ class ToolLookupCache:
             >>> asyncio.run(cache.get("t1"))
             {'status': 'ok'}
         """
-        if not self._enabled:
-            return
-
         effective_ttl = ttl if ttl is not None else self._ttl_seconds
-        self._set_l1(name, payload, effective_ttl)
+        cache_key = self._cache_key(name, server_id)
+        await self._set_cached_payload(cache_key, payload, effective_ttl, gateway_id, server_id)
 
-        redis = await self._get_redis_client()
-        if not redis:
-            return
-
-        try:
-            await redis.setex(self._redis_key(name), effective_ttl, orjson.dumps(payload))
-            if gateway_id:
-                set_key = self._gateway_set_key(gateway_id)
-                await redis.sadd(set_key, name)
-                await redis.expire(set_key, max(effective_ttl, self._ttl_seconds))
-        except Exception as exc:
-            logger.debug("ToolLookupCache Redis set failed: %s", exc)
-
-    async def set_negative(self, name: str, status: str) -> None:
-        """Store a negative cache entry for a tool name.
+    async def set_negative(
+        self,
+        name: str,
+        status: str,
+        caller_scope: str,
+        *,
+        server_id: Optional[str] = None,
+        gateway_id: Optional[str] = None,
+    ) -> None:
+        """Store a caller-scoped negative cache entry.
 
         Args:
             name: Tool name.
             status: Negative status (missing, inactive, offline).
+            caller_scope: Opaque digest of caller visibility context.
+            gateway_id: Optional gateway ID for invalidation tracking.
+            server_id: Optional virtual server scope.
 
         Examples:
             >>> import asyncio
@@ -296,19 +431,30 @@ class ToolLookupCache:
             >>> cache = ToolLookupCache()
             >>> cache._enabled = True
             >>> cache._l2_enabled = False
-            >>> asyncio.run(cache.set_negative("t1", "missing"))
-            >>> asyncio.run(cache.get("t1"))
+            >>> asyncio.run(cache.set_negative("t1", "missing", "caller-a", server_id="server-a"))
+            >>> asyncio.run(cache.get_negative("t1", "caller-a", "server-a"))
             {'status': 'missing'}
         """
         payload = {"status": status}
-        await self.set(name=name, payload=payload, ttl=self._negative_ttl_seconds)
+        if gateway_id:
+            payload["gateway_id"] = gateway_id
+        cache_key = self._negative_cache_key(name, caller_scope, server_id)
+        await self._set_cached_payload(cache_key, payload, self._negative_ttl_seconds, gateway_id, server_id, negative_name=name)
 
-    async def invalidate(self, name: str, gateway_id: Optional[str] = None) -> None:
+    async def invalidate(
+        self,
+        name: str,
+        gateway_id: Optional[str] = None,
+        server_id: Optional[str] = None,
+        affected_server_ids: Optional[Collection[str]] = None,
+    ) -> None:
         """Invalidate a tool cache entry by name.
 
         Args:
             name: Tool name.
-            gateway_id: Gateway ID for invalidation set tracking.
+            gateway_id: Gateway ID. When present, all aliases for that gateway are invalidated.
+            server_id: Optional virtual server scope for a targeted invalidation.
+            affected_server_ids: Virtual servers affected by a global tool mutation.
 
         Examples:
             >>> import asyncio
@@ -324,20 +470,134 @@ class ToolLookupCache:
         if not self._enabled:
             return
 
+        if gateway_id:
+            await self.invalidate_gateway(gateway_id)
+
+        await self.invalidate_negative_name(name)
+
+        if server_id is None:
+            for affected_server_id in sorted(set(affected_server_ids or ())):
+                await self.invalidate_server(affected_server_id)
+
+        cache_key = self._cache_key(name, server_id)
+
         with self._lock:
-            self._cache.pop(name, None)
+            self._cache.pop(cache_key, None)
 
         redis = await self._get_redis_client()
         if not redis:
             return
 
         try:
-            await redis.delete(self._redis_key(name))
-            if gateway_id:
-                await redis.srem(self._gateway_set_key(gateway_id), name)
-            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:{name}")
+            await redis.delete(self._redis_key(cache_key))
+            if server_id:
+                await redis.srem(self._server_set_key(server_id), cache_key)
+                await redis.srem(self._scoped_set_key(), cache_key)
+            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:key:{cache_key}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
+
+    async def invalidate_negative_name(self, name: str) -> None:
+        """Invalidate caller-scoped negative entries for one tool name.
+
+        Args:
+            name: Requested tool name.
+        """
+        if not self._enabled:
+            return
+
+        with self._lock:
+            for cache_key in [key for key in self._cache if self._negative_key_matches_name(key, name)]:
+                self._cache.pop(cache_key, None)
+
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        set_key = self._negative_name_set_key(name)
+        try:
+            now = time.time()
+            await redis.zremrangebyscore(set_key, "-inf", now)
+            cache_keys = await redis.zrange(set_key, 0, -1)
+            if cache_keys:
+                keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
+                await redis.delete(*keys)
+            await redis.delete(set_key)
+        except Exception as exc:
+            logger.debug("ToolLookupCache Redis negative-name invalidation failed: %s", exc)
+
+    @staticmethod
+    def _negative_key_matches_name(cache_key: str, name: str) -> bool:
+        """Return whether an internal key is a negative entry for a tool name.
+
+        Args:
+            cache_key: Internal cache key.
+            name: Requested tool name.
+
+        Returns:
+            True when the key identifies a negative entry for the name.
+        """
+        if cache_key.startswith("negative:"):
+            parts = cache_key.split(":", 2)
+            return len(parts) == 3 and parts[2] == name
+        if cache_key.startswith("server:"):
+            parts = cache_key.split(":", 4)
+            return len(parts) == 5 and parts[2] == "negative" and parts[4] == name
+        return False
+
+    async def invalidate_all_scoped(self) -> None:
+        """Invalidate every virtual-server-scoped tool lookup."""
+        if not self._enabled:
+            return
+
+        with self._lock:
+            for cache_key in [key for key in self._cache if key.startswith("server:")]:
+                self._cache.pop(cache_key, None)
+
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        set_key = self._scoped_set_key()
+        try:
+            cache_keys = await redis.smembers(set_key)
+            if cache_keys:
+                keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
+                await redis.delete(*keys)
+            await redis.delete(set_key)
+            await redis.publish("mcpgw:cache:invalidate", "tool_lookup:scoped")
+        except Exception as exc:
+            logger.debug("ToolLookupCache Redis invalidate_all_scoped failed: %s", exc)
+
+    async def invalidate_server(self, server_id: str) -> None:
+        """Invalidate all cached tool lookups scoped to a virtual server.
+
+        Args:
+            server_id: Virtual server ID.
+        """
+        if not self._enabled:
+            return
+
+        key_prefix = self._cache_key("", server_id)
+        with self._lock:
+            for cache_key in [key for key in self._cache if key.startswith(key_prefix)]:
+                self._cache.pop(cache_key, None)
+
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        set_key = self._server_set_key(server_id)
+        try:
+            cache_keys = await redis.smembers(set_key)
+            if cache_keys:
+                keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
+                await redis.delete(*keys)
+                await redis.srem(self._scoped_set_key(), *cache_keys)
+            await redis.delete(set_key)
+            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:server:{server_id}")
+        except Exception as exc:
+            logger.debug("ToolLookupCache Redis invalidate_server failed: %s", exc)
 
     async def invalidate_gateway(self, gateway_id: str) -> None:
         """Invalidate all cached tools for a gateway.
@@ -362,7 +622,7 @@ class ToolLookupCache:
 
         # L1 invalidation by gateway_id
         with self._lock:
-            to_remove = [name for name, entry in self._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id]
+            to_remove = [name for name, entry in self._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id or entry.value.get("gateway_id") == gateway_id]
             for name in to_remove:
                 self._cache.pop(name, None)
 

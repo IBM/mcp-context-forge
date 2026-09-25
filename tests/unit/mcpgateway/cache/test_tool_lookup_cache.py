@@ -9,7 +9,7 @@ Tests for ToolLookupCache.
 # Standard
 import builtins
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, call, MagicMock, patch
 
 # Third-Party
 import orjson
@@ -41,6 +41,93 @@ async def test_tool_lookup_cache_set_get_l1(tool_lookup_cache_instance):
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_same_name_by_server_l1(tool_lookup_cache_instance):
+    """Same-name tools on different virtual servers must not share L1 entries."""
+    payload_a = {"status": "active", "tool": {"id": "tool-a", "name": "shared-tool"}}
+    payload_b = {"status": "active", "tool": {"id": "tool-b", "name": "shared-tool"}}
+
+    await tool_lookup_cache_instance.set("shared-tool", payload_a, server_id="server-a")
+    await tool_lookup_cache_instance.set("shared-tool", payload_b, server_id="server-b")
+
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-a") == payload_a
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-b") == payload_b
+    assert await tool_lookup_cache_instance.get("shared-tool") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_negative_entries_by_server(tool_lookup_cache_instance):
+    """One server's offline result must not poison another server's lookup."""
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", "caller-a", server_id="server-a")
+
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a", "server-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a", "server-b") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_negative_entries_by_caller(tool_lookup_cache_instance):
+    """One caller's result must not affect another caller on the same server."""
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", "caller-a", server_id="server-a")
+
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a", "server-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-b", "server-a") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_global_negative_entries_by_caller(tool_lookup_cache_instance):
+    """Global negative entries must remain isolated by caller visibility."""
+    await tool_lookup_cache_instance.set_negative("shared-tool", "offline", "caller-a")
+
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-a") == {"status": "offline"}
+    assert await tool_lookup_cache_instance.get_negative("shared-tool", "caller-b") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_isolates_server_scopes(tool_lookup_cache_instance):
+    global_payload = {"status": "active", "tool": {"name": "global-tool"}}
+    server_one_payload = {"status": "active", "tool": {"name": "server-one-tool"}}
+    server_two_payload = {"status": "active", "tool": {"name": "server-two-tool"}}
+
+    await tool_lookup_cache_instance.set("shared-name", global_payload)
+    await tool_lookup_cache_instance.set("shared-name", server_one_payload, gateway_id="gw-1", server_id="srv-1")
+    await tool_lookup_cache_instance.set("shared-name", server_two_payload, gateway_id="gw-2", server_id="srv-2")
+
+    assert await tool_lookup_cache_instance.get("shared-name") == global_payload
+    assert await tool_lookup_cache_instance.get("shared-name", server_id="srv-1") == server_one_payload
+    assert await tool_lookup_cache_instance.get("shared-name", server_id="srv-2") == server_two_payload
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_server(tool_lookup_cache_instance):
+    global_payload = {"status": "active", "tool": {"name": "global-tool"}}
+    server_one_payload = {"status": "active", "tool": {"name": "server-one-tool"}}
+    server_two_payload = {"status": "active", "tool": {"name": "server-two-tool"}}
+
+    await tool_lookup_cache_instance.set("shared-name", global_payload)
+    await tool_lookup_cache_instance.set("shared-name", server_one_payload, gateway_id="gw-1", server_id="srv-1")
+    await tool_lookup_cache_instance.set("shared-name", server_two_payload, gateway_id="gw-2", server_id="srv-2")
+
+    await tool_lookup_cache_instance.invalidate_server("srv-1")
+
+    assert await tool_lookup_cache_instance.get("shared-name") == global_payload
+    assert await tool_lookup_cache_instance.get("shared-name", server_id="srv-1") is None
+    assert await tool_lookup_cache_instance.get("shared-name", server_id="srv-2") == server_two_payload
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_local_tool_invalidation_clears_only_affected_servers(tool_lookup_cache_instance):
+    scoped_payload = {"status": "active", "tool": {"id": "local-tool", "name": "local-tool", "gateway_id": None}}
+    unrelated_payload = {"status": "active", "tool": {"id": "other-tool", "name": "other-tool", "gateway_id": None}}
+
+    await tool_lookup_cache_instance.set("local-tool", scoped_payload, server_id="srv-1")
+    await tool_lookup_cache_instance.set("other-tool", unrelated_payload, server_id="srv-2")
+
+    await tool_lookup_cache_instance.invalidate("local-tool", affected_server_ids=["srv-1"])
+
+    assert await tool_lookup_cache_instance.get("local-tool", server_id="srv-1") is None
+    assert await tool_lookup_cache_instance.get("other-tool", server_id="srv-2") == unrelated_payload
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_lru_eviction(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l1_maxsize = 1
     payload_a = {"status": "active", "tool": {"name": "tool-a"}}
@@ -55,9 +142,9 @@ async def test_tool_lookup_cache_lru_eviction(tool_lookup_cache_instance):
 
 @pytest.mark.asyncio
 async def test_tool_lookup_cache_negative_entry(tool_lookup_cache_instance):
-    await tool_lookup_cache_instance.set_negative("tool-missing", "missing")
+    await tool_lookup_cache_instance.set_negative("tool-missing", "missing", "caller-a", server_id="server-a")
 
-    payload = await tool_lookup_cache_instance.get("tool-missing")
+    payload = await tool_lookup_cache_instance.get_negative("tool-missing", "caller-a", "server-a")
     assert payload["status"] == "missing"
 
 
@@ -116,7 +203,36 @@ async def test_tool_lookup_cache_l2_hit(tool_lookup_cache_instance):
 
 
 @pytest.mark.asyncio
-async def test_tool_lookup_cache_set_with_gateway_updates_redis(tool_lookup_cache_instance):
+async def test_tool_lookup_cache_isolates_same_name_by_server_l2(tool_lookup_cache_instance):
+    """Redis keys must preserve virtual-server scope after an L1 reset."""
+    tool_lookup_cache_instance._l2_enabled = True
+    stored = {}
+
+    async def _setex(key, _ttl, value):
+        stored[key] = value
+
+    async def _get(key):
+        return stored.get(key)
+
+    redis = MagicMock()
+    redis.setex = AsyncMock(side_effect=_setex)
+    redis.get = AsyncMock(side_effect=_get)
+    redis.sadd = AsyncMock()
+    redis.expire = AsyncMock()
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+    payload_a = {"status": "active", "tool": {"id": "tool-a"}}
+    payload_b = {"status": "active", "tool": {"id": "tool-b"}}
+
+    await tool_lookup_cache_instance.set("shared-tool", payload_a, server_id="server-a")
+    await tool_lookup_cache_instance.set("shared-tool", payload_b, server_id="server-b")
+    tool_lookup_cache_instance.invalidate_all_local()
+
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-a") == payload_a
+    assert await tool_lookup_cache_instance.get("shared-tool", server_id="server-b") == payload_b
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     payload = {"status": "active", "tool": {"name": "tool-a"}}
 
@@ -126,10 +242,82 @@ async def test_tool_lookup_cache_set_with_gateway_updates_redis(tool_lookup_cach
     redis.expire = AsyncMock()
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
-    await tool_lookup_cache_instance.set("tool-a", payload, gateway_id="gw-1")
-    assert redis.setex.called
-    assert redis.sadd.called
-    assert redis.expire.called
+    await tool_lookup_cache_instance.set("tool-a", payload, gateway_id="gw-1", server_id="srv-1")
+
+    redis.setex.assert_awaited_once_with("mcpgw:tool_lookup:v3:server:srv-1:tool-a", tool_lookup_cache_instance._ttl_seconds, orjson.dumps(payload))
+    assert redis.sadd.await_args_list == [
+        call("mcpgw:tool_lookup:gateway:gw-1", "server:srv-1:tool-a"),
+        call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:tool-a"),
+        call("mcpgw:tool_lookup_index:scoped", "server:srv-1:tool-a"),
+    ]
+    assert redis.expire.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_set_negative_updates_all_redis_indexes(tool_lookup_cache_instance):
+    """Negative entries must support gateway, server, and name invalidation."""
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock(setex=AsyncMock(), sadd=AsyncMock(), zadd=AsyncMock(), zremrangebyscore=AsyncMock(), expire=AsyncMock())
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    with patch("mcpgateway.cache.tool_lookup_cache.time.time", return_value=1000.0):
+        await tool_lookup_cache_instance.set_negative("tool-a", "deprecated", "caller-a", gateway_id="gw-1", server_id="srv-1")
+
+    cache_key = "server:srv-1:negative:caller-a:tool-a"
+    payload = {"status": "deprecated", "gateway_id": "gw-1"}
+    redis.setex.assert_awaited_once_with(
+        f"mcpgw:tool_lookup:v3:{cache_key}",
+        tool_lookup_cache_instance._negative_ttl_seconds,
+        orjson.dumps(payload),
+    )
+    assert redis.sadd.await_args_list == [
+        call("mcpgw:tool_lookup:gateway:gw-1", cache_key),
+        call("mcpgw:tool_lookup:server:srv-1", cache_key),
+        call("mcpgw:tool_lookup_index:scoped", cache_key),
+    ]
+    redis.zadd.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", {cache_key: 1010.0})
+    redis.zremrangebyscore.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", "-inf", 1000.0)
+    assert redis.expire.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_negative_name_index_prunes_expired_callers(tool_lookup_cache_instance, monkeypatch):
+    """Repeated callers must not retain expired negative-index members."""
+    tool_lookup_cache_instance._l2_enabled = True
+    now = [100.0]
+    scores: dict[str, float] = {}
+
+    async def _zadd(_key, values):
+        scores.update(values)
+
+    async def _zremrangebyscore(_key, _minimum, maximum):
+        for member in [member for member, score in scores.items() if score <= float(maximum)]:
+            scores.pop(member)
+
+    redis = MagicMock(
+        setex=AsyncMock(),
+        zadd=AsyncMock(side_effect=_zadd),
+        zremrangebyscore=AsyncMock(side_effect=_zremrangebyscore),
+        expire=AsyncMock(),
+    )
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+    monkeypatch.setattr("mcpgateway.cache.tool_lookup_cache.time.time", lambda: now[0])
+
+    for caller_number in range(100):
+        now[0] = 100.0 + caller_number
+        await tool_lookup_cache_instance.set_negative("tool-a", "missing", f"caller-{caller_number}")
+        assert len(scores) <= tool_lookup_cache_instance._negative_ttl_seconds + 1
+
+    now[0] = 300.0
+    await tool_lookup_cache_instance.set_negative("tool-a", "missing", "caller-live")
+
+    assert scores == {"negative:caller-live:tool-a": 310.0}
+
+
+def test_tool_lookup_cache_negative_key_match_rejects_missing_caller_scope():
+    """Malformed negative keys must not match a tool name."""
+    assert ToolLookupCache._negative_key_matches_name("negative:caller-a:tool-a", "tool-a") is True
+    assert ToolLookupCache._negative_key_matches_name("negative:tool-a", "tool-a") is False
 
 
 @pytest.mark.asyncio
@@ -147,22 +335,62 @@ async def test_tool_lookup_cache_set_redis_exception_is_swallowed(tool_lookup_ca
 async def test_tool_lookup_cache_invalidate_redis(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
+    redis.smembers = AsyncMock(return_value={b"tool-a", b"server:srv-1:tool-a"})
+    redis.zremrangebyscore = AsyncMock()
+    redis.zrange = AsyncMock(return_value=[b"negative:caller-a:tool-a", b"server:srv-1:negative:caller-a:tool-a"])
+    redis.delete = AsyncMock()
+    redis.publish = AsyncMock()
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    with patch("mcpgateway.cache.tool_lookup_cache.time.time", return_value=1000.0):
+        await tool_lookup_cache_instance.invalidate("tool-a", gateway_id="gw-1")
+
+    redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup:gateway:gw-1")
+    redis.zremrangebyscore.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", "-inf", 1000.0)
+    redis.zrange.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", 0, -1)
+    assert redis.delete.await_count == 5
+    assert set(redis.delete.await_args_list[0].args) == {
+        "mcpgw:tool_lookup:v3:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-1:tool-a",
+    }
+    assert redis.delete.await_args_list[1] == call("mcpgw:tool_lookup:gateway:gw-1")
+    assert set(redis.delete.await_args_list[2].args) == {
+        "mcpgw:tool_lookup:v3:negative:caller-a:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-1:negative:caller-a:tool-a",
+    }
+    assert redis.delete.await_args_list[3] == call("mcpgw:tool_lookup:negative_name:tool-a")
+    assert redis.delete.await_args_list[4] == call("mcpgw:tool_lookup:v3:tool-a")
+    assert redis.publish.await_args_list == [
+        call("mcpgw:cache:invalidate", "tool_lookup:gateway:gw-1"),
+        call("mcpgw:cache:invalidate", "tool_lookup:key:tool-a"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_exact_server_scope_redis(tool_lookup_cache_instance):
+    """Targeted scoped invalidation must publish an unambiguous exact-key message."""
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
     redis.delete = AsyncMock()
     redis.srem = AsyncMock()
     redis.publish = AsyncMock()
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
-    await tool_lookup_cache_instance.invalidate("tool-a", gateway_id="gw-1")
-    assert redis.delete.called
-    assert redis.srem.called
-    assert redis.publish.called
+    await tool_lookup_cache_instance.invalidate("shared-tool", server_id="srv-1")
+
+    redis.delete.assert_awaited_once_with("mcpgw:tool_lookup:v3:server:srv-1:shared-tool")
+    assert redis.srem.await_args_list == [
+        call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:shared-tool"),
+        call("mcpgw:tool_lookup_index:scoped", "server:srv-1:shared-tool"),
+    ]
+    redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:key:server:srv-1:shared-tool")
 
 
 @pytest.mark.asyncio
 async def test_tool_lookup_cache_invalidate_redis_exception_is_swallowed(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
-    redis.delete = AsyncMock(side_effect=RuntimeError("boom"))
+    redis.smembers = AsyncMock(side_effect=RuntimeError("boom"))
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
     # Exception path is intentionally swallowed and logged.
@@ -181,6 +409,47 @@ async def test_tool_lookup_cache_invalidate_gateway_redis(tool_lookup_cache_inst
     await tool_lookup_cache_instance.invalidate_gateway("gw-1")
     assert redis.delete.called
     assert redis.publish.called
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_server_redis(tool_lookup_cache_instance):
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
+    redis.smembers = AsyncMock(return_value={b"server:srv-1:tool-a", "server:srv-1:tool-b"})
+    redis.delete = AsyncMock()
+    redis.srem = AsyncMock()
+    redis.publish = AsyncMock()
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    await tool_lookup_cache_instance.invalidate_server("srv-1")
+
+    redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup:server:srv-1")
+    assert redis.delete.await_count == 2
+    redis.srem.assert_awaited_once()
+    assert redis.srem.await_args.args[0] == "mcpgw:tool_lookup_index:scoped"
+    assert set(redis.srem.await_args.args[1:]) == {b"server:srv-1:tool-a", "server:srv-1:tool-b"}
+    redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:server:srv-1")
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_all_scoped_redis(tool_lookup_cache_instance):
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
+    redis.smembers = AsyncMock(return_value={b"server:srv-1:tool-a", "server:srv-2:tool-b"})
+    redis.delete = AsyncMock()
+    redis.publish = AsyncMock()
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    await tool_lookup_cache_instance.invalidate_all_scoped()
+
+    redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup_index:scoped")
+    assert redis.delete.await_count == 2
+    assert set(redis.delete.await_args_list[0].args) == {
+        "mcpgw:tool_lookup:v3:server:srv-1:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-2:tool-b",
+    }
+    assert redis.delete.await_args_list[1] == call("mcpgw:tool_lookup_index:scoped")
+    redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:scoped")
 
 
 def test_tool_lookup_cache_import_error_defaults(monkeypatch):
@@ -264,6 +533,8 @@ async def test_tool_lookup_cache_disabled_noops():
     await cache.set("tool-x", {"status": "inactive"})
     await cache.invalidate("tool-x")
     await cache.invalidate_gateway("gw-1")
+    await cache.invalidate_server("srv-1")
+    await cache.invalidate_all_scoped()
     assert len(cache._cache) == 0
 
 
@@ -284,3 +555,13 @@ async def test_tool_lookup_cache_invalidate_gateway_redis_error(tool_lookup_cach
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
     await tool_lookup_cache_instance.invalidate_gateway("gw-1")
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_server_redis_error(tool_lookup_cache_instance):
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
+    redis.smembers = AsyncMock(side_effect=RuntimeError("boom"))
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    await tool_lookup_cache_instance.invalidate_server("srv-1")

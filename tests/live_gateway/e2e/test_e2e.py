@@ -50,7 +50,6 @@ import httpx
 import httpx2
 from mcp import ClientSession, MCPError as McpError
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
-from mcp.types import InitializeResult
 import pytest
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
@@ -2200,6 +2199,97 @@ def create_server(admin_api: APIRequestContext, owned_objects: _OwnedObjects) ->
 
 
 @pytest.fixture
+def same_name_private_tools(admin_api: APIRequestContext, playwright: Playwright, create_team: Any) -> Generator[dict[str, dict[str, str]], None, None]:
+    """Create two user-owned private gateways with identical tool names.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        playwright: Playwright entry point for user token creation.
+        create_team: Factory that creates tracked teams.
+
+    Yields:
+        Tenant tokens, servers, tool names, and expected echo markers.
+    """
+    uid = uuid.uuid4().hex[:8]
+    gateway_name = f"{LIFECYCLE_PREFIX}-shared-gateway-{uid}"
+    tenants: dict[str, dict[str, str]] = {}
+    user_records: list[dict[str, Any]] = []
+    user_contexts: list[APIRequestContext] = []
+    gateway_ids: list[str] = []
+    server_ids: list[str] = []
+
+    try:
+        for tenant_label in ("tenant-a", "tenant-b"):
+            _payload, team = _created_team(create_team, name=f"{LIFECYCLE_PREFIX}-{tenant_label}-{uid}")
+            team_id = team["id"]
+            email = f"{LIFECYCLE_PREFIX}-{tenant_label}-{uid}@test.com"
+            user = _create_user_with_token(admin_api, playwright, email, team_id=team_id, rbac_role="developer")
+            user_records.append(user)
+            user_api = _api_context(playwright, user["access_token"])
+            user_contexts.append(user_api)
+
+            gateway_resp = user_api.post(
+                "/gateways",
+                data={
+                    "name": gateway_name,
+                    "url": _GATEWAY_UPSTREAM_URL,
+                    "transport": "STREAMABLEHTTP",
+                    "visibility": "private",
+                },
+            )
+            assert gateway_resp.status in (200, 201, 202), f"POST /gateways returned {gateway_resp.status}: {gateway_resp.text()[:500]}"
+            gateway_id = _json_or_fail(gateway_resp, "POST /gateways")["id"]
+            gateway_ids.append(gateway_id)
+
+            names = _wait_for_gateway_tool_names(user_api, gateway_id)
+            assert names, f"gateway {gateway_id} reported no tools within {_GATEWAY_SYNC_DEADLINE:.0f}s"
+            tools = _gateway_tools(user_api, gateway_id)
+            echo_tool = next((tool for tool in tools if tool["name"].endswith("-echo")), None)
+            assert echo_tool, f"gateway {gateway_id} did not expose an echo tool: {sorted(names)}"
+
+            server_resp = user_api.post(
+                "/servers",
+                data={
+                    "server": {
+                        "name": f"{LIFECYCLE_PREFIX}-{tenant_label}-server-{uid}",
+                        "description": "Same-name tenant cache isolation fixture",
+                        "associated_tools": [echo_tool["id"]],
+                    },
+                    "visibility": "private",
+                },
+            )
+            assert server_resp.status in (200, 201), f"POST /servers returned {server_resp.status}: {server_resp.text()[:500]}"
+            server_id = _json_or_fail(server_resp, "POST /servers")["id"]
+            server_ids.append(server_id)
+            tenants[tenant_label] = {
+                "access_token": user["access_token"],
+                "server_id": server_id,
+                "tool_name": echo_tool["name"],
+                "marker": f"{tenant_label}-{uid}",
+            }
+
+        tool_names = {tenant["tool_name"] for tenant in tenants.values()}
+        assert len(tool_names) == 1, f"tenant gateways produced different tool names: {sorted(tool_names)}"
+        yield tenants
+    finally:
+        failures: list[str] = []
+        for server_id in reversed(server_ids):
+            failure = _delete_owned(admin_api, "/servers", server_id)
+            if failure:
+                failures.append(failure)
+        for gateway_id in reversed(gateway_ids):
+            failure = _delete_owned(admin_api, "/gateways", gateway_id)
+            if failure:
+                failures.append(failure)
+        for user_api in reversed(user_contexts):
+            user_api.dispose()
+        for user in reversed(user_records):
+            _cleanup_user(admin_api, user)
+        if failures:
+            pytest.fail("Tenant cache fixture cleanup failed:\n  " + "\n  ".join(failures))
+
+
+@pytest.fixture
 def create_resource(admin_api: APIRequestContext, owned_objects: _OwnedObjects) -> Any:
     """Return a factory that creates throwaway resources.
 
@@ -2318,6 +2408,74 @@ class TestVirtualServerLifecycle:
         observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, expected_names)
         assert observed == expected_names, f"MCP tools/list mismatch: missing={sorted(expected_names - observed)} unexpected={sorted(observed - expected_names)}"
         assert held_back not in observed, f"held-back tool {held_back} leaked into the scoped MCP catalog"
+
+    def test_detached_tool_cannot_use_warmed_lookup(self, admin_api: APIRequestContext, create_server: Any, lifecycle_tools: list[dict[str, Any]], admin_token: str) -> None:
+        """A detached tool must fail after its server-scoped lookup is warmed.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        server_url = _server_mcp_base(server_id)
+
+        warmed = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "warm-cache"}, server_url=server_url)
+        assert not warmed.is_error, f"Initial tools/call failed: {warmed}"
+
+        updated = admin_api.put(f"/servers/{server_id}", data={"associated_tools": []})
+        assert updated.status == 200, f"PUT /servers/{server_id} returned {updated.status}: {updated.text()[:500]}"
+
+        try:
+            detached = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "must-fail"}, server_url=server_url)
+        except (McpError, ExceptionGroup) as exc:
+            leaves = _unwrap_exception_group(exc)
+            assert any(isinstance(leaf, McpError) and "not found" in str(leaf).lower() for leaf in leaves), f"Detached tool returned the wrong protocol error: {leaves!r}"
+            return
+
+        assert detached.is_error, f"Detached tool remained invocable: {detached}"
+        assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
+
+    @pytest.mark.parametrize(
+        ("first_tenant", "second_tenant"),
+        [("tenant-a", "tenant-b"), ("tenant-b", "tenant-a")],
+    )
+    def test_same_name_private_tools_remain_owner_scoped(
+        self,
+        same_name_private_tools: dict[str, dict[str, str]],
+        first_tenant: str,
+        second_tenant: str,
+    ) -> None:
+        """Same-name tools must resolve inside each tenant in both cache orders.
+
+        Args:
+            same_name_private_tools: Two private gateway and server records.
+            first_tenant: Tenant that warms the shared tool name first.
+            second_tenant: Tenant that invokes the same name second.
+        """
+        for tenant_label in (first_tenant, second_tenant):
+            tenant = same_name_private_tools[tenant_label]
+            server_url = _server_mcp_base(tenant["server_id"])
+            observed = _names_when_ready(
+                lambda tenant=tenant, server_url=server_url: {tool.name for tool in _mcp_tools_list(tenant["access_token"], server_url=server_url)},
+                {tenant["tool_name"]},
+            )
+            assert observed == {tenant["tool_name"]}, f"{tenant_label} scoped tools/list returned {sorted(observed)}"
+
+            result = _mcp_tool_call(
+                tenant["access_token"],
+                tenant["tool_name"],
+                {"message": tenant["marker"]},
+                server_url=server_url,
+            )
+            assert not result.is_error, f"{tenant_label} same-name tool invocation failed: {result}"
+            assert tenant["marker"] in result.content[0].text, f"{tenant_label} received wrong tool result: {result}"
 
     def test_associated_resources_reachable_via_mcp(self, admin_api: APIRequestContext, create_server: Any, create_resource: Any, admin_token: str) -> None:
         """The per-server REST records and the MCP catalog both report the associated resource.
