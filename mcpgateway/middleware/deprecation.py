@@ -79,6 +79,7 @@ _LEGACY_PREFIXES: frozenset[str] = frozenset(
         "/toolops",  # TOOLOPS_ENABLED
         "/auth",  # EMAIL_AUTH_ENABLED
         "/teams",  # EMAIL_AUTH_ENABLED
+        "/users",  # EMAIL_AUTH_ENABLED
         "/tokens",  # EMAIL_AUTH_ENABLED
         "/rbac",  # EMAIL_AUTH_ENABLED
         "/compliance",  # MCPGATEWAY_ADMIN_API_ENABLED

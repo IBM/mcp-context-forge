@@ -1804,6 +1804,19 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/tokens/token-123", "DELETE", [Permissions.TOKENS_UPDATE]) is False
 
     @pytest.mark.asyncio
+    async def test_invitation_permission_patterns(self, middleware):
+        """Invitee routes require teams.join for scoped API tokens."""
+        routes = [
+            ("/users/me/invitations", "GET"),
+            ("/teams/invitations/token-123/accept", "POST"),
+            ("/teams/invitations/token-123/decline", "POST"),
+        ]
+
+        for path, method in routes:
+            assert middleware._check_permission_restrictions(path, method, [Permissions.TEAMS_JOIN]) is True
+            assert middleware._check_permission_restrictions(path, method, [Permissions.TEAMS_READ]) is False
+
+    @pytest.mark.asyncio
     async def test_private_visibility_requires_owner(self, middleware):
         """Test that private visibility enforces owner-only access per RBAC doc."""
         # Create mock DB session directly (passed as db parameter)
