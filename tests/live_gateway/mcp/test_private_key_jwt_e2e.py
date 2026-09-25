@@ -389,7 +389,7 @@ class TestPrivateKeyJwtLiveFlow:
         resp = admin_api.get(f"/gateways/{private_key_jwt_gateway['id']}")
         assert resp.status == 200, resp.text()
         body = resp.text()
-        assert "BEGIN PRIVATE KEY" not in body and "BEGIN RSA PRIVATE KEY" not in body, "private_key leaked through API"
+        assert "BEGIN PRIVATE KEY" not in body and "BEGIN RSA PRIVATE KEY" not in body, "private_key leaked through API"  # pragma: allowlist secret
 
     def test_invalid_method_rejected_with_422(self, admin_api: APIRequestContext) -> None:
         """An unsupported token_endpoint_auth_method fails closed at the live API boundary."""
