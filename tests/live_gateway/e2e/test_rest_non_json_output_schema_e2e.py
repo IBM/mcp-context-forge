@@ -3,20 +3,27 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Black-box check for a REST tool that declares an outputSchema and returns a
-non-JSON (truncated) body against an isolated gateway.
+Black-box check for a REST tool that declares an outputSchema against an
+isolated gateway with a fixed REST_RESPONSE_TEXT_MAX_LENGTH.
 
-Starts a private gateway subprocess, registers a REST tool pointing at a local
-HTTP server that serves an invalid, truncated JSON body, adds the tool to a
-virtual server, calls it over the server's MCP transport, and asserts the
-parse-error message reaches the caller instead of a generic output-validation
-failure.
+Starts a private gateway subprocess, registers a REST tool pointing at a
+local HTTP server, adds the tool to a virtual server, and calls it over the
+server's MCP transport. Two scenarios:
+
+- An invalid (unterminated) JSON body longer than the configured limit
+  reports a parse error truncated to that exact limit, not a generic
+  output-validation failure.
+- A valid JSON body longer than the configured limit still validates and
+  returns structured content: the limit only bounds the echoed error text,
+  never a successful parse.
 """
 
 from __future__ import annotations
 
 # Standard
+import contextlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import secrets
@@ -37,30 +44,53 @@ from tests.live_gateway.plugins._helpers import create_virtual_server, initializ
 pytestmark = pytest.mark.e2e
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
+# The gateway subprocess pins REST_RESPONSE_TEXT_MAX_LENGTH to this value, so
+# both bodies below (longer than the limit) exercise the same truncation path.
+_MAX_LENGTH = 2000
+
 # Invalid, truncated JSON: an unterminated string inside a "results" array.
 _TRUNCATED_BODY = ('{"results": ["' + "x" * 6000).encode()
 
+# Valid JSON, also longer than _MAX_LENGTH: proves the limit only bounds the
+# echoed error text and never blocks a successful parse of a large body.
+_LARGE_VALID_BODY = json.dumps({"results": ["x" * 6000]}).encode()
 
-class _TruncatedJSONHandler(BaseHTTPRequestHandler):
-    """Serve a truncated JSON body for the schema-tool parse-error probe."""
+
+class _RecordingHandler(BaseHTTPRequestHandler):
+    """Serve a fixed body, recording each request before responding.
+
+    Subclasses set ``body`` and override ``content_type`` as needed. Recording
+    happens first so a test can rely on ``requests`` the instant its response
+    has been read, with no window where the response beat the recording.
+    """
 
     requests: list = []
+    body: bytes = b""
 
     def do_GET(self):
-        """Return 200 with an invalid, truncated JSON body."""
+        """Record the request, then return 200 with the configured body."""
+        self.requests.append((self.command, self.path))
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(_TRUNCATED_BODY)
-
-    def handle_one_request(self):
-        """Dispatch as usual, then record the method and path received."""
-        super().handle_one_request()
-        if self.command:
-            self.requests.append((self.command, self.path))
+        self.wfile.write(self.body)
 
     def log_message(self, format, *args):
         """Keep the fixture HTTP server quiet."""
+
+
+class _TruncatedJSONHandler(_RecordingHandler):
+    """Serve a truncated JSON body for the schema-tool parse-error probe."""
+
+    requests: list = []
+    body = _TRUNCATED_BODY
+
+
+class _LargeValidJSONHandler(_RecordingHandler):
+    """Serve a large but valid JSON body for the schema-tool size-boundary probe."""
+
+    requests: list = []
+    body = _LARGE_VALID_BODY
 
 
 @pytest.fixture
@@ -92,6 +122,7 @@ def isolated_gateway(tmp_path):
         "MCPGATEWAY_A2A_ENABLED": "false",
         "SSRF_ALLOW_LOCALHOST": "true",
         "PLUGINS_ENABLED": "false",
+        "REST_RESPONSE_TEXT_MAX_LENGTH": str(_MAX_LENGTH),
         "LOG_LEVEL": "ERROR",
         "PYTHONUNBUFFERED": "1",
     }
@@ -128,11 +159,25 @@ def isolated_gateway(tmp_path):
                 process.wait(timeout=5)
 
 
-def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
-    """A truncated JSON body on a schema tool surfaces a parse error, not a validation error."""
-    client, token = isolated_gateway
-    _TruncatedJSONHandler.requests.clear()
-    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _TruncatedJSONHandler)
+@contextlib.contextmanager
+def _call_schema_tool(client, token, handler_cls, *, tool_name):
+    """Register a REST tool backed by ``handler_cls``, then call it via MCP.
+
+    Cleanup (deleting the server/tool, stopping the upstream) always runs on
+    exit, including when the caller's assertions raise.
+
+    Args:
+        client: Authenticated client for the isolated gateway.
+        token: Bearer token for the gateway's MCP transport.
+        handler_cls: Upstream handler class; ``handler_cls.requests`` is
+            cleared before the call and holds the recorded requests after.
+        tool_name: Unique tool name for this scenario.
+
+    Yields:
+        A tuple of the raw ``call_response`` and its decoded ``result``.
+    """
+    handler_cls.requests.clear()
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     worker = threading.Thread(target=upstream.serve_forever, daemon=True)
     worker.start()
     tool_id = None
@@ -142,8 +187,8 @@ def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
             "/tools",
             json={
                 "tool": {
-                    "name": "rest_non_json_output_schema_probe",
-                    "description": "Non-JSON body probe for outputSchema tools",
+                    "name": tool_name,
+                    "description": "outputSchema size-boundary probe",
                     "integration_type": "REST",
                     "url": f"http://127.0.0.1:{upstream.server_port}/probe",
                     "request_type": "GET",
@@ -161,7 +206,7 @@ def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
         tool = response.json()
         tool_id = tool["id"]
 
-        server_id = create_virtual_server(client, name="rest_non_json_output_schema_server", tool_ids=[tool_id])
+        server_id = create_virtual_server(client, name=f"{tool_name}_server", tool_ids=[tool_id])
         session_id = initialize_session(client, server_id=server_id, token=token)
 
         call_response = client.post(
@@ -172,12 +217,8 @@ def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
         assert call_response.status_code == 200, call_response.text
         payload = call_response.json()
         assert "result" in payload, payload
-        result = payload["result"]
-
-        assert result["isError"] is True
-        assert "Response body is not valid JSON" in result_text(result)
-        assert "Output validation error" not in call_response.text
-        assert _TruncatedJSONHandler.requests == [("GET", "/probe")], _TruncatedJSONHandler.requests
+        assert handler_cls.requests == [("GET", "/probe")], handler_cls.requests
+        yield call_response, payload["result"]
     finally:
         try:
             if server_id:
@@ -188,3 +229,27 @@ def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
             upstream.shutdown()
             upstream.server_close()
             worker.join(timeout=5)
+
+
+def test_non_json_body_with_output_schema_reports_parse_error(isolated_gateway):
+    """An invalid, truncated JSON body on a schema tool reports a bounded parse error."""
+    client, token = isolated_gateway
+    body_len = len(_TRUNCATED_BODY)
+    expected_echo = _TRUNCATED_BODY.decode()[:_MAX_LENGTH]
+    with _call_schema_tool(client, token, _TruncatedJSONHandler, tool_name="rest_non_json_output_schema_probe") as (call_response, result):
+        text = result_text(result)
+
+        assert result["isError"] is True
+        assert "Output validation error" not in call_response.text
+        assert f"Showing the first {_MAX_LENGTH} of {body_len} characters" in text
+        # The echoed body is exactly the configured limit, not the full 6000-x body.
+        assert text.endswith(expected_echo)
+        assert "x" * 6000 not in text
+
+
+def test_large_valid_json_with_output_schema_succeeds(isolated_gateway):
+    """A valid JSON body longer than the limit still validates and returns structured content."""
+    client, token = isolated_gateway
+    with _call_schema_tool(client, token, _LargeValidJSONHandler, tool_name="rest_large_valid_output_schema_probe") as (call_response, result):
+        assert result.get("isError") is not True, call_response.text
+        assert result.get("structuredContent") == {"results": ["x" * 6000]}
