@@ -119,6 +119,7 @@ from mcpgateway.schemas import (
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
@@ -2124,6 +2125,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.add(db_gateway)
             db.commit()
             db.refresh(db_gateway)
+            notify_dataplane()
 
             # Update tracking
             self._active_gateways.add(db_gateway.url)
@@ -2476,6 +2478,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info("No new items to add to database")
 
             db.commit()
+            notify_dataplane()
 
             cache = _get_registry_cache()
             await cache.invalidate_tools()
@@ -3370,6 +3373,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 db.commit()
                 db.refresh(gateway)
+                notify_dataplane()
 
                 # #4205: if a connect-affecting field changed, close any upstream
                 # MCP sessions pinned to this gateway so the next acquire rebuilds
@@ -3898,6 +3902,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 db.commit()
                 db.refresh(gateway)
+                notify_dataplane()
 
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
@@ -4204,6 +4209,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._hard_delete_gateway(db, gateway)
 
             db.commit()
+            notify_dataplane()
 
             await self._finalize_gateway_deletion(
                 gateway_id=str(gateway_id),

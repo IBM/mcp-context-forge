@@ -61,6 +61,7 @@ from mcpgateway.db import (
 )
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
@@ -717,6 +718,7 @@ class EmailAuthService:
             self.db.add(user)
             self.db.commit()
             self.db.refresh(user)
+            notify_dataplane()
 
             logger.info("Created new user: %s", SecurityValidator.sanitize_log_message(email))
 
@@ -2005,6 +2007,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            notify_dataplane()
             await self._invalidate_user_auth_cache(email)
 
             return user
@@ -2038,6 +2041,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            notify_dataplane()
             await self._invalidate_user_auth_cache(email)
 
             logger.info("User %s activated", SecurityValidator.sanitize_log_message(email))
@@ -2242,6 +2246,7 @@ class EmailAuthService:
             # Delete the user
             self.db.delete(user)
             self.db.commit()
+            notify_dataplane()
 
             await self._invalidate_deleted_user_auth_caches(email)
 
