@@ -660,6 +660,139 @@ export const viewServer = async function (serverId) {
 /**
  * SECURE: Edit Server function
  */
+const EDIT_SERVER_ASSOCIATION_CONTAINER_IDS = [
+  "associatedEditGateways",
+  "edit-server-tools",
+  "edit-server-resources",
+  "edit-server-prompts",
+];
+
+const updateEditServerTeamSelectorState = () => {
+  const teamContainer = safeGetElement("edit-server-team-container");
+  const teamSelect = safeGetElement("edit-server-team-id");
+  const teamRadio = safeGetElement("edit-server-visibility-team");
+  const teamMessage = safeGetElement("edit-server-team-message");
+
+  if (!teamContainer || !teamSelect) {
+    return;
+  }
+
+  const hasOwnerTeams = teamSelect.dataset.hasOwnerTeams === "true";
+  const isTeamVisibility = Boolean(teamRadio?.checked);
+  teamContainer.classList.toggle("hidden", !isTeamVisibility);
+  teamSelect.disabled = !isTeamVisibility || !hasOwnerTeams;
+
+  if (teamMessage) {
+    teamMessage.textContent = hasOwnerTeams
+      ? ""
+      : "You have no teams you own; team visibility is unavailable.";
+  }
+};
+
+const rescopeEditServerAssociations = (teamId) => {
+  if (!teamId) {
+    return;
+  }
+
+  const viewPublicCheckbox = safeGetElement("edit-server-view-public");
+  const includePublic = Boolean(viewPublicCheckbox?.checked);
+
+  EDIT_SERVER_ASSOCIATION_CONTAINER_IDS.forEach((containerId) => {
+    const container = safeGetElement(containerId);
+    const hxGet = container?.getAttribute("hx-get");
+    if (!container || !hxGet) {
+      return;
+    }
+
+    const url = new URL(hxGet, window.location.href);
+    url.searchParams.set("team_id", teamId);
+    if (includePublic) {
+      url.searchParams.set("include_public", "true");
+    } else {
+      url.searchParams.delete("include_public");
+    }
+
+    const updatedHxGet = `${url.pathname}${url.search}${url.hash}`;
+    container.setAttribute("hx-get", updatedHxGet);
+    window.htmx.process(container);
+    window.htmx.trigger(container, "load");
+  });
+
+  toggleViewPublic(
+    "edit-server-view-public",
+    EDIT_SERVER_ASSOCIATION_CONTAINER_IDS,
+    teamId
+  );
+};
+
+const handleEditServerTeamChange = () => {
+  updateEditServerTeamSelectorState();
+
+  const teamSelect = safeGetElement("edit-server-team-id");
+  if (!teamSelect) {
+    return;
+  }
+
+  const selectedTeamId = teamSelect.value || teamSelect.dataset.currentTeamId;
+  rescopeEditServerAssociations(selectedTeamId);
+};
+
+const initializeEditServerTeamSelector = (currentTeamId) => {
+  const teamSelect = safeGetElement("edit-server-team-id");
+  const teamRadio = safeGetElement("edit-server-visibility-team");
+  if (!teamSelect) {
+    return;
+  }
+
+  const ownerTeams = Array.isArray(window.USER_TEAMS_DATA)
+    ? window.USER_TEAMS_DATA.filter((team) => team?.role === "owner")
+    : [];
+  const placeholderOption = document.createElement("option");
+  placeholderOption.value = "";
+  placeholderOption.textContent = "— Select a team —";
+  const teamOptions = ownerTeams.map((team) => {
+    const option = document.createElement("option");
+    option.value = team.id;
+    option.textContent = team.name;
+    return option;
+  });
+
+  teamSelect.replaceChildren(placeholderOption, ...teamOptions);
+  teamSelect.dataset.hasOwnerTeams = String(ownerTeams.length > 0);
+  teamSelect.value = "";
+  if (teamRadio) {
+    teamRadio.disabled = ownerTeams.length === 0;
+  }
+
+  const normalizedTeamId =
+    currentTeamId === null || currentTeamId === undefined
+      ? ""
+      : String(currentTeamId);
+  teamSelect.dataset.currentTeamId = normalizedTeamId;
+  if (
+    normalizedTeamId &&
+    teamOptions.some((option) => option.value === normalizedTeamId)
+  ) {
+    teamSelect.value = normalizedTeamId;
+  }
+
+  [
+    "edit-server-visibility-public",
+    "edit-server-visibility-team",
+    "edit-server-visibility-private",
+  ].forEach((radioId) => {
+    const radio = safeGetElement(radioId);
+    if (radio) {
+      radio.removeEventListener("change", updateEditServerTeamSelectorState);
+      radio.addEventListener("change", updateEditServerTeamSelectorState);
+    }
+  });
+  teamSelect.removeEventListener("change", handleEditServerTeamChange);
+  teamSelect.addEventListener("change", handleEditServerTeamChange);
+
+  updateEditServerTeamSelectorState();
+};
+
 export const editServer = async function (serverId) {
   try {
     console.log(`Editing server ID: ${serverId}`);
@@ -726,15 +859,11 @@ export const editServer = async function (serverId) {
       }
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    const teamId =
+      server.teamId === null || server.teamId === undefined
+        ? ""
+        : String(server.teamId);
+    initializeEditServerTeamSelector(teamId);
 
     // Initialize View Public toggle for Edit Server modal
     if (teamId) {
@@ -746,12 +875,7 @@ export const editServer = async function (serverId) {
       }
       toggleViewPublic(
         "edit-server-view-public",
-        [
-          "associatedEditGateways",
-          "edit-server-tools",
-          "edit-server-resources",
-          "edit-server-prompts",
-        ],
+        EDIT_SERVER_ASSOCIATION_CONTAINER_IDS,
         teamId
       );
     }
