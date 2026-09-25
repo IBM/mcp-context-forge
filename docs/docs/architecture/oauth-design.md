@@ -54,8 +54,26 @@ Stored as JSON within the gateway record and assembled from Admin UI fields or A
 - **Redirect URI**: Must match the OAuth client registration.
 - **Client Credentials**: Client ID and encrypted Client Secret.
 - **User Credentials**: Username and password (for password grant only).
+- **Token Endpoint Auth**: `token_endpoint_auth_method` (`client_secret_basic`, `client_secret_post`, `none`, or `private_key_jwt`), optional inline `private_key` PEM plus `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` for private-key JWT authentication (RFC 7523). Default: client credentials posted in the request body.
 - **Scopes**: Array of requested scopes.
 - **Resource**: Optional resource parameter; derived from the gateway URL if omitted.
+
+### Private-Key JWT Client Authentication (RFC 7523)
+
+Gateways may authenticate to the token endpoint with a signed JWT instead of a shared client secret, as defined in [RFC 7523](https://datatools.ietf.org/doc/html/rfc7523). This is the standard confidential-client method for providers such as Microsoft Entra ID and Keycloak that issue JWKS to verify client assertions.
+
+Configured on the `oauth_config` object:
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `token_endpoint_auth_method` | no | `client_secret_basic`, `client_secret_post`, `none`, or `private_key_jwt`. Default: `client_secret_post` (client id and secret in the body). |
+| `private_key` | private_key_jwt only | Inline private key PEM used to sign the assertion. Rejected at validation when missing. |
+| `token_endpoint_auth_signing_alg` | no | JWS signing algorithm: `RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, or `PS256`. Default: `RS256`. |
+| `private_key_jwt_kid` | no | Key ID to emit as the JWT header `kid`, for provider JWKS matching. Omitted unless non-empty. |
+
+At token time the gateway builds a client assertion JWT with claims `iss`, `sub`, `aud` (the configured `token_url`), `iat`/`exp` (validity window capped at 300 seconds), and a random `jti`, then sends it with `client_assertion_type` set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. Signing runs without blocking the event loop.
+
+Fail-closed behavior: an unsupported `token_endpoint_auth_method`, an algorithm outside the allowlist, or a missing `private_key` for `private_key_jwt` raises `OAuthError` before any token request is sent. The gateway never silently falls back to another auth method.
 
 ### OAuth Tokens
 
