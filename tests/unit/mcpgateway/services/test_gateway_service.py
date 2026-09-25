@@ -10069,7 +10069,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         # Third-Party
         import jwt as pyjwt  # pylint: disable=import-outside-toplevel
 
-        return pyjwt.encode(claims, "test-key", algorithm="HS256")
+        return pyjwt.encode(claims, "unit-test-signing-key-0123456789abcdef", algorithm="HS256")  # pragma: allowlist secret
 
     @staticmethod
     def _mock_gateway(oauth_config: dict, url: str = "https://mcp.example.com/deep/path") -> MagicMock:

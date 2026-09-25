@@ -29,6 +29,9 @@ from mcpgateway.services.gateway_service import (
 )
 
 
+_TEST_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
+
+
 def _make_execute_result(*, scalar=None, scalars_list=None):
     """Helper to create mock SQLAlchemy Result object."""
     result = MagicMock()
@@ -740,7 +743,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         import jwt as pyjwt
 
         mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct-app"
-        token = pyjwt.encode({"aud": "api://wrong-app", "scope": "read write"}, "k", algorithm="HS256")
+        token = pyjwt.encode({"aud": "api://wrong-app", "scope": "read write"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
         # Mock EmailUser and EmailTeamMember queries
         mock_user = MagicMock()
@@ -808,7 +811,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         import jwt as pyjwt
 
         mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct"
-        token = pyjwt.encode({"aud": "api://wrong"}, "k", algorithm="HS256")
+        token = pyjwt.encode({"aud": "api://wrong"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
         # Mock EmailUser and EmailTeamMember queries
         mock_user = MagicMock()

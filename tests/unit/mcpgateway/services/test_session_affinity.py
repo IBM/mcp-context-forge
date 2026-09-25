@@ -3598,16 +3598,21 @@ def test_attach_envelope_trace_context_returns_none_on_empty_headers():
 
 
 def test_attach_envelope_trace_context_attaches_context_with_traceparent():
-    """When traceparent is present and otel is importable, a non-None context token is returned."""
+    """When traceparent is present and otel is importable, attach runs with the extracted context."""
     pytest.importorskip("opentelemetry.context", reason="opentelemetry not installed")
     # First-Party
     from mcpgateway.services import session_affinity as sa
 
-    result = sa._attach_envelope_trace_context(  # pylint: disable=protected-access
-        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
-    )
-    # Token (real otel attach) or None (otel absent): both are acceptable.
-    assert result is not None or result is None
+    # Mock attach: a real attach would leak the span into this thread's context
+    # and poison every test that runs afterwards.
+    with patch("opentelemetry.context.attach", return_value="token") as mock_attach:
+        result = sa._attach_envelope_trace_context(  # pylint: disable=protected-access
+            {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+        )
+    assert result == "token"
+    mock_attach.assert_called_once()
+    attached_context = mock_attach.call_args.args[0]
+    assert attached_context is not None
 
 
 def test_attach_envelope_trace_context_returns_none_on_attach_exception():
