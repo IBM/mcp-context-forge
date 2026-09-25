@@ -2,7 +2,7 @@
 
 ContextForge provides comprehensive observability through multiple complementary systems, allowing you to monitor, trace, and analyze your gateway operations.
 
-!!! warning "Internal observability store deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+!!! warning "Internal observability store deprecated as of 2026-10-20. Sunsets on 2027-01-18."
     The database-backed internal observability store is deprecated. Prefer
     OpenTelemetry export for new deployments. See
     [Deprecations](../deprecations.md).

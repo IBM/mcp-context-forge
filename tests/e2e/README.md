@@ -36,7 +36,7 @@ pytest tests/live_gateway/e2e/test_e2e.py -v
 
 `make test-mcp-cli` and `make test-mcp-rbac` are aliases for the consolidated
 target. `make test-mcp-protocol-e2e` is a deprecated alias. It sunsets on
-2026-12-29.
+2027-01-18.
 
 ### Environment Variables
 

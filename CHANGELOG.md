@@ -22,9 +22,9 @@
 
 ### Deprecated
 
-- **gRPC upstream services** - Deprecated as of 2026-09-30 and sunsets on 2026-12-29. Registering gRPC services as upstreams (`MCPGATEWAY_GRPC_ENABLED`, the gRPC admin routes, and the `grpc` install extra) has no replacement and stops working at the sunset date. See [Deprecations](docs/docs/deprecations.md).
-- **WebSocket upstreams** - Deprecated as of 2026-09-30 and sunsets on 2026-12-29. Gateway and catalog registrations with `ws://` or `wss://` URLs or `transport=WEBSOCKET` must move to Streamable HTTP or SSE. The gateway's client-facing WebSocket endpoint is not affected. See [Deprecations](docs/docs/deprecations.md).
-- **Local observability data store** - Deprecated as of 2026-09-30 and sunsets on 2026-12-29. The internal trace, span, and metric tables and the Admin UI views that read them are replaced by OTel export (`OTEL_ENABLE_OBSERVABILITY=true`, `OTEL_EXPORTER_OTLP_ENDPOINT`). See [Deprecations](docs/docs/deprecations.md).
+- **gRPC upstream services** - Deprecated as of 2026-10-20 and sunsets on 2027-01-18. Registering gRPC services as upstreams (`MCPGATEWAY_GRPC_ENABLED`, the gRPC admin routes, and the `grpc` install extra) has no replacement and stops working at the sunset date. See [Deprecations](docs/docs/deprecations.md).
+- **WebSocket upstreams** - Deprecated as of 2026-10-20 and sunsets on 2027-01-18. Gateway and catalog registrations with `ws://` or `wss://` URLs or `transport=WEBSOCKET` must move to Streamable HTTP or SSE. The gateway's client-facing WebSocket endpoint is not affected. See [Deprecations](docs/docs/deprecations.md).
+- **Local observability data store** - Deprecated as of 2026-10-20 and sunsets on 2027-01-18. The internal trace, span, and metric tables and the Admin UI views that read them are replaced by OTel export (`OTEL_ENABLE_OBSERVABILITY=true`, `OTEL_EXPORTER_OTLP_ENDPOINT`). See [Deprecations](docs/docs/deprecations.md).
 
 ### Fixed
 

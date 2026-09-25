@@ -940,9 +940,9 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
-# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (sunsets 2026-12-29)
+# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (sunsets 2027-01-18)
 test-mcp-protocol-e2e: test-e2e
-	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,2026-09-30,2026-12-29)
+	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,2026-10-20,2027-01-18)
 
 test-mcp-cli: test-e2e
 
@@ -3781,14 +3781,14 @@ isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
-# deprecated: black-check       - Use "make black CHECK=1" instead (sunsets 2026-12-29)
-# deprecated: isort-check       - Use "make isort CHECK=1" instead (sunsets 2026-12-29)
+# deprecated: black-check       - Use "make black CHECK=1" instead (sunsets 2027-01-18)
+# deprecated: isort-check       - Use "make isort CHECK=1" instead (sunsets 2027-01-18)
 black-check:
-	$(call deprecated_target,black-check,make black CHECK=1,2026-09-30,2026-12-29)
+	$(call deprecated_target,black-check,make black CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)"
 
 isort-check:
-	$(call deprecated_target,isort-check,make isort CHECK=1,2026-09-30,2026-12-29)
+	$(call deprecated_target,isort-check,make isort CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
 
 
@@ -3979,19 +3979,19 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	$(UV_BIN) tool run ruff==$(RUFF_VERSION) $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
-# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (sunsets 2026-12-29)
-# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (sunsets 2026-12-29)
-# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (sunsets 2026-12-29)
+# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (sunsets 2027-01-18)
+# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (sunsets 2027-01-18)
+# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (sunsets 2027-01-18)
 ruff-check:
-	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,2026-09-30,2026-12-29)
+	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)"
 
 ruff-fix:
-	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,2026-09-30,2026-12-29)
+	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$(TARGET)"
 
 ruff-format:
-	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,2026-09-30,2026-12-29)
+	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=format TARGET="$(TARGET)"
 
 future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged from main
@@ -5098,26 +5098,26 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
 # --- Deprecated container-run aliases ---
-# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (sunsets 2026-12-29)
-# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (sunsets 2026-12-29)
-# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (sunsets 2026-12-29)
-# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (sunsets 2026-12-29)
+# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (sunsets 2027-01-18)
 .PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
-	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,2026-09-30,2026-12-29)
+	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_HOST_NET=1
 
 container-run-ssl: container-check-image
-	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,2026-09-30,2026-12-29)
+	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1
 
 container-run-ssl-host: container-check-image
-	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,2026-09-30,2026-12-29)
+	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1
 
 container-run-ssl-jwt: container-check-image
-	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,2026-09-30,2026-12-29)
+	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
 
 .PHONY: container-push

@@ -386,7 +386,7 @@ make test-e2e
 `test-e2e` runs the consolidated suite covering both RBAC enforcement and
 MCP protocol compliance. `test-mcp-cli` and `test-mcp-rbac` are aliases for
 `test-e2e`. `test-mcp-protocol-e2e` is a deprecated alias for `test-e2e`. It
-sunsets on 2026-12-29.
+sunsets on 2027-01-18.
 
 ### 5.5 Load testing
 
