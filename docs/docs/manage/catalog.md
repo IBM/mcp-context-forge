@@ -122,7 +122,7 @@ catalog_servers:
     name: "WebSocket MCP Server"
     category: "Development Tools"
     url: "wss://api.example.com/mcp"
-    transport: "WEBSOCKET"  # Specify WebSocket transport
+    transport: "WEBSOCKET"  # DEPRECATED: sunsets 2026-12-29
     auth_type: "API Key"
     provider: "Internal Platform"
     description: "Real-time MCP server using WebSocket protocol"
@@ -287,7 +287,7 @@ Based on the `CatalogServer` schema (schemas.py:5371-5387):
 | `requires_api_key` | boolean | No | Whether API key is required (default: `false`) |
 | `secure` | boolean | No | Whether additional security is required (default: `false`) |
 | `tags` | array | No | Tags for categorization (default: `[]`) |
-| `transport` | string | No | Transport type: `SSE`, `STREAMABLEHTTP`, or `WEBSOCKET` (auto-detected if not specified) |
+| `transport` | string | No | Transport type: `SSE`, `STREAMABLEHTTP`, or `WEBSOCKET` (auto-detected if not specified). The `WEBSOCKET` value is deprecated. It sunsets on 2026-12-29. |
 | `logo_url` | string | No | URL to server logo/icon |
 | `documentation_url` | string | No | URL to server documentation |
 | `is_registered` | boolean | No | Whether server is already registered (set by system) |

@@ -387,7 +387,7 @@ DELETE changes `pending` or `active` gateways to `deleting`; the worker then sto
     - `STREAMABLEHTTP`: HTTP/SSE-based MCP server
     - `SSE`: Server-Sent Events transport
     - `STDIO`: Standard I/O (for local processes)
-    - `WEBSOCKET`: WebSocket transport
+    - `WEBSOCKET`: WebSocket transport (deprecated, sunsets 2026-12-29)
 
 #### Complete Example: Registering a Gateway
 
