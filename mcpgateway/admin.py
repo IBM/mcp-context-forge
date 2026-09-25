@@ -12854,9 +12854,10 @@ async def admin_add_gateway(
         return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     except RuntimeError as err:
-        # --- Getting only the custom message from the RuntimeError ---
-        error_ctx = [str(err)]
-        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+        # A RuntimeError here comes from signing the CA certificate, which fails on the
+        # server's own Ed25519 key rather than on anything the caller sent, so report it
+        # as a server error - matching the RuntimeError handler after registration below.
+        return ORJSONResponse(content={"success": False, "message": str(err)}, status_code=500)
 
     user_email = get_user_email(user)
 
