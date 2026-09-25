@@ -6331,3 +6331,164 @@ class TestListAgentsForUserTypeValidation:
             # Should call get_user_teams with empty string
             mock_team_service.return_value.get_user_teams.assert_called_once_with("")
             assert result == []
+
+
+class _StreamResponse:
+    """Mock httpx streaming response yielding SSE lines."""
+
+    def __init__(self, lines, status_code=200, body=b""):
+        self._lines = lines
+        self.status_code = status_code
+        self._body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def aread(self):
+        return self._body
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+def _sse(payload):
+    """Render a result payload as an SSE data line."""
+    return "data: " + json.dumps({"jsonrpc": "2.0", "result": payload})
+
+
+class TestA2AStreamingInvocation:
+    """Streaming (message/stream) invocation — see issue #6277."""
+
+    @pytest.fixture
+    def service(self):
+        """A2A service instance; the streaming helper needs no database."""
+        return A2AAgentService()
+
+    def test_aggregate_appends_artifact_deltas(self):
+        """Successive deltas for one artifact concatenate in arrival order."""
+        result = A2AAgentService._aggregate_a2a_stream_events(
+            [
+                {"taskId": "t1", "contextId": "c1", "artifact": {"artifactId": "a1", "name": "answer", "parts": [{"text": "Hel"}]}},
+                {"taskId": "t1", "artifact": {"artifactId": "a1", "parts": [{"text": "lo"}]}, "append": True},
+                {"taskId": "t1", "status": {"state": "completed"}},
+            ]
+        )
+
+        task = result["result"]
+        assert result["jsonrpc"] == "2.0"
+        assert task["id"] == "t1"
+        assert task["contextId"] == "c1"
+        assert task["kind"] == "task"
+        assert task["status"] == {"state": "completed"}
+        assert task["artifacts"] == [{"artifactId": "a1", "name": "answer", "parts": [{"text": "Hel"}, {"text": "lo"}]}]
+
+    def test_aggregate_replaces_when_append_is_false(self):
+        """append=False replaces the artifact's parts rather than extending them."""
+        result = A2AAgentService._aggregate_a2a_stream_events(
+            [
+                {"artifact": {"artifactId": "a1", "parts": [{"text": "draft"}]}},
+                {"artifact": {"artifactId": "a1", "parts": [{"text": "final"}]}, "append": False},
+            ]
+        )
+
+        assert result["result"]["artifacts"][0]["parts"] == [{"text": "final"}]
+
+    def test_aggregate_preserves_artifact_order(self):
+        """Multiple artifacts keep the order in which they first appeared."""
+        result = A2AAgentService._aggregate_a2a_stream_events(
+            [
+                {"artifact": {"artifactId": "second", "parts": []}},
+                {"artifact": {"artifactId": "first", "parts": []}},
+            ]
+        )
+
+        assert [a["artifactId"] for a in result["result"]["artifacts"]] == ["second", "first"]
+
+    def test_aggregate_defaults_state_to_completed(self):
+        """A stream with no status event still yields a terminal task."""
+        result = A2AAgentService._aggregate_a2a_stream_events([])
+
+        assert result["result"]["status"] == {"state": "completed"}
+        assert result["result"]["artifacts"] == []
+        assert result["id"] == 1
+
+    def test_aggregate_echoes_request_id(self):
+        """The aggregated envelope echoes the caller's JSON-RPC id."""
+        assert A2AAgentService._aggregate_a2a_stream_events([], request_id="abc")["id"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_streaming_invocation_aggregates_sse(self, service, monkeypatch):
+        """A text/event-stream reply is consumed and returned as one Task."""
+        pinned = SimpleNamespace(
+            endpoint_url="https://203.0.113.10/a2a",
+            headers={"Host": "agent.example.com"},
+            extensions={"sni_hostname": "agent.example.com"},
+        )
+        seen = {}
+
+        class Client:
+            def stream(self, method, url, **kwargs):
+                seen["method"] = method
+                seen["url"] = url
+                seen.update(kwargs)
+                return _StreamResponse(
+                    [
+                        ":keep-alive",
+                        "",
+                        _sse({"taskId": "t9", "artifact": {"artifactId": "a1", "parts": [{"text": "chunk-1"}]}}),
+                        "event: ignored-non-data-line",
+                        "data: {not valid json",
+                        _sse({"taskId": "t9", "artifact": {"artifactId": "a1", "parts": [{"text": "chunk-2"}]}, "append": True}),
+                        _sse({"taskId": "t9", "status": {"state": "completed"}}),
+                    ]
+                )
+
+        status, response_json, response_text = await service._invoke_agent_streaming(Client(), pinned, {"method": "message/stream", "id": 7})
+
+        assert status == 200
+        assert seen["method"] == "POST"
+        assert seen["url"] == "https://203.0.113.10/a2a"
+        assert seen["extensions"] == {"sni_hostname": "agent.example.com"}
+        # The caller's headers are preserved and an SSE Accept is added.
+        assert seen["headers"]["Host"] == "agent.example.com"
+        assert seen["headers"]["Accept"] == "text/event-stream"
+
+        task = response_json["result"]
+        assert task["id"] == "t9"
+        assert task["artifacts"][0]["parts"] == [{"text": "chunk-1"}, {"text": "chunk-2"}]
+        assert response_json["id"] == 7
+        assert json.loads(response_text) == response_json
+
+    @pytest.mark.asyncio
+    async def test_streaming_invocation_returns_body_on_error_status(self, service):
+        """A non-200 stream returns the raw body and no parsed JSON."""
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={}, extensions={})
+
+        class Client:
+            def stream(self, *_args, **_kwargs):
+                return _StreamResponse([], status_code=502, body=b"upstream exploded")
+
+        status, response_json, response_text = await service._invoke_agent_streaming(Client(), pinned, {"method": "message/stream"})
+
+        assert status == 502
+        assert response_json is None
+        assert response_text == "upstream exploded"
+
+    @pytest.mark.asyncio
+    async def test_streaming_invocation_accept_header_not_overridden(self, service):
+        """A caller-supplied Accept header wins over the SSE default."""
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Accept": "application/json"}, extensions={})
+        seen = {}
+
+        class Client:
+            def stream(self, _method, _url, **kwargs):
+                seen.update(kwargs)
+                return _StreamResponse([])
+
+        await service._invoke_agent_streaming(Client(), pinned, {})
+
+        assert seen["headers"]["Accept"] == "application/json"
