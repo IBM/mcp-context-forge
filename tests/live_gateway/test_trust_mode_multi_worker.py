@@ -69,8 +69,8 @@ def _trust_token(jti: str) -> str:
     return make_trusted_test_jwt(
         TRUST_USER_ID,
         email=TRUST_EMAIL,
-        teams=[],
-        roles=[],
+        teams=["live-trust-team"],
+        roles=["developer"],
         revocation_id=jti,
         secret=JWT_SECRET,
     )
@@ -112,7 +112,8 @@ def test_revocation_propagates_across_workers() -> None:
     30 s negative-cache window.
     """
     worker_a, worker_b = WORKER_URLS[0], WORKER_URLS[1]
-    token = _trust_token(REVOKE_JTI)
+    revoke_jti, control_jti = f"{REVOKE_JTI}-mw", f"{CONTROL_JTI}-mw"
+    token = _trust_token(revoke_jti)
 
     # The token authenticates against both workers before revocation.
     for url in (worker_a, worker_b):
@@ -122,7 +123,7 @@ def test_revocation_propagates_across_workers() -> None:
     # Revoke on worker A via the logout endpoint (writes the blocklist row).
     logout_response = _logout(worker_a, token)
     assert logout_response.status_code == 200, f"logout on worker A failed: {logout_response.status_code} {logout_response.text[:200]}"
-    assert logout_response.json().get("revoked_token") == REVOKE_JTI
+    assert logout_response.json().get("revoked_token") == revoke_jti
 
     # Worker B must reject the same jti. The trust branch checks the
     # revocation store on every request, so no cache wait is needed; the
@@ -131,7 +132,7 @@ def test_revocation_propagates_across_workers() -> None:
     assert response.status_code == 401, f"worker B accepted a token revoked on worker A: {response.status_code}"
 
     # Control: a different, unrevoked jti still authenticates on both workers.
-    control = _trust_token(CONTROL_JTI)
+    control = _trust_token(control_jti)
     for url in (worker_a, worker_b):
         response = _get_tools(url, control)
         assert response.status_code == 200, f"unrevoked control token rejected by {url}: {response.status_code} {response.text[:200]}"
