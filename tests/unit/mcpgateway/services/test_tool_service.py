@@ -686,6 +686,32 @@ class TestToolService:
             assert h["value"] == settings.masked_auth_value
 
     @pytest.mark.asyncio
+    async def test_get_tool_omits_metrics_by_default(self, tool_service, mock_tool):
+        """The detail view keeps metrics null unless explicitly requested (#6453)."""
+        db = MagicMock()
+        db.get.return_value = mock_tool
+        tool_service._check_tool_access = AsyncMock(return_value=True)
+
+        tool_read = await tool_service.get_tool(db, mock_tool.id)
+
+        assert tool_read.metrics is None
+        assert tool_read.execution_count is None
+
+    @pytest.mark.asyncio
+    async def test_get_tool_include_metrics_returns_summary(self, tool_service, mock_tool):
+        """include_metrics=True surfaces the aggregated metrics block (#6453)."""
+        mock_tool.metrics_summary = {**mock_tool.metrics_summary, "total_executions": 7}
+        db = MagicMock()
+        db.get.return_value = mock_tool
+        tool_service._check_tool_access = AsyncMock(return_value=True)
+
+        tool_read = await tool_service.get_tool(db, mock_tool.id, include_metrics=True)
+
+        assert tool_read.metrics is not None
+        assert tool_read.metrics.total_executions == 7
+        assert tool_read.execution_count == 7
+
+    @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_empty(self, tool_service, mock_tool):
         """Check auth for authheaders auth with empty value (regression test for StopIteration)"""
 
@@ -1624,7 +1650,13 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None)
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            include_metrics=False,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None,
+        )
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):
