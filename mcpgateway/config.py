@@ -1033,6 +1033,16 @@ class Settings(BaseSettings):
         default=None,
         description="Exact HTTPS origin allowed for post-OAuth redirects outside APP_DOMAIN.",
     )
+    oauth_token_retrieval_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable GET /oauth/token/{gateway_id}, which returns the caller's own "
+            "current OAuth access_token for a gateway (auto-refreshed if it is within "
+            "10 minutes of expiring). The refresh_token is never returned by this "
+            "endpoint. Disabled by default since it exposes a live bearer credential "
+            "to the caller."
+        ),
+    )
 
     @field_validator("oauth_redirect_allowed_origin")
     @classmethod

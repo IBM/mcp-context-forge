@@ -22,7 +22,7 @@ from typing import Annotated, Any, Dict, Optional
 from urllib.parse import urlparse
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -1678,6 +1678,94 @@ async def get_oauth_status_batch(
         results[gateway_id]["user_token_status"] = _token_info_to_status_payload(bulk_token_info.get(gateway_id))
 
     return results
+
+
+@oauth_router.get("/token/{gateway_id}")
+async def get_gateway_oauth_token(
+    gateway_id: str,
+    request: Request,
+    response: Response,
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+    threshold_seconds: int = Query(
+        default=600,
+        ge=0,
+        le=3600,
+        description="Refresh the token first if it is within this many seconds of expiring (default 600 = 10 minutes; max 3600).",
+    ),
+) -> dict:
+    """Return the caller's own current OAuth access token for a gateway.
+
+    This endpoint is **disabled by default** and must be explicitly enabled via
+    ``OAUTH_TOKEN_RETRIEVAL_ENABLED=true``. It resolves the stored OAuth
+    token for the *authenticated caller's own* session against the given gateway,
+    refreshing it first if it is within ``threshold_seconds`` of expiring (default 600,
+    i.e. 10 minutes), and returns only the ``access_token`` -- the ``refresh_token`` is
+    never included in the response. The success response is marked
+    ``Cache-Control: no-store`` so the credential isn't retained by intermediate caches,
+    and issuance is logged (gateway/user, never the token itself) for forensic
+    traceability.
+
+    Args:
+        gateway_id: ID of the gateway whose stored token to resolve.
+        request: Request with token-scoping context, forwarded to gateway access checks.
+        response: Response object used to mark the success response non-cacheable.
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+        threshold_seconds: Seconds before expiry at which the token is proactively
+            refreshed rather than returned as-is (0-3600, default 600).
+
+    Returns:
+        dict: ``gateway_id``, ``access_token``, ``token_type``, ``expires_at``, and
+            ``scopes`` for the caller's own token.
+
+    Raises:
+        HTTPException: 503 if the feature flag is disabled; 404 if the gateway is not
+            found or no OAuth token is stored for the caller; 400 if the gateway has no
+            OAuth configuration; 401 if the caller's identity cannot be resolved; 403 if
+            the caller lacks access to this gateway.
+    """
+    if not settings.oauth_token_retrieval_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="OAuth token retrieval is not enabled on this instance. Set OAUTH_TOKEN_RETRIEVAL_ENABLED=true to enable it.",
+        )
+
+    gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+    if not gateway:
+        raise HTTPException(status_code=404, detail="Gateway not found")
+
+    await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+
+    if not gateway.oauth_config:
+        raise HTTPException(status_code=400, detail="Gateway is not configured for OAuth")
+
+    app_user_email = get_user_email(current_user)
+    if not app_user_email or app_user_email == "unknown":
+        raise HTTPException(status_code=401, detail="User authentication required")
+
+    user_context = _build_user_context(current_user, db=db)
+    token_storage = TokenStorageService(db, user_context)
+
+    access_token = await token_storage.get_user_token(gateway_id, app_user_email, threshold_seconds=threshold_seconds)
+    if not access_token:
+        raise HTTPException(
+            status_code=404,
+            detail="No OAuth token found for this gateway and user. Complete the OAuth flow at /oauth/authorize/{gateway_id} first.",
+        )
+
+    token_info = await token_storage.get_token_info(gateway_id, app_user_email) or {}
+
+    response.headers["Cache-Control"] = "no-store"
+    logger.info(f"OAuth access token issued for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(app_user_email)}")
+
+    return {
+        "gateway_id": gateway_id,
+        "access_token": access_token,
+        "token_type": "Bearer",  # nosec B105 - OAuth token_type constant, not a credential
+        "expires_at": token_info.get("expires_at"),
+        "scopes": token_info.get("scopes"),
+    }
 
 
 async def _fetch_tools_via_token_exchange(
