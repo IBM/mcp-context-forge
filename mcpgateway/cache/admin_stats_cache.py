@@ -260,11 +260,13 @@ class AdminStatsCache:
         with self._lock:
             self._cache[cache_key] = CacheEntry(value=stats, expiry=time.time() + self._system_ttl)
 
-    async def get_observability_stats(self, hours: int = 24) -> Optional[Dict[str, Any]]:
+    async def get_observability_stats(self, hours: int = 24, cache_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get cached observability statistics.
 
         Args:
             hours: Time range in hours for stats
+            cache_key: Optional query-specific identifier. When omitted, the
+                legacy hours-based key is used.
 
         Returns:
             Cached observability stats or None on cache miss
@@ -279,7 +281,8 @@ class AdminStatsCache:
         if not self._enabled:
             return None
 
-        cache_key = self._get_redis_key("observability", str(hours))
+        identifier = cache_key if cache_key is not None else str(hours)
+        cache_key = self._get_redis_key("observability", identifier)
 
         # Try Redis first
         redis = await self._get_redis_client()
@@ -307,12 +310,14 @@ class AdminStatsCache:
         self._miss_count += 1
         return None
 
-    async def set_observability_stats(self, stats: Dict[str, Any], hours: int = 24) -> None:
+    async def set_observability_stats(self, stats: Dict[str, Any], hours: int = 24, cache_key: Optional[str] = None) -> None:
         """Store observability statistics in cache.
 
         Args:
             stats: Observability statistics dictionary
             hours: Time range in hours for stats
+            cache_key: Optional query-specific identifier. When omitted, the
+                legacy hours-based key is used.
 
         Examples:
             >>> import asyncio
@@ -322,7 +327,8 @@ class AdminStatsCache:
         if not self._enabled:
             return
 
-        cache_key = self._get_redis_key("observability", str(hours))
+        identifier = cache_key if cache_key is not None else str(hours)
+        cache_key = self._get_redis_key("observability", identifier)
 
         # Store in Redis
         redis = await self._get_redis_client()
