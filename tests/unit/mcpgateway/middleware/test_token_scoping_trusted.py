@@ -127,15 +127,15 @@ class TestTrustedTokenTeamScoping:
         validator.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_trusted_token_with_trust_mode_off_still_checks_membership(self, middleware, mock_request, monkeypatch):
-        """Feature-disabled boundary: trust mode OFF keeps the membership check."""
+    async def test_trusted_token_with_trust_mode_off_rejected_401_before_membership(self, middleware, mock_request, monkeypatch):
+        """Feature-disabled boundary: trust mode OFF rejects the marker 401 outright."""
         monkeypatch.setattr(settings, "jwt_trust_mode", "db")
 
         result, call_next, validator = await _run_scoping(middleware, mock_request, monkeypatch, _trusted_payload())
 
-        assert result.status_code == status.HTTP_403_FORBIDDEN
+        assert result.status_code == status.HTTP_401_UNAUTHORIZED
         call_next.assert_not_called()
-        validator.assert_called_once()
+        validator.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("token_use", ["api", None])
