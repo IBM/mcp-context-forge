@@ -2559,12 +2559,17 @@ def same_name_private_tools(admin_api: APIRequestContext, playwright: Playwright
         yield tenants
     finally:
         failures: list[str] = []
-        for server_id in reversed(server_ids):
-            failure = _delete_owned(admin_api, "/servers", server_id)
+        # The rows are private to each tenant user, and admin bypass cannot
+        # see another user's private rows (PR #4341), so deletes must run
+        # through the owning tenant's context. Deleting as admin 404s, the
+        # 404 is accepted below, and the later user deletion transfers the
+        # leaked rows to the platform admin, where they collide with every
+        # later private registration of the same URL.
+        for user_api, server_id, gateway_id in zip(reversed(user_contexts), reversed(server_ids), reversed(gateway_ids)):
+            failure = _delete_owned(user_api, "/servers", server_id)
             if failure:
                 failures.append(failure)
-        for gateway_id in reversed(gateway_ids):
-            failure = _delete_owned(admin_api, "/gateways", gateway_id)
+            failure = _delete_owned(user_api, "/gateways", gateway_id)
             if failure:
                 failures.append(failure)
         for user_api in reversed(user_contexts):
