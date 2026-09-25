@@ -44,7 +44,7 @@ reset tokens are still generated, but no email is delivered.
 In this mode, recovery options are:
 
 1. Use **Admin -> Users** to set a new password directly.
-2. Use admin API `PUT /auth/email/admin/users/{email}` to set a new password.
+2. Use admin API `PATCH /auth/email/admin/users/{email}` to set a new password.
 3. For break-glass scenarios, use the database recovery steps below.
 
 ## Admin UI Reset & Unlock
@@ -77,7 +77,7 @@ curl -X PATCH "http://localhost:4444/auth/email/admin/users/admin-b%40example.co
 ### Reset user password
 
 ```bash
-curl -X PUT "http://localhost:4444/auth/email/admin/users/user%40example.com" \
+curl -X PATCH "http://localhost:4444/auth/email/admin/users/user%40example.com" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
