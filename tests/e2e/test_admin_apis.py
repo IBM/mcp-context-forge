@@ -579,6 +579,12 @@ class TestAdminToolOpsAPIs:
 class TestAdminResourceAPIs:
     """Test admin resource management endpoints."""
 
+    async def test_admin_edit_resource_missing_name_returns_422(self, client: AsyncClient, mock_settings):
+        """A missing resource name is rejected before the update reaches the database."""
+        response = await client.post("/admin/resources/missing-id/edit", data={"uri": "file:///tmp/item"}, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 422
+        assert response.json() == {"detail": "Resource name is required."}
+
     async def test_admin_add_resource(self, client: AsyncClient, mock_settings):
         """Test adding a resource via the admin UI with new logic."""
         # Define valid form data
@@ -716,6 +722,12 @@ class TestAdminResourceAPIs:
 # -------------------------
 class TestAdminPromptAPIs:
     """Test admin prompt management endpoints."""
+
+    async def test_admin_edit_prompt_missing_template_returns_422(self, client: AsyncClient, mock_settings):
+        """A missing prompt template returns validation instead of a server error."""
+        response = await client.post("/admin/prompts/missing-id/edit", data={"name": "existing-prompt"}, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 422
+        assert response.json() == {"detail": "Prompt template is required."}
 
     async def test_admin_list_prompts_empty(self, client: AsyncClient, mock_settings):
         """Test GET /admin/prompts returns empty list initially."""

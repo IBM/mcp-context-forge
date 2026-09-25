@@ -25439,7 +25439,7 @@ class TestPublicVisibilityGuard:
     @pytest.mark.asyncio
     async def test_edit_prompt_blocks_public_when_flag_false(self, mock_request, mock_db, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
-        form_data = FakeForm({"name": "P", "visibility": "public", "team_id": "team-abc"})
+        form_data = FakeForm({"name": "P", "template": "Hello", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
         with pytest.raises(HTTPException) as exc_info:
             await admin_edit_prompt("some-id", mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})

@@ -13667,6 +13667,9 @@ async def admin_edit_resource(
     LOGGER.debug(f"User {get_user_email(user)} is editing resource ID {resource_id}")
     form = await request.form()
     LOGGER.info(f"Form data received for resource edit: {form}")
+    name = form.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return ORJSONResponse(content={"detail": "Resource name is required."}, status_code=422)
     team_id = _form_team_id(form)
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=team_id)
@@ -14060,6 +14063,8 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
+    if "template" not in form:
+        return ORJSONResponse(content={"detail": "Prompt template is required."}, status_code=422)
     team_id = _form_team_id(form)
 
     visibility = str(form.get("visibility", "private"))
