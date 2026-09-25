@@ -517,6 +517,25 @@ async def test_password_flow_form_encoded(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_password_flow_without_client_id_succeeds(oauth_manager):
+    """The password grant keeps client_id optional (RFC 6749 Section 4.3)."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
+    mock_response.text = "access_token=no-cid-tok&token_type=bearer"
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager._password_flow({"token_url": "https://auth/token", "username": "user", "password": "pass", "scopes": ["read"]})  # pragma: allowlist secret
+    assert result == "no-cid-tok"
+    posted = mock_client.post.call_args.kwargs["data"]
+    assert posted["grant_type"] == "password"
+    assert "client_id" not in posted
+    assert "client_secret" not in posted
+
+
+@pytest.mark.asyncio
 async def test_password_flow_decrypt_secret(oauth_manager):
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()

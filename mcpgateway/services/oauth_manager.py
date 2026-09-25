@@ -582,16 +582,24 @@ class OAuthManager:
         token_data: Dict[str, Any],
         headers: Dict[str, str],
         runtime_credentials: Dict[str, Any],
+        *,
+        require_client_id: bool = True,
     ) -> None:
         """Apply the configured token endpoint client authentication method in place.
 
         Mutates ``token_data`` (form body) and ``headers`` (request headers)
         with the client mechanism selected by ``token_endpoint_auth_method``.
+        When ``require_client_id`` is false, a missing client_id is not an
+        error and the id is sent only when configured. The password grant
+        (RFC 6749 Section 4.3) historically allowed a client without
+        credentials, so it calls this method with ``require_client_id=False``.
 
         Args:
             token_data: Token request form data to extend.
             headers: Token request headers to extend.
             runtime_credentials: Runtime-ready OAuth configuration after decryption.
+            require_client_id: Whether a missing client_id is an error.
+                True for all flows except the password grant.
 
         Raises:
             OAuthError: If the configured method is unknown or required signing
@@ -602,29 +610,34 @@ class OAuthManager:
         client_id = runtime_credentials.get("client_id")
         client_secret = runtime_credentials.get("client_secret")
 
-        if not isinstance(client_id, str) or not client_id:
+        if require_client_id and (not isinstance(client_id, str) or not client_id):
             raise OAuthError("OAuth configuration missing client_id required for token endpoint authentication")
 
         if auth_method == "none":
             # RFC 7591 Section 2: public client with no authentication.
-            token_data["client_id"] = client_id
+            if client_id:
+                token_data["client_id"] = client_id
             logger.debug("Using no authentication for token endpoint (public client)")
             return
 
         if auth_method == "client_secret_basic":
-            if client_secret:
+            if client_id and client_secret:
                 headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
                 logger.debug("Using HTTP Basic Auth for token endpoint authentication")
             else:
                 # Public PKCE clients have no secret to encode; POST body mode is the fallback.
                 logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
-                token_data["client_id"] = client_id
+                if client_id:
+                    token_data["client_id"] = client_id
+                if client_secret:
+                    token_data["client_secret"] = client_secret
             return
 
         if auth_method == "private_key_jwt":
             token_data["client_assertion_type"] = CLIENT_ASSERTION_TYPE_JWT_BEARER
             token_data["client_assertion"] = await self._build_client_assertion(runtime_credentials)
-            token_data["client_id"] = client_id
+            if client_id:
+                token_data["client_id"] = client_id
             logger.debug("Using private_key_jwt client assertion for token endpoint authentication")
             return
 
@@ -632,7 +645,8 @@ class OAuthManager:
             raise OAuthError(f"Unsupported token_endpoint_auth_method '{sanitize_for_log(auth_method)}'. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
 
         # Default: client_secret_post with a shared secret (RFC 6749 Section 2.3.1).
-        token_data["client_id"] = client_id
+        if client_id:
+            token_data["client_id"] = client_id
         if client_secret:
             token_data["client_secret"] = client_secret
         logger.debug("Using POST body for token endpoint authentication")
@@ -737,7 +751,7 @@ class OAuthManager:
             "password": password,
         }
         headers: Dict[str, str] = {}
-        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials)
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials, require_client_id=False)
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
