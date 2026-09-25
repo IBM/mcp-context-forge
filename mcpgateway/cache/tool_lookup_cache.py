@@ -538,7 +538,8 @@ class ToolLookupCache:
             True when the key identifies a negative entry for the name.
         """
         if cache_key.startswith("negative:"):
-            return cache_key.split(":", 2)[-1] == name
+            parts = cache_key.split(":", 2)
+            return len(parts) == 3 and parts[2] == name
         if cache_key.startswith("server:"):
             parts = cache_key.split(":", 4)
             return len(parts) == 5 and parts[2] == "negative" and parts[4] == name

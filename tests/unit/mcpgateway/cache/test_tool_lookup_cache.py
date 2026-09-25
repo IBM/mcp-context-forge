@@ -314,6 +314,12 @@ async def test_tool_lookup_cache_negative_name_index_prunes_expired_callers(tool
     assert scores == {"negative:caller-live:tool-a": 310.0}
 
 
+def test_tool_lookup_cache_negative_key_match_rejects_missing_caller_scope():
+    """Malformed negative keys must not match a tool name."""
+    assert ToolLookupCache._negative_key_matches_name("negative:caller-a:tool-a", "tool-a") is True
+    assert ToolLookupCache._negative_key_matches_name("negative:tool-a", "tool-a") is False
+
+
 @pytest.mark.asyncio
 async def test_tool_lookup_cache_set_redis_exception_is_swallowed(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
