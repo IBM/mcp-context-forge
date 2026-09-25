@@ -26,6 +26,38 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
 
 
+def team_scoped_conditions(model_cls: Any, team_id: str, owner_email: Optional[str] = None, include_public: bool = True) -> List[Any]:
+    """Build the OR-conditions selecting rows for an explicit ``team_id`` filter.
+
+    Single definition of what ``?team_id=`` means. Used by :class:`BaseService`
+    for every service-layer list endpoint, and directly by the hand-built admin
+    queries in ``mcpgateway.admin`` so both agree on the semantics.
+
+    Globally-public rows owned by *other* teams stay visible (issue #4732, fixed
+    in PR #4773): ``team_id`` narrows team-scoped rows, it does not suppress
+    platform-public ones.
+
+    Args:
+        model_cls: SQLAlchemy model to build conditions against.
+        team_id: Team to narrow to.
+        owner_email: When set, the caller's own private rows within that team are
+            included. ``None`` suppresses owner access.
+        include_public: Whether globally-public rows from other teams are
+            included. Defaults to ``True``, which is the documented behaviour;
+            callers pass ``False`` only to honour an explicit user request for a
+            team-only view (the admin UI's "View Public" toggle).
+
+    Returns:
+        List of conditions intended to be combined with :func:`sqlalchemy.or_`.
+    """
+    conditions = [and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"]))]
+    if include_public:
+        conditions.append(model_cls.visibility == "public")  # globally public items from any team
+    if owner_email:
+        conditions.append(and_(model_cls.team_id == team_id, model_cls.visibility == "private", model_cls.owner_email == owner_email))
+    return conditions
+
+
 class BaseService(ABC):
     """Abstract base class for services with visibility-filtered listing."""
 
@@ -147,14 +179,9 @@ class BaseService(ABC):
     def _team_scoped_conditions(self, team_id: str, owner_email: Optional[str] = None) -> List[Any]:
         """Build the OR-conditions selecting rows for an explicit ``team_id`` filter.
 
-        Single definition of what ``?team_id=`` means, shared by the admin and
-        anonymous bypass branches of :meth:`_apply_access_control` and by the
-        team-scoped branch of :meth:`_apply_visibility_filter`, so that adding a
-        visibility tier only requires updating one place.
-
-        Globally-public rows owned by *other* teams stay visible (issue #4732,
-        fixed in PR #4773): ``team_id`` narrows team-scoped rows, it does not
-        suppress platform-public ones.
+        Thin wrapper over :func:`team_scoped_conditions` bound to this service's
+        model. Service-layer listing never suppresses platform-public rows, so no
+        ``include_public`` opt-out is exposed here.
 
         Args:
             team_id: Team to narrow to.
@@ -164,14 +191,7 @@ class BaseService(ABC):
         Returns:
             List of conditions intended to be combined with :func:`sqlalchemy.or_`.
         """
-        model_cls = self._visibility_model_cls
-        conditions = [
-            and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"])),
-            model_cls.visibility == "public",  # globally public items from any team are always visible
-        ]
-        if owner_email:
-            conditions.append(and_(model_cls.team_id == team_id, model_cls.visibility == "private", model_cls.owner_email == owner_email))
-        return conditions
+        return team_scoped_conditions(self._visibility_model_cls, team_id, owner_email=owner_email)
 
     def _apply_visibility_filter(
         self,
