@@ -1339,6 +1339,24 @@ class TokenScopingMiddleware:
 
             # Resolve teams based on token_use claim
             token_use = payload.get("token_use")
+
+            # Trust dispatch rule (#5896): a token_use="trusted" marker must never
+            # enter the default funnel. With trust mode OFF, interpreting marker
+            # claims under API/legacy semantics (normalize_token_teams, local team
+            # membership) would honor unmapped claims. Reject 401 here so Layer-1
+            # scoping cannot pre-empt the authentication choke point's own 401
+            # (auth.py) with a 403.
+            if token_use == "trusted" and settings.jwt_trust_mode != "jwt-trust":  # nosec B105 - Not a password; token_use is a JWT claim type
+                logger.warning(
+                    "Rejected token with token_use=trusted: JWT trust mode is OFF",
+                    extra={"security_event": "trust_token_rejected_mode_off"},
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Trusted tokens require JWT trust mode",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 user_email = await self._resolve_user_email_from_payload(payload)
                 # Session token: resolve teams from DB/cache directly
