@@ -143,6 +143,62 @@ publisher omits that virtual host so a split deployment can use the dataplane's
 See the MCP [deprecated-feature registry](https://modelcontextprotocol.io/specification/draft/deprecated)
 and [transport guidance](https://modelcontextprotocol.io/specification/draft/basic/transports/streamable-http).
 
+## stdio wrapper
+
+`mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust
+`crates/wrapper/` binary are Removed. The removal ships in the next release.
+The wrapper was removed without a deprecation window. The removal predates
+this policy.
+
+Migration:
+
+- Clients that speak Streamable HTTP need no bridge. Point them at
+  `/servers/<server_id>/mcp/` directly.
+- stdio clients such as Claude Desktop use the FastMCP bridge. Run
+  `uvx fastmcp-remote <gateway-url>`. See
+  [client configuration](using/clients/index.md) for per-client setup.
+
+## gRPC upstream services
+
+!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+    Registering gRPC services as upstreams is deprecated. The support is
+    experimental and disabled by default (`MCPGATEWAY_GRPC_ENABLED=false`).
+    Do not adopt it in new deployments. Existing registrations keep working
+    until the sunset date.
+
+No replacement exists. The gRPC admin routes, the reflection-based discovery,
+and the `grpc` install extra stop working at the sunset date. Runtime signals
+land with the code change.
+
+See [gRPC services](using/grpc-services.md).
+
+## WebSocket upstreams
+
+!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+    Registering MCP servers over WebSocket is deprecated. This covers
+    `ws://` and `wss://` URLs and `transport=WEBSOCKET` in gateway and
+    catalog registrations.
+
+Register the server over Streamable HTTP or SSE instead. Both transports
+remain supported. The gateway's own WebSocket endpoint for clients is not
+affected. This deprecation covers upstream connections only.
+
+See [catalog registration](manage/catalog.md).
+
+## Local observability data store
+
+!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+    The internal observability database is deprecated. This covers the
+    trace, span, and metric tables that `OBSERVABILITY_ENABLED=true`
+    writes, and the Admin UI views that read them.
+
+Export telemetry over OTLP instead. Set `OTEL_ENABLE_OBSERVABILITY=true` and
+`OTEL_EXPORTER_OTLP_ENDPOINT`. See
+[OTel observability](architecture/observability-otel.md). Admin dashboards
+that read the local store lose their data source at the sunset date.
+
+See [internal observability](manage/observability/internal-observability.md).
+
 ## Backlog
 
 Open deprecations and their removal status, as of 2026-09-25. Entries stay
@@ -162,6 +218,9 @@ predate this policy. They used a 26-day window.
 | Item | Earliest removal | Status |
 |---|---|---|
 | Legacy unversioned API shim | 2026-09-26 | Default `LEGACY_API_SUNSET_DATE`. `legacy_api_enabled` still defaults to `true`. Tools, resources, prompts, teams, and tokens still call legacy paths internally. See [terminology](overview/terminology.md). |
+| gRPC upstream services | 2026-12-29 | Experimental, disabled by default. No replacement. |
+| WebSocket upstreams | 2026-12-29 | Use Streamable HTTP or SSE registrations instead. |
+| Local observability data store | 2026-12-29 | Use OTel export instead. |
 
 ### Makefile aliases
 
@@ -172,6 +231,12 @@ site states both dates.
 |---|---|---|
 | Makefile aliases `black-check`, `isort-check`, `ruff-check`, `ruff-fix`, `ruff-format`, `container-run-host`, `container-run-ssl`, `container-run-ssl-host`, `container-run-ssl-jwt` | 2026-12-29 | Pending. |
 | Makefile alias `test-mcp-protocol-e2e` | 2026-12-29 | Pending. |
+
+### Removed
+
+| Item | Removed | Status |
+|---|---|---|
+| stdio wrapper (`mcpgateway/wrapper.py`, `crates/wrapper/`) | Next release | Removed without a deprecation window. See the entry above. |
 
 ### No sunset date assigned
 

@@ -1,5 +1,9 @@
 # Internal Observability System
 
+!!! warning "Deprecated as of 2026-09-30. Sunsets on 2026-12-29."
+    The internal observability database is deprecated. Export telemetry over
+    OTLP instead. See [Deprecations](../../deprecations.md).
+
 ContextForge includes a built-in observability system that provides comprehensive performance monitoring, error tracking, and analytics without requiring external observability platforms. All trace data is stored in your database (SQLite/PostgreSQL) and visualized through the Admin UI.
 
 ## Overview
