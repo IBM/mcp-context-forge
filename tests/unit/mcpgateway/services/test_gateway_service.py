@@ -5225,7 +5225,8 @@ async def test_fetch_tools_after_oauth_empty_catalog_preserves_existing_items(ga
 
 
 @pytest.mark.asyncio
-async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch):
+@pytest.mark.parametrize("partial_catalog", [False, True], ids=["full-catalog", "tools-only-catalog"])
+async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch, caplog, partial_catalog):
     gateway = MagicMock(spec=DbGateway)
     gateway.id = "gw-1"
     gateway.name = "gw"
@@ -5236,8 +5237,16 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
         SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth"),
         SimpleNamespace(id=7, original_name="ui-tool", created_via="ui"),
     ]
-    gateway.resources = [SimpleNamespace(id=3, uri="old://res", created_via="oauth"), SimpleNamespace(id=4, uri="keep://res", created_via="oauth")]
-    gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth"), SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth")]
+    gateway.resources = [
+        SimpleNamespace(id=3, uri="old://res", created_via="oauth"),
+        SimpleNamespace(id=4, uri="keep://res", created_via="oauth"),
+        SimpleNamespace(id=8, uri="api://res", created_via="api"),
+    ]
+    gateway.prompts = [
+        SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth"),
+        SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth"),
+        SimpleNamespace(id=9, original_name="ui-prompt", created_via="ui"),
+    ]
     gateway.capabilities = {}
     gateway.last_seen = None
 
@@ -5288,7 +5297,13 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
 
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
     gateway_service._connect_to_sse_server_without_validation = AsyncMock(
-        return_value=({"resources": True, "prompts": True}, [SimpleNamespace(name="keep-tool")], [SimpleNamespace(uri="keep://res")], [SimpleNamespace(name="keep-prompt")], [])
+        return_value=(
+            {"resources": True, "prompts": True},
+            [SimpleNamespace(name="keep-tool")],
+            [] if partial_catalog else [SimpleNamespace(uri="keep://res")],
+            [] if partial_catalog else [SimpleNamespace(name="keep-prompt")],
+            [],
+        )
     )
     gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
     gateway_service._update_or_create_resources = MagicMock(return_value=[MagicMock()])
@@ -5305,12 +5320,21 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
     monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
-    result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+    with caplog.at_level(logging.WARNING):
+        result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
 
     assert result_data["capabilities"]["resources"] is True
     assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool"}
-    assert len(gateway.resources) == 1
-    assert len(gateway.prompts) == 1
+    assert {resource.uri for resource in gateway.resources} == ({"api://res"} if partial_catalog else {"keep://res", "api://res"})
+    assert {prompt.original_name for prompt in gateway.prompts} == ({"ui-prompt"} if partial_catalog else {"keep-prompt", "ui-prompt"})
+    assert "preserving existing items" not in caplog.text
+
+    deletes = [call.args[0] for call in db.execute.call_args_list if isinstance(call.args[0], Delete)]
+    deleted_ids = {statement.table.name: set(next(iter(statement.compile().params.values()))) for statement in deletes}
+    assert deleted_ids[DbTool.__tablename__] == {1}
+    assert deleted_ids[DbResource.__tablename__] == ({3, 4} if partial_catalog else {3})
+    assert deleted_ids[DbPrompt.__tablename__] == ({5, 6} if partial_catalog else {5})
+    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6} if partial_catalog else {1, 3, 5})
 
 
 # ---------------------------------------------------------------------------
