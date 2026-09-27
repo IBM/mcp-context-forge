@@ -1567,7 +1567,7 @@ async def test_get_list_paginated_single_page(mcp_method):
     session = AsyncMock()
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
-    list_method.return_value = SimpleNamespace(**{response_attribute: ["t1", "t2"], "nextCursor": None})
+    list_method.return_value = SimpleNamespace(**{response_attribute: ["t1", "t2"], "next_cursor": None})
     assert await get_list_paginated(session, mcp_method) == ["t1", "t2"]
     list_method.assert_awaited_once_with()
 
@@ -1576,7 +1576,7 @@ async def test_get_list_paginated_single_page(mcp_method):
 async def test_get_list_paginated_empty_first_page():
     """Return an empty list without requesting another page."""
     session = AsyncMock()
-    session.list_tools.return_value = ListToolsResult(tools=[], nextCursor=None)
+    session.list_tools.return_value = ListToolsResult(tools=[], next_cursor=None)
     assert await get_list_paginated(session, MCPListMethod.TOOLS) == []
     session.list_tools.assert_awaited_once_with()
 
@@ -1596,15 +1596,15 @@ async def test_get_list_no_cursor():
         (MCPListMethod.TOOLS, "list_tools", "tools"),
         (MCPListMethod.PROMPTS, "list_prompts", "prompts"),
         (MCPListMethod.RESOURCES, "list_resources", "resources"),
-        (MCPListMethod.RESOURCE_TEMPLATES, "list_resource_templates", "resourceTemplates"),
+        (MCPListMethod.RESOURCE_TEMPLATES, "list_resource_templates", "resource_templates"),
     ],
 )
 async def test_get_list_paginated_multi_page(mcp_method, method_name, response_attribute):
     session = AsyncMock()
     list_method = getattr(session, method_name)
     pages = [
-        SimpleNamespace(**{response_attribute: ["t1"], "nextCursor": "cur"}),
-        SimpleNamespace(**{response_attribute: ["t2", "t3"], "nextCursor": None}),
+        SimpleNamespace(**{response_attribute: ["t1"], "next_cursor": "cur"}),
+        SimpleNamespace(**{response_attribute: ["t2", "t3"], "next_cursor": None}),
     ]
     list_method.side_effect = pages
     assert await get_list_paginated(session, mcp_method) == ["t1", "t2", "t3"]
@@ -1618,7 +1618,7 @@ async def test_get_list_paginated_multi_page(mcp_method, method_name, response_a
 async def test_get_list_paginated_stops_at_cursor_cycles(cursors, caplog):
     """Return collected results and warn when a cursor repeats."""
     session = AsyncMock()
-    pages = [SimpleNamespace(tools=["t1"], nextCursor=cursor) for cursor in cursors]
+    pages = [SimpleNamespace(tools=["t1"], next_cursor=cursor) for cursor in cursors]
     session.list_tools.side_effect = pages
 
     assert await get_list_paginated(session, MCPListMethod.TOOLS) == ["t1"] * len(cursors)

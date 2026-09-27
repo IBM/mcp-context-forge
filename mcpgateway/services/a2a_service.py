@@ -33,7 +33,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update
+from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -1798,7 +1798,15 @@ class A2AAgentService(BaseService):
                         await cache.invalidate_tools()
                         tool_lookup_cache = _get_tool_lookup_cache()
                         if agent.tool and agent.tool.name:
-                            await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
+                            affected_server_ids: tuple[str, ...] = ()
+                            if not agent.tool.gateway_id:
+                                server_ids = db.execute(select(server_tool_association.c.server_id).where(server_tool_association.c.tool_id == agent.tool_id)).scalars().all()
+                                affected_server_ids = tuple(str(server_id) for server_id in server_ids)
+                            await tool_lookup_cache.invalidate(
+                                agent.tool.name,
+                                gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None,
+                                affected_server_ids=affected_server_ids,
+                            )
 
                 status = "activated" if activate else "deactivated"
                 logger.info("A2A agent %s: %s (ID: %s)", status, agent.name, agent.id)

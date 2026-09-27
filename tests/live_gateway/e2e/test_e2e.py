@@ -19,6 +19,8 @@ Requirements:
         PLATFORM_ADMIN_EMAIL   Admin email (default: admin@example.com)
         MCPGATEWAY_MCP_APPS_ENABLED
                                Set true in both gateway and test process to run MCP Apps cases
+        MCP_E2E_GATEWAY_SYNC_DEADLINE
+                               Gateway tool-sync poll deadline in seconds (default: 30.0)
 
 Usage:
     make test-e2e
@@ -30,10 +32,10 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -45,17 +47,17 @@ import uuid
 
 # Third-Party
 import httpx
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
-from mcp.types import InitializeResult
+import httpx2
+from mcp import ClientSession, MCPError as McpError
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 import pytest
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-from playwright.sync_api import APIRequestContext, APIResponse, Playwright
+from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, Playwright
 
 # Local
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
 
 # Local
 from tests.helpers.api_helpers import ApiTestHelper
@@ -113,23 +115,12 @@ skip_no_mcp_apps = pytest.mark.skipif(
 )
 
 
-class GatewayClientSession(ClientSession):
-    """``ClientSession`` that retains the ``InitializeResult`` for assertions."""
-
-    initialize_result: InitializeResult
-
-    async def initialize(self) -> InitializeResult:
-        """Initialize the session and stash the result on the instance."""
-        self.initialize_result = await super().initialize()
-        return self.initialize_result
-
-
 @pytest.fixture
 async def client(jwt_token: str, mcp_url: str):
-    timeout = timedelta(seconds=_CLIENT_TIMEOUT)
+    timeout = httpx2.Timeout(_CLIENT_TIMEOUT)
     headers = {"Authorization": f"Bearer {jwt_token}"}
 
-    # anyio task groups (inside streamablehttp_client / ClientSession) must be
+    # anyio task groups (inside streamable_http_client / ClientSession) must be
     # entered and exited from the same task. pytest-asyncio drives async-gen
     # fixture setup and teardown in separate tasks, so run the whole session
     # lifecycle in a dedicated runner task and hand the session to the test.
@@ -139,15 +130,13 @@ async def client(jwt_token: str, mcp_url: str):
 
     async def _session_runner() -> None:
         try:
-            async with streamablehttp_client(mcp_url, headers=headers, timeout=timeout, sse_read_timeout=timeout) as (read_stream, write_stream, _):
-                async with GatewayClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
+            async with streamable_http_client(mcp_url, http_client=create_mcp_http_client(headers=headers, timeout=timeout)) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream, read_timeout_seconds=_CLIENT_TIMEOUT) as session:
                     await session.initialize()
                     holder["session"] = session
                     ready.set()
                     await release.wait()
-        except Exception as exc:  # surface connection/init failures in the test
-            # Exception, not BaseException: a cancelled runner must see
-            # CancelledError propagate, not have it stashed as a result.
+        except BaseException as exc:  # surface connection/init failures in the test
             holder["error"] = exc
             ready.set()
 
@@ -184,20 +173,20 @@ async def client(jwt_token: str, mcp_url: str):
 # ---------------------------------------------------------------------------
 class TestConnectivity:
 
-    async def test_ping(self, client: GatewayClientSession) -> None:
+    async def test_ping(self, client: ClientSession) -> None:
         """Ping roundtrips via the live gateway session."""
         await client.send_ping()
         print("    -> ping OK")
 
-    async def test_initialize_reports_server_info(self, client: GatewayClientSession) -> None:
-        """Initialize exposes protocolVersion, capabilities, and serverInfo."""
+    async def test_initialize_reports_server_info(self, client: ClientSession) -> None:
+        """Initialize exposes protocol_version, capabilities, and server_info."""
         init = client.initialize_result
-        assert init.protocolVersion, f"missing protocolVersion: {init}"
+        assert init.protocol_version, f"missing protocolVersion: {init}"
         assert init.capabilities, f"missing capabilities: {init}"
-        assert init.serverInfo, f"missing serverInfo: {init}"
-        print(f"    -> Protocol: {init.protocolVersion}, Server: {init.serverInfo.name} v{init.serverInfo.version}")
+        assert init.server_info, f"missing serverInfo: {init}"
+        print(f"    -> Protocol: {init.protocol_version}, Server: {init.server_info.name} v{init.server_info.version}")
 
-    async def test_server_capabilities_include_core_surfaces(self, client: GatewayClientSession) -> None:
+    async def test_server_capabilities_include_core_surfaces(self, client: ClientSession) -> None:
         """Gateway advertises tools, resources, and prompts capabilities."""
         caps = client.initialize_result.capabilities
         assert caps.tools is not None, f"tools capability missing: {caps}"
@@ -206,7 +195,7 @@ class TestConnectivity:
         advertised = [k for k in ("tools", "resources", "prompts", "logging", "completions") if getattr(caps, k, None) is not None]
         print(f"    -> Capabilities: {advertised}")
 
-    async def test_multiple_calls_in_one_session(self, client: GatewayClientSession) -> None:
+    async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""
         tools = (await client.list_tools()).tools
         resources = (await client.list_resources()).resources
@@ -221,29 +210,29 @@ class TestConnectivity:
 # ---------------------------------------------------------------------------
 class TestTools:
 
-    async def test_tools_list_nonempty(self, client: GatewayClientSession) -> None:
+    async def test_tools_list_nonempty(self, client: ClientSession) -> None:
         tools = (await client.list_tools()).tools
         assert len(tools) > 0, "no tools registered on gateway"
         print(f"    -> {len(tools)} tools: {[t.name for t in tools][:10]}")
 
-    async def test_tools_have_required_fields(self, client: GatewayClientSession) -> None:
+    async def test_tools_have_required_fields(self, client: ClientSession) -> None:
         tools = (await client.list_tools()).tools
         for tool in tools:
             assert tool.name, f"tool missing name: {tool}"
             assert tool.description, f"tool {tool.name} missing description"
-            assert tool.inputSchema is not None, f"tool {tool.name} missing inputSchema"
+            assert tool.input_schema is not None, f"tool {tool.name} missing inputSchema"
         print(f"    -> all {len(tools)} tools have name/description/inputSchema")
 
-    async def test_tools_include_gateway_prefixed(self, client: GatewayClientSession) -> None:
+    async def test_tools_include_gateway_prefixed(self, client: ClientSession) -> None:
         """Federated tools surface under a hyphenated ``<server>-<tool>`` name."""
         tools = (await client.list_tools()).tools
         prefixed = [t.name for t in tools if "-" in t.name]
         assert prefixed, f"expected gateway-prefixed tools, got: {[t.name for t in tools]}"
         print(f"    -> {len(prefixed)} gateway-prefixed tools present")
 
-    async def test_tool_input_schemas_are_json_schema_objects(self, client: GatewayClientSession) -> None:
+    async def test_tool_input_schemas_are_json_schema_objects(self, client: ClientSession) -> None:
         for tool in (await client.list_tools()).tools:
-            schema = tool.inputSchema
+            schema = tool.input_schema
             if schema:
                 assert schema.get("type") == "object", f"tool {tool.name} inputSchema not type=object: {schema}"
         print("    -> all tool inputSchemas validated as type=object")
@@ -251,11 +240,11 @@ class TestTools:
 
 class TestDiscovery:
 
-    async def test_resources_list(self, client: GatewayClientSession) -> None:
+    async def test_resources_list(self, client: ClientSession) -> None:
         resources = (await client.list_resources()).resources
         print(f"    -> {len(resources)} resources")
 
-    async def test_resources_read_roundtrip(self, client: GatewayClientSession) -> None:
+    async def test_resources_read_roundtrip(self, client: ClientSession) -> None:
         """Round-trip any advertised resource through resources/read.
 
         Listing without reading is weak coverage — this exercises the full
@@ -289,11 +278,11 @@ class TestDiscovery:
             return
         pytest.skip(f"All {len(resources)} resource(s) returned errors via generic /mcp/ (last: {last_error})")
 
-    async def test_prompts_list(self, client: GatewayClientSession) -> None:
+    async def test_prompts_list(self, client: ClientSession) -> None:
         prompts = (await client.list_prompts()).prompts
         print(f"    -> {len(prompts)} prompts")
 
-    async def test_prompt_get_renders(self, client: GatewayClientSession) -> None:
+    async def test_prompt_get_renders(self, client: ClientSession) -> None:
         """Render any advertised prompt via prompts/get.
 
         Prefers a prompt with no required arguments to avoid hard-coding
@@ -326,37 +315,37 @@ class TestToolCalls:
     (fast_time_server) which may be transiently unavailable.
     """
 
-    async def test_get_system_time(self, client: GatewayClientSession) -> None:
+    async def test_get_system_time(self, client: ClientSession) -> None:
         result = await client.call_tool("fast-time-get-system-time", {"timezone": "UTC"})
-        assert result.isError is False, f"get-system-time returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"get-system-time returned error (upstream may be down): {result.content}"
         assert result.content and result.content[0].type == "text"
         text = result.content[0].text
         assert text
         print(f"    -> get-system-time(UTC) = {text}")
 
-    async def test_convert_time(self, client: GatewayClientSession) -> None:
+    async def test_convert_time(self, client: ClientSession) -> None:
         result = await client.call_tool(
             "fast-time-convert-time",
             {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
         )
-        assert result.isError is False, f"convert-time returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"convert-time returned error (upstream may be down): {result.content}"
         assert result.content[0].type == "text"
         print(f"    -> convert-time(UTC->NY) = {result.content[0].text}")
 
-    async def test_echo(self, client: GatewayClientSession) -> None:
+    async def test_echo(self, client: ClientSession) -> None:
         test_message = "hello-from-mcp-protocol-e2e"
         result = await client.call_tool("fast-time-echo", {"message": test_message})
-        assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"echo returned error (upstream may be down): {result.content}"
         text = result.content[0].text
         assert test_message in text, f"echo did not return message: {text}"
         print(f"    -> echo('{test_message}') = {text}")
 
-    async def test_get_stats(self, client: GatewayClientSession) -> None:
+    async def test_get_stats(self, client: ClientSession) -> None:
         result = await client.call_tool("fast-time-get-stats", {})
-        assert result.isError is False, f"get-stats returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"get-stats returned error (upstream may be down): {result.content}"
         print(f"    -> get-stats = {result.content[0].text[:120]}")
 
-    async def test_schema_error_preserves_payload(self, client: GatewayClientSession) -> None:
+    async def test_schema_error_preserves_payload(self, client: ClientSession) -> None:
         """End-to-end regression guard for ContextForge #4202.
 
         Drives the full MCP federation path through the retained fast-time
@@ -366,27 +355,27 @@ class TestToolCalls:
         tool = await self._require_declared_output_schema(client, "fast-time-schema-error")
         assert tool is not None
         result = await client.call_tool("fast-time-schema-error", {})
-        assert result.isError is True, f"expected isError=true, got: {result}"
+        assert result.is_error is True, f"expected isError=true, got: {result}"
         text = result.content[0].text if result.content else ""
         assert "200 points" in text, f"expected original error text preserved, got: {text!r}"
         assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error: {text!r}"
         print(f"    -> schema_error isError=true preserved: {text}")
 
-    async def test_schema_success_validates_payload(self, client: GatewayClientSession) -> None:
+    async def test_schema_success_validates_payload(self, client: ClientSession) -> None:
         """Positive control proving valid output-schema responses still validate."""
         tool = await self._require_declared_output_schema(client, "fast-time-schema-success")
         assert tool is not None
         result = await client.call_tool("fast-time-schema-success", {})
-        assert result.isError is False, f"expected success, got: {result}"
+        assert result.is_error is False, f"expected success, got: {result}"
         payload = json.loads(result.content[0].text)
         assert payload.get("recognitionId") == "rec-123", f"unexpected payload: {payload}"
-        structured = result.structuredContent
+        structured = result.structured_content
         assert structured is not None, f"expected structured content on successful validation: {result}"
         assert structured.get("recognitionId") == "rec-123", f"unexpected structured content: {structured}"
         print(f"    -> schema_success validated: {payload}")
 
     @staticmethod
-    async def _require_declared_output_schema(client: GatewayClientSession, tool_name: str):
+    async def _require_declared_output_schema(client: ClientSession, tool_name: str):
         """Require a synced tool with a declared output schema."""
         tools = (await client.list_tools()).tools
         match = next((tool for tool in tools if tool.name == tool_name), None)
@@ -394,20 +383,20 @@ class TestToolCalls:
             f"Tool {tool_name!r} is not registered in the gateway. "
             "Check that register_fast_time completed and gateway synchronization finished."
         )
-        assert match.outputSchema, (
-            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. "
+        assert match.output_schema, (
+            f"Tool {tool_name!r} has no output_schema declared in the gateway: {match}. "
             "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
         )
         return match
 
-    async def test_nonexistent_tool(self, client: GatewayClientSession) -> None:
+    async def test_nonexistent_tool(self, client: ClientSession) -> None:
         """Calling a nonexistent tool surfaces an error, via either path."""
         try:
             result = await client.call_tool("nonexistent-tool-xyz", {})
         except McpError as exc:
             print(f"    -> McpError (expected): {exc}")
             return
-        assert result.isError is True, f"expected error for non-existent tool: {result}"
+        assert result.is_error is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
 
 
@@ -630,6 +619,12 @@ _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-by
 # The default covers one 60-second publish interval plus 15 seconds of slack.
 _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
+# Replica propagation via Nginx is expected to be faster than the 60-second
+# tool-catalog publish interval that _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS covers.
+_REPLICA_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_REPLICA_SYNC_DEADLINE", "30.0"))
+# Revocation invalidates the Redis auth cache and publishes to the other replicas.
+# One second matches TestDenyPaths.test_revoked_token_fails. Raise it under CI load.
+_REVOCATION_PROPAGATION_SECONDS = float(os.getenv("MCP_E2E_REVOCATION_DELAY", "1.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -643,6 +638,27 @@ def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
     return make_playwright_api_context(playwright, BASE_URL, token)
 
 
+def _replica_tools_path(gateway_id: str, probe: str) -> str:
+    """Build a unique, unpaginated gateway-tool request for a replica probe."""
+    return f"/tools?limit=0&gateway_id={gateway_id}&replica_probe={probe}"
+
+
+def _assert_replica_response(response, read_index: int) -> list[dict[str, Any]]:
+    """Assert a successful backend response that was not served from Nginx cache."""
+    assert response.status == 200, f"Replica read {read_index} failed: {response.status} {response.text()}"
+    cache_status = response.headers.get("x-cache-status")
+    assert cache_status != "HIT", f"Replica read {read_index} was served from Nginx cache, not a gateway backend"
+    payload = response.json()
+    assert isinstance(payload, list), f"Replica read {read_index} returned unexpected payload: {payload!r}"
+    return payload
+
+
+def _get_gateway_tools(admin_api: APIRequestContext, gateway_id: str, probe: str, read_index: int) -> list[dict[str, Any]]:
+    """Read all tools for one gateway through Nginx using a unique cache key."""
+    response = admin_api.get(_replica_tools_path(gateway_id, probe))
+    return _assert_replica_response(response, read_index)
+
+
 # ---------------------------------------------------------------------------
 # RBAC helper: resolve role name -> UUID
 # ---------------------------------------------------------------------------
@@ -653,6 +669,61 @@ def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
         if role.get("name") == role_name:
             return role["id"]
     raise AssertionError(f"RBAC role '{role_name}' not found. Available: {[r.get('name') for r in resp.json()]}")
+
+
+# ---------------------------------------------------------------------------
+# Token minting: POST /tokens as the token's own owner
+# ---------------------------------------------------------------------------
+def _mint_token(
+    playwright: Playwright,
+    email: str,
+    *,
+    is_admin: bool = False,
+    team_id: str | None = None,
+    scope: dict[str, Any] | None = None,
+    expires_in_days: int = 1,
+) -> dict[str, Any]:
+    """Mint an API token for ``email`` through ``POST /tokens``.
+
+    The call runs as the token's own owner. A short-lived JWT for ``email``
+    authenticates a throwaway API context, so the created token is self-owned
+    rather than admin-delegated.
+
+    Args:
+        playwright: Playwright entry point used to build the API context.
+        email: Owner of the new token.
+        is_admin: Set the ``is_admin`` claim on the minting JWT.
+        team_id: Scope the token to this team. Omit for a personal token.
+        scope: Token scope payload, for example ``{"permissions": ["tools.read"]}``.
+        expires_in_days: Token lifetime in days.
+
+    Returns:
+        dict: Keys ``access_token``, ``token_id``, ``token_name``.
+    """
+    user_jwt = _make_jwt(email, is_admin=is_admin, teams=[team_id] if team_id else None)
+    user_ctx = _api_context(playwright, user_jwt)
+    token_name = f"{RBAC_PREFIX}-token-{uuid.uuid4().hex[:8]}"
+    token_data: dict[str, Any] = {
+        "name": token_name,
+        "expires_in_days": expires_in_days,
+    }
+    if team_id:
+        token_data["team_id"] = team_id
+    if scope:
+        token_data["scope"] = scope
+
+    try:
+        token_resp = user_ctx.post("/tokens", data=token_data)
+        assert token_resp.status in (200, 201), f"Failed to create token for {email}: {token_resp.status} {token_resp.text()}"
+        payload = token_resp.json()
+        access_token = payload["access_token"]
+        token_obj = payload.get("token", payload)
+        token_id = token_obj.get("id") or token_obj.get("token_id")
+    finally:
+        user_ctx.dispose()
+
+    logger.info("Created API token for %s (id=%s)", email, token_id)
+    return {"access_token": access_token, "token_id": token_id, "token_name": token_name}
 
 
 # ---------------------------------------------------------------------------
@@ -670,7 +741,7 @@ def _create_user_with_token(
 ) -> dict[str, Any]:
     """Create a user via API, optionally join a team, assign RBAC role, and create an API token.
 
-    Returns dict with: email, access_token, token_id, team_id, role.
+    Returns dict with: email, access_token, token_id, token_name, team_id, role, is_admin.
     """
     # 1. Create user
     resp = admin_api.post(
@@ -704,36 +775,14 @@ def _create_user_with_token(
             assert role_resp.status in (200, 201), f"Failed to assign {rbac_role} to {email}: {role_resp.status} {role_resp.text()}"
         logger.info("Assigned %s role to %s", rbac_role, email)
 
-    # 4. Create API token via POST /tokens (as the user, using admin JWT that impersonates)
-    # We use a JWT for this user to create a self-owned token
-    user_jwt = _make_jwt(email, is_admin=is_admin, teams=[team_id] if team_id else None)
-    user_ctx = _api_context(playwright, user_jwt)
-    token_name = f"{RBAC_PREFIX}-token-{uuid.uuid4().hex[:8]}"
-    token_data: dict[str, Any] = {
-        "name": token_name,
-        "expires_in_days": 1,
-    }
-    if team_id:
-        token_data["team_id"] = team_id
-    if token_scope:
-        token_data["scope"] = token_scope
-
-    try:
-        token_resp = user_ctx.post("/tokens", data=token_data)
-        assert token_resp.status in (200, 201), f"Failed to create token for {email}: {token_resp.status} {token_resp.text()}"
-        payload = token_resp.json()
-        access_token = payload["access_token"]
-        token_obj = payload.get("token", payload)
-        token_id = token_obj.get("id") or token_obj.get("token_id")
-    finally:
-        user_ctx.dispose()
-
-    logger.info("Created API token for %s (id=%s)", email, token_id)
+    # 4. Create API token via POST /tokens, acting as the user
+    minted = _mint_token(playwright, email, is_admin=is_admin, team_id=team_id, scope=token_scope)
 
     return {
         "email": email,
-        "access_token": access_token,
-        "token_id": token_id,
+        "access_token": minted["access_token"],
+        "token_id": minted["token_id"],
+        "token_name": minted["token_name"],
         "team_id": team_id,
         "role": rbac_role,
         "is_admin": is_admin,
@@ -786,8 +835,8 @@ def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, N
 
 @pytest.fixture(scope="module")
 def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
-    """Register fast_time_server via Streamable HTTP transport and wait for tool sync."""
-    streamable_http_url = "http://fast_time_server:9080/mcp"
+    """Register fast_time_server and wait for a stable Streamable HTTP tool catalog."""
+    streamable_http_url = _GATEWAY_UPSTREAM_URL
 
     # Delete any pre-existing gateway with same name or same URL (gateway_service
     # rejects a second public gateway at the same URL), but remember what was
@@ -802,51 +851,75 @@ def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str,
                 displaced_gateways.append(gw)
                 admin_api.delete(f"/gateways/{gw['id']}")
 
-    resp = admin_api.post(
-        "/gateways",
-        data={
-            "name": STREAMABLE_HTTP_GATEWAY_NAME,
-            "url": streamable_http_url,
-            "transport": "STREAMABLEHTTP",
-        },
-    )
-    assert resp.status in (200, 201), f"Failed to register Streamable HTTP gateway: {resp.status} {resp.text()}"
-    gw = resp.json()
-    gw_id = gw["id"]
-    logger.info("Registered Streamable HTTP gateway: %s (id=%s)", STREAMABLE_HTTP_GATEWAY_NAME, gw_id)
+    gw_id: str | None = None
+    try:
+        resp = admin_api.post(
+            "/gateways",
+            data={
+                "name": STREAMABLE_HTTP_GATEWAY_NAME,
+                "url": streamable_http_url,
+                "transport": "STREAMABLEHTTP",
+            },
+        )
+        assert resp.status in (200, 201), f"Failed to register Streamable HTTP gateway: {resp.status} {resp.text()}"
+        gw = resp.json()
+        gw_id = gw["id"]
+        logger.info("Registered Streamable HTTP gateway: %s (id=%s)", STREAMABLE_HTTP_GATEWAY_NAME, gw_id)
 
-    # Poll for tool sync (up to 30s)
-    for i in range(30):
+        deadline = time.monotonic() + _REPLICA_SYNC_DEADLINE_SECONDS
+        previous_tool_ids: frozenset[str] | None = None
+        read_index = 0
+        while time.monotonic() < deadline:
+            read_index += 1
+            probe = f"gateway-sync-{uuid.uuid4().hex}"
+            try:
+                gateway_tools = _get_gateway_tools(admin_api, gw_id, probe, read_index)
+                tool_ids = frozenset(str(tool["id"]) for tool in gateway_tools)
+                if tool_ids and tool_ids == previous_tool_ids:
+                    logger.info("Streamable HTTP gateway synchronized with %d stable tools", len(tool_ids))
+                    yield {"id": gw_id, "name": STREAMABLE_HTTP_GATEWAY_NAME, "tool_ids": tool_ids}
+                    return
+                previous_tool_ids = tool_ids
+            except (AssertionError, KeyError, TypeError, ValueError, PlaywrightError) as exc:
+                logger.debug("Gateway tool synchronization probe %d did not succeed: %s", read_index, exc)
+                previous_tool_ids = None
+            time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
+
+        raise AssertionError(f"Streamable HTTP gateway {gw_id} did not produce a stable tool catalog within {_REPLICA_SYNC_DEADLINE_SECONDS}s")
+    finally:
+        if gw_id:
+            with suppress(Exception):
+                delete_response = admin_api.delete(f"/gateways/{gw_id}")
+                if delete_response.status not in (200, 204, 404):
+                    logger.warning("Failed to delete Streamable HTTP gateway %s: %s %s", gw_id, delete_response.status, delete_response.text())
+
+        # Restore any displaced pre-existing registration (e.g. the compose-seeded
+        # "fast_time" gateway) so other tests relying on it keep working.
+        for gw in displaced_gateways:
+            with suppress(Exception):
+                admin_api.post(
+                    "/gateways",
+                    data={
+                        "name": gw["name"],
+                        "url": gw["url"],
+                        "transport": gw.get("transport", "STREAMABLEHTTP"),
+                        "description": gw.get("description"),
+                    },
+                )
+
+
+@pytest.fixture(scope="module")
+def cross_replica_user(admin_api: APIRequestContext, playwright: Playwright, streamable_http_gateway: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
+    """Create a token-owning user for replica consistency checks and always clean it up."""
+    del streamable_http_gateway
+    email = f"{RBAC_PREFIX}-replica-{uuid.uuid4().hex[:8]}@test.com"
+    user_info: dict[str, Any] = {"email": email, "team_id": None, "role": None, "token_id": None}
+    try:
+        user_info.update(_create_user_with_token(admin_api, playwright, email))
         time.sleep(1)
-        try:
-            tools = admin_api.get("/tools").json()
-            gateway_tools = [t for t in tools if t.get("gatewayId") == gw_id]
-            if gateway_tools:
-                logger.info("Streamable HTTP gateway synced: %d tools", len(gateway_tools))
-                break
-        except Exception:
-            pass
-    else:
-        logger.warning("Streamable HTTP gateway tool sync timed out, continuing anyway")
-
-    yield {"id": gw_id, "name": STREAMABLE_HTTP_GATEWAY_NAME}
-
-    with suppress(Exception):
-        admin_api.delete(f"/gateways/{gw_id}")
-
-    # Restore any displaced pre-existing registration (e.g. the compose-seeded
-    # "fast_time" gateway) so other tests relying on it keep working.
-    for gw in displaced_gateways:
-        with suppress(Exception):
-            admin_api.post(
-                "/gateways",
-                data={
-                    "name": gw["name"],
-                    "url": gw["url"],
-                    "transport": gw.get("transport", "STREAMABLEHTTP"),
-                    "description": gw.get("description"),
-                },
-            )
+        yield user_info
+    finally:
+        _cleanup_user(admin_api, user_info)
 
 
 @pytest.fixture(scope="module")
@@ -990,6 +1063,25 @@ def scoped_token_read_execute(admin_api: APIRequestContext, playwright: Playwrig
     _cleanup_user(admin_api, user)
 
 
+@pytest.fixture(scope="module")
+def token_lifecycle_user(admin_api: APIRequestContext, playwright: Playwright) -> Generator[dict[str, Any], None, None]:
+    """An admin user whose first token survives the whole token-lifecycle class.
+
+    Tests that do not destroy the token share this one. Tests that revoke or
+    restrict a token mint their own against the same user.
+    """
+    uid = uuid.uuid4().hex[:8]
+    user = _create_user_with_token(
+        admin_api,
+        playwright,
+        f"{RBAC_PREFIX}-tokenlc-{uid}@test.com",
+        is_admin=True,
+        rbac_role="platform_admin",
+    )
+    yield user
+    _cleanup_user(admin_api, user)
+
+
 # ---------------------------------------------------------------------------
 # MCP protocol helpers
 # ---------------------------------------------------------------------------
@@ -1005,16 +1097,93 @@ def _mcp_client_url(server_url: str = BASE_URL) -> str:
     return f"{server_url}/mcp/" if not server_url.endswith(("/mcp", "/mcp/")) else server_url.rstrip("/") + "/"
 
 
+def _unwrap_exception_group(exc: BaseException) -> list[BaseException]:
+    """Flatten a possibly-nested ``ExceptionGroup`` into its leaf exceptions.
+
+    The MCP SDK runs client calls inside anyio ``TaskGroup``s at both the
+    session and transport layers. A single underlying error (an ``McpError``,
+    an ``httpx.HTTPStatusError``) can arrive wrapped in one or more
+    ``ExceptionGroup`` layers depending on how many task groups were open on
+    the call stack when it surfaced -- for example ``initialize()`` alone
+    wraps once, while ``initialize()`` followed by ``call_tool()`` on the same
+    session wraps twice. Callers that need to inspect the real error must
+    unwrap to an unknown, not a fixed, depth.
+    """
+    if isinstance(exc, ExceptionGroup):
+        leaves: list[BaseException] = []
+        for sub in exc.exceptions:
+            leaves.extend(_unwrap_exception_group(sub))
+        return leaves
+    return [exc]
+
+
+# Transport-layer failures an MCP call can raise. The tuple lists these errors only.
+# Catching bare Exception would swallow the AssertionErrors below and the test could
+# never fail (#6839). ExceptionGroup is included because the SDK's ClientSession runs
+# call_tool() inside an anyio TaskGroup, which wraps a single McpError on the way out.
+_TRANSPORT_ERRORS = (McpError, httpx.HTTPError, httpx2.HTTPError, RuntimeError, TimeoutError, ExceptionGroup)
+
+# Every RBAC denial in mcpgateway/middleware/rbac.py raises 403. A 401 means
+# authentication failed before RBAC ran, so it is not evidence of a denial.
+_DENIED_STATUSES = (403,)
+
+
+def _assert_denied_for_rbac(call: Callable[[], Any], context: str) -> None:
+    """Run an MCP call and assert the gateway denied it for an RBAC reason.
+
+    The gateway denies in either of two shapes. It answers the JSON-RPC call with
+    ``isError`` set, or it fails the call at the transport. Each shape gets its own
+    assertion, and each assertion checks the denial reason. A bare ``isError`` check
+    would also pass for an unrelated error, so it cannot detect an RBAC regression.
+
+    The assertions live in the ``except`` and ``else`` bodies. Neither body is covered
+    by the ``try``, so this structure cannot swallow an ``AssertionError``.
+
+    Args:
+        call: Zero-argument callable that performs the MCP tool call.
+        context: Short label for the call, used in the printed output.
+
+    Raises:
+        AssertionError: If the call succeeded, or failed for another reason.
+    """
+    try:
+        result = call()
+    except _TRANSPORT_ERRORS as exc:
+        leaves = _unwrap_exception_group(exc)
+        denied_by_status = any(getattr(getattr(leaf, "response", None), "status_code", None) in _DENIED_STATUSES for leaf in leaves)
+        denied_by_text = any("access denied" in str(leaf).lower() for leaf in leaves)
+        assert denied_by_status or denied_by_text, f"expected an access denial for {context}, got: {leaves!r}"
+        print(f"    -> Outsider {context} rejected at the transport (expected): {leaves[0]}")
+    else:
+        assert result.is_error, f"Outsider {context} should be denied, got: {result}"
+        detail = result.content[0].text.lower()
+        assert "access denied" in detail, f"expected an access denial for {context}, got: {result.content[0].text}"
+        print(f"    -> Outsider {context} denied (expected): {result.content[0].text}")
+
+
 @asynccontextmanager
 async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[ClientSession]:
-    """Open an initialized MCP client session over Streamable HTTP."""
+    """Open an initialized MCP client session over Streamable HTTP.
+
+    The mcp 2.x transport turns a non-2xx handshake response into a generic
+    JSON-RPC error and drops the HTTP status, so the gateway's ``ErrorResponseHook``
+    is attached to the client and a failed handshake is re-raised as
+    ``httpx2.HTTPStatusError`` carrying the real status (401, 403, ...).
+    """
     url = _mcp_client_url(server_url)
     headers = {"Authorization": f"Bearer {access_token}"} if access_token else None
-    timeout = timedelta(seconds=_CLIENT_TIMEOUT)
-    async with streamablehttp_client(url, headers=headers, timeout=timeout, sse_read_timeout=timeout) as (read_stream, write_stream, _):
-        async with ClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
-            await session.initialize()
-            yield session
+    http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+    error_hook = ErrorResponseHook().install(http_client)
+    try:
+        async with streamable_http_client(url, http_client=http_client) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream, read_timeout_seconds=_CLIENT_TIMEOUT) as session:
+                await session.initialize()
+                yield session
+    except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
+        status_error = error_hook.to_http_status_error(exc)
+        if status_error is None:
+            raise
+        raise status_error from exc
 
 
 async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
@@ -1250,7 +1419,7 @@ class TestMcpToolCallByRole:
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
         result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Admin tool call should succeed: {result}"
+        assert not result.is_error, f"Admin tool call should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Admin call mcp-rbac-streamable-http-gw-get-system-time = {text}")
@@ -1258,36 +1427,38 @@ class TestMcpToolCallByRole:
     def test_developer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Developer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["developer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Developer tool call should succeed (check_any_team): {result}"
+        assert not result.is_error, f"Developer tool call should succeed (check_any_team): {result}"
         print(f"    -> Developer call succeeded: {result.content[0].text}")
 
     def test_team_admin_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Team admin has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["team_admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Team admin tool call should succeed (check_any_team): {result}"
+        assert not result.is_error, f"Team admin tool call should succeed (check_any_team): {result}"
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
         """Outsider has no team membership, so no tools.execute anywhere — denied."""
-        try:
-            result = _mcp_tool_call(outsider_user["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-            assert result.isError, f"Outsider should be denied tools.execute, got: {result}"
-        except Exception:
-            pass  # McpError or connection error — both valid denials
-        print("    -> Outsider denied tools.execute (expected)")
+        _assert_denied_for_rbac(
+            lambda: _mcp_tool_call(outsider_user["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"}),
+            "tools.execute",
+        )
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
-        try:
-            result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
-            assert result.isError, f"Nonexistent tool should return error, got: {result}"
-        except Exception:
-            pass  # McpError — expected for outsider with no permissions
-        print("    -> Outsider nonexistent tool: error (expected)")
+        """An outsider calling an unknown tool is denied by RBAC, not by name resolution.
+
+        The outsider holds no team membership, so RBAC denies the call before the
+        gateway resolves the tool name. ``isError`` alone would stay true for a plain
+        name-resolution failure, so the helper asserts the denial reason instead.
+        """
+        _assert_denied_for_rbac(
+            lambda: _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac"),
+            "nonexistent tool call",
+        )
 
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["viewer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Viewer tool call should succeed (check_any_team): {result}"
+        assert not result.is_error, f"Viewer tool call should succeed (check_any_team): {result}"
         print(f"    -> Viewer call succeeded: {result.content[0].text}")
 
 
@@ -1324,7 +1495,7 @@ class TestMcpScopedTokenPermissions:
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
         result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Unscoped admin token should succeed: {result}"
+        assert not result.is_error, f"Unscoped admin token should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Unscoped admin token call = {text}")
@@ -1351,7 +1522,7 @@ class TestMcpStreamableHttpTransport:
         assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t.name for t in tools]}"
         # Call the first one found
         result = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
-        assert not result.isError, f"Streamable HTTP get-system-time failed: {result}"
+        assert not result.is_error, f"Streamable HTTP get-system-time failed: {result}"
         print(f"    -> Streamable HTTP {time_tools[0]} = {result.content[0].text}")
 
     def test_streamable_http_convert_time(self, test_users: dict) -> None:
@@ -1363,7 +1534,7 @@ class TestMcpStreamableHttpTransport:
             convert_tools[0],
             {"time": "2025-06-01T10:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"},
         )
-        assert not result.isError, f"Streamable HTTP convert-time failed: {result}"
+        assert not result.is_error, f"Streamable HTTP convert-time failed: {result}"
         print(f"    -> Streamable HTTP {convert_tools[0]}: OK")
 
     def test_streamable_http_resources_discoverable(self, test_users: dict) -> None:
@@ -1499,6 +1670,210 @@ class TestDenyPaths:
 
 
 # ---------------------------------------------------------------------------
+# Test: API token lifecycle
+# ---------------------------------------------------------------------------
+class TestTokenLifecycle:
+    """Create, list, authenticate, revoke, and scope-restrict an API token.
+
+    Issue #6523. Token revocation already has a deny-path test. Everything
+    before revocation was fixture infrastructure until this class. A silent
+    break in the token catalog would leave the RBAC suite green.
+    """
+
+    def test_create_token_returns_access_token_and_id(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """POST /tokens returns a non-empty access_token and a token id.
+
+        The POST runs inline rather than through ``_mint_token`` so the raw
+        ``TokenCreateResponse`` body is asserted, not the helper's extraction.
+        """
+        user_jwt = _make_jwt(token_lifecycle_user["email"], is_admin=True, teams=None)
+        ctx = _api_context(playwright, user_jwt)
+        token_id = None
+        try:
+            name = f"{RBAC_PREFIX}-token-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post("/tokens", data={"name": name, "expires_in_days": 1})
+            assert resp.status in (200, 201), f"POST /tokens failed: {resp.status} {resp.text()}"
+
+            payload = resp.json()
+            token_obj = payload.get("token", {})
+            token_id = token_obj.get("id")
+            assert "access_token" in payload, f"TokenCreateResponse must carry access_token, got {sorted(payload)}"
+            assert "token" in payload, f"TokenCreateResponse must carry a token object, got {sorted(payload)}"
+            assert isinstance(payload["access_token"], str), f"access_token must be a string, got {type(payload['access_token'])}"
+            assert payload["access_token"], "access_token must not be empty"
+            assert token_id, f"token object must carry an id, got {sorted(token_obj)}"
+            assert token_obj["name"] == name, f"Name mismatch: {token_obj['name']} != {name}"
+            assert isinstance(payload.get("warnings", []), list), "warnings must be a list when present"
+            print(f"    -> Minted token {token_id} ({len(payload['access_token'])} chars, warnings={payload.get('warnings')})")
+        finally:
+            ctx.dispose()
+            if token_id:
+                with suppress(Exception):
+                    admin_api.delete(f"/tokens/admin/{token_id}")
+
+    def test_created_token_in_list(self, token_lifecycle_user: dict, playwright: Playwright) -> None:
+        """GET /tokens lists the caller's token by id and name.
+
+        ``/tokens`` blocks the ``api_token`` auth method outright
+        (``mcpgateway/routers/tokens.py`` ``_require_authenticated_session`` —
+        Management Plane isolation against token-chaining). List with a fresh
+        session-style JWT for the same user, not the minted access_token.
+        """
+        user_jwt = _make_jwt(token_lifecycle_user["email"], is_admin=True, teams=None)
+        ctx = _api_context(playwright, user_jwt)
+        try:
+            resp = ctx.get("/tokens")
+            assert resp.status == 200, f"GET /tokens failed: {resp.status} {resp.text()}"
+            payload = resp.json()
+            assert "tokens" in payload, f"TokenListResponse must carry a 'tokens' key, got {sorted(payload)}"
+            by_id = {token["id"]: token for token in payload["tokens"]}
+            assert token_lifecycle_user["token_id"] in by_id, f"Created token missing from catalog. Listed ids: {sorted(by_id)}"
+            listed = by_id[token_lifecycle_user["token_id"]]
+            assert listed["name"] == token_lifecycle_user["token_name"], f"Name mismatch: {listed['name']} != {token_lifecycle_user['token_name']}"
+            print(f"    -> Catalog lists {listed['name']} (total={payload['total']})")
+        finally:
+            ctx.dispose()
+
+    def test_token_authenticates_rest_endpoint(self, token_lifecycle_user: dict, playwright: Playwright) -> None:
+        """The minted token authenticates a REST endpoint."""
+        ctx = _api_context(playwright, token_lifecycle_user["access_token"])
+        try:
+            resp = ctx.get("/tools")
+            assert resp.status == 200, f"GET /tools with a valid token must return 200: {resp.status} {resp.text()}"
+            print(f"    -> REST auth accepted on GET /tools: {resp.status}")
+        finally:
+            ctx.dispose()
+
+    def test_token_authenticates_mcp_endpoint(self, token_lifecycle_user: dict) -> None:
+        """The minted token opens an MCP session."""
+        assert _mcp_initialize_only(token_lifecycle_user["access_token"]), "MCP initialize must succeed with a valid token"
+        print("    -> MCP initialize accepted the minted token")
+
+    def test_expires_at_reflects_expires_in_days(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """A one-day token expires about 24 hours from now.
+
+        List with a fresh session-style JWT, not the minted access_token —
+        see ``test_created_token_in_list`` for why ``/tokens`` rejects it.
+        """
+        minted = _mint_token(playwright, token_lifecycle_user["email"], is_admin=True, expires_in_days=1)
+        user_jwt = _make_jwt(token_lifecycle_user["email"], is_admin=True, teams=None)
+        ctx = _api_context(playwright, user_jwt)
+        try:
+            resp = ctx.get("/tokens")
+            assert resp.status == 200, f"GET /tokens failed: {resp.status} {resp.text()}"
+            by_id = {token["id"]: token for token in resp.json()["tokens"]}
+            assert minted["token_id"] in by_id, f"Minted token missing from catalog. Listed ids: {sorted(by_id)}"
+            raw = by_id[minted["token_id"]]["expires_at"]
+            assert raw, "expires_in_days=1 must produce a non-null expires_at"
+
+            expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expected = datetime.now(timezone.utc) + timedelta(days=1)
+            drift = abs((expires_at - expected).total_seconds())
+            assert drift <= 120, f"expires_at {expires_at.isoformat()} drifts {drift:.0f}s from now+24h"
+            print(f"    -> expires_at {expires_at.isoformat()} ({drift:.0f}s drift)")
+        finally:
+            ctx.dispose()
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
+    def test_revoke_token_denies_rest(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """A revoked token is rejected on the REST API."""
+        minted = _mint_token(playwright, token_lifecycle_user["email"], is_admin=True)
+        ctx = _api_context(playwright, minted["access_token"])
+        try:
+            before = ctx.get("/tools")
+            assert before.status == 200, f"Token must work before revocation: {before.status} {before.text()}"
+
+            revoke = admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+            assert revoke.status == 204, f"Revoke must return 204: {revoke.status} {revoke.text()}"
+            time.sleep(_REVOCATION_PROPAGATION_SECONDS)
+
+            after = ctx.get("/tools")
+            assert after.status == 401, f"Revoked token must be rejected with 401, got {after.status}: {after.text()}"
+            print(f"    -> Revoked token rejected on REST: {after.status}")
+        finally:
+            ctx.dispose()
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
+    def test_revoke_token_denies_mcp(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright) -> None:
+        """A revoked token cannot open an MCP session."""
+        minted = _mint_token(playwright, token_lifecycle_user["email"], is_admin=True)
+        try:
+            assert _mcp_initialize_only(minted["access_token"]), "Token must work before revocation"
+
+            revoke = admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+            assert revoke.status == 204, f"Revoke must return 204: {revoke.status} {revoke.text()}"
+            time.sleep(_REVOCATION_PROPAGATION_SECONDS)
+
+            # A revoked token fails the JWT auth dependency before any MCP method
+            # dispatch, so the gateway answers the initialize POST with 401.
+            # _mcp_session re-surfaces that as httpx2.HTTPStatusError (the mcp 2.x
+            # transport itself drops the status) -- possibly wrapped in
+            # ExceptionGroup layers (see _unwrap_exception_group). Narrowed to
+            # these two types and to status 401 so an unrelated transport
+            # failure (a restart, a timeout) cannot read as "revocation confirmed".
+            with pytest.raises((httpx2.HTTPStatusError, ExceptionGroup)) as excinfo:
+                _mcp_initialize_only(minted["access_token"])
+            status_errors = [e for e in _unwrap_exception_group(excinfo.value) if isinstance(e, httpx2.HTTPStatusError)]
+            assert status_errors and status_errors[0].response.status_code == 401, f"expected a 401 from the revoked token, got: {excinfo.value!r}"
+            print(f"    -> Revoked token rejected on MCP (expected): {status_errors[0]}")
+        finally:
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
+    def test_scoped_token_denied_tool_execute(self, token_lifecycle_user: dict, admin_api: APIRequestContext, playwright: Playwright, streamable_http_gateway: dict) -> None:
+        """A token scoped to tools.read cannot execute a tool.
+
+        Token generation auto-injects ``servers.use`` for MCP-method
+        permissions, so the token reaches the transport. ``token_scope_grants``
+        then denies ``tools.execute`` at the JSON-RPC layer.
+        """
+        minted = _mint_token(
+            playwright,
+            token_lifecycle_user["email"],
+            is_admin=True,
+            scope={"permissions": ["tools.read"]},
+        )
+        try:
+            tools = _mcp_tools_list(minted["access_token"])
+            assert tools, "tools.read must still list tools"
+            assert any(t.name == f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time" for t in tools), f"target tool missing from tools/list: {[t.name for t in tools]}"
+
+            # The except clause lists transport errors only. Catching bare Exception
+            # here would swallow the AssertionError below and the test could never fail.
+            # ExceptionGroup is included because the SDK's ClientSession runs call_tool()
+            # inside an anyio TaskGroup, which wraps a single McpError in an ExceptionGroup
+            # on the way out. This is still safe: the assert below sits outside this try,
+            # so widening the tuple here cannot swallow it.
+            #
+            # The inner assert checks *why* the call failed, not just that it did: an
+            # unrelated transport hiccup (a restart, a timeout) would otherwise also
+            # land in this except and print as "(expected)". "Access denied" is
+            # _ACCESS_DENIED_MSG in mcpgateway/middleware/rbac.py, the fixed message
+            # _ensure_rpc_permission() raises via JSONRPCError(-32003, ...) on a
+            # token_scope_grants() denial -- the one thing this except is meant to catch.
+            # _unwrap_exception_group handles the nesting depth varying by call shape
+            # (a preceding tools/list on the same session adds a task-group layer).
+            result = None
+            try:
+                result = _mcp_tool_call(minted["access_token"], f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time", {"timezone": "UTC"})
+            except _TRANSPORT_ERRORS as exc:
+                leaves = _unwrap_exception_group(exc)
+                assert any("access denied" in str(leaf).lower() for leaf in leaves), f"expected an access-denial error, got: {leaves!r}"
+                print(f"    -> Scoped token denied execute at the transport (expected): {leaves[0]}")
+
+            if result is not None:
+                assert result.is_error, f"tools.read-only token must be denied tools.execute, got: {result}"
+                print(f"    -> Scoped token denied execute (expected): {result.content[0].text}")
+        finally:
+            with suppress(Exception):
+                admin_api.delete(f"/tokens/admin/{minted['token_id']}")
+
+
+# ---------------------------------------------------------------------------
 # Test: Cross-transport consistency
 # ---------------------------------------------------------------------------
 @pytest.mark.flaky(reruns=1, reruns_delay=2)
@@ -1513,7 +1888,7 @@ class TestCrossTransportConsistency:
 
         for tool_name in time_tools[:2]:  # Test up to 2 variants
             result = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
-            assert not result.isError, f"{tool_name} failed: {result}"
+            assert not result.is_error, f"{tool_name} failed: {result}"
             text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
@@ -1530,7 +1905,7 @@ class TestCrossTransportConsistency:
                 tool_name,
                 {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
             )
-            assert not result.isError, f"{tool_name} failed: {result}"
+            assert not result.is_error, f"{tool_name} failed: {result}"
             text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
@@ -1824,6 +2199,97 @@ def create_server(admin_api: APIRequestContext, owned_objects: _OwnedObjects) ->
 
 
 @pytest.fixture
+def same_name_private_tools(admin_api: APIRequestContext, playwright: Playwright, create_team: Any) -> Generator[dict[str, dict[str, str]], None, None]:
+    """Create two user-owned private gateways with identical tool names.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        playwright: Playwright entry point for user token creation.
+        create_team: Factory that creates tracked teams.
+
+    Yields:
+        Tenant tokens, servers, tool names, and expected echo markers.
+    """
+    uid = uuid.uuid4().hex[:8]
+    gateway_name = f"{LIFECYCLE_PREFIX}-shared-gateway-{uid}"
+    tenants: dict[str, dict[str, str]] = {}
+    user_records: list[dict[str, Any]] = []
+    user_contexts: list[APIRequestContext] = []
+    gateway_ids: list[str] = []
+    server_ids: list[str] = []
+
+    try:
+        for tenant_label in ("tenant-a", "tenant-b"):
+            _payload, team = _created_team(create_team, name=f"{LIFECYCLE_PREFIX}-{tenant_label}-{uid}")
+            team_id = team["id"]
+            email = f"{LIFECYCLE_PREFIX}-{tenant_label}-{uid}@test.com"
+            user = _create_user_with_token(admin_api, playwright, email, team_id=team_id, rbac_role="developer")
+            user_records.append(user)
+            user_api = _api_context(playwright, user["access_token"])
+            user_contexts.append(user_api)
+
+            gateway_resp = user_api.post(
+                "/gateways",
+                data={
+                    "name": gateway_name,
+                    "url": _GATEWAY_UPSTREAM_URL,
+                    "transport": "STREAMABLEHTTP",
+                    "visibility": "private",
+                },
+            )
+            assert gateway_resp.status in (200, 201, 202), f"POST /gateways returned {gateway_resp.status}: {gateway_resp.text()[:500]}"
+            gateway_id = _json_or_fail(gateway_resp, "POST /gateways")["id"]
+            gateway_ids.append(gateway_id)
+
+            names = _wait_for_gateway_tool_names(user_api, gateway_id)
+            assert names, f"gateway {gateway_id} reported no tools within {_GATEWAY_SYNC_DEADLINE:.0f}s"
+            tools = _gateway_tools(user_api, gateway_id)
+            echo_tool = next((tool for tool in tools if tool["name"].endswith("-echo")), None)
+            assert echo_tool, f"gateway {gateway_id} did not expose an echo tool: {sorted(names)}"
+
+            server_resp = user_api.post(
+                "/servers",
+                data={
+                    "server": {
+                        "name": f"{LIFECYCLE_PREFIX}-{tenant_label}-server-{uid}",
+                        "description": "Same-name tenant cache isolation fixture",
+                        "associated_tools": [echo_tool["id"]],
+                    },
+                    "visibility": "private",
+                },
+            )
+            assert server_resp.status in (200, 201), f"POST /servers returned {server_resp.status}: {server_resp.text()[:500]}"
+            server_id = _json_or_fail(server_resp, "POST /servers")["id"]
+            server_ids.append(server_id)
+            tenants[tenant_label] = {
+                "access_token": user["access_token"],
+                "server_id": server_id,
+                "tool_name": echo_tool["name"],
+                "marker": f"{tenant_label}-{uid}",
+            }
+
+        tool_names = {tenant["tool_name"] for tenant in tenants.values()}
+        assert len(tool_names) == 1, f"tenant gateways produced different tool names: {sorted(tool_names)}"
+        yield tenants
+    finally:
+        failures: list[str] = []
+        for server_id in reversed(server_ids):
+            failure = _delete_owned(admin_api, "/servers", server_id)
+            if failure:
+                failures.append(failure)
+        for gateway_id in reversed(gateway_ids):
+            failure = _delete_owned(admin_api, "/gateways", gateway_id)
+            if failure:
+                failures.append(failure)
+        for user_api in reversed(user_contexts):
+            user_api.dispose()
+        for user in reversed(user_records):
+            _cleanup_user(admin_api, user)
+        if failures:
+            pytest.fail("Tenant cache fixture cleanup failed:\n  " + "\n  ".join(failures))
+
+
+@pytest.fixture
 def create_resource(admin_api: APIRequestContext, owned_objects: _OwnedObjects) -> Any:
     """Return a factory that creates throwaway resources.
 
@@ -1942,6 +2408,74 @@ class TestVirtualServerLifecycle:
         observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, expected_names)
         assert observed == expected_names, f"MCP tools/list mismatch: missing={sorted(expected_names - observed)} unexpected={sorted(observed - expected_names)}"
         assert held_back not in observed, f"held-back tool {held_back} leaked into the scoped MCP catalog"
+
+    def test_detached_tool_cannot_use_warmed_lookup(self, admin_api: APIRequestContext, create_server: Any, lifecycle_tools: list[dict[str, Any]], admin_token: str) -> None:
+        """A detached tool must fail after its server-scoped lookup is warmed.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        server_url = _server_mcp_base(server_id)
+
+        warmed = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "warm-cache"}, server_url=server_url)
+        assert not warmed.is_error, f"Initial tools/call failed: {warmed}"
+
+        updated = admin_api.put(f"/servers/{server_id}", data={"associated_tools": []})
+        assert updated.status == 200, f"PUT /servers/{server_id} returned {updated.status}: {updated.text()[:500]}"
+
+        try:
+            detached = _mcp_tool_call(admin_token, echo_tool["name"], {"message": "must-fail"}, server_url=server_url)
+        except (McpError, ExceptionGroup) as exc:
+            leaves = _unwrap_exception_group(exc)
+            assert any(isinstance(leaf, McpError) and "not found" in str(leaf).lower() for leaf in leaves), f"Detached tool returned the wrong protocol error: {leaves!r}"
+            return
+
+        assert detached.is_error, f"Detached tool remained invocable: {detached}"
+        assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
+
+    @pytest.mark.parametrize(
+        ("first_tenant", "second_tenant"),
+        [("tenant-a", "tenant-b"), ("tenant-b", "tenant-a")],
+    )
+    def test_same_name_private_tools_remain_owner_scoped(
+        self,
+        same_name_private_tools: dict[str, dict[str, str]],
+        first_tenant: str,
+        second_tenant: str,
+    ) -> None:
+        """Same-name tools must resolve inside each tenant in both cache orders.
+
+        Args:
+            same_name_private_tools: Two private gateway and server records.
+            first_tenant: Tenant that warms the shared tool name first.
+            second_tenant: Tenant that invokes the same name second.
+        """
+        for tenant_label in (first_tenant, second_tenant):
+            tenant = same_name_private_tools[tenant_label]
+            server_url = _server_mcp_base(tenant["server_id"])
+            observed = _names_when_ready(
+                lambda tenant=tenant, server_url=server_url: {tool.name for tool in _mcp_tools_list(tenant["access_token"], server_url=server_url)},
+                {tenant["tool_name"]},
+            )
+            assert observed == {tenant["tool_name"]}, f"{tenant_label} scoped tools/list returned {sorted(observed)}"
+
+            result = _mcp_tool_call(
+                tenant["access_token"],
+                tenant["tool_name"],
+                {"message": tenant["marker"]},
+                server_url=server_url,
+            )
+            assert not result.is_error, f"{tenant_label} same-name tool invocation failed: {result}"
+            assert tenant["marker"] in result.content[0].text, f"{tenant_label} received wrong tool result: {result}"
 
     def test_associated_resources_reachable_via_mcp(self, admin_api: APIRequestContext, create_server: Any, create_resource: Any, admin_token: str) -> None:
         """The per-server REST records and the MCP catalog both report the associated resource.
@@ -2223,7 +2757,7 @@ def owned_users(admin_api: APIRequestContext) -> Generator[_OwnedUsers, None, No
             members = admin_api.get(f"/teams/{team_id}/members")
             # A missing team proves nothing about the membership, so only a
             # readable member list counts as verification.
-            if members.status == 200 and email in {member.get("email") for member in members.json()}:
+            if members.status == 200 and email in {member.get("user_email") for member in members.json()}:
                 failures.append(f"team membership for {email} on {team_id} survived cleanup")
 
     if failures:
@@ -2376,3 +2910,667 @@ class TestUserLifecycle:
         assert deleted.status in (200, 204), f"DELETE /auth/email/admin/users/{email} returned {deleted.status}: {deleted.text()[:500]}"
 
         assert email not in {user.get("email") for user in _list_all_users(admin_api)}, f"{email} is still present in the listing after deletion"
+
+
+# ---------------------------------------------------------------------------
+# Test: Cross-replica consistency
+# ---------------------------------------------------------------------------
+class TestCrossReplicaConsistency:
+    """Writes through Nginx are visible across the three default gateway replicas.
+
+    Ten independent reads have a roughly 99.9949% probability of reaching at
+    least two replicas when Nginx distributes requests uniformly.
+    """
+
+    N_READS = 10
+
+    def test_tool_visible_across_replicas(self, admin_api: APIRequestContext, streamable_http_gateway: dict[str, Any]) -> None:
+        """Every replica probe sees at least one synchronized tool for the new gateway."""
+        gateway_id = streamable_http_gateway["id"]
+
+        for read_index in range(1, self.N_READS + 1):
+            tools = _get_gateway_tools(admin_api, gateway_id, f"tool-visible-{uuid.uuid4().hex}", read_index)
+            assert tools, f"Replica read {read_index} did not return tools for gateway {gateway_id}"
+            assert all(tool.get("gatewayId") == gateway_id for tool in tools), f"Replica read {read_index} returned a tool for another gateway"
+
+    def test_token_authenticates_across_replicas(self, playwright: Playwright, cross_replica_user: dict[str, Any], streamable_http_gateway: dict[str, Any]) -> None:
+        """A token minted through Nginx authenticates every subsequent replica probe."""
+        gateway_id = streamable_http_gateway["id"]
+        user_api = _api_context(playwright, cross_replica_user["access_token"])
+        try:
+            for read_index in range(1, self.N_READS + 1):
+                response = user_api.get(_replica_tools_path(gateway_id, f"token-auth-{uuid.uuid4().hex}"))
+                _assert_replica_response(response, read_index)
+        finally:
+            user_api.dispose()
+
+    def test_user_visible_across_replicas(self, admin_api: APIRequestContext, cross_replica_user: dict[str, Any]) -> None:
+        """A user created through Nginx appears in every subsequent admin listing."""
+        email = cross_replica_user["email"]
+
+        for read_index in range(1, self.N_READS + 1):
+            response = admin_api.get(f"/auth/email/admin/users?limit=0&replica_probe=user-visible-{uuid.uuid4().hex}")
+            users = _assert_replica_response(response, read_index)
+            assert any(user.get("email") == email for user in users), f"Replica read {read_index} did not return user {email}"
+
+    def test_gateway_tools_consistent_across_replicas(self, admin_api: APIRequestContext, streamable_http_gateway: dict[str, Any]) -> None:
+        """Every replica returns the same stable tool catalog and gateway ID."""
+        gateway_id = streamable_http_gateway["id"]
+        expected_tool_ids = streamable_http_gateway["tool_ids"]
+        assert expected_tool_ids, "Gateway fixture did not capture a stable, non-empty tool catalog"
+
+        for read_index in range(1, self.N_READS + 1):
+            tools = _get_gateway_tools(admin_api, gateway_id, f"catalog-consistency-{uuid.uuid4().hex}", read_index)
+            assert all(tool.get("gatewayId") == gateway_id for tool in tools), f"Replica read {read_index} returned a tool for another gateway"
+            actual_tool_ids = frozenset(str(tool["id"]) for tool in tools)
+            assert actual_tool_ids == expected_tool_ids, f"Replica read {read_index} returned tool IDs {sorted(actual_tool_ids)}, expected {sorted(expected_tool_ids)}"
+            assert len(tools) == len(expected_tool_ids), f"Replica read {read_index} returned duplicate tools for gateway {gateway_id}"
+
+
+# ---------------------------------------------------------------------------
+# Team lifecycle
+# ---------------------------------------------------------------------------
+
+TEAM_PREFIX = "e2e-team"
+
+# Two teams per page over five teams forces at least three pages.
+_TEAM_PAGE_SIZE = 2
+_TEAM_PAGE_COUNT = 5
+
+
+def _team_name(run_prefix: str | None = None) -> str:
+    """Return a fresh team name inside the suite's namespace.
+
+    Args:
+        run_prefix: Prefix that isolates one test's teams. Defaults to the
+            suite prefix.
+
+    Returns:
+        A name no other run reuses.
+    """
+    return f"{run_prefix or TEAM_PREFIX}-{uuid.uuid4().hex[:8]}"
+
+
+def _team_pages(admin_api: APIRequestContext, search_query: str, limit: int | None = None) -> list[list[dict[str, Any]]]:
+    """Return each page of the teams matching ``search_query``, in order.
+
+    ``GET /teams/`` applies a default page size, so an unpaginated read drops
+    teams on a busy stack. The traversal rejects a repeated cursor, which would
+    otherwise loop until the page budget runs out.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        search_query: Substring the gateway matches on name, slug, or description.
+        limit: Page size. Defaults to the gateway's own default.
+
+    Returns:
+        One list of team records per page.
+
+    Raises:
+        AssertionError: A page failed, a cursor repeated, or the pages ran past
+            the budget.
+    """
+    pages: list[list[dict[str, Any]]] = []
+    seen_cursors: set[str] = set()
+    cursor: str | None = None
+
+    for _ in range(_LIFECYCLE_MAX_PAGES):
+        params: dict[str, Any] = {"include_pagination": "true", "search_query": search_query}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        resp = admin_api.get("/teams/", params=params)
+        assert resp.status == 200, f"GET /teams/ returned {resp.status}: {resp.text()[:500]}"
+        body = _json_or_fail(resp, "GET /teams/")
+        pages.append(body.get("teams") or [])
+
+        cursor = body.get("nextCursor")
+        if not cursor:
+            return pages
+        assert cursor not in seen_cursors, f"GET /teams/ repeated cursor {cursor!r}; the traversal does not advance"
+        seen_cursors.add(cursor)
+
+    raise AssertionError(f"GET /teams/ did not finish within {_LIFECYCLE_MAX_PAGES} pages for search_query={search_query!r}")
+
+
+def _teams_matching(admin_api: APIRequestContext, search_query: str) -> list[dict[str, Any]]:
+    """Return every team matching ``search_query`` across all pages.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        search_query: Substring the gateway matches on name, slug, or description.
+
+    Returns:
+        Every matching team record.
+    """
+    return [team for page in _team_pages(admin_api, search_query) for team in page]
+
+
+def _team_by_id(teams: list[dict[str, Any]], team_id: str) -> dict[str, Any] | None:
+    """Return one team record from a listing.
+
+    Args:
+        teams: Records from ``GET /teams/``.
+        team_id: Id to find.
+
+    Returns:
+        The matching record, or ``None``.
+    """
+    return next((team for team in teams if team.get("id") == team_id), None)
+
+
+def _member(members: list[dict[str, Any]], email: str) -> dict[str, Any] | None:
+    """Return one member record from a team member list.
+
+    Args:
+        members: Records from ``GET /teams/{id}/members``.
+        email: Address to find.
+
+    Returns:
+        The matching record, or ``None``.
+    """
+    return next((member for member in members if member.get("user_email") == email), None)
+
+
+def _team_members(admin_api: APIRequestContext, team_id: str) -> list[dict[str, Any]]:
+    """Return one team's members.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        team_id: Team to read.
+
+    Returns:
+        The member records.
+    """
+    resp = admin_api.get(f"/teams/{team_id}/members")
+    assert resp.status == 200, f"GET /teams/{team_id}/members returned {resp.status}: {resp.text()[:500]}"
+    return _json_or_fail(resp, f"GET /teams/{team_id}/members")
+
+
+def _created_team(create_team: Any, **kwargs: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create a team, and fail unless the gateway accepted it.
+
+    Args:
+        create_team: Factory returning ``(payload, response, body)``.
+        **kwargs: Forwarded to the factory.
+
+    Returns:
+        The request payload and the created team.
+    """
+    payload, resp, team = create_team(**kwargs)
+    assert resp.status == 201, f"POST /teams/ returned {resp.status}: {resp.text()[:500]}"
+    return payload, team
+
+
+class _OwnedTeams:
+    """Teams this test created.
+
+    A team is registered only after a successful create returns a usable id, so
+    teardown never deletes a team the test did not make.
+    """
+
+    def __init__(self) -> None:
+        """Initialise an empty registry."""
+        self.ids: list[str] = []
+
+
+@pytest.fixture
+def owned_teams(admin_api: APIRequestContext, owned_users: _OwnedUsers) -> Generator[_OwnedTeams, None, None]:
+    """Track teams one test creates, delete them, and prove they are gone.
+
+    This fixture requests ``owned_users`` to order the two teardowns. Pytest
+    finalises in reverse setup order, so ``owned_users`` is set up first and
+    runs last, and every team is deleted before the accounts that belong to it.
+
+    Teardown continues past a failure. One unreachable team must not strand the
+    rest, so transport errors and unexpected statuses are collected and reported
+    together at the end.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        owned_users: Account registry this teardown must precede.
+
+    Yields:
+        The registry the factory writes to.
+    """
+    del owned_users  # Requested for teardown order only.
+
+    owned = _OwnedTeams()
+    yield owned
+
+    failures: list[str] = []
+
+    for team_id in reversed(owned.ids):
+        try:
+            resp = admin_api.delete(f"/teams/{team_id}")
+        except Exception as exc:  # pylint: disable=broad-except
+            failures.append(f"DELETE /teams/{team_id} raised {type(exc).__name__}: {exc}")
+            continue
+        # 404 covers a team the test deleted itself. A 403 is unexpected here:
+        # no test drops the creator's own membership, so one signals a real
+        # authorization change and must fail.
+        if resp.status not in (200, 204, 404):
+            failures.append(f"DELETE /teams/{team_id} returned {resp.status}: {resp.text()[:200]}")
+
+    if owned.ids:
+        try:
+            remaining = {team.get("id") for team in _teams_matching(admin_api, TEAM_PREFIX)}
+        except Exception as exc:  # pylint: disable=broad-except
+            failures.append(f"listing teams after cleanup raised {type(exc).__name__}: {exc}")
+        else:
+            leaked = sorted(set(owned.ids) & remaining)
+            if leaked:
+                failures.append(f"teams still present after cleanup: {leaked}")
+
+    if failures:
+        pytest.fail("Team cleanup did not complete:\n  " + "\n  ".join(failures))
+
+
+@pytest.fixture
+def create_team(admin_api: APIRequestContext, owned_teams: _OwnedTeams) -> Any:
+    """Return a factory that creates throwaway teams.
+
+    The factory registers the new id before it returns, so a later failed
+    assertion still leaves the team tracked for teardown. It hands back the
+    request inputs, so tests assert against what was sent.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        owned_teams: Registry that receives created ids.
+
+    Returns:
+        A callable returning ``(payload, response, body)``.
+    """
+
+    def _create(*, name: str | None = None, visibility: str = "private", description: str = "E2E team lifecycle") -> tuple[dict[str, Any], APIResponse, Any]:
+        payload: dict[str, Any] = {"name": name or _team_name(), "visibility": visibility, "description": description}
+        resp = admin_api.post("/teams/", data=payload)
+
+        body: Any = None
+        if resp.status in (200, 201):
+            body = _json_or_fail(resp, "POST /teams/")
+            team_id = body.get("id") if isinstance(body, dict) else None
+            assert team_id, f"POST /teams/ returned {resp.status} without a usable id: {resp.text()[:500]}"
+            if team_id not in owned_teams.ids:
+                owned_teams.ids.append(team_id)
+
+        return payload, resp, body
+
+    return _create
+
+
+class TestTeamLifecycle:
+    """Admin creates a team, manages its members, then deletes the team."""
+
+    def test_create_team_returns_expected_fields(self, create_team: Any) -> None:
+        """Creation returns 201 and echoes the requested team.
+
+        Args:
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        payload, resp, team = create_team(visibility="private")
+
+        assert resp.status == 201, f"POST /teams/ returned {resp.status}: {resp.text()[:500]}"
+        # Expectations come from the request, never from the response echo.
+        assert team["id"], "POST /teams/ returned an empty id"
+        assert team["name"] == payload["name"]
+        assert team["visibility"] == payload["visibility"]
+
+    def test_create_team_makes_creator_an_owner(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """The caller holds an active owner membership on a team it created.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        _payload, team = _created_team(create_team)
+
+        owner = _member(_team_members(admin_api, team["id"]), ADMIN_EMAIL)
+        assert owner is not None, f"{ADMIN_EMAIL} holds no membership on the team it created"
+        assert owner["role"] == "owner", f"creator holds role {owner['role']!r}, expected 'owner'"
+        assert owner["is_active"] is True, "creator's owner membership is not active"
+
+    def test_team_appears_in_listing_and_detail(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """A created team is visible in the listing and in its detail record.
+
+        The listing read follows the cursor. A first-page-only read would miss
+        the team on a stack that already holds a full page.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        payload, team = _created_team(create_team)
+
+        listed = _team_by_id(_teams_matching(admin_api, payload["name"]), team["id"])
+        assert listed is not None, f"team {team['id']} is absent from GET /teams/"
+
+        detail = admin_api.get(f"/teams/{team['id']}")
+        assert detail.status == 200, f"GET /teams/{team['id']} returned {detail.status}: {detail.text()[:500]}"
+        body = _json_or_fail(detail, f"GET /teams/{team['id']}")
+
+        assert body["name"] == payload["name"]
+        assert body["visibility"] == payload["visibility"]
+        assert body["slug"] == listed["slug"], "detail and listing disagree on the slug"
+
+    def test_add_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any) -> None:
+        """Adding a member returns 201 and the member list confirms it.
+
+        The POST response is validated first. The member list is then read back
+        so the record is confirmed independently of that echo.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+            create_user: Factory returning ``(email, payload, response)``.
+        """
+        _payload, team = _created_team(create_team)
+        team_id = team["id"]
+
+        email, _user_payload, created = create_user()
+        assert created.status == 201, f"POST /auth/email/admin/users returned {created.status}: {created.text()[:500]}"
+
+        added = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
+        assert added.status == 201, f"POST /teams/{team_id}/members returned {added.status}: {added.text()[:500]}"
+
+        added_body = _json_or_fail(added, f"POST /teams/{team_id}/members")
+        assert added_body["user_email"] == email
+        assert added_body["team_id"] == team_id
+        assert added_body["role"] == "member"
+
+        member = _member(_team_members(admin_api, team_id), email)
+        assert member is not None, f"{email} is absent from the member list after POST returned 201"
+        assert member["user_email"] == email
+        assert member["team_id"] == team_id
+        assert member["role"] == "member"
+        assert member["is_active"] is True
+
+    def test_remove_team_member(self, admin_api: APIRequestContext, create_team: Any, create_user: Any) -> None:
+        """Removing a member leaves the creator's ownership intact.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+            create_user: Factory returning ``(email, payload, response)``.
+        """
+        _payload, team = _created_team(create_team)
+        team_id = team["id"]
+
+        email, _user_payload, created = create_user()
+        assert created.status == 201, f"POST /auth/email/admin/users returned {created.status}: {created.text()[:500]}"
+
+        added = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
+        assert added.status == 201, f"POST /teams/{team_id}/members returned {added.status}: {added.text()[:500]}"
+        assert _member(_team_members(admin_api, team_id), email) is not None, f"{email} is absent before removal"
+
+        removed = admin_api.delete(f"/teams/{team_id}/members/{email}")
+        assert removed.status == 200, f"DELETE /teams/{team_id}/members/{email} returned {removed.status}: {removed.text()[:500]}"
+
+        members = _team_members(admin_api, team_id)
+        assert _member(members, email) is None, f"{email} is still a member after removal"
+
+        # Removing a member must not touch the creator. A lost owner membership
+        # would also block the teardown delete.
+        owner = _member(members, ADMIN_EMAIL)
+        assert owner is not None, "the creator's membership disappeared when another member was removed"
+        assert owner["role"] == "owner", f"creator holds role {owner['role']!r} after the removal, expected 'owner'"
+        assert owner["is_active"] is True, "creator's owner membership is inactive after the removal"
+
+    def test_team_pagination_is_consistent(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """Paging a known set of teams returns each one exactly once.
+
+        The run prefix isolates this test's teams, so the assertion does not
+        depend on the gateway's total team count.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        run_prefix = f"{TEAM_PREFIX}-page-{uuid.uuid4().hex[:8]}"
+        created: set[str] = set()
+        for _ in range(_TEAM_PAGE_COUNT):
+            _payload, team = _created_team(create_team, name=_team_name(run_prefix))
+            created.add(team["id"])
+
+        pages = _team_pages(admin_api, run_prefix, limit=_TEAM_PAGE_SIZE)
+
+        assert len(pages) > 1, f"{_TEAM_PAGE_COUNT} teams at limit={_TEAM_PAGE_SIZE} returned {len(pages)} page(s); the traversal never paged"
+
+        seen: list[str] = [team["id"] for page in pages for team in page]
+        duplicates = sorted({team_id for team_id in seen if seen.count(team_id) > 1})
+        assert not duplicates, f"teams returned on more than one page: {duplicates}"
+        assert set(seen) == created, f"paging returned {sorted(set(seen))}, expected {sorted(created)}"
+
+    def test_deleted_team_disappears(self, admin_api: APIRequestContext, create_team: Any) -> None:
+        """Deletion removes the team from the listing and from detail reads.
+
+        The gateway deletes a team softly, so the row survives in the database.
+        These assertions cover the REST contract, which reports the team as
+        gone.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            create_team: Factory returning ``(payload, response, body)``.
+        """
+        payload, team = _created_team(create_team)
+        team_id = team["id"]
+
+        assert _team_by_id(_teams_matching(admin_api, payload["name"]), team_id) is not None, f"team {team_id} is absent from the listing before deletion"
+
+        deleted = admin_api.delete(f"/teams/{team_id}")
+        assert deleted.status == 200, f"DELETE /teams/{team_id} returned {deleted.status}: {deleted.text()[:500]}"
+
+        assert _team_by_id(_teams_matching(admin_api, payload["name"]), team_id) is None, f"team {team_id} is still listed after deletion"
+
+        detail = admin_api.get(f"/teams/{team_id}")
+        assert detail.status == 404, f"GET /teams/{team_id} returned {detail.status} after deletion, expected 404: {detail.text()[:500]}"
+
+    def test_delete_nonexistent_team_returns_404(self, admin_api: APIRequestContext) -> None:
+        """Deleting an unused team id is refused.
+
+        The id is well formed, so the 404 reports a missing team rather than a
+        rejected path.
+
+        Args:
+            admin_api: Authenticated admin API context.
+        """
+        unused = uuid.uuid4().hex
+
+        resp = admin_api.delete(f"/teams/{unused}")
+        assert resp.status == 404, f"DELETE /teams/{unused} returned {resp.status}, expected 404: {resp.text()[:500]}"
+
+
+# ---------------------------------------------------------------------------
+# Gateway registration and tool sync (#6521)
+# ---------------------------------------------------------------------------
+GATEWAY_LIFECYCLE_PREFIX = "e2e-gw-lifecycle"
+_GATEWAY_SYNC_DEADLINE = float(os.getenv("MCP_E2E_GATEWAY_SYNC_DEADLINE", "30.0"))
+_GATEWAY_UPSTREAM_URL = "http://fast_time_server:9080/mcp"
+
+
+def _gateway_tool_names(admin_api: APIRequestContext, gateway_id: str) -> set[str]:
+    """Return the names of tools currently synced from one gateway.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        gateway_id: Gateway id to filter by.
+
+    Returns:
+        Names of the gateway's currently synced tools.
+    """
+    return {tool["name"] for tool in _gateway_tools(admin_api, gateway_id)}
+
+
+def _gateway_tools(admin_api: APIRequestContext, gateway_id: str) -> list[dict[str, Any]]:
+    """Return the full tool records currently synced from one gateway.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        gateway_id: Gateway id to filter by.
+
+    Returns:
+        The gateway's currently synced tool records.
+    """
+    resp = admin_api.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+    assert resp.status == 200, f"GET /tools returned {resp.status}: {resp.text()[:500]}"
+    return _json_or_fail(resp, "GET /tools")
+
+
+def _wait_for_gateway_tool_names(admin_api: APIRequestContext, gateway_id: str, *, until_empty: bool = False) -> set[str]:
+    """Poll a gateway's synced tool names until sync (or teardown) converges.
+
+    Args:
+        admin_api: Authenticated admin API context.
+        gateway_id: Gateway id to filter by.
+        until_empty: Wait for the set to become empty instead of non-empty.
+
+    Returns:
+        The last observed set of tool names.
+    """
+    deadline = time.monotonic() + _GATEWAY_SYNC_DEADLINE
+    observed: set[str] = set()
+    while True:
+        observed = _gateway_tool_names(admin_api, gateway_id)
+        ready = (not observed) if until_empty else bool(observed)
+        if ready or time.monotonic() >= deadline:
+            return observed
+        time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
+
+
+@pytest.fixture
+def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[APIResponse, None, None]:
+    """Register a throwaway gateway against ``fast_time_server`` and delete it after.
+
+    Registered ``private`` so it never collides with the suite's shared
+    public ``streamable_http_gateway`` fixture, which already holds the same
+    upstream URL for the whole module (``gateway_service`` rejects a second
+    public gateway at one URL; uniqueness is visibility-scoped, so a private
+    registration by the same owner is a distinct row).
+
+    ``streamable_http_gateway``'s own displacement scan matches on name OR
+    url regardless of visibility, and its teardown restores whatever it
+    displaced without a ``visibility`` field (so the restored row comes
+    back public). That scan only runs once, at that fixture's first use,
+    which file order places before ``TestGatewayLifecycle``. A private row
+    from this fixture can only be swept up by it if this class ran first
+    and a delete below failed silently — reorder the class or harden the
+    delete below if that ever needs closing.
+
+    Args:
+        admin_api: Authenticated admin API context.
+
+    Yields:
+        The raw registration response, for the test to assert on.
+    """
+    uid = uuid.uuid4().hex[:8]
+    name = f"{GATEWAY_LIFECYCLE_PREFIX}-{uid}"
+    resp = admin_api.post(
+        "/gateways",
+        data={
+            "name": name,
+            "url": _GATEWAY_UPSTREAM_URL,
+            "transport": "STREAMABLEHTTP",
+            "visibility": "private",
+        },
+    )
+    assert resp.status in (200, 201, 202), f"POST /gateways returned {resp.status}: {resp.text()[:500]}"
+    yield resp
+    with suppress(Exception):
+        gw_id = resp.json().get("id")
+        if gw_id:
+            admin_api.delete(f"/gateways/{gw_id}")
+
+
+class TestGatewayLifecycle:
+    """Register an MCP gateway, wait for tool sync, then delete it."""
+
+    def test_register_returns_id_and_metadata(self, ephemeral_gateway: APIResponse) -> None:
+        """Registration succeeds and echoes id, name, url, and transport.
+
+        Args:
+            ephemeral_gateway: Raw registration response.
+        """
+        assert ephemeral_gateway.status in (200, 201, 202), f"POST /gateways returned {ephemeral_gateway.status}: {ephemeral_gateway.text()[:500]}"
+        gw = _json_or_fail(ephemeral_gateway, "POST /gateways")
+        assert gw.get("id"), f"registered gateway has no id: {gw}"
+        assert gw.get("name", "").startswith(GATEWAY_LIFECYCLE_PREFIX)
+        assert gw.get("url") == _GATEWAY_UPSTREAM_URL
+        assert gw.get("transport") == "STREAMABLEHTTP"
+
+    def test_tools_sync_within_deadline(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """At least one tool syncs from the upstream within the sync deadline.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        names = _wait_for_gateway_tool_names(admin_api, gw_id)
+        assert names, f"gateway {gw_id} reported no synced tools within {_GATEWAY_SYNC_DEADLINE:.0f}s"
+
+    def test_synced_tools_carry_gateway_id(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """Every synced tool's ``gatewayId`` matches the registering gateway.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        _wait_for_gateway_tool_names(admin_api, gw_id)
+        tools = _gateway_tools(admin_api, gw_id)
+        assert tools, f"gateway {gw_id} reported no synced tools within {_GATEWAY_SYNC_DEADLINE:.0f}s"
+        mismatched = [tool["name"] for tool in tools if tool.get("gatewayId") != gw_id]
+        assert not mismatched, f"tools {mismatched} carry a gatewayId other than {gw_id}"
+
+    def test_synced_tools_have_expected_names(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """The synced catalog includes a ``get-system-time`` tool from ``fast_time_server``.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        names = _wait_for_gateway_tool_names(admin_api, gw_id)
+        time_tools = [name for name in names if "get-system-time" in name]
+        assert time_tools, f"expected a get-system-time tool, got: {sorted(names)}"
+
+    def test_delete_gateway_removes_tools(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """Deleting the gateway removes its synced tools from the catalog.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw_id = _json_or_fail(ephemeral_gateway, "POST /gateways")["id"]
+        assert _wait_for_gateway_tool_names(admin_api, gw_id), f"gateway {gw_id} never synced tools; deletion cleanup cannot be observed"
+
+        resp = admin_api.delete(f"/gateways/{gw_id}")
+        assert resp.status in (200, 202), f"DELETE /gateways/{gw_id} returned {resp.status}: {resp.text()[:500]}"
+
+        remaining = _wait_for_gateway_tool_names(admin_api, gw_id, until_empty=True)
+        assert not remaining, f"tools {sorted(remaining)} still report gatewayId={gw_id} after deletion"
+
+        detail = admin_api.get(f"/gateways/{gw_id}")
+        assert detail.status == 404, f"GET /gateways/{gw_id} returned {detail.status} after deletion, expected 404"
+
+    def test_duplicate_registration_conflicts(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
+        """Re-registering the same name, url, and visibility returns 409.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            ephemeral_gateway: Raw registration response.
+        """
+        gw = _json_or_fail(ephemeral_gateway, "POST /gateways")
+
+        duplicate = admin_api.post(
+            "/gateways",
+            data={
+                "name": gw["name"],
+                "url": gw["url"],
+                "transport": gw["transport"],
+                "visibility": "private",
+            },
+        )
+        assert duplicate.status == 409, f"duplicate POST /gateways returned {duplicate.status}, expected 409: {duplicate.text()[:500]}"

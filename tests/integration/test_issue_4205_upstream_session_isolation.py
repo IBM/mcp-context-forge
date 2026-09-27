@@ -38,6 +38,7 @@ import pytest
 # First-Party
 from mcpgateway.services.upstream_session_registry import (
     SessionCreateRequest,
+    SessionLifecycle,
     TransportType,
     UpstreamSessionRegistry,
 )
@@ -91,13 +92,11 @@ def _make_counter_session_factory():
             await shutdown_event.wait()
 
         task = asyncio.create_task(owner(), name="counter-upstream-owner")
-        # The registry looks for these two attributes on the session to
-        # manage its lifecycle; the real default_session_factory smuggles
-        # them on the MCP ClientSession the same way.
-        session._cf_owner_task = task  # type: ignore[attr-defined]
-        session._cf_shutdown_event = shutdown_event  # type: ignore[attr-defined]
+        # The registry takes the owner task + shutdown event from the typed
+        # SessionLifecycle handle in the second tuple slot — the same
+        # contract the real default_session_factory fulfils.
         created.append(session)
-        return session, object()
+        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=None)
 
     return factory, created
 

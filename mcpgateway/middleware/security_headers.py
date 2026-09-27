@@ -475,14 +475,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Lightweight dynamic CORS reflection based on current settings
         origin = request.headers.get("Origin")
         if origin:
-            allow = False
-            if settings.environment != "production":
-                # In non-production, honor allowed_origins dynamically
-                allow = (not settings.allowed_origins) or (origin in settings.allowed_origins)
-            else:
-                # In production, require explicit allow-list
-                allow = origin in settings.allowed_origins
-            if allow:
+            # Reflecting an origin with credentials requires an explicit allowlist in every
+            # environment; an empty allowlist must never mean "allow any origin".
+            if origin in settings.allowed_origins:
                 response.headers["Access-Control-Allow-Origin"] = origin
                 # Standard CORS helpers
                 if settings.cors_allow_credentials:

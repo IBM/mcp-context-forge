@@ -91,7 +91,7 @@ _SAFE_STRING_VALUE_RE = re.compile(r"^[A-Za-z0-9_.,:=/-]*$")
 # https://github.com/IBM/cpex-plugins/issues/129 (secrets_detection: secret_types,
 # encoded_exfil_detection: encoding_types, url_reputation: reputation_categories,
 # rate_limiter: backend -- wired up here; retry_with_backoff has no string field).
-_SAFE_STRING_FIELD_NAMES = frozenset({"stage", "detection_types", "secret_types", "encoding_types", "reputation_categories", "backend"})
+_SAFE_STRING_FIELD_NAMES = frozenset({"stage", "detection_types", "secret_types", "encoding_types", "reputation_categories", "backend", "limit_mode", "strategy"})
 
 # Deny-by-default field-name allowlist for numeric (int/float, excluding bool) values:
 # a field name matching _IDENTIFIER_RE is bounded/charset-safe but not proof the *value*
@@ -106,7 +106,7 @@ _SAFE_STRING_FIELD_NAMES = frozenset({"stage", "detection_types", "secret_types"
 # url_reputation: total_checked, rate_limiter: allowed/throttled, retry_with_backoff:
 # retry_count/retry_delay_ms -- wired up here; total_detections/total_masked above
 # already cover secrets_detection's and encoded_exfil_detection's shared field names).
-_SAFE_NUMERIC_FIELD_NAMES = frozenset({"total_detections", "total_masked", "total_blocked", "total_checked", "allowed", "throttled", "retry_count", "retry_delay_ms"})
+_SAFE_NUMERIC_FIELD_NAMES = frozenset({"total_detections", "total_masked", "total_blocked", "total_checked", "allowed", "throttled", "retry_count", "retry_delay_ms", "chars_seen", "truncated_count"})
 
 
 def _is_valid_identifier(name: Any) -> bool:

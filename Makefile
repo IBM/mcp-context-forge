@@ -5679,7 +5679,8 @@ endef
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
 compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
-	embedded-up embedded-down embedded-clean embedded-status embedded-logs
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
+	compose-ui-config-check
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5696,6 +5697,22 @@ compose-validate:
 	fi
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
+
+# Config-only smoke test for the supported 'ui' profile (contextforge-web-ui BFF)
+# Catches profile, variable-interpolation, and Compose-schema regressions without
+# starting any containers. See docs/docs/development/release-management.md #6.4.
+compose-ui-config-check:
+	@echo "🔍 Validating 'ui' profile compose config..."
+	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
+		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile ui config --quiet
+	@echo "✅ 'ui' profile compose config is valid"
 
 compose-upgrade-pg18: compose-validate
 	@echo "⚠️  This will upgrade Postgres 17 -> 18"
@@ -8762,3 +8779,45 @@ linting-workflow-commitlint:         ## 📝  Conventional Commits linting (togg
 .PHONY: conc-01-gateways
 conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh
+
+# Published full-stack MCP conformance harness.
+CF_INTEGRATION ?= cf-integration
+CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
+CF_CONTROLPLANE_REPO ?= $(CURDIR)
+CF_CONTROLPLANE_REF ?= $(shell git -C "$(CF_CONTROLPLANE_REPO)" rev-parse HEAD)
+CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
+CF_CONTROLPLANE_PULL_POLICY ?= never
+CF_COMPOSE_BUILD ?= true
+CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+
+# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
+# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+.PHONY: conformance conformance-bless
+
+# Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
+conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+# Exercise only the 2025-11-25 client against a legacy fixture.
+conformance conformance-bless:
+	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git -C "$(CF_CONTROLPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
+		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
+		exit 1; \
+	fi
+	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+	"$(CF_INTEGRATION)" conformance run \
+		--client-version 2025-11-25 \
+		--server-era legacy \
+		--lane builtin \
+		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+		$(if $(filter conformance-bless,$@),--bless)

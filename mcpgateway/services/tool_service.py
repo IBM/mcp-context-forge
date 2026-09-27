@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+import hashlib
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
 import logging
 import os
@@ -47,11 +48,10 @@ from cpex.framework import (
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
+import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
-from mcp import ClientSession, types
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
 import referencing
@@ -109,6 +109,7 @@ from mcpgateway.utils.identity_propagation import build_identity_headers, build_
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -148,7 +149,7 @@ def _get_registry_cache():
 _downstream_session_id_from_request = downstream_session_id_from_request_context
 
 
-def _get_tool_lookup_cache():
+def _get_tool_lookup_cache() -> Any:
     """Get tool lookup cache singleton lazily.
 
     Returns:
@@ -611,8 +612,16 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
     return f"<{fallback_type} object (unrepresentable)>"
 
 
-def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
-    """Handle JSON parsing failures with graceful fallback to raw text.
+def _handle_json_parse_error(response, error, is_error_response: bool = False) -> list[TextContent]:
+    """Build the error content reported when a REST response body is not valid JSON.
+
+    Logs the failure and returns a single ``TextContent`` describing the parse error
+    and the (possibly truncated) body. Callers use the result directly as
+    ``ToolResult.content`` with ``is_error=True``. On the 2xx success path that only
+    happens when the tool declares an ``outputSchema``; otherwise the raw text is
+    passed through as a successful result. Never pass the result to
+    ``extract_using_jq``: ``TextContent`` is not JSON-serializable, so the filter
+    fails and replaces this message with a generic jsonpath error.
 
     Args:
         response: The HTTP response object with .text attribute
@@ -620,22 +629,25 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
         is_error_response: If True, logs as "error response", else "response"
 
     Returns:
-        Dictionary with response_text key containing the raw response text
-        (truncated to REST_RESPONSE_TEXT_MAX_LENGTH if longer to avoid exposing sensitive data),
-        or error details if response body is empty/None
+        A one-element list holding the error ``TextContent``; the body is truncated
+        to ``REST_RESPONSE_TEXT_MAX_LENGTH`` characters.
     """
     msg = "error response" if is_error_response else "response"
     if not response.text:
         logger.warning("Failed to parse JSON %s: %s. Response body was empty.", msg, error)
-        return {"error": "Empty response body"}
+        return [TextContent(type="text", text="Empty response body")]
 
     max_length = settings.rest_response_text_max_length
     text = response.text[:max_length] if len(response.text) > max_length else response.text
+
     if len(response.text) > max_length:
         logger.warning("Failed to parse JSON %s: %s. Response truncated from %s to %s characters.", msg, error, len(response.text), max_length)
+        error_message = f"Response body is not valid JSON: {error}. Showing the first {max_length} of {len(response.text)} characters:\n{text}"
     else:
         logger.warning("Failed to parse JSON %s: %s", msg, error)
-    return {"response_text": text}
+        error_message = f"Response body is not valid JSON: {error}.\n{text}"
+
+    return [TextContent(type="text", text=error_message)]
 
 
 # SECURITY: JSON Schemas validated here are tool-controlled data — a federated tool ships its
@@ -1086,6 +1098,23 @@ class ToolTimeoutError(ToolInvocationError):
         self.retry_delay_ms = retry_delay_ms
 
 
+class ToolInputRequired(Exception):
+    """Control-flow signal: upstream returned an InputRequiredResult (2026 MRTR).
+
+    Carries the raw result up to the transport, which returns it to the
+    modern downstream client so the client can answer and retry.
+    """
+
+    def __init__(self, result: Any):
+        """Wrap the upstream InputRequiredResult.
+
+        Args:
+            result: The InputRequiredResult received from the upstream server.
+        """
+        super().__init__("input required")
+        self.result = result
+
+
 def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> int:
     """Normalize retry policy integer settings from plugin config."""
     if raw_value is None:
@@ -1471,6 +1500,148 @@ class ToolService(BaseService):
                 return True
 
         return False
+
+    async def _cached_tool_is_usable(
+        self,
+        db: Session,
+        tool_payload: Dict[str, Any],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
+    ) -> bool:
+        """Return whether a cached tool can satisfy this exact invocation scope.
+
+        Cache entries are performance hints, not authorization decisions. A
+        stale or differently scoped entry must fall through to the scoped DB
+        lookup instead of terminating resolution.
+
+        Args:
+            db: Database session used by visibility checks.
+            tool_payload: Cached tool metadata.
+            user_email: Effective caller email.
+            token_teams: Effective caller team scope.
+            server_id: Optional virtual-server scope.
+            require_app_visible: Require MCP Apps visibility.
+            require_model_visible: Require model visibility.
+
+        Returns:
+            True when the cache entry is safe to use for this invocation.
+        """
+        if not tool_payload:
+            return False
+        if server_id:
+            tool_id = tool_payload.get("id")
+            if not tool_id:
+                return False
+            server_match = db.execute(
+                select(server_tool_association.c.tool_id).where(
+                    server_tool_association.c.server_id == server_id,
+                    server_tool_association.c.tool_id == tool_id,
+                )
+            ).first()
+            if not server_match:
+                return False
+        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
+            return False
+        if require_app_visible and not is_app_visible_tool(tool_payload):
+            return False
+        if require_model_visible and not is_model_visible_tool(tool_payload):
+            return False
+        return True
+
+    @staticmethod
+    def _negative_cache_caller_scope(
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
+    ) -> str:
+        """Return an opaque digest for caller-dependent tool resolution.
+
+        Args:
+            user_email: Effective caller email.
+            token_teams: Effective caller team scope.
+            require_app_visible: Require MCP Apps visibility.
+            require_model_visible: Require model visibility.
+
+        Returns:
+            SHA-256 digest of caller visibility inputs.
+        """
+        scope = {
+            "user_email": user_email,
+            "token_teams": None if token_teams is None else sorted(str(team_id) for team_id in token_teams),
+            "require_app_visible": require_app_visible,
+            "require_model_visible": require_model_visible,
+        }
+        return hashlib.sha256(orjson.dumps(scope, option=orjson.OPT_SORT_KEYS)).hexdigest()
+
+    @staticmethod
+    def _raise_for_negative_tool_status(name: str, status: Optional[str]) -> None:
+        """Raise the error represented by a negative tool cache status.
+
+        Args:
+            name: Requested tool name.
+            status: Cached negative status.
+
+        Raises:
+            ToolNotFoundError: If the tool is missing, inactive, or offline.
+            ToolInvocationError: If the tool is deprecated.
+
+        Unknown statuses are ignored and resolution continues against the database.
+        """
+        if status == "missing":
+            raise ToolNotFoundError(f"Tool not found: {name}")
+        if status == "inactive":
+            raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+        if status == "offline":
+            raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+        if status == "deprecated":
+            raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+        logger.warning("Ignoring unknown negative tool cache status %r for tool %s", status, name)
+
+    @staticmethod
+    def _server_ids_for_tool_cache_invalidation(db: Session, tool_id: str, gateway_id: Optional[Any]) -> tuple[str, ...]:
+        """Return server IDs that need invalidation for a local tool.
+
+        Args:
+            db: Database session.
+            tool_id: Tool ID.
+            gateway_id: Gateway ID, when the tool belongs to a gateway.
+
+        Returns:
+            Server IDs for a local tool, or an empty tuple for a gateway tool.
+        """
+        if gateway_id:
+            return ()
+        server_ids = db.execute(select(server_tool_association.c.server_id).where(server_tool_association.c.tool_id == tool_id)).scalars().all()
+        return tuple(str(server_id) for server_id in server_ids)
+
+    @staticmethod
+    def _server_ids_for_tool_names_cache_invalidation(db: Session, names: set[str]) -> tuple[str, ...]:
+        """Return server IDs associated with local tools matching given names.
+
+        Args:
+            db: Database session.
+            names: Tool names changed by a bulk operation.
+
+        Returns:
+            Server IDs associated with matching local tools.
+        """
+        if not names:
+            return ()
+        server_ids = (
+            db.execute(
+                select(server_tool_association.c.server_id)
+                .join(DbTool, DbTool.id == server_tool_association.c.tool_id)
+                .where(DbTool.gateway_id.is_(None), or_(DbTool.name.in_(names), DbTool.original_name.in_(names), DbTool.custom_name.in_(names)))
+                .distinct()
+            )
+            .scalars()
+            .all()
+        )
+        return tuple(str(server_id) for server_id in server_ids)
 
     def convert_tool_to_read(
         self,
@@ -2471,8 +2642,9 @@ class ToolService(BaseService):
                         continue
                     gateway_id = getattr(tool, "gateway_id", None)
                     tool_name_map[name] = str(gateway_id) if gateway_id else tool_name_map.get(name)
+                local_server_ids = self._server_ids_for_tool_names_cache_invalidation(db, {name for name, gateway_id in tool_name_map.items() if gateway_id is None})
                 for tool_name, gateway_id in tool_name_map.items():
-                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id)
+                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id, affected_server_ids=local_server_ids if gateway_id is None else None)
                 # Also invalidate tags cache since tool tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3553,6 +3725,7 @@ class ToolService(BaseService):
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
             tool_team_id = tool.team_id
+            tool_gateway_id = tool.gateway_id
 
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
@@ -3562,7 +3735,8 @@ class ToolService(BaseService):
             # Clean up server_tool_association rows referencing this tool.
             # The association table FK has no ondelete cascade, so rows must
             # be removed explicitly before the tool row can be deleted.
-            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id))
+            association_result = db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id).returning(server_tool_association.c.server_id))
+            affected_server_ids = () if tool_gateway_id else tuple(str(server_id) for server_id in association_result.scalars().all())
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
@@ -3609,7 +3783,7 @@ class ToolService(BaseService):
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool_gateway_id) if tool_gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3721,6 +3895,7 @@ class ToolService(BaseService):
 
             if is_activated or is_reachable:
                 tool.updated_at = datetime.now(timezone.utc)
+                affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, tool.gateway_id)
 
                 db.commit()
                 db.refresh(tool)
@@ -3730,7 +3905,11 @@ class ToolService(BaseService):
                     cache = _get_registry_cache()
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
-                    await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+                    await tool_lookup_cache.invalidate(
+                        tool.name,
+                        gateway_id=str(tool.gateway_id) if tool.gateway_id else None,
+                        affected_server_ids=affected_server_ids,
+                    )
 
                 if not tool.enabled:
                     # Inactive
@@ -3815,6 +3994,28 @@ class ToolService(BaseService):
             )
             raise ToolError(f"Failed to set tool state: {str(e)}")
 
+    @staticmethod
+    def _make_mcp_tool_error(
+        sanitized_message: str,
+        structured_content: Optional[Dict[str, Any]] = None,
+    ) -> "types.CallToolResult":
+        """Build a CallToolResult with isError=True.
+
+        Args:
+            sanitized_message: Pre-sanitized error text to include in the result.
+            structured_content: Optional dict attached to the result (e.g. ``{"status_code": 429}``
+                for retry-plugin status matching).
+
+        Returns:
+            A ``CallToolResult`` that conforms to the MCP protocol error shape.
+
+        """
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=f"MCP server error: {sanitized_message}")],
+            isError=True,
+            structuredContent=structured_content,
+        )
+
     async def invoke_tool_direct(
         self,
         gateway_id: str,
@@ -3844,10 +4045,11 @@ class ToolService(BaseService):
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
+            Returns a CallToolResult with isError=True if the tool invocation fails at runtime.
 
         Raises:
             ToolNotFoundError: If gateway not found or access denied.
-            ToolInvocationError: If invocation fails.
+            ToolInvocationError: If gateway is not in direct_proxy mode.
         """
         logger.info("Direct proxy tool invocation: %s via gateway %s", name, SecurityValidator.sanitize_log_message(gateway_id))
         # Look up gateway
@@ -3881,6 +4083,21 @@ class ToolService(BaseService):
                 meta_data = build_identity_meta(user_context, meta_data, gateway)
 
             gateway_url = gateway.url
+
+            # Snapshot auth_query_params while the ORM session is still open so
+            # sanitize_exception_message can redact secrets if the downstream call fails.
+            _gw_auth_type = getattr(gateway, "auth_type", None)
+            _gw_auth_query_params: Optional[Dict[str, str]] = None
+            if _gw_auth_type == "query_param":
+                raw_qp = getattr(gateway, "auth_query_params", None)
+                if isinstance(raw_qp, dict):
+                    _gw_auth_query_params = {}
+                    for _pk, _ev in raw_qp.items():
+                        if _ev:
+                            try:
+                                _gw_auth_query_params[_pk] = decode_auth(_ev).get(_pk, "")
+                            except Exception:  # noqa: S110
+                                logger.debug("Failed to decrypt query param '%s' for direct proxy error sanitization", _pk)
 
             # Resolve the original (unprefixed) tool name for the remote server.
             # Tools registered via gateways are stored as "{gateway_slug}{separator}{slugified_name}",
@@ -3916,46 +4133,52 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
-                request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)
-                async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                            await session.initialize()
+                async with mcp_proxy_client(
+                    url=gateway_url,
+                    headers=traced_headers,
+                    timeout=settings.mcpgateway_direct_proxy_timeout,
+                ) as client:
+                    with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                        pass  # Client auto-initializes on first RPC call
 
-                        with create_span(
-                            "mcp.client.request",
-                            {
-                                "mcp.tool.name": remote_name,
-                                "contextforge.gateway_id": str(gateway.id),
-                                "contextforge.runtime": "python",
-                            },
-                        ):
-                            # Call tool with meta if provided
-                            if request_meta_data:
-                                logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
-                            else:
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments)
-                        with create_span(
-                            "mcp.client.response",
-                            {
-                                "mcp.tool.name": remote_name,
-                                "contextforge.gateway_id": str(gateway.id),
-                                "contextforge.runtime": "python",
-                                "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
-                            },
-                        ):
-                            pass
+                    with create_span(
+                        "mcp.client.request",
+                        {
+                            "mcp.tool.name": remote_name,
+                            "contextforge.gateway_id": str(gateway.id),
+                            "contextforge.runtime": "python",
+                        },
+                    ):
+                        request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)  # noqa: F841 -- used in call_tool below
+                        # Call tool with meta if provided
+                        if request_meta_data:
+                            logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                        else:
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments)
+                    with create_span(
+                        "mcp.client.response",
+                        {
+                            "mcp.tool.name": remote_name,
+                            "contextforge.gateway_id": str(gateway.id),
+                            "contextforge.runtime": "python",
+                            "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
+                        },
+                    ):
+                        pass
 
-                        logger.info(
-                            "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                            SecurityValidator.sanitize_log_message(gateway.id),
-                            meta_data is not None,
-                        )
-                        return tool_result
+                    logger.info(
+                        "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                        SecurityValidator.sanitize_log_message(gateway.id),
+                        meta_data is not None,
+                    )
+                    return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
-            raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
+            # Sanitize before returning — exception text may contain auth tokens embedded in
+            # gateway URLs (CWE-209).  Matches the SSE/StreamableHTTP error paths.
+            sanitized = sanitize_exception_message(str(e), _gw_auth_query_params)
+            return self._make_mcp_tool_error(sanitized)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code
@@ -4354,7 +4577,10 @@ class ToolService(BaseService):
         is_direct_proxy = False
         tool = None
         gateway = None
-        tool_selected_from_server_scope = False
+        tool_lookup_cache = _get_tool_lookup_cache()
+        tool_membership_verified = False
+        negative_cache_allowed = False
+        negative_cache_caller_scope = self._negative_cache_caller_scope(user_email, token_teams, require_model_visible=require_model_visible)
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
         if gateway_id_from_header:
@@ -4388,28 +4614,37 @@ class ToolService(BaseService):
                 }
 
         if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
 
-            if cached_payload:
-                status = cached_payload.get("status", "active")
-                if status == "missing":
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                if status == "inactive":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                if status == "offline":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-                tool_payload = cached_payload.get("tool") or {}
-                gateway_payload = cached_payload.get("gateway")
+            if cached_payload and cached_payload.get("status", "active") == "active":
+                cached_tool_payload = cached_payload.get("tool") or {}
+                if await self._cached_tool_is_usable(
+                    db,
+                    cached_tool_payload,
+                    user_email,
+                    token_teams,
+                    server_id,
+                    require_model_visible=require_model_visible,
+                ):
+                    tool_membership_verified = bool(server_id)
+                    negative_cache_allowed = True
+                    tool_payload = cached_tool_payload
+                    gateway_payload = cached_payload.get("gateway")
+
+            if not tool_payload and tool_lookup_cache.enabled:
+                negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
+                if negative_payload:
+                    self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
             tools = self._load_invocable_tools(db, name, server_id=server_id)
-            tool_selected_from_server_scope = bool(server_id)
+            tool_membership_verified = bool(server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
             multiple_found = len(tools) > 1
+            negative_cache_allowed = not multiple_found
             if not multiple_found:
                 tool = tools[0]
             else:
@@ -4436,15 +4671,27 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if negative_cache_allowed:
+                    tool_gateway_id = getattr(tool, "gateway_id", None)
+                    await tool_lookup_cache.set_negative(
+                        name,
+                        "offline",
+                        negative_cache_caller_scope,
+                        gateway_id=str(tool_gateway_id) if tool_gateway_id else None,
+                        server_id=server_id,
+                    )
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+                gateway_id = tool_payload.get("gateway_id")
+                if server_id:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
+                else:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -4460,7 +4707,7 @@ class ToolService(BaseService):
         if require_model_visible and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        if server_id and not tool_selected_from_server_scope:
+        if server_id and not tool_membership_verified:
             tool_id_for_check = tool_payload.get("id")
             if not tool_id_for_check:
                 raise ToolNotFoundError(f"Tool not found: {name}")
@@ -4681,24 +4928,32 @@ class ToolService(BaseService):
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
         #
-        # NOTE: CPEX control-execution telemetry is intentionally not emitted from this
-        # path.  prepare_rust_mcp_tool_execution() builds an execution plan and returns
-        # before the actual tool invocation — there is no downstream flush point where
-        # record_control_telemetry() can be called.  When the Rust runtime falls back to
-        # the Python invoke_tool() path (e.g. post-invoke hooks configured, ineligible
-        # transport) the Python path's own accumulator will capture all telemetry.
-        # Tracked in the Phase 5 attribute-policy follow-on issue.
+        # A successful plan still has no Rust-side control-telemetry flush point.
+        # A pre-invoke denial is different: no plan is returned and the upstream is
+        # never contacted, so persist its control evidence here before re-raising.
+        rust_ctl_acc = ControlTelemetryAccumulator()
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
-            pre_result, _ = await plugin_manager.invoke_hook(
-                ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                global_context=hook_global_context,
-                local_contexts=plugin_context_table,
-                violations_as_exceptions=True,
-                extensions=build_request_extensions(),
-            )
+            try:
+                pre_result, _ = await plugin_manager.invoke_hook(
+                    ToolHookType.TOOL_PRE_INVOKE,
+                    payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                    global_context=hook_global_context,
+                    local_contexts=plugin_context_table,
+                    violations_as_exceptions=True,
+                    extensions=build_request_extensions(),
+                )
+            except PluginViolationError as exc:
+                rust_ctl_acc.add_violation(exc, hook="pre")
+                record_control_telemetry(
+                    trace_id=current_trace_id.get(),
+                    accumulator=rust_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
+                raise
             record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
             _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
             if pre_result.modified_payload:
@@ -4964,8 +5219,9 @@ class ToolService(BaseService):
         Called from each transport-specific timeout handler so the retry plugin
         can record the failure and (optionally) request a retry.  If the plugin
         sets ``retry_delay_ms > 0``, a ``ToolTimeoutError`` carrying the delay
-        is raised immediately; otherwise control returns to the caller which
-        raises a plain ``ToolTimeoutError``.
+        is raised immediately; otherwise this method returns normally and the
+        caller must raise a plain ``ToolTimeoutError`` to reach the outer
+        ``invoke_tool`` handler.
 
         Args:
             name: Tool name.
@@ -5020,6 +5276,10 @@ class ToolService(BaseService):
         require_app_visible: bool,
         require_model_visible: bool,
         path_label: str,
+        progress_callback: Optional[Any] = None,
+        allow_input_required: bool = False,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> "ToolResult":
         """Sleep for the plugin-requested delay, then recursively re-invoke the tool.
 
@@ -5045,6 +5305,10 @@ class ToolService(BaseService):
             require_app_visible: Whether the retried invocation must resolve an app-visible tool.
             require_model_visible: Whether the retried invocation must resolve a model-visible tool.
             path_label: Label for log messages (success/timeout/exception).
+            progress_callback: Optional callback forwarded to the retried invocation for progress notifications.
+            allow_input_required: Whether the retried invocation may return an InputRequiredResult (MRTR).
+            input_responses: Client responses to a prior InputRequiredResult, forwarded on retry.
+            request_state: Opaque server state echoed back with input_responses on retry.
 
         Returns:
             ToolResult from the retried invocation.
@@ -5076,6 +5340,10 @@ class ToolService(BaseService):
                 require_app_visible=require_app_visible,
                 require_model_visible=require_model_visible,
                 retry_attempt=retry_attempt + 1,
+                progress_callback=progress_callback,
+                allow_input_required=allow_input_required,
+                input_responses=input_responses,
+                request_state=request_state,
             )
 
     async def _resolve_tool_for_invocation(
@@ -5133,6 +5401,15 @@ class ToolService(BaseService):
         is_direct_proxy = False
         tool = None
         gateway = None
+        tool_lookup_cache = _get_tool_lookup_cache()
+        tool_membership_verified = False
+        negative_cache_allowed = False
+        negative_cache_caller_scope = self._negative_cache_caller_scope(
+            user_email,
+            token_teams,
+            require_app_visible=require_app_visible,
+            require_model_visible=require_model_visible,
+        )
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
 
@@ -5182,19 +5459,28 @@ class ToolService(BaseService):
 
         # Normal mode: look up tool in database/cache
         if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
 
-            if cached_payload:
-                status = cached_payload.get("status", "active")
-                if status == "missing":
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                if status == "inactive":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                if status == "offline":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-                tool_payload = cached_payload.get("tool") or {}
-                gateway_payload = cached_payload.get("gateway")
+            if cached_payload and cached_payload.get("status", "active") == "active":
+                cached_tool_payload = cached_payload.get("tool") or {}
+                if await self._cached_tool_is_usable(
+                    db,
+                    cached_tool_payload,
+                    user_email,
+                    token_teams,
+                    server_id,
+                    require_app_visible=require_app_visible,
+                    require_model_visible=require_model_visible,
+                ):
+                    tool_membership_verified = bool(server_id)
+                    negative_cache_allowed = True
+                    tool_payload = cached_tool_payload
+                    gateway_payload = cached_payload.get("gateway")
+
+            if not tool_payload and tool_lookup_cache.enabled:
+                negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
+                if negative_payload:
+                    self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1
@@ -5202,11 +5488,13 @@ class ToolService(BaseService):
             # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
             # tool names across teams without crashing on MultipleResultsFound.
             tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tool_membership_verified = bool(server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
             multiple_found = len(tools) > 1
+            negative_cache_allowed = not multiple_found
             if not multiple_found:
                 tool = tools[0]
             else:
@@ -5240,7 +5528,15 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if negative_cache_allowed:
+                    tool_gateway_id = getattr(tool, "gateway_id", None)
+                    await tool_lookup_cache.set_negative(
+                        name,
+                        "offline",
+                        negative_cache_caller_scope,
+                        gateway_id=str(tool_gateway_id) if tool_gateway_id else None,
+                        server_id=server_id,
+                    )
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
@@ -5249,8 +5545,12 @@ class ToolService(BaseService):
             gateway_payload = cache_payload.get("gateway")
             # Skip caching when multiple tools share a name — resolution is
             # user-dependent, so a cached result could be wrong for other users.
-            if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+                gateway_id = tool_payload.get("gateway_id")
+                if server_id:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
+                else:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -5269,14 +5569,21 @@ class ToolService(BaseService):
             # Check deprecated status after RBAC to avoid leaking tool existence
             if tool_payload.get("deprecated") is True:
                 # Cache the deprecated status to avoid repeated DB queries
-                await tool_lookup_cache.set_negative(name, "deprecated")
+                if negative_cache_allowed:
+                    await tool_lookup_cache.set_negative(
+                        name,
+                        "deprecated",
+                        negative_cache_caller_scope,
+                        gateway_id=tool_payload.get("gateway_id"),
+                        server_id=server_id,
+                    )
                 raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided
             # Tool must be attached to the specified virtual server
             # ═══════════════════════════════════════════════════════════════════════════
-            if server_id:
+            if server_id and not tool_membership_verified:
                 tool_id_for_check = tool_payload.get("id")
                 if not tool_id_for_check:
                     # Cannot verify server membership without tool ID - deny access
@@ -5331,6 +5638,11 @@ class ToolService(BaseService):
         require_app_visible: bool = False,
         require_model_visible: bool = False,
         retry_attempt: int = 0,
+        *,
+        progress_callback: Optional[Any] = None,
+        allow_input_required: bool = False,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -5360,6 +5672,12 @@ class ToolService(BaseService):
             require_model_visible: When True, deny execution unless the resolved tool is model-visible.
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
+            progress_callback: Optional async callable (progress, total, message) invoked for
+                each progress update the upstream server emits during the call.
+            allow_input_required: When True, an upstream InputRequiredResult (2026 MRTR)
+                is surfaced via ToolInputRequired instead of failing the call.
+            input_responses: Client answers to a prior InputRequiredResult, forwarded upstream.
+            request_state: Opaque state echoed from a prior InputRequiredResult, forwarded upstream.
 
         Returns:
             Tool invocation result.
@@ -5787,12 +6105,12 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError (outage) is not caught here — it propagates to the outer
                             # except PluginError handler without mark_denied(), keeping enforcement
                             # denials and plugin crashes distinguishable in downstream dashboards.
-                            _ctl_acc.mark_denied(hook="pre")
+                            _ctl_acc.add_violation(exc, hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
@@ -6039,16 +6357,24 @@ class ToolService(BaseService):
                             # Non-2xx response — parse body (may be HTML, plain text, XML, etc.)
                             try:
                                 result = response.json()
+                                # JSON parsed successfully - format as error message
+                                if isinstance(result, dict) and "error" in result:
+                                    error_val = result["error"]
+                                else:
+                                    error_val = f"HTTP {response.status_code}: {response.text[: settings.rest_response_text_max_length]}"
+                                # A non-string "error" value is serialized fresh here and was never
+                                # bounded by _handle_json_parse_error, so bound it to the same limit.
+                                serialized_error = error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode()[: settings.rest_response_text_max_length]
+                                content = [TextContent(type="text", text=serialized_error)]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=True)
-                            if "error" in result:
-                                error_val = result["error"]
-                            elif "response_text" in result:
-                                error_val = f"HTTP {response.status_code}: {result['response_text']}"
-                            else:
-                                error_val = f"HTTP {response.status_code}"
+                                # JSON parse failed - get error TextContent from handler
+                                error_content = _handle_json_parse_error(response, e, is_error_response=True)
+                                # Prefix the parse-error text with the HTTP status
+                                first_text = error_content[0].text if error_content else ""
+                                content = [TextContent(type="text", text=f"HTTP {response.status_code}: {first_text}")]
+
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=content,
                                 is_error=True,
                                 structured_content={"status_code": response.status_code},
                             )
@@ -6064,28 +6390,42 @@ class ToolService(BaseService):
                             # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
                             try:
                                 result = response.json()
+                                # JSON parsed successfully - extract error message
+                                error_val = result["error"] if isinstance(result, dict) and "error" in result else "Tool error encountered"
+                                serialized_error = error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode()[: settings.rest_response_text_max_length]
+                                content = [TextContent(type="text", text=serialized_error)]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=True)
-                            error_val = result["error"] if "error" in result else "Tool error encountered"
+                                # JSON parse failed - get error TextContent from handler
+                                content = _handle_json_parse_error(response, e, is_error_response=True)
+
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=content,
                                 is_error=True,
                             )
                             # Don't mark as successful for error responses - success remains False
                         else:
+                            parse_error = None
                             try:
                                 result = response.json()
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=False)
-                            logger.debug("REST API tool response: %s", result)
-                            filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
-                            # Check if extract_using_jq returned an error (list of TextContent objects)
-                            if _is_jq_filter_error(filtered_response):
-                                # Error case - use the TextContent directly
-                                tool_result = ToolResult(content=filtered_response, is_error=True)
-                                success = False
+                                parse_error = _handle_json_parse_error(response, e, is_error_response=False)
+                                # Without an outputSchema, a non-JSON body is still a valid result.
+                                # Pass the truncated raw text through as the tool output.
+                                result = {"response_text": response.text[: settings.rest_response_text_max_length]} if response.text else {"error": "Empty response body"}
+                            if parse_error is not None and tool_output_schema:
+                                # A non-JSON body cannot satisfy outputSchema, so report the parse error.
+                                # Skip jq here: TextContent is not JSON-serializable.
+                                tool_result = ToolResult(content=parse_error, is_error=True)
                             else:
-                                tool_result = self._coerce_to_tool_result(filtered_response)
+                                logger.debug("REST API tool response: %s", result)
+                                filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
+                                # Check if extract_using_jq returned an error (list of TextContent objects)
+                                if _is_jq_filter_error(filtered_response):
+                                    # Error case - use the TextContent directly
+                                    tool_result = ToolResult(content=filtered_response, is_error=True)
+                                    success = False
+                                else:
+                                    tool_result = self._coerce_to_tool_result(filtered_response)
                             # If output schema is present, validate and attach structured content.
                             # The validator skips for isError=true (per #4202) and, on validation
                             # failure, mutates tool_result in place with is_error=True, so the
@@ -6277,10 +6617,10 @@ class ToolService(BaseService):
 
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
-                        timeout: httpx.Timeout | None = None,
-                        auth: httpx.Auth | None = None,
-                    ) -> httpx.AsyncClient:
-                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+                        timeout: httpx2.Timeout | None = None,
+                        auth: httpx2.Auth | None = None,
+                    ) -> httpx2.AsyncClient:
+                        """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                         Args:
                             headers: Optional headers for the client
@@ -6288,7 +6628,7 @@ class ToolService(BaseService):
                             auth: Optional auth for the client
 
                         Returns:
-                            httpx.AsyncClient: Configured HTTPX async client
+                            httpx2.AsyncClient: Configured HTTPX async client
 
                         Raises:
                             Exception: If CA certificate signature is invalid
@@ -6305,7 +6645,7 @@ class ToolService(BaseService):
                             else:
                                 valid = True
                         # First-Party
-                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
 
                         # For plain HTTP gateway URLs, skip SSL context entirely to avoid unnecessary SSL setup.
                         if gateway_url and gateway_url.lower().startswith("http://"):
@@ -6321,15 +6661,15 @@ class ToolService(BaseService):
 
                         # Use effective_timeout for read operations if not explicitly overridden by caller
                         # This ensures the underlying client waits at least as long as the tool configuration requires
-                        factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
+                        factory_timeout = timeout if timeout else get_httpx2_timeout(read_timeout=effective_timeout)
 
-                        return httpx.AsyncClient(
+                        return httpx2.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
                             follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
-                            limits=httpx.Limits(
+                            limits=httpx2.Limits(
                                 max_connections=settings.httpx_max_connections,
                                 max_keepalive_connections=settings.httpx_max_keepalive_connections,
                                 keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -6344,12 +6684,13 @@ class ToolService(BaseService):
                             headers: HTTP headers to include in the request
 
                         Returns:
-                            ToolResult: Result of tool call
+                            CallToolResult: Result of tool call. Returns ``isError=True`` on
+                            timeouts, connection errors, and communication failures instead of
+                            raising, so the MCP protocol ``content`` contract is always satisfied.
 
                         Raises:
-                            ToolInvocationError: If the tool invocation fails during execution.
-                            ToolTimeoutError: If the tool invocation times out.
-                            BaseException: On connection or communication errors
+                            asyncio.CancelledError: Propagated without wrapping.
+                            SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
                         # Get correlation ID for distributed tracing
@@ -6403,7 +6744,19 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(
+                                            tool_name_original,
+                                            arguments,
+                                            meta=meta_data,
+                                            progress_callback=progress_callback,
+                                            allow_input_required=True,
+                                            input_responses=input_responses,
+                                            request_state=request_state,
+                                        )
+                                        if isinstance(tool_call_result, types.InputRequiredResult):
+                                            if allow_input_required:
+                                                raise ToolInputRequired(tool_call_result)
+                                            raise ToolInvocationError("Elicitation not supported")
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), or
@@ -6430,32 +6783,49 @@ class ToolService(BaseService):
                                     request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                                        async with ClientSession(*streams) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=request_headers,
+                                        timeout=effective_timeout,
+                                        httpx_client_factory=get_httpx_client_factory,
+                                        transport="sse",
+                                    ) as client:
+                                        with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
+                                            pass  # Client auto-initializes on first RPC call
+                                        with create_span(
+                                            "mcp.client.request",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                            },
+                                        ):
+                                            with anyio.fail_after(effective_timeout):
+                                                tool_call_result = await client.session.call_tool(
+                                                    tool_name_original,
+                                                    arguments,
+                                                    meta=request_meta_data,
+                                                    progress_callback=progress_callback,
+                                                    allow_input_required=True,
+                                                    input_responses=input_responses,
+                                                    request_state=request_state,
+                                                )
+                                                if isinstance(tool_call_result, types.InputRequiredResult):
+                                                    if allow_input_required:
+                                                        raise ToolInputRequired(tool_call_result)
+                                                    raise ToolInvocationError("Elicitation not supported")
+                                        with create_span(
+                                            "mcp.client.response",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                            },
+                                        ):
+                                            pass
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -6470,7 +6840,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
-                            # Handle timeout specifically - log and raise ToolInvocationError
+                            # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6498,9 +6868,21 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
+                            # Raise ToolTimeoutError so the outer handler at the invoke_tool level
+                            # fires TOOL_POST_INVOKE exactly once.  Using return here would fall
+                            # through into the post-process block and fire it a second time.
+                            # _run_timeout_post_invoke already raised if retry_delay_ms > 0, so
+                            # this raise carries no retry signal (retry_delay_ms=0).
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
+                        except ToolInputRequired:
+                            # 2026 MRTR control flow, not a failure - let the transport handle it.
+                            raise
+                        except (SystemExit, GeneratorExit, KeyboardInterrupt):
+                            # Process-control signals must propagate; they are not tool failures.
+                            # Mirrors the CancelledError guard above — see PR #3202 review B7.
                             raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -6509,6 +6891,9 @@ class ToolService(BaseService):
                             if isinstance(e, BaseExceptionGroup):
                                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                                     root_cause = root_cause.exceptions[0]
+                            if isinstance(root_cause, ToolInputRequired):
+                                # 2026 MRTR control flow arrived wrapped in a task-group ExceptionGroup.
+                                raise root_cause
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             # Sanitize error message to prevent URL secrets from leaking in logs
@@ -6522,7 +6907,12 @@ class ToolService(BaseService):
                                 error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
-                            raise
+                            # Include HTTP status code in structured_content so the retry plugin can
+                            # honour retry_on_status (e.g. 429, 503) on this transport.
+                            exc_structured: Optional[Dict[str, Any]] = None
+                            if isinstance(root_cause, httpx.HTTPStatusError):
+                                exc_structured = {"status_code": root_cause.response.status_code}
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -6532,12 +6922,14 @@ class ToolService(BaseService):
                             headers: HTTP headers to include in the request
 
                         Returns:
-                            ToolResult: Result of tool call
+                            CallToolResult: Result of tool call. Returns ``isError=True`` on
+                            timeouts, connection errors, and communication failures instead of
+                            raising, so the MCP protocol ``content`` contract is always satisfied.
 
                         Raises:
-                            ToolInvocationError: If the tool invocation fails during execution.
-                            ToolTimeoutError: If the tool invocation times out.
-                            BaseException: On connection or communication errors
+                            asyncio.CancelledError: Propagated without wrapping.
+                            SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
+
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
@@ -6585,7 +6977,19 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(
+                                            tool_name_original,
+                                            arguments,
+                                            meta=meta_data,
+                                            progress_callback=progress_callback,
+                                            allow_input_required=True,
+                                            input_responses=input_responses,
+                                            request_state=request_state,
+                                        )
+                                        if isinstance(tool_call_result, types.InputRequiredResult):
+                                            if allow_input_required:
+                                                raise ToolInputRequired(tool_call_result)
+                                            raise ToolInvocationError("Elicitation not supported")
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), when
@@ -6613,36 +7017,48 @@ class ToolService(BaseService):
                                     request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                        _get_session_id,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=request_headers,
+                                        timeout=effective_timeout,
+                                        httpx_client_factory=get_httpx_client_factory,
+                                    ) as client:
+                                        with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                                            pass  # Client auto-initializes on first RPC call
+                                        with create_span(
+                                            "mcp.client.request",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                            },
+                                        ):
+                                            with anyio.fail_after(effective_timeout):
+                                                tool_call_result = await client.session.call_tool(
+                                                    tool_name_original,
+                                                    arguments,
+                                                    meta=request_meta_data,
+                                                    progress_callback=progress_callback,
+                                                    allow_input_required=True,
+                                                    input_responses=input_responses,
+                                                    request_state=request_state,
+                                                )
+                                                if isinstance(tool_call_result, types.InputRequiredResult):
+                                                    if allow_input_required:
+                                                        raise ToolInputRequired(tool_call_result)
+                                                    raise ToolInvocationError("Elicitation not supported")
+                                        with create_span(
+                                            "mcp.client.response",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                            },
+                                        ):
+                                            pass
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -6657,7 +7073,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
-                            # Handle timeout specifically - log and raise ToolInvocationError
+                            # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6685,9 +7101,21 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
+                            # Raise ToolTimeoutError so the outer handler at the invoke_tool level
+                            # fires TOOL_POST_INVOKE exactly once.  Using return here would fall
+                            # through into the post-process block and fire it a second time.
+                            # _run_timeout_post_invoke already raised if retry_delay_ms > 0, so
+                            # this raise carries no retry signal (retry_delay_ms=0).
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
+                        except ToolInputRequired:
+                            # 2026 MRTR control flow, not a failure - let the transport handle it.
+                            raise
+                        except (SystemExit, GeneratorExit, KeyboardInterrupt):
+                            # Process-control signals must propagate; they are not tool failures.
+                            # Mirrors the CancelledError guard above — see PR #3202 review B7.
                             raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -6696,6 +7124,9 @@ class ToolService(BaseService):
                             if isinstance(e, BaseExceptionGroup):
                                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                                     root_cause = root_cause.exceptions[0]
+                            if isinstance(root_cause, ToolInputRequired):
+                                # 2026 MRTR control flow arrived wrapped in a task-group ExceptionGroup.
+                                raise root_cause
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             # Sanitize error message to prevent URL secrets from leaking in logs
@@ -6709,7 +7140,12 @@ class ToolService(BaseService):
                                 error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
-                            raise
+                            # Include HTTP status code in structured_content so the retry plugin can
+                            # honour retry_on_status (e.g. 429, 503) on this transport.
+                            exc_structured: Optional[Dict[str, Any]] = None
+                            if isinstance(root_cause, httpx.HTTPStatusError):
+                                exc_structured = {"status_code": root_cause.response.status_code}
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
 
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
@@ -6731,10 +7167,10 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError propagates to the outer handler without mark_denied().
-                            _ctl_acc.mark_denied(hook="pre")
+                            _ctl_acc.add_violation(exc, hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
@@ -6783,7 +7219,10 @@ class ToolService(BaseService):
                             logger.debug("Tool call result dump: %s", dump)
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
-                            structured = dump.get("structuredContent") or dump.get("structured_content")
+                            # Use explicit None check to preserve empty dicts (valid MCP responses)
+                            structured = dump.get("structuredContent")
+                            if structured is None:
+                                structured = dump.get("structured_content")
                             filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
 
                             is_err = getattr(tool_call_result, "is_error", None)
@@ -6831,10 +7270,10 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError propagates to the outer handler without mark_denied().
-                            _ctl_acc.mark_denied(hook="pre")
+                            _ctl_acc.add_violation(exc, hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
@@ -7021,10 +7460,10 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except PluginViolationError:
+                        except PluginViolationError as exc:
                             # Deliberate policy denial: mark so telemetry emits result.allowed=False.
                             # PluginError propagates to the outer handler without mark_denied().
-                            _ctl_acc.mark_denied(hook="post")
+                            _ctl_acc.add_violation(exc, hook="post")
                             raise
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
                         _ctl_acc.add(post_result, hook="post")
@@ -7069,6 +7508,10 @@ class ToolService(BaseService):
                             require_app_visible=require_app_visible,
                             require_model_visible=require_model_visible,
                             path_label="success",
+                            progress_callback=progress_callback,
+                            allow_input_required=allow_input_required,
+                            input_responses=input_responses,
+                            request_state=request_state,
                         )
 
                 # Emit CPEX control-execution telemetry for this invocation (best-effort).
@@ -7081,11 +7524,8 @@ class ToolService(BaseService):
             except PluginViolationError:
                 # Deliberate policy denial — emit partial telemetry so the summary span captures
                 # result.allowed=False and any pre-denial execution records.
-                # Note: when violations_as_exceptions=True, CPEX raises PluginViolationError
-                # *before* appending a ControlExecutionRecord for the denying plugin to the
-                # executions list (see cpex/framework/manager.py:680-682).  _ctl_acc therefore
-                # contains only records from plugins that ran before the denier.
-                # Upstream CPEX gap tracked in issue #5785 follow-on.
+                # The hook-level handlers add CPEX's execution records and, when available,
+                # its immutable safe denial outcome before this outer handler flushes them.
                 _emit_ctl_telemetry()
                 raise
             except PluginError:
@@ -7127,10 +7567,17 @@ class ToolService(BaseService):
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
                         path_label="timeout",
+                        progress_callback=progress_callback,
+                        allow_input_required=allow_input_required,
+                        input_responses=input_responses,
+                        request_state=request_state,
                     )
                 raise
             except asyncio.CancelledError:
                 # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
+                raise
+            except ToolInputRequired:
+                # 2026 MRTR control flow, not a failure - let the transport handle it.
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -7139,6 +7586,9 @@ class ToolService(BaseService):
                 if isinstance(e, BaseExceptionGroup):
                     while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                         root_cause = root_cause.exceptions[0]
+                if isinstance(root_cause, ToolInputRequired):
+                    # 2026 MRTR control flow arrived wrapped in a task-group ExceptionGroup.
+                    raise root_cause
                 error_message = str(root_cause)
                 # Set span error status
                 if span:
@@ -7195,6 +7645,10 @@ class ToolService(BaseService):
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
                         path_label="exception",
+                        progress_callback=progress_callback,
+                        allow_input_required=allow_input_required,
+                        input_responses=input_responses,
+                        request_state=request_state,
                     )
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
@@ -7613,6 +8067,7 @@ class ToolService(BaseService):
 
             old_tool_name = tool.name
             old_gateway_id = tool.gateway_id
+            affected_server_ids = self._server_ids_for_tool_cache_invalidation(db, tool.id, old_gateway_id)
 
             # Check ownership if user_email provided
             if user_email:
@@ -7792,8 +8247,8 @@ class ToolService(BaseService):
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None)
-            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None, affected_server_ids=affected_server_ids)
+            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None, affected_server_ids=affected_server_ids)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

@@ -65,10 +65,10 @@ from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_valida
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
+from mcpgateway._security_constants import calculate_entropy
 from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
-from mcpgateway._security_constants import calculate_entropy
 from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
@@ -657,6 +657,23 @@ class Settings(BaseSettings):
         description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+    mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
+        default="legacy",
+        description=(
+            "Upstream MCP connect mode: 'auto' negotiates modern protocol revisions (e.g. 2026-07-28) "
+            "via server/discover with legacy initialize fallback; 'legacy' forces the pre-2026 "
+            "initialize handshake (rollback for misbehaving upstreams)."
+        ),
+    )
+    mcp_inbound_protocol_mode: Literal["auto", "legacy"] = Field(
+        default="legacy",
+        description=(
+            "Inbound MCP protocol mode: 'auto' accepts all supported protocol versions "
+            "including 2026-07-28; 'legacy' accepts only handshake-era versions "
+            "(2024-11-05 through 2025-11-25), rejecting 2026-07-28 with 400 to steer "
+            "dual-era clients to legacy initialize negotiation."
+        ),
+    )
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(
@@ -2247,7 +2264,7 @@ class Settings(BaseSettings):
         default=32,
         ge=0,
         le=128,
-        description=("Max per-control result records exported per tool invocation. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
+        description=("Max per-control result records exported per tool invocation. Denials take priority; zero emits only the summary. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
     )
     cpex_control_telemetry_max_attributes: int = Field(
         default=256,
@@ -2264,8 +2281,9 @@ class Settings(BaseSettings):
     cpex_control_telemetry_emit_reason: bool = Field(
         default=False,
         description=(
-            "Emit cpex.control.result.reason and cpex.control.result.error_code on "
-            "per-control spans. Disabled by default because these fields may contain "
+            "Emit free-form execution reasons and error codes on per-control spans. "
+            "Validated denial outcome codes are emitted independently of this flag. "
+            "Disabled by default because free-form fields may contain "
             "PII, tool argument values, or exception content. Enable only when the "
             "observability sink is appropriately secured and a redaction boundary is "
             "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
@@ -2912,6 +2930,11 @@ class Settings(BaseSettings):
     # Per-gateway refresh configuration (used when auto_refresh_servers is True)
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
+
+    # Modern (2026-07-28) change-event listeners
+    # When enabled, the gateway holds one standing subscriptions/listen stream per
+    # server to get the list changed event
+    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
@@ -3881,6 +3904,17 @@ Disallow: /
     max_header_total_size_bytes: int = Field(default=16384, description="Maximum total size of all headers (16KB default)")
     max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
     max_header_count: int = Field(default=100, description="Maximum number of header fields")
+    max_header_value_length: int = Field(
+        default=4096, description="Maximum length for individual header values during sanitization (4KB default). Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+)."
+    )
+
+    @field_validator("max_header_value_length")
+    @classmethod
+    def validate_max_header_value_length(cls, v: int) -> int:
+        """Validate max_header_value_length is a positive integer."""
+        if v <= 0:
+            raise ValueError("max_header_value_length must be positive")
+        return v
 
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")

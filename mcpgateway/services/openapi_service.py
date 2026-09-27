@@ -7,26 +7,26 @@ OpenAPI Service for ContextForge AI Gateway.
 This module provides services for fetching and extracting schemas from OpenAPI specifications.
 """
 
-# Standard
 import asyncio
+import copy
+import collections
 import logging
-from collections import OrderedDict
+import time
 from sys import getsizeof
-from time import monotonic
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 import urllib.parse
 
 # Third-Party
 import orjson
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.common.validators import SecurityValidator, pin_url_to_resolved_ip
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_schema(schema_obj: Optional[dict[str, Any]], components_schemas: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _resolve_schema(schema_obj: Optional[dict], components_schemas: dict) -> Optional[dict]:
     """Resolve a schema from a ``$ref`` reference or return an inline schema.
 
     Only resolves top-level local ``$ref`` references of the form
@@ -49,164 +49,241 @@ def _resolve_schema(schema_obj: Optional[dict[str, Any]], components_schemas: di
             return None
         schema_name = ref_path.split("/")[-1]
         resolved = components_schemas.get(schema_name)
-        if not isinstance(resolved, dict):
+        if resolved is None:
             logger.warning("Unresolved $ref '%s': schema '%s' not found in components.schemas", ref_path, schema_name)
-            return None
         return resolved
-    return schema_obj if isinstance(schema_obj, dict) else None
+    return schema_obj if schema_obj is not None else None
 
 
 # 10 MiB — generous for any realistic OpenAPI spec, prevents memory exhaustion from malicious servers.
 _MAX_SPEC_BYTES = 10 * 1024 * 1024
-_OPENAPI_SPEC_CACHE_TTL = 60.0
-_OPENAPI_SPEC_CACHE_MAX_ENTRIES = 128
-_OPENAPI_SPEC_CACHE_MAX_BYTES = 64 * 1024 * 1024
-_OPENAPI_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
 
-_openapi_spec_cache: OrderedDict[str, tuple[float, dict[str, Any], int]] = OrderedDict()
-_openapi_spec_cache_bytes = 0
-_openapi_spec_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
-_openapi_spec_cache_lock = asyncio.Lock()
+_SPEC_CACHE_MAX = 64
+_SPEC_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_SPEC_CACHE_TTL = 60.0
+# A failed fetch is cached too, for a much shorter window. Without a negative entry every
+# queued single-flight waiter re-runs the failing fetch in turn, so N waiters pay N × timeout.
+_SPEC_ERROR_TTL = 5.0
+_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
+_spec_cache: collections.OrderedDict[str, tuple[float, dict | Exception, int]] = collections.OrderedDict()
+_spec_cache_bytes = 0
+_spec_locks: dict[str, asyncio.Lock] = {}
+_spec_locks_guard = asyncio.Lock()
 
 
-async def _fetch_openapi_spec_uncached(spec_url: str, timeout: float) -> dict[str, Any]:
-    """Fetch and parse an OpenAPI specification without consulting the cache."""
-    client = await get_http_client()
-    async with client.stream("GET", spec_url, timeout=timeout, follow_redirects=False) as response:
-        response.raise_for_status()
+async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
+    """Fetch an OpenAPI specification from a URL with SSRF protection.
 
-        # Early reject via Content-Length when the header is present.
+    Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds, failures for
+    ``_SPEC_ERROR_TTL`` seconds.  Concurrent callers for the same URL share a
+    single in-flight fetch (single-flight), and a caller that arrives while a
+    failure is still cached re-raises that failure instead of refetching.
+    The cache is bounded by entry count and aggregate memory; expired and
+    overflow entries are evicted on access.
+
+    Connection pinning (DNS-rebinding prevention) follows the same pattern as
+    ``tool_service`` and ``a2a_protocol``: the validated DNS resolution is
+    pinned to the outbound request, and the original ``Host``/SNI are preserved.
+    An isolated ephemeral HTTP client is used per fetch to prevent cross-host
+    cookie leakage.
+
+    Args:
+        spec_url: The URL to fetch the OpenAPI spec from.
+        timeout: Request timeout in seconds (default: 10.0).
+
+    Returns:
+        The parsed OpenAPI specification.
+
+    Raises:
+        ValueError: If URL fails security validation, response is too large, or
+            response body is not valid JSON.
+        httpx.HTTPError: If the request fails.
+    """
+    global _spec_cache_bytes
+
+    now = time.monotonic()
+
+    # --- evict expired entries on every access ---
+    expired_keys = [k for k, (expires_at, _, _) in _spec_cache.items() if expires_at <= now]
+    for k in expired_keys:
+        _spec_cache_bytes -= _spec_cache.pop(k)[2]
+        _spec_locks.pop(k, None)
+
+    fresh = _fresh_cached_copy(spec_url)
+    if fresh is not None:
+        logger.debug("OpenAPI spec cache hit for %s", spec_url)
+        return fresh
+
+    # --- single-flight: one fetch per URL, concurrent callers wait ---
+    async with _spec_locks_guard:
+        if spec_url not in _spec_locks:
+            _spec_locks[spec_url] = asyncio.Lock()
+        lock = _spec_locks[spec_url]
+
+    async with lock:
+        # Re-check after acquiring — another waiter may have populated the cache.
+        fresh = _fresh_cached_copy(spec_url)
+        if fresh is not None:
+            logger.debug("OpenAPI spec single-flight coalesced for %s", spec_url)
+            return fresh
+
+        logger.debug("OpenAPI spec cache miss, fetching %s", spec_url)
         try:
-            cl = int(response.headers.get("content-length", "0"))
-        except (ValueError, OverflowError):
-            cl = 0  # Malformed header — fall through to streamed check below
-        if cl > _MAX_SPEC_BYTES:
-            raise ValueError(f"OpenAPI spec response too large ({cl} bytes, max {_MAX_SPEC_BYTES})")
+            result = await _do_fetch(spec_url, timeout)
+        except Exception as exc:
+            _store(spec_url, exc, _SPEC_ERROR_TTL)
+            raise
 
-        # Stream the body in chunks so we never buffer more than the cap.
-        chunks: list[bytes] = []
-        total = 0
-        async for chunk in response.aiter_bytes(chunk_size=8192):
-            total += len(chunk)
-            if total > _MAX_SPEC_BYTES:
-                raise ValueError(f"OpenAPI spec response too large (>{_MAX_SPEC_BYTES} bytes)")
-            chunks.append(chunk)
+        _store(spec_url, result, _SPEC_CACHE_TTL)
+        return copy.deepcopy(result)
+
+
+def _estimate_spec_cache_size(spec_url: str, value: dict | Exception, max_bytes: int) -> int:
+    """Estimate retained bytes and stop once the cache budget is exceeded."""
+    total = getsizeof(spec_url) + _SPEC_CACHE_ENTRY_OVERHEAD_BYTES
+    seen: set[int] = set()
+    pending: list[object] = [value]
+    while pending and total <= max_bytes:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        total += getsizeof(item)
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            pending.extend(item)
+        elif isinstance(item, Exception):
+            pending.extend(item.args)
+    return total
+
+
+def _store(spec_url: str, value: dict | Exception, ttl: float) -> None:
+    """Cache *value* under *spec_url* within the entry and byte limits.
+
+    Args:
+        spec_url: Cache key for the OpenAPI spec.
+        value: Parsed specification, or the exception raised by a failed fetch.
+        ttl: Lifetime of the entry in seconds.
+    """
+    global _spec_cache_bytes
+
+    entry_size = _estimate_spec_cache_size(spec_url, value, _SPEC_CACHE_MAX_BYTES)
+    previous = _spec_cache.pop(spec_url, None)
+    if previous is not None:
+        _spec_cache_bytes -= previous[2]
+    if entry_size > _SPEC_CACHE_MAX_BYTES:
+        _spec_locks.pop(spec_url, None)
+        return
+
+    _spec_cache[spec_url] = (time.monotonic() + ttl, value, entry_size)
+    _spec_cache_bytes += entry_size
+    _spec_cache.move_to_end(spec_url)
+    while len(_spec_cache) > _SPEC_CACHE_MAX or _spec_cache_bytes > _SPEC_CACHE_MAX_BYTES:
+        evicted_key, (_, _, evicted_size) = _spec_cache.popitem(last=False)
+        _spec_cache_bytes -= evicted_size
+        _spec_locks.pop(evicted_key, None)
+
+
+def _fresh_cached_copy(spec_url: str) -> Optional[dict]:
+    """Return an independent copy of the cached spec while the entry is live.
+
+    Args:
+        spec_url: Cache key for the OpenAPI spec.
+
+    Returns:
+        A deep copy of the cached spec, or ``None`` when absent or expired.
+
+    Raises:
+        Exception: The cached failure, when the live entry is a negative-cache
+            entry written by a recent failed fetch.
+    """
+    cached = _spec_cache.get(spec_url)
+    if cached is None or cached[0] <= time.monotonic():
+        return None
+    _spec_cache.move_to_end(spec_url)
+    if isinstance(cached[1], Exception):
+        raise cached[1]
+    return copy.deepcopy(cached[1])
+
+
+async def _do_fetch(spec_url: str, timeout: float) -> dict:
+    """Validate, pin, and fetch a single OpenAPI spec URL.
+
+    Uses an isolated ephemeral HTTP client (no shared cookies, single
+    connection) with the resolved IP pinned into the URL and the original
+    Host/SNI preserved — identical to the REST tool-invocation pattern.
+
+    Args:
+        spec_url: Validated OpenAPI spec URL.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Parsed JSON specification dict.
+    """
+    import httpx  # pylint: disable=import-outside-toplevel
+
+    # --- SSRF: validate + DNS-pin (closes the rebinding window) ---
+    validated = await SecurityValidator.validate_url_for_connection_pinning(spec_url, "OpenAPI spec URL")
+    resolved_ip = validated.get("resolved_ip")
+    original_hostname = validated.get("hostname")
+    original_authority = validated.get("original_authority")
+
+    fetch_url = spec_url
+    extra_headers: dict[str, str] = {}
+    extensions: dict[str, str] = {}
+
+    if resolved_ip and original_hostname and original_authority:
+        fetch_url = pin_url_to_resolved_ip(spec_url, resolved_ip)
+        extra_headers["Host"] = original_authority
+        extensions["sni_hostname"] = original_hostname
+    elif settings.ssrf_protection_enabled:
+        raise ValueError("OpenAPI spec URL blocked by URL policy")
+
+    # --- isolated client: no shared cookies, single connection ---
+    async with httpx.AsyncClient(
+        verify=not settings.skip_ssl_verify,
+        follow_redirects=False,
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+    ) as client:
+        request = client.build_request("GET", fetch_url, headers=extra_headers, timeout=timeout, extensions=extensions)
+        response = await client.send(request, stream=True)
+        try:
+            response.raise_for_status()
+
+            # Early reject via Content-Length when the header is present.
+            try:
+                cl = int(response.headers.get("content-length", "0"))
+            except (ValueError, OverflowError):
+                cl = 0  # Malformed header — fall through to streamed check.
+            if cl > _MAX_SPEC_BYTES:
+                raise ValueError(f"OpenAPI spec response too large ({cl} bytes, max {_MAX_SPEC_BYTES})")
+
+            # Stream the body in chunks so we never buffer more than the cap.
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes(chunk_size=8192):
+                total += len(chunk)
+                if total > _MAX_SPEC_BYTES:
+                    raise ValueError(f"OpenAPI spec response too large (>{_MAX_SPEC_BYTES} bytes)")
+                chunks.append(chunk)
+        finally:
+            await response.aclose()
 
     body = b"".join(chunks)
 
     try:
-        spec = orjson.loads(body)
-        if not isinstance(spec, dict):
-            raise ValueError("Response is not a JSON object. Ensure the URL points to a JSON OpenAPI specification.")
-        return spec
+        return orjson.loads(body)
     except (orjson.JSONDecodeError, ValueError) as exc:
         raise ValueError("Response is not valid JSON. Ensure the URL points to a JSON OpenAPI specification.") from exc
 
 
-def _estimate_openapi_spec_cache_size(spec_url: str, spec: dict[str, Any], max_bytes: int) -> int:
-    """Estimate retained cache bytes, stopping once the budget is exceeded."""
-    total = getsizeof(spec_url) + _OPENAPI_SPEC_CACHE_ENTRY_OVERHEAD_BYTES
-    if total > max_bytes:
-        return total
-
-    seen: set[int] = set()
-    pending: list[Any] = [spec]
-    while pending:
-        value = pending.pop()
-        value_id = id(value)
-        if value_id in seen:
-            continue
-        seen.add(value_id)
-        total += getsizeof(value)
-        if total > max_bytes:
-            return total
-        if isinstance(value, dict):
-            pending.extend(value.keys())
-            pending.extend(value.values())
-        elif isinstance(value, (list, tuple, set, frozenset)):
-            pending.extend(value)
-
-    return total
-
-
-async def _fetch_and_cache_openapi_spec(spec_url: str, timeout: float) -> dict[str, Any]:
-    """Fetch a specification and cache it only after a successful response."""
-    global _openapi_spec_cache_bytes
-
-    spec = await _fetch_openapi_spec_uncached(spec_url, timeout)
-    entry_size = _estimate_openapi_spec_cache_size(spec_url, spec, _OPENAPI_SPEC_CACHE_MAX_BYTES)
-
-    async with _openapi_spec_cache_lock:
-        previous = _openapi_spec_cache.pop(spec_url, None)
-        if previous is not None:
-            _openapi_spec_cache_bytes -= previous[2]
-        if entry_size <= _OPENAPI_SPEC_CACHE_MAX_BYTES:
-            _openapi_spec_cache[spec_url] = (monotonic(), spec, entry_size)
-            _openapi_spec_cache_bytes += entry_size
-        while len(_openapi_spec_cache) > _OPENAPI_SPEC_CACHE_MAX_ENTRIES or _openapi_spec_cache_bytes > _OPENAPI_SPEC_CACHE_MAX_BYTES:
-            _, (_, _, oldest_size) = _openapi_spec_cache.popitem(last=False)
-            _openapi_spec_cache_bytes -= oldest_size
-
-    return spec
-
-
-def _remove_inflight_openapi_spec(spec_url: str, task: asyncio.Task[dict[str, Any]]) -> None:
-    """Remove a completed single-flight task without disturbing a replacement."""
-    if _openapi_spec_inflight.get(spec_url) is task:
-        del _openapi_spec_inflight[spec_url]
-
-
-async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict[str, Any]:
-    """
-    Fetch OpenAPI specification from a URL with SSRF protection.
-
-    Redirects are disabled to prevent SSRF bypass (an attacker-controlled
-    server could redirect to an internal address after the initial URL
-    passes validation).  Response bodies larger than ``_MAX_SPEC_BYTES``
-    are rejected to guard against memory exhaustion.
-
-    Args:
-        spec_url: The URL to fetch the OpenAPI spec from
-        timeout: Request timeout in seconds (default: 10.0)
-
-    Returns:
-        dict: The parsed OpenAPI specification
-
-    Raises:
-        ValueError: If URL fails security validation, response is too large, or
-            response body is not valid JSON
-        httpx.HTTPError: If the request fails
-    """
-    global _openapi_spec_cache_bytes
-
-    # SSRF Protection: validate every call, including cache hits.
-    SecurityValidator.validate_url(spec_url, "OpenAPI spec URL")
-
-    async with _openapi_spec_cache_lock:
-        cached = _openapi_spec_cache.get(spec_url)
-        if cached is not None:
-            cached_at, spec, _ = cached
-            if monotonic() - cached_at < _OPENAPI_SPEC_CACHE_TTL:
-                return spec
-            _, _, cached_size = _openapi_spec_cache.pop(spec_url)
-            _openapi_spec_cache_bytes -= cached_size
-
-        task = _openapi_spec_inflight.get(spec_url)
-        if task is None:
-            task = asyncio.create_task(_fetch_and_cache_openapi_spec(spec_url, timeout))
-            _openapi_spec_inflight[spec_url] = task
-            task.add_done_callback(lambda completed: _remove_inflight_openapi_spec(spec_url, completed))
-
-    # Shield the shared fetch so cancellation of one caller does not cancel
-    # other callers waiting for the same specification.
-    return await asyncio.shield(task)
-
-
 def extract_schemas_from_openapi(
-    spec: dict[str, Any],
+    spec: dict,
     path: str,
     method: str,
-) -> Tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+) -> Tuple[Optional[dict], Optional[dict]]:
     """Extract input and output schemas from an OpenAPI specification.
 
     Args:
@@ -258,7 +335,7 @@ async def fetch_and_extract_schemas(
     method: str,
     openapi_url: Optional[str] = None,
     timeout: float = 10.0,
-) -> Tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], str]:
+) -> Tuple[Optional[dict], Optional[dict], str]:
     """
     Fetch OpenAPI spec and extract input/output schemas with SSRF protection.
 
