@@ -35,6 +35,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import set_custom_name_and_slug
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -99,7 +100,19 @@ class TestGatewayToolNameCollisions:
     def test_candidate_name_uses_gateway_orm_format(self, monkeypatch, separator):
         """Candidate names use configured separator and same slug normalization as ORM."""
         monkeypatch.setattr(settings, "gateway_tool_name_separator", separator)
-        assert _build_gateway_tool_invocation_name("Prod API", "API Search") == f"{slugify('Prod API')}{separator}{slugify('API Search')}"
+        tool = SimpleNamespace(
+            original_name="API Search",
+            custom_name="API Search",
+            custom_name_slug="",
+            display_name=None,
+            gateway=SimpleNamespace(name="Prod API"),
+            gateway_id="gateway-id",
+            name="",
+        )
+
+        set_custom_name_and_slug(None, None, tool)
+
+        assert _build_gateway_tool_invocation_name("Prod API", "API Search") == tool.name
 
     def test_public_collision_is_rejected(self):
         """Public tool namespace ignores owner identity."""
@@ -157,6 +170,94 @@ class TestGatewayToolNameCollisions:
             )
 
         db.execute.assert_not_called()
+
+    def test_private_to_public_projection_rejects_public_collision(self):
+        """Inherited tool visibility uses final gateway visibility before mutation."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "private"
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id="current",
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[tool],
+                existing_tools_by_original_name={"search": tool},
+                project_gateway_visibility=True,
+                original_gateway_visibility="private",
+            )
+
+    def test_public_to_private_projection_ignores_public_collision(self):
+        """Final private scope does not retain stale public collision semantics."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "public"
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="private",
+            tools=[tool],
+            existing_tools_by_original_name={"search": tool},
+            project_gateway_visibility=True,
+            original_gateway_visibility="public",
+        )
+
+    def test_gateway_visibility_projection_preserves_tool_override(self):
+        """Gateway visibility changes preserve explicit per-tool visibility."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "team"
+        tool.team_id = "team-one"
+        tool.owner_email = "owner@example.com"
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="private",
+            tools=[tool],
+            existing_tools_by_original_name={"search": tool},
+            project_gateway_visibility=True,
+            original_gateway_visibility="public",
+        )
 
 
 def _make_gateway(**overrides):
@@ -2005,6 +2106,44 @@ class TestGatewayService:
         assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
         # Visibility changes must be persisted
         test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_visibility_collision_rolls_back_before_init(self, gateway_service, mock_gateway, test_db):
+        """Visibility-only update validates final tool scope before mutation."""
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "private"
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+        tool.gateway_id = "current"
+        mock_gateway.id = "current"
+        mock_gateway.name = "prod"
+        mock_gateway.visibility = "private"
+        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.team_id = None
+        mock_gateway.tools = [tool]
+        conflict = SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(scalars_list=[conflict]),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        gateway_service._initialize_gateway = AsyncMock()
+
+        with pytest.raises(GatewayToolNameConflictError):
+            await gateway_service.update_gateway(test_db, "current", GatewayUpdate(visibility="public"))
+
+        assert mock_gateway.visibility == "private"
+        assert tool.visibility == "private"
+        gateway_service._initialize_gateway.assert_not_awaited()
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_rejects_nonexistent_team(self, gateway_service, mock_gateway, test_db):

@@ -2874,17 +2874,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     return self.convert_gateway_to_read(gateway)
 
                 gateway_name_changed = gateway_update.name is not None and gateway_update.name != gateway.name
-                if gateway_name_changed:
+                gateway_visibility_changed = gateway_update.visibility is not None and gateway_update.visibility != gateway.visibility
+                if gateway_name_changed or gateway_visibility_changed:
                     self._validate_tool_name_collisions(
                         db,
-                        gateway_name=gateway_update.name,
+                        gateway_name=gateway_update.name or gateway.name,
                         gateway_id=str(gateway.id),
                         gateway_team_id=gateway.team_id,
                         gateway_owner_email=gateway.owner_email,
                         gateway_visibility=gateway_update.visibility or gateway.visibility,
                         tools=list(gateway.tools),
                         existing_tools_by_original_name={tool.original_name: tool for tool in gateway.tools},
-                        project_gateway_rename=True,
+                        project_gateway_rename=gateway_name_changed,
+                        project_gateway_visibility=gateway_visibility_changed,
+                        original_gateway_visibility=gateway.visibility,
                     )
 
                 # Check for name conflicts if name is being changed
@@ -6498,6 +6501,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         existing_tools_by_original_name: dict[str, DbTool] | None = None,
         update_visibility: bool = False,
         project_gateway_rename: bool = False,
+        project_gateway_visibility: bool = False,
+        original_gateway_visibility: str | None = None,
     ) -> None:
         """Reject federated tool names that collide in their persisted visibility scope.
 
@@ -6519,8 +6524,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     candidate_name = slugify(gateway_name) + settings.gateway_tool_name_separator + custom_name_slug
                 else:
                     candidate_name = existing.name
-                visibility = getattr(tool, "visibility", None) if update_visibility else None
-                projected.append((candidate_name, visibility or existing.visibility, existing.team_id, existing.owner_email))
+                visibility = existing.visibility
+                if project_gateway_visibility and visibility == original_gateway_visibility:
+                    visibility = gateway_visibility
+                upstream_visibility = getattr(tool, "visibility", None) if update_visibility else None
+                projected.append((candidate_name, upstream_visibility or visibility, existing.team_id, existing.owner_email))
             else:
                 projected.append(
                     (

@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-- **Federated gateway tool-name collisions** - Gateway registration, refresh, OAuth discovery, reactivation, and rename now reject detected tool-name collisions in public, team, and private visibility scopes. Existing duplicate rows require administrator review before affected invocation names are usable. Operators can identify duplicates with:
+- **Federated gateway tool-name collisions** - Gateway registration, refresh, OAuth discovery, reactivation, rename, and visibility updates now reject detected tool-name collisions in public, team, and private visibility scopes. Gateway automation must handle the endpoint's conflict response when a previously accepted colliding registration is rejected. Existing duplicate rows require administrator review before affected invocation names are usable. Operators can identify duplicates with:
 
   ```sql
   SELECT name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'public' GROUP BY name HAVING COUNT(*) > 1 ORDER BY name;

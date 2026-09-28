@@ -3736,6 +3736,8 @@ async def admin_set_gateway_state(
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
+    except GatewayToolNameConflictError as e:
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
         error_message = "Failed to set gateway state. Please try again."
@@ -13052,6 +13054,8 @@ async def admin_update_gateway_rest(
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as ex:
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
@@ -13336,6 +13340,8 @@ async def admin_edit_gateway(
     except HTTPException:
         raise
     except Exception as ex:
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
