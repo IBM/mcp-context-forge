@@ -316,6 +316,61 @@ describe("editServer", () => {
     consoleSpy.mockRestore();
   });
 
+  test("fills the OAuth resource (audience) field", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const form = document.createElement("form");
+    form.id = "edit-server-form";
+    document.body.appendChild(form);
+
+    const idInput = document.createElement("input");
+    idInput.id = "edit-server-id";
+    form.appendChild(idInput);
+
+    const resourceInput = document.createElement("input");
+    resourceInput.id = "edit-server-oauth-resource";
+    form.appendChild(resourceInput);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "s1",
+          name: "test-server",
+          oauthEnabled: true,
+          oauthConfig: {
+            authorization_servers: ["https://auth.example.com"],
+            resource: ["https://a.example.com", "https://b.example.com"],
+          },
+        }),
+    });
+
+    await editServer("s1");
+    expect(resourceInput.value).toBe(
+      "https://a.example.com, https://b.example.com"
+    );
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "s1",
+          name: "test-server",
+          oauthEnabled: true,
+          oauthConfig: {
+            authorization_servers: ["https://auth.example.com"],
+            resource: "my-client-id",
+          },
+        }),
+    });
+
+    await editServer("s1");
+    expect(resourceInput.value).toBe("my-client-id");
+
+    consoleSpy.mockRestore();
+  });
+
   test("handles visibility radio buttons", async () => {
     window.ROOT_PATH = "";
     window.ALLOW_PUBLIC_VISIBILITY = true;
