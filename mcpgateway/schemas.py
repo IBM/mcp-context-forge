@@ -38,7 +38,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -128,6 +128,40 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
 )
 
 
+def _validate_oauth_token_endpoint_auth(v: Dict[str, Any]) -> None:
+    """Validate the token endpoint client authentication settings structurally.
+
+    Structural rules match the runtime exactly because both read the same
+    constant sets: an unknown ``token_endpoint_auth_method`` or signing
+    algorithm is rejected here so a config value can never pass the API
+    boundary and then fail or silently switch behavior later.
+
+    Args:
+        v: OAuth configuration dict.
+
+    Raises:
+        ValueError: If the method, algorithm, key ID, or signing key is invalid.
+    """
+    raw_method = v.get("token_endpoint_auth_method")
+    if raw_method is not None and raw_method not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_method '{raw_method}' is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+
+    raw_alg = v.get("token_endpoint_auth_signing_alg")
+    if raw_alg is not None and raw_alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_signing_alg '{raw_alg}' is not allowed. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS))}")
+
+    raw_kid = v.get("private_key_jwt_kid")
+    if raw_kid is not None and raw_kid != "":
+        if not isinstance(raw_kid, str) or not raw_kid.strip():
+            raise ValueError("oauth_config.private_key_jwt_kid must be a non-empty string when provided")
+
+    method = raw_method or "client_secret_post"
+    if method == "private_key_jwt":
+        private_key = v.get("private_key")
+        if not isinstance(private_key, str) or not private_key.strip():
+            raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -148,6 +182,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         return v
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
+    _validate_oauth_token_endpoint_auth(v)
     for field_name in ("token_url", "authorization_url", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
         raw_value = v.get(field_name)
         if raw_value in (None, ""):
@@ -3237,7 +3272,10 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
+        "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
+        "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3647,7 +3685,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
+        "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
+        "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
     )
 
     # Query Parameter Authentication (INSECURE)

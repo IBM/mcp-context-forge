@@ -33,6 +33,7 @@ Specific subsuites need additional services on top:
 | `e2e/` | gateway with MCP transports and Playwright | `make testing-up` (default profile) |
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
 | `mcp/test_oauth_status_live.py` | Postgres reachable at `localhost:5433` (the compose default) | `make testing-up` |
+| `mcp/test_private_key_jwt_e2e.py` | stub AS and upstream reachable via `host.docker.internal` (the compose default) | `make testing-up` |
 | `sso/` | Keycloak (jwks tests) and/or Entra ID (entra tests) | `docker compose --profile sso up -d` for Keycloak; `AZURE_*` env vars for Entra |
 | `e2e_rust/` | gateway built with the Rust transport (edge or full mode) | `make testing-up` with the Rust profile, or rebuild compose images with Rust enabled |
 
@@ -52,6 +53,7 @@ make test-mcp-access-matrix        # tests/live_gateway/e2e_rust/test_mcp_access
 make test-mcp-session-isolation    # tests/live_gateway/e2e_rust/test_mcp_session_isolation.py
 make test-e2e-sso                  # tests/live_gateway/sso/
 make test-oauth-status-live        # tests/live_gateway/mcp/test_oauth_status_live.py
+make test-private-key-jwt-live     # tests/live_gateway/mcp/test_private_key_jwt_e2e.py
 
 # Or run a specific file directly via uv
 uv run --extra plugins pytest tests/live_gateway/mcp/test_langfuse_traces.py -v

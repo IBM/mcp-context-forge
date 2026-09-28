@@ -1002,6 +1002,13 @@ test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] again
 		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
 	@echo "✅ OAuth status live tests passed!"
 
+test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt token auth against a running gateway
+	@echo "🧪 Running private_key_jwt live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack; stub AS/upstream run on host.docker.internal"
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
+		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
+	@echo "✅ private_key_jwt live tests passed!"
+
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
