@@ -3443,20 +3443,10 @@ def _wait_for_gateway_tool_names(admin_api: APIRequestContext, gateway_id: str, 
 def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[APIResponse, None, None]:
     """Register a throwaway gateway against ``fast_time_server`` and delete it after.
 
-    Registered ``private`` so it never collides with the suite's shared
-    public ``streamable_http_gateway`` fixture, which already holds the same
-    upstream URL for the whole module (``gateway_service`` rejects a second
-    public gateway at one URL; uniqueness is visibility-scoped, so a private
-    registration by the same owner is a distinct row).
-
-    ``streamable_http_gateway``'s own displacement scan matches on name OR
-    url regardless of visibility, and its teardown restores whatever it
-    displaced without a ``visibility`` field (so the restored row comes
-    back public). That scan only runs once, at that fixture's first use,
-    which file order places before ``TestGatewayLifecycle``. A private row
-    from this fixture can only be swept up by it if this class ran first
-    and a delete below failed silently — reorder the class or harden the
-    delete below if that ever needs closing.
+    Relies on ``_displace_url_for_lifecycle_class`` (a class-scoped autouse
+    fixture on ``TestGatewayLifecycle``) to clear existing gateways at the
+    same upstream URL once before the whole class runs, so this function-scoped
+    fixture does not need to displace on every individual test call.
 
     Args:
         admin_api: Authenticated admin API context.
@@ -3466,25 +3456,63 @@ def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[APIResponse, No
     """
     uid = uuid.uuid4().hex[:8]
     name = f"{GATEWAY_LIFECYCLE_PREFIX}-{uid}"
-    resp = admin_api.post(
-        "/gateways",
-        data={
-            "name": name,
-            "url": _GATEWAY_UPSTREAM_URL,
-            "transport": "STREAMABLEHTTP",
-            "visibility": "private",
-        },
-    )
-    assert resp.status in (200, 201, 202), f"POST /gateways returned {resp.status}: {resp.text()[:500]}"
-    yield resp
-    with suppress(Exception):
+    gw_id: str | None = None
+    try:
+        resp = admin_api.post(
+            "/gateways",
+            data={
+                "name": name,
+                "url": _GATEWAY_UPSTREAM_URL,
+                "transport": "STREAMABLEHTTP",
+            },
+        )
+        assert resp.status in (200, 201, 202), f"POST /gateways returned {resp.status}: {resp.text()[:500]}"
         gw_id = resp.json().get("id")
-        if gw_id:
-            admin_api.delete(f"/gateways/{gw_id}")
+        yield resp
+    finally:
+        with suppress(Exception):
+            if gw_id:
+                admin_api.delete(f"/gateways/{gw_id}")
 
 
 class TestGatewayLifecycle:
     """Register an MCP gateway, wait for tool sync, then delete it."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _displace_url_for_lifecycle_class(self, admin_api: APIRequestContext) -> Generator[None, None, None]:
+        """Displace gateways at the fast_time URL once for the whole class.
+
+        Removes any existing public gateway at ``_GATEWAY_UPSTREAM_URL``
+        (e.g. the module-scoped ``streamable_http_gateway``) before any test
+        in this class runs, so that the DB-level uniqueness constraint
+        ``uq_team_owner_email_name_tool`` does not block the per-test
+        ``ephemeral_gateway`` fixture.  Restores the displaced gateways once
+        after the last test in the class completes.
+
+        Args:
+            admin_api: Authenticated admin API context.
+
+        Yields:
+            None
+        """
+        displaced: list[dict] = []
+        with suppress(Exception):
+            for gw in admin_api.get("/gateways").json():
+                if gw.get("url") == _GATEWAY_UPSTREAM_URL:
+                    displaced.append(gw)
+                    admin_api.delete(f"/gateways/{gw['id']}")
+        yield
+        for gw in displaced:
+            with suppress(Exception):
+                admin_api.post(
+                    "/gateways",
+                    data={
+                        "name": gw["name"],
+                        "url": gw["url"],
+                        "transport": gw.get("transport", "STREAMABLEHTTP"),
+                        "description": gw.get("description"),
+                    },
+                )
 
     def test_register_returns_id_and_metadata(self, ephemeral_gateway: APIResponse) -> None:
         """Registration succeeds and echoes id, name, url, and transport.
@@ -3556,7 +3584,7 @@ class TestGatewayLifecycle:
         assert detail.status == 404, f"GET /gateways/{gw_id} returned {detail.status} after deletion, expected 404"
 
     def test_duplicate_registration_conflicts(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
-        """Re-registering the same name, url, and visibility returns 409.
+        """Re-registering the same URL and visibility returns 409.
 
         Args:
             admin_api: Authenticated admin API context.
@@ -3567,10 +3595,9 @@ class TestGatewayLifecycle:
         duplicate = admin_api.post(
             "/gateways",
             data={
-                "name": gw["name"],
+                "name": gw["name"] + "-dup",
                 "url": gw["url"],
                 "transport": gw["transport"],
-                "visibility": "private",
             },
         )
         assert duplicate.status == 409, f"duplicate POST /gateways returned {duplicate.status}, expected 409: {duplicate.text()[:500]}"
