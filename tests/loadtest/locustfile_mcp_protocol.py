@@ -119,18 +119,30 @@ try:
     MCP_TOOL_POOL_SIZE: int = max(0, int(_cfg("MCP_BENCHMARK_TOOL_POOL_SIZE", "0") or 0))
 except ValueError:
     MCP_TOOL_POOL_SIZE = 0
-# Fixed tool pool for ProdToolUser. The fast-time-server inventory is stable, so
-# names and arguments are pinned here instead of discovered per run.
-PROD_BENCH_TOOLS: list[tuple[str, dict]] = [
-    ("fast-time-get-system-time", {"timezone": "America/New_York"}),
-    ("fast-time-convert-time", {"time": "09:00", "source_timezone": "Europe/London", "target_timezone": "Asia/Tokyo"}),
-    ("fast-time-echo", {"message": "prod-benchmark"}),
-    ("fast-time-get-stats", {}),
-]
-# Legacy gateways require the initialize handshake before tools/call. Modern
-# stateless gateways do not. Any value other than "modern" keeps the handshake.
+# Legacy gateways require the initialize handshake before tools/call and accept
+# bare JSON-RPC. The modern dataplane is stateless and speaks MCP 2026-07-28:
+# per-request _meta, routing headers, and SSE replies.
 PROD_BENCH_MODE = _cfg("PROD_BENCH_MODE", "legacy").strip().lower()
-PROD_BENCH_HANDSHAKE = PROD_BENCH_MODE != "modern"
+PROD_BENCH_MODERN = PROD_BENCH_MODE == "modern"
+PROD_BENCH_HANDSHAKE = not PROD_BENCH_MODERN
+PROD_BENCH_PROTOCOL_VERSION = _cfg("PROD_BENCH_PROTOCOL_VERSION", "2026-07-28")
+PROD_BENCH_META = {
+    "io.modelcontextprotocol/protocolVersion": PROD_BENCH_PROTOCOL_VERSION,
+    "io.modelcontextprotocol/clientCapabilities": {},
+}
+# Fixed tool pool for ProdToolUser. The fast-time-server inventory is stable, so
+# names and arguments are pinned here instead of discovered per run. The legacy
+# gateway federates them under a `fast-time-` prefix; the dataplane virtual
+# server routes on the upstream tool names directly.
+_PROD_BENCH_ARGS: dict[str, dict] = {
+    "get_system_time": {"timezone": "America/New_York"},
+    "convert_time": {"time": "09:00", "source_timezone": "Europe/London", "target_timezone": "Asia/Tokyo"},
+    "echo": {"message": "prod-benchmark"},
+    "get_stats": {},
+}
+PROD_BENCH_TOOLS: list[tuple[str, dict]] = [
+    (tool if PROD_BENCH_MODERN else "fast-time-" + tool.replace("_", "-"), args) for tool, args in _PROD_BENCH_ARGS.items()
+]
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
 logging.basicConfig(level=getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
@@ -564,6 +576,18 @@ def _jsonrpc(method: str, params: dict | None = None) -> dict:
     return payload
 
 
+def _decode_mcp_body(response) -> Any:
+    """Parse a Streamable HTTP reply: plain JSON, or a single SSE `data:` frame.
+
+    The dataplane answers `tools/call` with `text/event-stream` even for a
+    one-shot response, so `response.json()` alone is not enough.
+    """
+    text = response.text or ""
+    if text.lstrip().startswith("data:"):
+        text = "".join(line[5:] for line in text.splitlines() if line.startswith("data:"))
+    return json.loads(text)
+
+
 def _synth_value(prop_name: str, spec: dict) -> Any:
     """Synthesize one benchmark-safe value for a JSON Schema property.
 
@@ -733,7 +757,7 @@ class BaseMCPUser(FastHttpUser):
     def _mcp_path(self) -> str:
         return f"/servers/{self._server_id}/mcp"
 
-    def _mcp_headers(self) -> dict[str, str]:
+    def _mcp_headers(self, method: str = "", params: dict | None = None) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -741,6 +765,15 @@ class BaseMCPUser(FastHttpUser):
         }
         if self._mcp_session_id:
             headers["Mcp-Session-Id"] = self._mcp_session_id
+        if PROD_BENCH_MODERN:
+            # MCP 2026-07-28 stateless routing: the dataplane requires both content
+            # types, the negotiated version, and the target method/name up front.
+            headers["Accept"] = "application/json, text/event-stream"
+            headers["MCP-Protocol-Version"] = PROD_BENCH_PROTOCOL_VERSION
+            headers["Mcp-Method"] = method
+            target = (params or {}).get("name") or (params or {}).get("uri")
+            if target:
+                headers["Mcp-Name"] = target
         return headers
 
     def _mcp_request(self, method: str, params: dict | None, name: str) -> dict | None:
@@ -748,12 +781,14 @@ class BaseMCPUser(FastHttpUser):
 
         Returns the 'result' field on success, None on error.
         """
+        if PROD_BENCH_MODERN:
+            params = {**(params or {}), "_meta": PROD_BENCH_META}
         payload = _jsonrpc(method, params)
         try:
             with self.client.post(
                 self._mcp_path(),
                 data=json.dumps(payload),
-                headers=self._mcp_headers(),
+                headers=self._mcp_headers(method, params),
                 name=name,
                 catch_response=True,
             ) as response:
@@ -774,7 +809,7 @@ class BaseMCPUser(FastHttpUser):
                     return None
 
                 try:
-                    data = response.json()
+                    data = _decode_mcp_body(response)
                 except Exception as e:
                     response.failure(f"Invalid JSON: {e}")
                     return None
