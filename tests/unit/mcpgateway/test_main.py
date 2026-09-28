@@ -47,6 +47,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.schemas import (
     A2AAgentAggregateMetrics,
+    GatewayCreate,
     GatewayImpactPreview,
     GatewayRead,
     PromptMetrics,
