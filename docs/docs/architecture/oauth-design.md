@@ -73,7 +73,7 @@ Configured on the `oauth_config` object:
 
 At token time the gateway builds a client assertion JWT with claims `iss`, `sub`, `aud` (the configured `token_url`), `iat`/`exp` (validity window capped at 300 seconds), and a random `jti`, then sends it with `client_assertion_type` set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. Signing runs without blocking the event loop.
 
-Fail-closed behavior: an unsupported `token_endpoint_auth_method`, an algorithm outside the allowlist, or a missing `private_key` for `private_key_jwt` raises `OAuthError` before any token request is sent. The gateway never silently falls back to another auth method.
+Fail-closed behavior: an unsupported `token_endpoint_auth_method`, an algorithm outside the allowlist, or a missing `private_key` for `private_key_jwt` raises `OAuthError` before any token request is sent. An unknown method and `private_key_jwt` never fall back to another auth method; `client_secret_basic` with a missing secret falls back to POST-body mode for public PKCE clients.
 
 ### OAuth Tokens
 

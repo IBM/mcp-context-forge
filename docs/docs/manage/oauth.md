@@ -151,7 +151,7 @@ For providers that require a confidential client without a shared secret (Micros
 The gateway signs a client assertion JWT (`iss`, `sub`, `aud`, `iat`/`exp`, `jti`) and posts it with `client_assertion_type` set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. `aud` is always the configured `token_url`. Set `token_endpoint_auth_signing_alg` to one of `RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, or `PS256` (default `RS256`), and `private_key_jwt_kid` when the provider's JWKS matches on `kid`. The assertion validity window is capped at 300 seconds.
 
 !!! important
-    The private key must match the public key uploaded to the Authorization Server. A missing key or an unsupported algorithm is rejected with a 422 at validation time and with an `OAuthError` at runtime; the gateway never silently falls back to another auth method.
+    The private key must match the public key uploaded to the Authorization Server. A missing key or an unsupported algorithm is rejected with a 422 at validation time and with an `OAuthError` at runtime. `private_key_jwt` never falls back to another auth method; `client_secret_basic` falls back to POST-body mode only when the secret is missing on a public PKCE client.
 
 ### Resource Parameter and `omit_resource`
 
