@@ -281,14 +281,19 @@ async def test_explicit_resource_rename_persists(naming_db, federated, payload, 
     ):
         await service.update_resource(naming_db, resource.id, ResourceUpdate(**payload))
         naming_db.expire(resource)
-        expected = (f"upstream-{expected_base}" if expected_base else "upstream") if federated else (payload.get("custom_name") or payload["name"])
+        explicit_name = payload.get("custom_name")
+        effective_base = expected_base if not federated or explicit_name is not None else "report"
+        if federated:
+            expected = f"upstream-{effective_base}" if effective_base else "upstream"
+        else:
+            expected = explicit_name if explicit_name is not None else payload["name"]
         assert resource.name == expected
-        assert resource.custom_name_slug == expected_base
+        assert resource.custom_name_slug == effective_base
         assert resource.original_name == "Report"
         await service.update_resource(naming_db, resource.id, ResourceUpdate(description="Unchanged base"))
         naming_db.expire(resource)
         assert resource.name == expected
-        assert resource.custom_name_slug == expected_base
+        assert resource.custom_name_slug == effective_base
 
 
 @pytest.mark.asyncio
