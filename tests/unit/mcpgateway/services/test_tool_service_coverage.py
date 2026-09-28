@@ -4188,6 +4188,7 @@ class TestDeleteToolServerAssociationCleanup:
         execute_calls = []
         assoc_result = MagicMock()
         assoc_result.rowcount = 1  # One association row removed
+        assoc_result.scalars.return_value.all.return_value = ["server-1"]
         delete_result = MagicMock()
         delete_result.rowcount = 1
 
@@ -4217,6 +4218,7 @@ class TestDeleteToolServerAssociationCleanup:
         # Must have 2 execute calls: association cleanup then tool DELETE
         assert db.execute.call_count == 2
         db.commit.assert_called()
+        mock_tlc.return_value.invalidate.assert_awaited_once_with("a2a_test_agent", gateway_id=None, affected_server_ids=("server-1",))
 
 
 # ============================================================================
@@ -5495,42 +5497,45 @@ class TestSetToolStatePermissionCheck:
 class TestInvokeToolCachePaths:
     @pytest.mark.asyncio
     async def test_cached_status_missing(self, tool_service):
-        """Cached status 'missing' raises ToolNotFoundError."""
+        """Scoped cached status 'missing' raises ToolNotFoundError."""
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "missing"})
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value={"status": "missing"})
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
             with pytest.raises(ToolNotFoundError):
-                await tool_service.invoke_tool(db, "missing_tool", {})
+                await tool_service.invoke_tool(db, "missing_tool", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_cached_status_inactive(self, tool_service):
-        """Cached status 'inactive' raises ToolNotFoundError."""
+        """Scoped cached status 'inactive' raises ToolNotFoundError."""
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "inactive"})
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value={"status": "inactive"})
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
             with pytest.raises(ToolNotFoundError, match="inactive"):
-                await tool_service.invoke_tool(db, "inactive_tool", {})
+                await tool_service.invoke_tool(db, "inactive_tool", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_cached_status_offline(self, tool_service):
-        """Cached status 'offline' raises ToolNotFoundError."""
+        """Scoped cached status 'offline' raises ToolNotFoundError."""
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "offline"})
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value={"status": "offline"})
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
             with pytest.raises(ToolNotFoundError, match="offline"):
-                await tool_service.invoke_tool(db, "offline_tool", {})
+                await tool_service.invoke_tool(db, "offline_tool", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_db_tool_unreachable_sets_negative_cache(self, tool_service):
@@ -5546,6 +5551,7 @@ class TestInvokeToolCachePaths:
             mock_cache = AsyncMock()
             mock_cache.enabled = True
             mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.get_negative = AsyncMock(return_value=None)
             mock_cache.set_negative = AsyncMock()
             mock_cache_fn.return_value = mock_cache
 
@@ -5553,7 +5559,7 @@ class TestInvokeToolCachePaths:
             db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[tool])))))
 
             with pytest.raises(ToolNotFoundError, match="offline"):
-                await tool_service.invoke_tool(db, "unreachable", {})
+                await tool_service.invoke_tool(db, "unreachable", {}, server_id="server-1")
             mock_cache.set_negative.assert_called_once()
 
     @pytest.mark.asyncio
@@ -5595,6 +5601,7 @@ class TestInvokeToolCachePaths:
                     "gateway": None,
                 }
             )
+            mock_cache.get_negative = AsyncMock(return_value=None)
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
@@ -5604,20 +5611,15 @@ class TestInvokeToolCachePaths:
     @pytest.mark.asyncio
     async def test_server_scoping_denies_unattached_tool(self, tool_service):
         """Tool not attached to specified server raises not found."""
-        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn, patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)):
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            # Disable cache to force DB lookup path
             mock_cache = AsyncMock()
-            mock_cache.enabled = True
-            mock_cache.get = AsyncMock(
-                return_value={
-                    "status": "active",
-                    "tool": {"enabled": True, "reachable": True, "id": "t1", "visibility": "public", "integration_type": "REST", "annotations": {}},
-                    "gateway": None,
-                }
-            )
+            mock_cache.enabled = False
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
-            db.execute = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+            # Mock DB to return empty result for tool lookup
+            db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
 
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "tool", {}, server_id="srv-1")
@@ -10140,6 +10142,8 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             mock_mbuf.return_value = MagicMock()
             mock_timeout_counter.labels.return_value.inc = MagicMock()
 
+            # Timeout must raise ToolTimeoutError so TOOL_POST_INVOKE fires exactly once
+            # (the post-process block must not fire a second time on the same failure).
             with pytest.raises(ToolTimeoutError, match="timed out"):
                 await tool_service.invoke_tool(db, "test_tool", {}, plugin_context_table=context_table)
 
@@ -10187,8 +10191,325 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
             mock_mbuf.return_value = MagicMock()
 
-            with pytest.raises(ToolInvocationError, match="root"):
+            # After the MCP protocol fix, exceptions return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # The root cause "root" should be in the error message
+            assert "root" in str(result.content[0])
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — retry_on_status structured_content via SSE / StreamableHTTP
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpSseRetryOnStatus:
+    """HTTPStatusError on the SSE path must propagate status_code in structured_content.
+
+    Finding #2: the inner BaseException handler converts the exception to a CallToolResult
+    before the outer handler can attach structured_content.  The inner handler must do it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sse_http_status_error_sets_structured_content_status_code(self, tool_service):
+        """httpx.HTTPStatusError on SSE transport must include status_code in structured_content."""
+        import httpx  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        # Build a real httpx.HTTPStatusError with a 429 response
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 429
+        http_err = httpx.HTTPStatusError("Too Many Requests", request=MagicMock(), response=mock_response)
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=http_err)
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+            patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert result.is_error is True
+        # structured_content must carry status_code so the retry plugin can act on it
+        assert result.structured_content is not None, "structured_content must be set for HTTPStatusError"
+        assert result.structured_content.get("status_code") == 429
+
+
+class TestInvokeToolMcpStreamableHttpRetryOnStatus:
+    """HTTPStatusError on the StreamableHTTP path must propagate status_code in structured_content."""
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_http_status_error_sets_structured_content_status_code(self, tool_service):
+        """httpx.HTTPStatusError on StreamableHTTP transport must include status_code in structured_content."""
+        import httpx  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        # Build a real httpx.HTTPStatusError with a 503 response
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 503
+        http_err = httpx.HTTPStatusError("Service Unavailable", request=MagicMock(), response=mock_response)
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=http_err)
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+            patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=lambda msg, _qp: msg),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert result.is_error is True
+        # structured_content must carry status_code so the retry plugin can act on it
+        assert result.structured_content is not None, "structured_content must be set for HTTPStatusError"
+        assert result.structured_content.get("status_code") == 503
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — MCP timeout fires TOOL_POST_INVOKE exactly once (Finding #1)
+# ---------------------------------------------------------------------------
+
+
+class TestMcpSseTimeoutPostInvokeFiresOnce:
+    """TOOL_POST_INVOKE must fire exactly once when an SSE transport times out.
+
+    Before the fix the timeout handler called ``_run_timeout_post_invoke``
+    (post-invoke #1) and then returned an error value instead of raising.
+    That return fell through into the post-process block, which fired
+    TOOL_POST_INVOKE a second time.  Any post-invoke plugin (audit log,
+    circuit breaker, retry) double-counted the failure and the second hook's
+    ``retry_delay_ms`` could trigger an unintended retry — the exact behaviour
+    the ``ToolTimeoutError`` handler's comment at line 7175 exists to prevent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sse_timeout_post_invoke_fires_exactly_once(self, tool_service):
+        """TOOL_POST_INVOKE fires exactly once on an unretried SSE timeout."""
+        # Third-Party
+        from cpex.framework import ToolHookType  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        # Plugin manager: no TOOL_PRE_INVOKE hooks, only TOOL_POST_INVOKE.
+        # This makes invoke_hook.await_count a direct measure of TOOL_POST_INVOKE
+        # calls, with no pre-invoke noise.
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            return hook_type == ToolHookType.TOOL_POST_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        # Return retry_delay_ms=0 so no retry is attempted.
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {})
+        )
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            with pytest.raises(ToolTimeoutError, match="timed out"):
                 await tool_service.invoke_tool(db, "test_tool", {})
+
+        # Exactly one TOOL_POST_INVOKE call — from _run_timeout_post_invoke.
+        # Before the fix a second call fired from the post-process block.
+        assert plugin_manager.invoke_hook.await_count == 1, (
+            f"TOOL_POST_INVOKE fired {plugin_manager.invoke_hook.await_count} time(s); expected exactly 1. "
+            "A second fire means the timeout handler's return value fell through into the "
+            "post-process block and double-counted the failure."
+        )
+        fired_hook = plugin_manager.invoke_hook.await_args_list[0].args[0]
+        assert fired_hook == ToolHookType.TOOL_POST_INVOKE
+
+
+class TestMcpStreamableHttpTimeoutPostInvokeFiresOnce:
+    """TOOL_POST_INVOKE must fire exactly once when a StreamableHTTP transport times out."""
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_timeout_post_invoke_fires_exactly_once(self, tool_service):
+        """TOOL_POST_INVOKE fires exactly once on an unretried StreamableHTTP timeout."""
+        # Third-Party
+        from cpex.framework import ToolHookType  # pylint: disable=import-outside-toplevel
+
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            return hook_type == ToolHookType.TOOL_POST_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {})
+        )
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert plugin_manager.invoke_hook.await_count == 1, (
+            f"TOOL_POST_INVOKE fired {plugin_manager.invoke_hook.await_count} time(s); expected exactly 1. "
+            "A second fire means the timeout handler's return value fell through into the "
+            "post-process block and double-counted the failure."
+        )
+        fired_hook = plugin_manager.invoke_hook.await_args_list[0].args[0]
+        assert fired_hook == ToolHookType.TOOL_POST_INVOKE
+
+
+# ---------------------------------------------------------------------------
+# _make_mcp_tool_error — structured_content survives _coerce_to_tool_result
+# ---------------------------------------------------------------------------
+
+
+class TestMakeToolErrorStructuredContentSurvivesCoercion:
+    """structuredContent set via _make_mcp_tool_error must survive _coerce_to_tool_result.
+
+    Finding #2 (direct-proxy path): ``_make_mcp_tool_error`` built
+    ``types.CallToolResult(..., structured_content=...)`` using the snake-case
+    kwarg.  The MCP SDK's ``CallToolResult`` declares the field as
+    ``structuredContent`` with no snake-case alias and ``extra="allow"``, so
+    the value landed as an unrecognised extra attribute rather than the real
+    field.  When ``_coerce_to_tool_result`` later round-tripped the result
+    via ``model_dump(by_alias=True)`` the extra key was dropped and
+    ``structured_content`` was ``None`` on the returned ``ToolResult``.
+
+    The direct-proxy SSE/StreamableHTTP branch uses ``_coerce_to_tool_result``
+    (line 6854), so this regression silently broke ``retry_on_status`` for
+    direct-proxy invocations while the non-direct-proxy branch happened to
+    survive via a fallback in ``dump.get("structuredContent") or
+    dump.get("structured_content")`` (line 6862).
+    """
+
+    def test_make_mcp_tool_error_with_structured_content_survives_coercion(self, tool_service):
+        """structured_content from _make_mcp_tool_error survives _coerce_to_tool_result."""
+        structured = {"status_code": 429}
+        raw = tool_service._make_mcp_tool_error("Too Many Requests", structured_content=structured)
+
+        # The SDK field must be populated (regression guard for the snake-case kwarg bug).
+        assert raw.structured_content == structured, (
+            f"_make_mcp_tool_error set structured_content via snake-case kwarg; "
+            f"expected structured_content={structured!r}, got {raw.structured_content!r}. "
+            "The MCP SDK field is camelCase — use structuredContent= to set it."
+        )
+
+        coerced = tool_service._coerce_to_tool_result(raw)
+        assert coerced.structured_content == structured, (
+            f"structured_content was lost after _coerce_to_tool_result; "
+            f"expected {structured!r}, got {coerced.structured_content!r}. "
+            "This breaks retry_on_status for direct-proxy SSE/StreamableHTTP invocations."
+        )
+        assert coerced.is_error is True
+
+    def test_make_mcp_tool_error_without_structured_content_returns_none(self, tool_service):
+        """_make_mcp_tool_error without structured_content leaves structuredContent as None."""
+        raw = tool_service._make_mcp_tool_error("some error")
+        assert raw.structured_content is None
+        coerced = tool_service._coerce_to_tool_result(raw)
+        assert coerced.structured_content is None
+        assert coerced.is_error is True
 
 
 # ---------------------------------------------------------------------------
@@ -10361,6 +10682,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             mock_mbuf.return_value = MagicMock()
             mock_timeout_counter.labels.return_value.inc = MagicMock()
 
+            # Timeout must raise ToolTimeoutError so TOOL_POST_INVOKE fires exactly once.
             with pytest.raises(ToolTimeoutError, match="timed out"):
                 await tool_service.invoke_tool(db, "test_tool", {})
 
@@ -10399,8 +10721,17 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
             mock_mbuf.return_value = MagicMock()
 
-            with pytest.raises(ToolInvocationError, match="root"):
-                await tool_service.invoke_tool(db, "test_tool", {})
+            # After the MCP protocol fix, exceptions return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # The root cause "root" should be in the error message
+            assert "root" in str(result.content[0])
 
 
 class TestInvokeToolLookupLogic:
@@ -10600,3 +10931,278 @@ class TestInvokeToolLookupLogic:
             # Even though user_email matches owner, public-only token should deny access
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool_direct — decode_auth exception silenced (lines 3920-3921)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolDirectDecodeAuthException:
+    """Covers the except-Exception guard that silences decode_auth failures.
+
+    When auth_type is ``query_param`` and a non-empty encrypted value cannot be
+    decrypted, ``decode_auth`` raises.  The guard at line 3920 must catch the
+    exception, log a debug message, and continue so the outer call proceeds
+    (rather than surfacing a raw crypto error to the caller).
+    """
+
+    @staticmethod
+    def _make_direct_session(gateway):
+        """Return a fresh_db_session replacement that serves gateway + no tool row."""
+
+        @contextmanager
+        def _ctx():
+            mock_db = MagicMock()
+            gw_result = MagicMock()
+            gw_result.scalar_one_or_none.return_value = gateway
+            tool_result = MagicMock()
+            tool_result.scalar_one_or_none.return_value = None
+            mock_db.execute.side_effect = [gw_result, tool_result]
+            yield mock_db
+
+        return _ctx
+
+    @pytest.mark.asyncio
+    async def test_decode_auth_exception_is_silenced_and_call_proceeds(self, tool_service):
+        """decode_auth failure must be swallowed and the invocation must still complete."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        gw = MagicMock()
+        gw.id = "gw-direct-decode-err"
+        gw.name = "direct_decode_err_gw"
+        gw.slug = "direct-decode-err-gw"
+        gw.url = "http://remote-mcp:8080/mcp"
+        gw.gateway_mode = "direct_proxy"
+        gw.auth_type = "query_param"
+        # Non-empty value so the decode_auth branch is entered.
+        gw.auth_query_params = {"api_key": "corrupted_encrypted_value"}  # pragma: allowlist secret
+        gw.passthrough_headers = None
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.owner_email = None
+
+        expected_result = MagicMock()
+        expected_result.content = [MagicMock(text="ok")]
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        @asynccontextmanager
+        async def mock_proxy_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_direct_session(gw)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            # decode_auth raises so the except block at line 3920 fires.
+            patch("mcpgateway.services.tool_service.decode_auth", side_effect=ValueError("bad cipher")),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_proxy_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.gateway_tool_name_separator = "--"
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-decode-err",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # The call must succeed despite the decode_auth failure.
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# connect_to_sse_server — process-control signals propagate (line 6564)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpSseProcessSignalPropagates:
+    """SystemExit/GeneratorExit/KeyboardInterrupt must propagate unchanged.
+
+    The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` guard
+    at line 6564 prevents these signals from being swallowed by the outer
+    ``except BaseException`` handler, which would convert them into a
+    ``CallToolResult`` error response.
+    """
+
+    @pytest.mark.asyncio
+    async def test_system_exit_propagates_from_sse_transport(self, tool_service):
+        """SystemExit must escape the inner guard at line 6564 and reach the outer handler.
+
+        The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` block inside
+        ``connect_to_sse_server`` re-raises the signal before the ``except BaseException``
+        handler can swallow it as a tool error.  The outer ``invoke_tool`` handler wraps
+        it as a ``ToolInvocationError``; verifying that wrap confirms line 6564 fired.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        # SystemExit(42) — str(SystemExit(42)) == "42", so the outer handler sets
+        # error_message="42" and raises ToolInvocationError("Tool invocation failed: 42").
+        mock_session.call_tool = AsyncMock(side_effect=SystemExit(42))
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # The signal escapes connect_to_sse_server (line 6564 fired) and is then
+            # wrapped by the outer invoke_tool BaseException handler into a ToolInvocationError.
+            with pytest.raises(ToolInvocationError, match="42"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_keyboard_interrupt_propagates_from_sse_transport(self, tool_service):
+        """KeyboardInterrupt must escape the inner guard at line 6564 and reach the outer handler."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=KeyboardInterrupt())
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # KeyboardInterrupt escapes connect_to_sse_server (line 6564 fired) and is then
+            # wrapped by the outer invoke_tool BaseException handler into a ToolInvocationError.
+            with pytest.raises(ToolInvocationError):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+
+# ---------------------------------------------------------------------------
+# connect_to_streamablehttp_server — process-control signals propagate (line 6767)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
+    """SystemExit/GeneratorExit/KeyboardInterrupt must propagate unchanged.
+
+    The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` guard
+    at line 6767 prevents these signals from being swallowed by the outer
+    ``except BaseException`` handler inside ``connect_to_streamablehttp_server``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_system_exit_propagates_from_streamablehttp_transport(self, tool_service):
+        """SystemExit must escape the inner guard at line 6767 and reach the outer handler.
+
+        The ``except (SystemExit, GeneratorExit, KeyboardInterrupt): raise`` block inside
+        ``connect_to_streamablehttp_server`` re-raises the signal before the
+        ``except BaseException`` handler can swallow it as a tool error.  The outer
+        ``invoke_tool`` handler wraps it as a ``ToolInvocationError``.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=SystemExit(42))
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # The signal escapes connect_to_streamablehttp_server (line 6767 fired) and is
+            # then wrapped by the outer invoke_tool BaseException handler.
+            with pytest.raises(ToolInvocationError, match="42"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_keyboard_interrupt_propagates_from_streamablehttp_transport(self, tool_service):
+        """KeyboardInterrupt must escape the inner guard at line 6767 and reach the outer handler."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        db = MagicMock()
+
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=KeyboardInterrupt())
+        mock_session.session.call_tool = mock_session.call_tool
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=mock_session),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # KeyboardInterrupt escapes connect_to_streamablehttp_server (line 6767 fired)
+            # and is then wrapped by the outer invoke_tool BaseException handler.
+            with pytest.raises(ToolInvocationError):
+                await tool_service.invoke_tool(db, "test_tool", {})

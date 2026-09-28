@@ -1308,7 +1308,11 @@ class TestAppOnlyToolSecurity:
             header_mapping=None,
             gateway=None,
         )
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        cache.get_negative = AsyncMock(return_value=None)
 
         monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
         monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [model_only_tool])
@@ -1354,7 +1358,11 @@ class TestAppOnlyToolSecurity:
             header_mapping=None,
             gateway=None,
         )
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        cache.get_negative = AsyncMock(return_value=None)
 
         monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
         monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [app_only_tool])
@@ -1407,7 +1415,11 @@ class TestAppOnlyToolSecurity:
         assert _serialize_mcp_tool_definitions([app_only_tool]) == []
 
         service = ToolService()
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        cache.get_negative = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
         monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [app_only_tool])
         monkeypatch.setattr(service, "_check_tool_access", AsyncMock(return_value=True))

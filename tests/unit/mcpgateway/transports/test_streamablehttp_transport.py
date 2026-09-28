@@ -585,6 +585,90 @@ async def test_call_tool_with_structured_content(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_empty_dict_structured_content_primary_path(monkeypatch):
+    """Regression: empty-dict structuredContent must be preserved on the primary path.
+
+    ``{}`` is falsy in Python. A plain ``if structured:`` gate drops it and
+    returns a bare list, which causes the MCP SDK to raise:
+    ``RuntimeError: Tool has an output schema but did not return structured content``
+
+    This test exercises the primary (non-forwarded) branch of ``call_tool``
+    with ``structured_content={}``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "ok"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.is_error = False
+    mock_result.structured_content = {}
+    mock_result.model_dump = lambda by_alias=True: {"content": [{"type": "text", "text": "ok"}], "structuredContent": {}}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {})
+
+    assert isinstance(result, tuple), f"Expected tuple, got {type(result)}: {result!r}"
+    unstructured, structured = result
+    assert isinstance(unstructured, list)
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == "ok"
+    assert structured == {}
+
+
+@pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_empty_dict_snake_case_fallback(monkeypatch):
+    """Preserve empty structured content from forwarded snake_case fallback."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={"result": {"content": [{"type": "text", "text": "ok"}], "structured_content": {}}}
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, tuple), f"Expected tuple, got {type(result)}: {result!r}"
+        unstructured, structured = result
+        assert isinstance(unstructured, list)
+        assert isinstance(unstructured[0], types.TextContent)
+        assert unstructured[0].text == "ok"
+        assert structured == {}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
 async def test_call_tool_preserves_is_error_for_egress(monkeypatch):
     """Egress regression guard for ContextForge #4202 — local (non-pooled) branch.
 
@@ -6818,6 +6902,99 @@ async def test_call_tool_session_affinity_forwarded_with_structured(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_empty_dict_structured_content(monkeypatch):
+    """Regression: empty-dict structuredContent must be preserved on the forwarded path.
+
+    ``{}`` is falsy in Python. A plain ``if structured:`` gate drops it and
+    returns a bare list, causing:
+    ``RuntimeError: Tool has an output schema but did not return structured content``
+
+    This test exercises the session-affinity (forwarded) branch of ``call_tool``
+    where the response comes from ``pool.forward_request_to_owner`` as a raw
+    JSON-RPC result dict containing ``structuredContent: {}``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={"result": {"content": [{"type": "text", "text": "ok"}], "structuredContent": {}}}
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, tuple), f"Expected tuple, got {type(result)}: {result!r}"
+        unstructured, structured = result
+        assert isinstance(unstructured, list)
+        assert structured == {}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_empty_dict_structured_content_is_error_path(monkeypatch):
+    """Preserve empty structured content on forwarded error responses."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={
+            "result": {
+                "content": [{"type": "text", "text": "failed"}],
+                "structuredContent": {},
+                "isError": True,
+            }
+        }
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.structured_content == {}
+        assert result.content[0].text == "failed"
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
 async def test_call_tool_session_affinity_forwarded_preserves_is_error(monkeypatch):
     """Egress regression guard for #4202 — pooled/worker-forwarded branch.
 
@@ -11667,6 +11844,7 @@ class TestProxyFunctions:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = True
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(mock_gateway, request_headers, {}, None)
@@ -11760,6 +11938,7 @@ class TestProxyFunctions:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = True
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_resources_to_gateway(mock_gateway, request_headers, {}, None)
@@ -11937,6 +12116,7 @@ class TestProxyFunctions:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = True
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
@@ -12023,6 +12203,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12056,6 +12237,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_resources_to_gateway(gw, request_headers, {}, None)
@@ -12090,6 +12272,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_read_resource_to_gateway(gw, "file:///test.txt", {}, None)
@@ -12123,6 +12306,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12155,6 +12339,7 @@ class TestProxyUpstreamAuthorizationRename:
                                 mock_settings.default_passthrough_headers = []
                                 mock_settings.mcpgateway_direct_proxy_timeout = 30
                                 with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.max_header_value_length = 4096
                                     mock_ph_settings.enable_header_passthrough = False  # Explicitly disabled
                                     mock_ph_settings.enable_overwrite_base_headers = False
                                     await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12182,6 +12367,7 @@ class TestProxyUpstreamAuthorizationRename:
                         mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
                         mock_settings.mcpgateway_direct_proxy_timeout = 30
                         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                            mock_ph_settings.max_header_value_length = 4096
                             mock_ph_settings.enable_header_passthrough = True
                             mock_ph_settings.enable_overwrite_base_headers = False
                             await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
@@ -12217,6 +12403,7 @@ class TestProxyUpstreamAuthorizationRename:
                             mock_settings.default_passthrough_headers = []
                             mock_settings.mcpgateway_direct_proxy_timeout = 30
                             with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                mock_ph_settings.max_header_value_length = 4096
                                 mock_ph_settings.enable_header_passthrough = True
                                 mock_ph_settings.enable_overwrite_base_headers = False
                                 await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)

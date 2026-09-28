@@ -1929,7 +1929,7 @@ async def call_tool(
             # Register session mapping BEFORE checking forwarding (same pattern as SSE)
             # This ensures ownership is registered atomically so forward_request_to_owner() works
             try:
-                cached = await tool_lookup_cache.get(name)
+                cached = await tool_lookup_cache.get(name, server_id=server_id)
                 if cached and cached.get("status") == "active":
                     gateway_info = cached.get("gateway")
                     if gateway_info:
@@ -1993,7 +1993,10 @@ async def call_tool(
                     return converted
 
                 unstructured = _rehydrate_content_items(result_data.get("content", []))
-                structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                # Use explicit None check to preserve empty dicts (valid MCP responses)
+                structured = result_data.get("structuredContent")
+                if structured is None:
+                    structured = result_data.get("structured_content")
                 if not isinstance(structured, dict):
                     structured = None
                 is_error = bool(result_data.get("isError") or result_data.get("is_error"))
@@ -2013,7 +2016,7 @@ async def call_tool(
                 # Success path: return the list/tuple shape so the MCP SDK's
                 # server-side validator runs and enforces the tool's
                 # outputSchema against the structured payload.
-                if structured:
+                if structured is not None:
                     return (unstructured, structured)
                 return unstructured
         except RuntimeError:
@@ -2178,7 +2181,7 @@ async def call_tool(
             # Success path: return the list/tuple shape so the MCP SDK's
             # server-side validator runs and enforces the tool's
             # outputSchema against the structured payload.
-            if structured:
+            if structured is not None:
                 return (unstructured, structured)
             return unstructured
     except ToolInputRequired as e:
