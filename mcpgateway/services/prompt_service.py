@@ -50,6 +50,7 @@ from mcpgateway.observability import create_span, set_span_attribute, set_span_e
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
 from mcpgateway.services.event_service import EventService
@@ -882,6 +883,7 @@ class PromptService(BaseService):
             db.add(db_prompt)
             db.commit()
             db.refresh(db_prompt)
+            notify_dataplane()
             # Notify subscribers
             await self._notify_prompt_added(db_prompt)
 
@@ -1309,6 +1311,7 @@ class PromptService(BaseService):
 
                 # Commit the chunk
                 db.commit()
+                notify_dataplane()
 
                 # Refresh prompts for notifications and audit trail
                 for db_prompt in prompts_to_add:
@@ -2414,6 +2417,7 @@ class PromptService(BaseService):
 
             db.commit()
             db.refresh(prompt)
+            notify_dataplane()
 
             await self._notify_prompt_updated(prompt)
 
@@ -2631,6 +2635,7 @@ class PromptService(BaseService):
                 prompt.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(prompt)
+                notify_dataplane()
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -2851,6 +2856,7 @@ class PromptService(BaseService):
 
             db.delete(prompt)
             db.commit()
+            notify_dataplane()
             await self._notify_prompt_deleted(prompt_info)
             logger.info("Deleted prompt: %s", prompt_info["name"])
 
