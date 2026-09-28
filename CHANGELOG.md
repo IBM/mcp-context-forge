@@ -7,28 +7,118 @@
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
 
-## [Unreleased]
+## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
+
+### Overview
+
+Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migration**, **tool preview**, **SSO linking and group-mapping controls**, **catalog and OAuth registration fixes**, **CORS and schema-validation hardening**, and **live black-box E2E coverage**:
+
+- **Protocol & Transport** - Moved to `mcp>=2.0.0` with `mcp-types`, added opt-in modern protocol negotiation (`MCP_CLIENT_CONNECT_MODE`, `MCP_INBOUND_PROTOCOL_MODE`, `GATEWAY_MODERN_LISTENERS_ENABLED`, all legacy/off by default), and paginated every upstream `list_*` call.
+- **Security & Auth** - CORS origin reflection now requires an explicit allowlist, schema validation refuses remote `$ref`s, SSO cross-provider linking is fail-closed behind `SSO_ALLOW_PROVIDER_LINKING`, SSO and SIEM output is XSS-hardened, and tool lookup caches are isolated per tenant scope.
+- **API & Platform** - Added the tool preview endpoint, per-caller OAuth token status, a team search filter, passwordless SSO-only users, and MCP-compliant tool execution errors.
+- **Operations** - Removed the stdio wrapper in favour of FastMCP, migrated the output length guard to the Rust-backed CPEX package, fixed OCP PGO Helm deployment on fresh clusters, and refreshed Python, Node.js, and Rust dependencies.
+- **Testing** - Consolidated the live MCP E2E suites and added virtual server, user, token, team, and gateway lifecycle coverage against a running gateway.
 
 ### Added
 
+#### **API & Platform**
+
 - **Tool preview endpoint** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Added `POST /tools/preview/{name}` (and its `/v1` mount), a dry-run counterpart to tool invocation that validates arguments against the tool's `input_schema`, resolves local vs. federated targeting, and reports which plugin pre-invoke hooks would run, without ever dispatching the tool. Gated behind `MCPGATEWAY_TOOL_PREVIEW_ENABLED` (off by default) and the `tools.preview` RBAC permission. Only plugins tagged `preview_safe` actually run during a preview; every other hook that would run live is reported as a warning instead.
+- **Per-caller OAuth token status** ([#6620](https://github.com/IBM/mcp-context-forge/pull/6620)) - `/oauth/status` reports the calling user's own token state instead of a shared gateway-level state.
+- **Team search filter** ([#6652](https://github.com/IBM/mcp-context-forge/pull/6652)) - `GET /v1/teams/` accepts a `search_query` filter.
+- **`APP_DOMAIN`-derived server URL** ([#6656](https://github.com/IBM/mcp-context-forge/pull/6656)) - `ServerRead` exposes a `url` built from `APP_DOMAIN`, so clients behind ingress proxies receive a reachable address.
+
+#### **Security & Auth**
+
+- **Passwordless SSO-only users** ([#6603](https://github.com/IBM/mcp-context-forge/pull/6603)) - Users provisioned through SSO exist without a local password instead of carrying an unusable placeholder credential.
+- **`SSO_ALLOW_PROVIDER_LINKING`** ([#6616](https://github.com/IBM/mcp-context-forge/pull/6616)) - Explicit, fail-closed setting (default `false`) that gates cross-provider sign-in for an already-linked email.
+
+#### **Catalog & Plugins**
+
+- **OAuth discovery metadata in the bundled catalog** ([#6613](https://github.com/IBM/mcp-context-forge/pull/6613)) - Seeded discovery metadata into `mcp-catalog.yml`, so OAuth-protected catalog entries register without manual endpoint entry.
+- **Rust-backed output length guard** ([#6846](https://github.com/IBM/mcp-context-forge/pull/6846)) - Migrated the output length guard plugin to the Rust-backed CPEX package.
 
 ### Breaking Changes
 
 - **Configurable header sanitization limit** ([#6654](https://github.com/IBM/mcp-context-forge/pull/6654)) - Added `MAX_HEADER_VALUE_LENGTH` with a 4096 default. Existing deployments without this setting retain current behavior. Python integrations importing the removed `MAX_HEADER_VALUE_LENGTH` module constants must use `settings.max_header_value_length`. Invalid pre-existing `MAX_HEADER_VALUE_LENGTH` environment values now fail startup. For large OAuth tokens, raise `MAX_HEADER_VALUE_LENGTH`, `MAX_HEADER_FIELD_SIZE_BYTES`, and `MAX_HEADER_TOTAL_SIZE_BYTES` together.
-- **stdio wrapper removed in favour of FastMCP** - `mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust `crates/wrapper/` binary are removed. Clients that already speak Streamable HTTP need no bridge — point them at `/servers/<server_id>/mcp/` directly. For stdio clients such as Claude Desktop, use FastMCP's bridge (`uvx fastmcp-remote`); see [`docs/docs/using/clients/`](docs/docs/using/clients/) for per-client configuration.
-- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+- **stdio wrapper removed in favour of FastMCP** - `mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust `crates/wrapper/` binary are removed. Clients that already speak Streamable HTTP need no bridge — point them at `/servers/<server_id>/mcp/` directly. For stdio clients such as Claude Desktop, use FastMCP's bridge (`uvx fastmcp-remote`); see [`docs/docs/using/clients/`](docs/docs/using/clients/) for per-client configuration. ([#6201](https://github.com/IBM/mcp-context-forge/pull/6201))
 - **`invoke_tool` now enforces input-schema validation** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Live tool invocation (`tools/call`) now validates `arguments` against the tool's `input_schema` before dispatch, raising `ToolInvocationError` on a mismatch, via the same `_validate_tool_input_arguments` check `POST /tools/preview/{name}` uses (#5629). Previously `invoke_tool` never checked `arguments` against `input_schema` at all, so a tool whose callers relied on that gap will now reject calls it previously accepted. To find affected callers before enabling, preview the same arguments against `POST /tools/preview/{name}`: a `validated: false` response with an `invalid_arguments` warning is exactly what live invocation will now reject. Remediate by correcting the caller's arguments or by relaxing the tool's published `input_schema` to match what it actually accepts.
+- **Tool execution failures return MCP-compliant errors** ([#6181](https://github.com/IBM/mcp-context-forge/pull/6181)) - A failed tool execution returns a protocol-conformant error result instead of the previous ad-hoc shape. Clients that parsed the old payload must read the MCP error fields.
+- **MCP Python SDK 2.x** ([#6868](https://github.com/IBM/mcp-context-forge/pull/6868)) - The gateway now requires `mcp>=2.0.0`, `mcp-types>=2.0.0`, and `cpex>=0.1.4`, the first CPEX release built for `mcp` 2.x. Python consumers that import the gateway next to `mcp` 1.x must upgrade. Protocol behaviour is unchanged by default: `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` both default to `legacy`, and `GATEWAY_MODERN_LISTENERS_ENABLED` defaults to `false`. Set them to `auto` and `true` to negotiate the 2026-07-28 revision.
 
 ### Fixed
 
-- **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly.
+#### **Security & Auth**
 
+- **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly. ([#6941](https://github.com/IBM/mcp-context-forge/pull/6941))
 - **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).
-
-- **OAuth token scope resolution fails closed for indeterminate state** - Admin users with missing or malformed `token_teams` state and no cached JWT payload now fail closed to public-only scope (`[]`/403) instead of receiving unrestricted admin bypass (`None`). This prevents indeterminate scope from being silently promoted to unrestricted access ([#5980](https://github.com/IBM/mcp-context-forge/issues/5980)).
-
+- **OAuth token scope resolution fails closed for indeterminate state** - Admin users with missing or malformed `token_teams` state and no cached JWT payload now fail closed to public-only scope (`[]`/403) instead of receiving unrestricted admin bypass (`None`). This prevents indeterminate scope from being silently promoted to unrestricted access ([#5980](https://github.com/IBM/mcp-context-forge/issues/5980)). ([#6004](https://github.com/IBM/mcp-context-forge/pull/6004))
 - **Schema validation no longer resolves remote `$ref`s** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Tool input/output schemas are tool-controlled data, and `jsonschema`'s default registry resolves remote `$ref` URIs by fetching them over the network, which is reachable from tool preview and from every live invocation with an output schema. Non-local references are now refused outright, and validators are built against a registry that never retrieves, so an unresolvable reference fails validation closed instead of issuing a request.
+- **SSO cross-provider relink misconfiguration and admin carryover** ([#6616](https://github.com/IBM/mcp-context-forge/pull/6616)) - Cross-provider sign-in for an already-linked email is now gated behind an explicit, fail-closed `SSO_ALLOW_PROVIDER_LINKING` setting (default `false`) instead of an always-on, misleadingly-logged auto-link ([#6431](https://github.com/IBM/mcp-context-forge/issues/6431)). When linking is enabled, relinking re-vets admin status against the new provider and demotes regardless of how admin was originally granted (`api`, manual, or `sso`), closing a privilege-carryover path where a manually-granted admin could relink to a provider that never vets for admin and silently keep `*` permissions. The refuse-path log message wording changed from "account-linking required" to "login refused"; update any log-based alerting that matched the old string.
+- **Stored XSS on SSO and SIEM surfaces** ([#6615](https://github.com/IBM/mcp-context-forge/pull/6615)) - Hardened SSO and SIEM rendering against stored cross-site scripting ([#5856](https://github.com/IBM/mcp-context-forge/issues/5856)).
+- **Dict-shaped SSO groups and roles claims** ([#6427](https://github.com/IBM/mcp-context-forge/pull/6427)) - SSO normalization flattens `groups` and `roles` claims delivered as objects instead of dropping them.
+- **IBM Verify group mapping** ([#6610](https://github.com/IBM/mcp-context-forge/pull/6610)) - Implemented `IBM_VERIFY_GROUP_MAPPING`, so IBM Verify groups map onto teams.
+- **Forced password change with a custom admin password** ([#6717](https://github.com/IBM/mcp-context-forge/pull/6717)) - Bootstrap skips the forced password-change flag when `PLATFORM_ADMIN_PASSWORD` is explicitly configured.
+- **Tenant isolation for the tool lookup cache** ([#6968](https://github.com/IBM/mcp-context-forge/pull/6968)) - Tool lookups are cached per tenant scope, so one tenant's entry can no longer satisfy another tenant's lookup.
+- **Outbound spec fetching** ([#6933](https://github.com/IBM/mcp-context-forge/pull/6933)) - Spec retrieval uses the shared HTTP client with a bounded cache, DNS pinning against rebinding, and single-flight deduplication of concurrent fetches.
+
+#### **Gateway, Catalog & Tools**
+
+- **Upstream list pagination** ([#6809](https://github.com/IBM/mcp-context-forge/pull/6809)) - Tool, prompt, resource, and resource-template discovery follows `nextCursor` until the server stops returning one, with repeated-cursor protection, instead of importing only the first page.
+- **Large REST response truncation** ([#6200](https://github.com/IBM/mcp-context-forge/pull/6200)) - REST tool responses, including non-JSON bodies and JSON parse errors, are bounded by `REST_RESPONSE_TEXT_MAX_LENGTH` on every path rather than only on the JSON error path.
+- **Empty resource content versus fetch failure** ([#6705](https://github.com/IBM/mcp-context-forge/pull/6705)) - An upstream fetch failure is no longer reported as an empty resource body.
+- **Catalog OAuth credential persistence on registration** ([#6588](https://github.com/IBM/mcp-context-forge/pull/6588)) - OAuth credentials submitted with a catalog server registration now persist onto the created gateway's `oauth_config` in the same call, and "OAuth2.1 & API Key" catalog entries registered with no API key skip the doomed connection test instead of failing registration ([#5967](https://github.com/IBM/mcp-context-forge/issues/5967)). `requires_oauth_config` no longer clears just because `oauth_config` is set - it now means "disabled OAuth gateway", so a previously-authorized OAuth gateway that was manually disabled (credential rotation, maintenance) now shows the "OAuth Config Required" card instead of "Already Registered". Display-only; no data or access is lost.
+- **Catalog discovery with empty MCP capabilities** ([#6758](https://github.com/IBM/mcp-context-forge/pull/6758)) - Servers that advertise no capabilities are still discovered instead of being skipped.
+- **`auth_type` spelling drift in `mcp-catalog.yml`** ([#6795](https://github.com/IBM/mcp-context-forge/pull/6795)) - Normalised inconsistent `auth_type` values in the bundled catalog.
+- **Health-check failure reason** ([#6368](https://github.com/IBM/mcp-context-forge/pull/6368)) - Gateway health checks persist the failure reason, so the cause survives past the check.
+- **Async gateway audit sessions** ([#6455](https://github.com/IBM/mcp-context-forge/pull/6455)) - Gateway audit logging uses its own session, matching the separate-session audit pattern.
+- **Empty `structuredContent` dicts** ([#6182](https://github.com/IBM/mcp-context-forge/pull/6182)) - An empty dict in `structuredContent` is preserved instead of being coerced away.
+- **CPEX deny-path control telemetry** ([#6806](https://github.com/IBM/mcp-context-forge/pull/6806)) - Deny-path control telemetry is persisted instead of dropped.
+
+#### **Admin UI & Catalog Assets**
+
+- **Object types in `anyOf`/`oneOf` schemas** ([#6421](https://github.com/IBM/mcp-context-forge/pull/6421)) - The schema-driven form renders object branches of `anyOf` and `oneOf` instead of failing.
+- **Catalog icon weight** ([#6852](https://github.com/IBM/mcp-context-forge/pull/6852)) - Normalized icon visual weight and stripped pale badge surrounds.
+
+#### **Build, CI & Dependencies**
+
+- **OCP PGO on fresh clusters** ([#6196](https://github.com/IBM/mcp-context-forge/pull/6196)) - Fixed Helm OCP PGO deployment failures on clusters with no prior install.
+- **`package-lock.json` mutation during local dev** ([#6782](https://github.com/IBM/mcp-context-forge/pull/6782)) - `make dev` and `make serve` no longer rewrite `package-lock.json`.
+- **Rust dependency advisories** ([#6831](https://github.com/IBM/mcp-context-forge/pull/6831)) - Upgraded `rustls` to 0.23.45 and `chacha20` to 0.10.2.
+- **OCI image version label** - The image `version` label reports 1.0.11 and is tracked by bumpversion, so it no longer drifts from the package version.
+
+### Documentation
+
+- **IBM Cloud Code Engine deployment guide** ([#6290](https://github.com/IBM/mcp-context-forge/pull/6290)) - Added the missing env secret to the deployment steps.
+- **ADR-025 and altk references** ([#6788](https://github.com/IBM/mcp-context-forge/pull/6788)) - Corrected package and image references.
+- **Agent prose and clean code standards** ([#6803](https://github.com/IBM/mcp-context-forge/pull/6803)) - Adopted the ASD-STE100 prose rules and clean code standards for agent-authored content.
+- **API-to-product vocabulary mapping** ([#6770](https://github.com/IBM/mcp-context-forge/pull/6770)) - Documented how API `gateway` and `server` map to the product terms "MCP server" and "virtual server".
+- **Release documentation** ([#6764](https://github.com/IBM/mcp-context-forge/pull/6764)) - Updated the release process documentation.
+- **MkDocs math rendering** - Updated the `pymdownx.arithmatex` format functions for pymdownx 12.x.
+
+### Testing
+
+- **Consolidated live MCP E2E suites** ([#6786](https://github.com/IBM/mcp-context-forge/pull/6786)) - Merged the overlapping live MCP suites into one.
+- **Lifecycle coverage in the live E2E suite** - Added virtual server ([#6792](https://github.com/IBM/mcp-context-forge/pull/6792)), user ([#6833](https://github.com/IBM/mcp-context-forge/pull/6833)), token ([#6838](https://github.com/IBM/mcp-context-forge/pull/6838)), team ([#6844](https://github.com/IBM/mcp-context-forge/pull/6844)), and gateway registration with tool sync ([#6848](https://github.com/IBM/mcp-context-forge/pull/6848)) coverage.
+- **Cross-replica consistency** ([#6804](https://github.com/IBM/mcp-context-forge/pull/6804)) - Verified E2E behaviour across replicas.
+- **RBAC deny tests** ([#6874](https://github.com/IBM/mcp-context-forge/pull/6874)) - Fixed deny-path tests that swallowed `AssertionError` and therefore always passed.
+- **Playwright suite repair** ([#6572](https://github.com/IBM/mcp-context-forge/pull/6572)) - Fixed broken Playwright tests.
+- **Vault A2A tool test argument** ([#6967](https://github.com/IBM/mcp-context-forge/pull/6967)) - Corrected the tool argument name in the vault A2A-wrapped MCP tool test.
+- **External IdP integration tests** ([#6797](https://github.com/IBM/mcp-context-forge/pull/6797)) - Allowed real DNS passthrough, so external IdP integration tests resolve providers.
+- **`ephemeral_gateway` fixture collision** - `TestGatewayLifecycle` no longer fails with a 409 when the fixture gateway is already registered.
+
+### Chores
+
+| PR | Description |
+|----|-------------|
+| [#6718](https://github.com/IBM/mcp-context-forge/pull/6718) | align the publisher schema with the dataplane API |
+| [#6763](https://github.com/IBM/mcp-context-forge/pull/6763) | update the Mend configuration |
+| [#6791](https://github.com/IBM/mcp-context-forge/pull/6791) | pin `cpex` to 0.1.3 |
+| [#6801](https://github.com/IBM/mcp-context-forge/pull/6801) | align CI coverage thresholds to 90% to match the Makefile |
+| [#6512](https://github.com/IBM/mcp-context-forge/pull/6512) | run legacy-to-legacy conformance with verified baselines |
+| [#6851](https://github.com/IBM/mcp-context-forge/pull/6851) | preserve colors in conformance output |
+
+Release preparation bumped every version reference to 1.0.11 and refreshed Python, Node.js, and Rust dependencies.
 
 ## [1.0.10] - 2026-09-07 - OAuth Security, Observability, Plugin Context, and Reliability
 
