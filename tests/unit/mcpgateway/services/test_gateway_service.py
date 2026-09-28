@@ -5236,6 +5236,7 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
         SimpleNamespace(id=1, original_name="old-tool", created_via="oauth"),
         SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth"),
         SimpleNamespace(id=7, original_name="ui-tool", created_via="ui"),
+        SimpleNamespace(id=10, original_name="notify-tool", created_via="notification_service"),
     ]
     gateway.resources = [
         SimpleNamespace(id=3, uri="old://res", created_via="oauth"),
@@ -5331,10 +5332,12 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
 
     deletes = [call.args[0] for call in db.execute.call_args_list if isinstance(call.args[0], Delete)]
     deleted_ids = {statement.table.name: set(next(iter(statement.compile().params.values()))) for statement in deletes}
-    assert deleted_ids[DbTool.__tablename__] == {1}
+    # notify-tool carries created_via="notification_service", which MCP_SYNC_CREATED_VIA_VALUES
+    # treats as MCP-discovered, so a stale one is pruned like any other discovered entry.
+    assert deleted_ids[DbTool.__tablename__] == {1, 10}
     assert deleted_ids[DbResource.__tablename__] == ({3, 4} if partial_catalog else {3})
     assert deleted_ids[DbPrompt.__tablename__] == ({5, 6} if partial_catalog else {5})
-    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6} if partial_catalog else {1, 3, 5})
+    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6, 10} if partial_catalog else {1, 3, 5, 10})
 
 
 # ---------------------------------------------------------------------------

@@ -2465,13 +2465,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Only prune entries that came from MCP discovery. API/UI and legacy
             # entries can share the gateway but are not authoritative upstream data.
-            mcp_created_via_values = {"MCP", "federation", "health_check", "manual_refresh", "oauth", "update"}
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway OAuth fetch",
-                stale_created_via_values=mcp_created_via_values,
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
                 skip_stale_cleanup=skip_stale_cleanup,
             )
 
