@@ -3194,6 +3194,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
 
+                # Token audience this server accepts, for IdPs that do not issue tokens for its URL (no RFC 8707)
+                oauth_resource = parse_oauth_resource_form(form.get("oauth_resource"))
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
+
                 # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
                 oauth_audience = str(form.get("oauth_audience", "")).strip()
                 if oauth_audience:
@@ -3356,10 +3361,22 @@ async def admin_edit_server(
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
 
+                # Token audience this server accepts, for IdPs that do not issue tokens for its URL (no RFC 8707)
+                oauth_resource = parse_oauth_resource_form(form.get("oauth_resource"))
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
+
                 # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
                 oauth_audience = str(form.get("oauth_audience", "")).strip()
                 if oauth_audience:
                     oauth_config["audience"] = oauth_audience
+
+                # Keep stored keys this form does not show (e.g. client_id set via the API) so a UI edit does not drop them
+                stored_oauth_config = getattr(db.get(DbServer, server_id), "oauth_config", None)
+                if isinstance(stored_oauth_config, dict):
+                    for key, value in stored_oauth_config.items():
+                        if key not in ("authorization_servers", "scopes_supported", "token_endpoint", "resource"):
+                            oauth_config.setdefault(key, value)
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
