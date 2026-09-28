@@ -271,21 +271,17 @@ class OAuthManager:
         if grant_type == "token-exchange":
             if not subject_token:
                 raise OAuthError("Token exchange requires a subject token; the user must be authenticated.")
-            runtime_creds = await self._prepare_runtime_credentials(credentials, "token-exchange")
-            scopes = runtime_creds.get("scopes") or []
+            scopes = credentials.get("scopes") or []
             response = await self.token_exchange(
-                token_url=runtime_creds["token_url"],
+                oauth_config=credentials,
                 subject_token=subject_token,
-                client_id=runtime_creds.get("client_id", ""),
-                client_secret=runtime_creds.get("client_secret", ""),
-                audience=runtime_creds.get("target_audience"),
+                audience=credentials.get("target_audience"),
                 scope=" ".join(scopes) if scopes else None,
-                requested_token_type=runtime_creds.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
-                subject_token_type=runtime_creds.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                requested_token_type=credentials.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                subject_token_type=credentials.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
                 ca_certificate=ca_certificate,
                 client_cert=client_cert,
                 client_key=client_key,
-                client_secret_is_plaintext=True,  # _prepare_runtime_credentials already decrypted it
             )
             return response["access_token"]
         if grant_type == "authorization_code":
@@ -627,8 +623,10 @@ class OAuthManager:
 
         Raises:
             OAuthError: If the configured method is unknown or required signing
-                material is missing. The method never silently falls back to a
-                different authentication mechanism than the one configured.
+                material is missing. An unknown method and ``private_key_jwt``
+                never fall back to another mechanism; ``client_secret_basic`` with
+                a missing secret falls back to POST-body mode for public PKCE
+                clients, which ensures the request still carries the client id.
         """
         auth_method = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post")
         client_id = runtime_credentials.get("client_id")
@@ -880,10 +878,10 @@ class OAuthManager:
 
     async def token_exchange(
         self,
-        token_url: str,
-        subject_token: str,
-        client_id: str,
-        client_secret: str,
+        token_url: Optional[str] = None,
+        subject_token: str = "",
+        client_id: str = "",
+        client_secret: str = "",
         audience: Optional[str] = None,
         scope: Optional[str] = None,
         requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
@@ -892,6 +890,7 @@ class OAuthManager:
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
         client_secret_is_plaintext: bool = False,
+        oauth_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -900,10 +899,13 @@ class OAuthManager:
         behalf of the original user.
 
         Args:
-            token_url: Token endpoint of the authorization server.
+            token_url: Token endpoint of the authorization server. Required
+                unless ``oauth_config`` is provided, which supplies the URL.
             subject_token: The original user's access token.
-            client_id: Client ID for the gateway.
-            client_secret: Client secret for the gateway.
+            client_id: Client ID for the gateway. Used only when ``oauth_config``
+                is omitted (legacy direct callers).
+            client_secret: Client secret for the gateway. Used only when
+                ``oauth_config`` is omitted (legacy direct callers).
             audience: Intended audience for the exchanged token.
             scope: Requested scope for the exchanged token.
             requested_token_type: The type of token being requested.
@@ -916,11 +918,14 @@ class OAuthManager:
             client_cert: Optional client certificate for mTLS (PEM format or file path).
             client_key: Optional client private key for mTLS (PEM format or file path).
             client_secret_is_plaintext: Set True when the caller has already decrypted
-                ``client_secret`` (e.g. ``get_access_token`` routes through
-                ``_prepare_runtime_credentials``). Skips the inline decrypt block so an
-                already-plaintext secret is never re-run through ``is_encrypted``. The
-                direct ``ToolService`` caller passes the raw encrypted DB value and keeps
-                the default ``False`` so the inline decrypt still runs.
+                ``client_secret`` (e.g. the legacy direct-caller path). Only applies when
+                ``oauth_config`` is omitted.
+            oauth_config: Optional complete stored OAuth configuration. When provided,
+                the credentials are decrypted once via ``_prepare_runtime_credentials``
+                and the ``token_endpoint_auth_method`` (including RFC 7523
+                ``private_key_jwt``) is honored through ``_apply_token_endpoint_auth``.
+                The ``token_url``/``client_id``/``client_secret`` arguments are then
+                ignored.
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
@@ -933,40 +938,58 @@ class OAuthManager:
                 values, but CF only forwards exchanged tokens as
                 ``Authorization: Bearer <token>``).
         """
-        # Decrypt client secret if encrypted. Skipped when the caller already decrypted it
-        # (client_secret_is_plaintext=True) to avoid re-running is_encrypted on plaintext.
-        if client_secret and not client_secret_is_plaintext:
-            try:
-                settings = get_settings()
-                encryption = get_encryption_service(settings.auth_encryption_secret)
-                if encryption.is_encrypted(client_secret):
-                    decrypted = await encryption.decrypt_secret_async(client_secret)
-                    if decrypted:
-                        client_secret = decrypted
-            except Exception as e:
-                logger.warning("Failed to decrypt client secret for token exchange: %s", e)
+        # Resolve runtime credentials once. With oauth_config the complete stored
+        # configuration is decrypted and its token_endpoint_auth_method (including
+        # RFC 7523 private_key_jwt) is honored. Without it, the legacy
+        # token_url/client_id/client_secret arguments are used directly with the
+        # default client_secret_post method.
+        if oauth_config is not None:
+            runtime_credentials = await self._prepare_runtime_credentials(oauth_config, "token-exchange")
+            resolved_token_url = runtime_credentials.get("token_url")
+            if not isinstance(resolved_token_url, str) or not resolved_token_url:
+                raise OAuthError("OAuth configuration missing valid token_url for token exchange")
+        else:
+            if not isinstance(token_url, str) or not token_url:
+                raise OAuthError("Token exchange requires a token_url")
+            runtime_credentials: Dict[str, Any] = {"token_url": token_url, "client_id": client_id, "client_secret": client_secret}
+
+            # Decrypt client secret if encrypted. Skipped when the caller already decrypted it
+            # (client_secret_is_plaintext=True) to avoid re-running is_encrypted on plaintext.
+            if client_secret and not client_secret_is_plaintext:
+                try:
+                    settings = get_settings()
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
+                    if encryption.is_encrypted(client_secret):
+                        decrypted = await encryption.decrypt_secret_async(client_secret)
+                        if decrypted:
+                            client_secret = decrypted
+                except Exception as e:
+                    logger.warning("Failed to decrypt client secret for token exchange: %s", e)
+            runtime_credentials["client_secret"] = client_secret
 
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
             "subject_token_type": subject_token_type,  # nosec B105 - RFC 8693 token type URI, not a credential
             "requested_token_type": requested_token_type,
-            "client_id": client_id,
-            "client_secret": client_secret,
         }
         if audience:
             token_data["audience"] = audience
         if scope:
             token_data["scope"] = scope
 
+        headers: Dict[str, str] = {}
+        await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials, require_client_id=False)
+
         for attempt in range(self.max_retries):
             try:
                 response = await self._post_token_request(
-                    token_url,
+                    runtime_credentials["token_url"],
                     token_data,
                     ca_certificate=ca_certificate,
                     client_cert=client_cert,
                     client_key=client_key,
+                    headers=headers,
                 )
                 response.raise_for_status()
 

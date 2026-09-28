@@ -2404,6 +2404,15 @@ def _success_json_response():
     return mock_response
 
 
+def _token_exchange_success_response():
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "exchanged-token", "token_type": "Bearer"}
+    return mock_response
+
+
 @pytest.fixture
 def private_key_credentials():
     return _private_key_jwt_credentials()
@@ -2669,6 +2678,79 @@ class TestPrivateKeyJwtFlows:
         form = mock_client.post.call_args.kwargs["data"]
         assertion = form["client_assertion"]
         assert jwt.get_unverified_header(assertion)["kid"] == "kid-from-config"
+
+
+class TestPrivateKeyJwtTokenExchange:
+    """RFC 8693 token exchange honors the configured token_endpoint_auth_method."""
+
+    @pytest.mark.asyncio
+    async def test_sends_signed_assertion_and_no_client_secret(self, oauth_manager):
+        credentials = _private_key_jwt_credentials()
+        public_pem = credentials.pop("_test_public_pem")
+
+        with (
+            patch.object(oauth_manager, "_prepare_runtime_credentials", AsyncMock(wraps=oauth_manager._prepare_runtime_credentials)) as prepare,
+            patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post,
+        ):
+            post.return_value = _token_exchange_success_response()
+            result = await oauth_manager.token_exchange(
+                oauth_config=credentials,
+                subject_token="inbound.jwt",
+                scope="read write",
+            )
+
+        prepare.assert_awaited_once_with(credentials, "token-exchange")
+        assert result["access_token"] == "exchanged-token"
+        token_data = post.await_args.args[1]
+        assert "client_secret" not in token_data
+        assert token_data["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange"
+        assert token_data["subject_token"] == "inbound.jwt"
+        assert token_data["scope"] == "read write"
+        assert token_data["client_assertion_type"] == CLIENT_ASSERTION_TYPE_JWT_BEARER
+        decoded = jwt.decode(token_data["client_assertion"], public_pem, algorithms=["RS256"], audience=credentials["token_url"])
+        assert decoded["iss"] == "test-client"
+        assert decoded["sub"] == "test-client"
+        assert decoded["aud"] == credentials["token_url"]
+
+    @pytest.mark.asyncio
+    async def test_unknown_auth_method_fails_closed(self, oauth_manager):
+        credentials = _private_key_jwt_credentials(token_endpoint_auth_method="unknown_method")
+        credentials.pop("_test_public_pem")
+
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            with pytest.raises(OAuthError):
+                await oauth_manager.token_exchange(oauth_config=credentials, subject_token="inbound.jwt")
+
+        post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_token_url_in_config_fails_closed(self, oauth_manager):
+        credentials = _private_key_jwt_credentials()
+        credentials["token_url"] = ""
+        credentials.pop("_test_public_pem")
+
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            with pytest.raises(OAuthError):
+                await oauth_manager.token_exchange(oauth_config=credentials, subject_token="inbound.jwt")
+
+        post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_legacy_arguments_use_client_secret_post(self, oauth_manager):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            post.return_value = _token_exchange_success_response()
+            result = await oauth_manager.token_exchange(
+                token_url="https://issuer.example.com/token",
+                subject_token="inbound.jwt",
+                client_id="legacy-client",
+                client_secret="legacy-secret",  # pragma: allowlist secret
+            )
+
+        assert result["access_token"] == "exchanged-token"
+        token_data = post.await_args.args[1]
+        assert token_data["client_id"] == "legacy-client"
+        assert token_data["client_secret"] == "legacy-secret"  # pragma: allowlist secret
+        assert "client_assertion" not in token_data
 
 
 def test_redact_token_response_masks_client_assertion():
