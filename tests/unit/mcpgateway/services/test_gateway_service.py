@@ -153,6 +153,83 @@ class TestGatewayToolNameCollisions:
             tools=[SimpleNamespace(name="api-search")],
         )
 
+    def test_team_collision_in_same_team_is_rejected(self):
+        """Team tool names conflict inside one team namespace."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="team", team_id="team-one", owner_email="other@example.com", gateway_id="other")]
+        )
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id="team-one",
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="team",
+                tools=[SimpleNamespace(name="api-search")],
+            )
+
+    def test_private_collision_for_same_owner_is_rejected(self):
+        """Private tool names conflict inside one owner namespace."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="private", team_id=None, owner_email="owner@example.com", gateway_id="other")]
+        )
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="private",
+                tools=[SimpleNamespace(name="api-search")],
+            )
+
+    def test_current_gateway_and_other_names_are_ignored(self):
+        """Validation ignores current-gateway rows and unrelated invocation names."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[
+                SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="owner@example.com", gateway_id="current"),
+                SimpleNamespace(name="other-search", visibility="public", team_id=None, owner_email="owner@example.com", gateway_id="other"),
+            ]
+        )
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="public",
+            tools=[SimpleNamespace(name="search")],
+        )
+
+    def test_none_tool_entry_is_rejected(self):
+        """Validator rejects unnormalized catalog entries before querying."""
+        service = GatewayService()
+        db = MagicMock()
+
+        with pytest.raises(ValueError, match="invalid tool entry"):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[None],
+            )
+
+        db.execute.assert_not_called()
+
     def test_incoming_normalized_duplicates_are_rejected_before_query(self):
         """One incoming gateway catalog cannot expose duplicate invocation names."""
         service = GatewayService()

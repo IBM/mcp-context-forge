@@ -7505,6 +7505,7 @@ class TestOAuthFunctionality:
         cases = [
             (GatewayDuplicateConflictError(duplicate_gateway), 409),
             (GatewayNameConflictError("name"), 409),
+            (GatewayToolNameConflictError("prod-api-search"), 409),
             (GatewayCredentialError("Stored credential contains invalid characters"), 422),
             (ValueError("bad"), 400),
             (ValidationError.from_exception_data("test", error_details), 422),
