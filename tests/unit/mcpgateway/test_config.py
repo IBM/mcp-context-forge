@@ -99,6 +99,7 @@ def test_ui_base_url_allows_path_prefix():
 @pytest.mark.parametrize("suffix, expected", [("/app", "/"), ("/app/", "/"), ("/contextforge/app/", "/contextforge")])
 def test_ui_base_url_removes_legacy_mount_prefix(caplog, suffix, expected):
     """Legacy frontend bases retain their deployment prefix without duplicating the mount."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
     configured = Settings(ui_base_url=f"https://ui.example.com{suffix}", environment="development", _env_file=None)
     assert str(configured.ui_base_url) == f"https://ui.example.com{expected}"
     assert "removing the trailing /app" in caplog.text
