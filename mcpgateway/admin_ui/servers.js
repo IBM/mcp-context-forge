@@ -855,11 +855,22 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
       }
+
+      // Extract accepted audience (resource may be a string or a list)
+      const oauthResourceField = safeGetElement("edit-server-oauth-resource");
+      if (oauthResourceField) {
+        const resource = server.oauthConfig.resource;
+        oauthResourceField.value = Array.isArray(resource)
+          ? resource.join(", ")
+          : resource || "";
+      }
     } else {
       // Clear OAuth config fields when no config exists
       if (oauthAuthServerField) oauthAuthServerField.value = "";
       if (oauthScopesField) oauthScopesField.value = "";
       if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
+      const oauthResourceField = safeGetElement("edit-server-oauth-resource");
+      if (oauthResourceField) oauthResourceField.value = "";
     }
 
     // Store server data for modal population
