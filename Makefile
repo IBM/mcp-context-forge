@@ -2762,7 +2762,9 @@ MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 PROD_BENCH_MODE ?= legacy
-PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)
+# modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
+# proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
+PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(PROD_BENCH_MODE)),/contextforge-rs)
 PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
 PROD_BENCH_USERS ?= 125
 PROD_BENCH_SPAWN_RATE ?= 30
@@ -2864,6 +2866,7 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 	@echo "   Host: $(PROD_BENCH_HOST)"
 	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
 	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(PROD_BENCH_RUN_TIME)"
+	@$(if $(filter modern,$(PROD_BENCH_MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
