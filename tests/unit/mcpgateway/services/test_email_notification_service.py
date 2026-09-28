@@ -105,6 +105,12 @@ class TestAuthEmailNotificationService:
 
         assert result == "https://gateway.example.com/root/app/accept-invitation/tok%2Fen"
 
+    @pytest.mark.parametrize("path", ["/app", "/app/reset-password", "/app/accept-invitation"])
+    def test_build_frontend_url_rejects_mount_prefix(self, path):
+        """Callers supply routes without an existing frontend mount prefix."""
+        with pytest.raises(ValueError, match="exclude the /app"):
+            build_frontend_url(path)
+
     def test_build_frontend_url_rejects_untrusted_path_shape(self):
         """Frontend helper rejects relative and scheme-relative paths."""
         with pytest.raises(ValueError):

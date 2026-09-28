@@ -1350,6 +1350,9 @@ class Settings(BaseSettings):
             raise ValueError("UI_BASE_URL must not contain a query string")
         if value.fragment:
             raise ValueError("UI_BASE_URL must not contain a fragment")
+        if (value.path or "").rstrip("/").endswith("/app"):
+            logger.warning("UI_BASE_URL excludes the /app mount prefix; removing the trailing /app from the configured base")
+            return HttpUrl(str(value).rstrip("/")[:-4])
         return value
 
     # Security settings
