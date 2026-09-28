@@ -96,6 +96,21 @@ def test_ui_base_url_allows_path_prefix():
     assert str(configured.ui_base_url) == "https://ui.example.com/contextforge"
 
 
+@pytest.mark.parametrize("suffix, expected", [("/app", "/"), ("/app/", "/"), ("/contextforge/app/", "/contextforge")])
+def test_ui_base_url_removes_legacy_mount_prefix(caplog, suffix, expected):
+    """Legacy frontend bases retain their deployment prefix without duplicating the mount."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+    configured = Settings(ui_base_url=f"https://ui.example.com{suffix}", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == f"https://ui.example.com{expected}"
+    assert "removing the trailing /app" in caplog.text
+
+
+def test_ui_base_url_preserves_similar_path():
+    """Deployment prefixes that merely contain app remain unchanged."""
+    configured = Settings(ui_base_url="https://ui.example.com/myapp", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == "https://ui.example.com/myapp"
+
+
 def test_ui_base_url_treats_blank_string_as_unset():
     """Blank environment override preserves gateway UI fallback behavior."""
     configured = Settings(ui_base_url="", environment="development", _env_file=None)
