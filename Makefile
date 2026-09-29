@@ -2778,14 +2778,15 @@ PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(PROD_BENCH_MODE))
 PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
 PROD_BENCH_USERS ?= 125
 PROD_BENCH_SPAWN_RATE ?= 30
+# Locust exits 1 when any request failed. Set 0 to report numbers regardless.
+PROD_BENCH_EXIT_CODE_ON_ERROR ?= 1
 TIME ?= 1800s
 
-# Honor only an explicit `make ... TOKEN=<jwt>`. A TOKEN or MCPGATEWAY_BEARER_TOKEN
-# left exported in the shell goes stale when the stack restarts with a new
-# JWT_SECRET_KEY, and every benchmark call then returns 401; legacy mode mints a
-# fresh token from the running gateway instead. Modern mode cannot mint (the Rust
-# dataplane verifies RS256 against its JWKS), so it still takes the exported token.
-PROD_BENCH_TOKEN = $(if $(filter command line,$(origin TOKEN)),$(TOKEN),$(if $(filter modern,$(PROD_BENCH_MODE)),$(MCPGATEWAY_BEARER_TOKEN)))
+# TOKEN wins, from the command line or the environment, then MCPGATEWAY_BEARER_TOKEN.
+# With both empty, legacy mode mints a fresh token from the running gateway; modern
+# mode cannot mint, because the Rust dataplane verifies RS256 against its JWKS.
+# A token that went stale on a stack restart stops at the 401 preflight below.
+PROD_BENCH_TOKEN = $(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))
 PROD_BENCH_USER ?= admin@example.com
 PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE).html
 PROD_BENCH_CSV_PREFIX ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE)
@@ -2879,7 +2880,9 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 # help: prod-benchmark-tools     - Fixed-tool-list MCP benchmark (PROD_BENCH_MODE=legacy|modern)
 .PHONY: prod-benchmark-tools
 prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
+	@case "$(PROD_BENCH_MODE)" in legacy|modern) ;; *) echo "❌ PROD_BENCH_MODE must be legacy or modern (got: $(PROD_BENCH_MODE))"; exit 1 ;; esac
 	@echo "📊 Running production tool benchmark..."
+	@echo "🔑 Token: run \`export TOKEN=\$$(make create-token)\`"
 	@echo "   Mode: $(PROD_BENCH_MODE) (handshake: $(if $(filter modern,$(PROD_BENCH_MODE)),skipped,initialize))"
 	@echo "   Host: $(PROD_BENCH_HOST)"
 	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
@@ -2895,12 +2898,21 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 		fi; \
 		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp" \
 			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}" || true); \
-		if [ "$$CODE" = "401" ]; then \
-			echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
-			echo "Fix: unset TOKEN MCPGATEWAY_BEARER_TOKEN so the benchmark mints its own, or pass TOKEN=<jwt> on the command line."; \
-			exit 1; \
-		fi; \
+			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
+		case "$$CODE" in \
+			2*) ;; \
+			401) \
+				echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
+				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
+				exit 1 ;; \
+			000) \
+				echo "Preflight failed: no HTTP response from $(PROD_BENCH_HOST). Start the stack with: make prod-up"; \
+				exit 1 ;; \
+			*) \
+				echo "Preflight failed (HTTP $$CODE) from $(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp"; \
+				exit 1 ;; \
+		esac; \
+		STATUS=0; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
 		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
 		PROD_BENCH_MODE=$(PROD_BENCH_MODE) \
@@ -2912,15 +2924,17 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 			--spawn-rate=$(PROD_BENCH_SPAWN_RATE) \
 			--run-time=$(TIME) \
 			--headless \
-			--exit-code-on-error=0 \
+			--exit-code-on-error=$(PROD_BENCH_EXIT_CODE_ON_ERROR) \
 			--html=$(PROD_BENCH_HTML_REPORT) \
 			--csv=$(PROD_BENCH_CSV_PREFIX) \
 			--only-summary \
-			ProdToolUser'
-	@$(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$(PROD_BENCH_CSV_PREFIX)_stats.csv"
-	@echo ""
-	@echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"
-	@echo "📊 CSV Reports: $(PROD_BENCH_CSV_PREFIX)_stats.csv"
+			ProdToolUser || STATUS=$$?; \
+		GATEWAY_REPLICAS=$(REPLICA) $(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$(PROD_BENCH_CSV_PREFIX)_stats.csv" \
+			--mode "$(PROD_BENCH_MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --compose "$(PROD_COMPOSE_FILE)"; \
+		echo ""; \
+		echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"; \
+		echo "📊 CSV Reports: $(PROD_BENCH_CSV_PREFIX)_stats.csv"; \
+		exit $$STATUS'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
