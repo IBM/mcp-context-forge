@@ -9090,6 +9090,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-resource-form" method="POST">
+                  <input type="hidden" name="name" id="edit-resource-name" />
                   <div class="grid grid-cols-1 gap-7">
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
@@ -9108,14 +9109,14 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     <div class="relative">
                       <label
                         class="block text-sm font-medium text-gray-700"
-                        for="edit-resource-name"
+                        for="edit-resource-custom-name"
                         >Name</label
                       >
                       <input
                         type="text"
-                        name="name"
+                        name="customName"
                         required
-                        id="edit-resource-name"
+                        id="edit-resource-custom-name"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                       <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
