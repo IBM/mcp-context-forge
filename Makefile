@@ -5615,6 +5615,7 @@ docker-shell:
 # help: compose-sso-down      - Stop & remove SSO-profile containers (keep named volumes)
 # help: compose-sso-clean     - ✨ Down SSO stack and delete named volumes (data-loss ⚠)
 # help: sso-test-login        - Run SSO smoke checks against compose stack
+# help: compose-sso-seed-audience - Trust Keycloak access tokens for API auth (api_audience=mcp-gateway-api)
 # help: compose-lite-up       - Start lite stack (reduced resources for local dev)
 # help: compose-lite-down     - Stop lite stack
 # help: compose-restart      - Recreate changed containers, pulling / building as needed
@@ -5687,7 +5688,7 @@ define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
-.PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login \
+.PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login compose-sso-seed-audience \
 	compose-lite-up compose-restart compose-build compose-pull \
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
@@ -5759,6 +5760,8 @@ compose-sso: compose-validate
 	@echo "✅ SSO stack started."
 	@echo "   Gateway:  http://localhost:8080"
 	@echo "   Keycloak: http://localhost:8180 (admin/changeme)"
+	@echo "   Next: once the gateway is healthy, run 'make compose-sso-seed-audience'"
+	@echo "         to accept Keycloak access tokens (web UI SSO) on the gateway API."
 
 compose-sso-monitoring: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5811,6 +5814,42 @@ compose-sso-clean: compose-validate
 sso-test-login:
 	@echo "🧪 Running SSO smoke checks..."
 	@COMPOSE_CMD="$(COMPOSE_CMD)" ./scripts/test-sso-flow.sh
+
+# The SSO provider's trusted_for_api_auth/api_audience fields have no env-var
+# bootstrap, so this sets them through the admin API on a running compose-sso stack.
+SSO_SEED_GATEWAY_URL ?= http://localhost:8080
+SSO_SEED_REALM ?= mcp-gateway
+SSO_SEED_API_AUDIENCE ?= mcp-gateway-api
+
+compose-sso-seed-audience:
+	@command -v jq >/dev/null 2>&1 || { echo "❌ jq is required"; exit 1; }
+	@set -eu; \
+	SECRET="$${JWT_SECRET_KEY:-$$(grep -E '^JWT_SECRET_KEY=' .env 2>/dev/null | cut -d= -f2- | tr -d "\"'" || true)}"; \
+	if [ -z "$$SECRET" ]; then echo "❌ JWT_SECRET_KEY is not set in the environment or .env"; exit 1; fi; \
+	TOKEN=$$($(VENV_DIR)/bin/python3 -m mcpgateway.utils.create_jwt_token \
+		--username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10 \
+		--secret "$$SECRET" --algo HS256 2>/dev/null) || { echo "❌ Could not mint an admin JWT (run 'make venv install-dev'?)"; exit 1; }; \
+	AUTH="Authorization: Bearer $$TOKEN"; \
+	API="$(SSO_SEED_GATEWAY_URL)/auth/sso/admin/providers"; \
+	LIST=$$(curl -fsS -H "$$AUTH" "$$API") || { echo "❌ Could not list SSO providers at $$API (is 'make compose-sso' up and healthy?)"; exit 1; }; \
+	IDS=$$(printf '%s' "$$LIST" | jq -r '.[].id'); \
+	PROVIDER=""; \
+	for id in $$IDS; do \
+		if curl -fsS -H "$$AUTH" "$$API/$$id" | jq -e --arg realm "$(SSO_SEED_REALM)" \
+			'(.provider_metadata.realm // "") == $$realm or ((.issuer // "") | endswith("/realms/" + $$realm))' >/dev/null; then \
+			PROVIDER="$$id"; break; \
+		fi; \
+	done; \
+	if [ -z "$$PROVIDER" ]; then echo "❌ No SSO provider matches Keycloak realm '$(SSO_SEED_REALM)' (found: $$(echo $$IDS))"; exit 1; fi; \
+	echo "🔐 Trusting provider '$$PROVIDER' for API auth (api_audience=$(SSO_SEED_API_AUDIENCE))..."; \
+	BODY=$$(jq -n --arg aud "$(SSO_SEED_API_AUDIENCE)" '{trusted_for_api_auth: true, api_audience: $$aud}'); \
+	curl -fsS -X PUT -H "$$AUTH" -H "Content-Type: application/json" -d "$$BODY" "$$API/$$PROVIDER" >/dev/null \
+		|| { echo "❌ PUT $$API/$$PROVIDER failed"; exit 1; }; \
+	if ! curl -fsS -H "$$AUTH" "$$API/$$PROVIDER" | jq -e --arg aud "$(SSO_SEED_API_AUDIENCE)" \
+		'.trusted_for_api_auth == true and .api_audience == $$aud' >/dev/null; then \
+		echo "❌ Provider '$$PROVIDER' did not keep trusted_for_api_auth=true / api_audience=$(SSO_SEED_API_AUDIENCE)"; exit 1; \
+	fi; \
+	echo "✅ Provider '$$PROVIDER': trusted_for_api_auth=true, api_audience=$(SSO_SEED_API_AUDIENCE)"
 
 .PHONY: compose-lite-up
 compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
