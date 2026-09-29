@@ -996,9 +996,9 @@ async def test_tool_invoke_direct_pins_the_validated_address(fake_resolver, monk
     monkeypatch.setattr("mcpgateway.services.tool_service.build_gateway_auth_headers", lambda _gw: {"Authorization": "Bearer remote-token"})
     monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _capture_client_factory(captured))
 
-    with pytest.raises(Exception):
-        await service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={"key": "value"}, user_email="user@example.com", token_teams=["team-1"])
+    result = await service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={"key": "value"}, user_email="user@example.com", token_teams=["team-1"])
 
+    assert result.is_error is True, "the capture stub stops the call, which surfaces as an MCP error result"
     client = captured["factory"](headers={}, timeout=None, auth=None)
     try:
         assert isinstance(client._transport, SniPinningTransport)
@@ -1020,10 +1020,16 @@ async def test_tool_invoke_direct_refuses_a_rebound_address(fake_resolver, monke
     monkeypatch.setattr("mcpgateway.services.tool_service.settings.mcpgateway_direct_proxy_timeout", 30)
     monkeypatch.setattr("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.services.tool_service.build_gateway_auth_headers", lambda _gw: {"Authorization": "Bearer remote-token"})
-    monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _refuse_to_dial)
+    dial_attempts = []
+    monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", lambda *a, **k: dial_attempts.append(a) or _refuse_to_dial())
 
-    with pytest.raises(ToolInvocationError, match="Outbound URL blocked by URL policy"):
-        await service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={"key": "value"}, user_email="user@example.com", token_teams=["team-1"])
+    result = await service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={"key": "value"}, user_email="user@example.com", token_teams=["team-1"])
+
+    # invoke_tool_direct returns runtime failures as an MCP error result, which would also absorb
+    # the AssertionError from _refuse_to_dial, so assert directly that no dial was attempted.
+    assert dial_attempts == []
+    assert result.is_error is True
+    assert "Outbound URL blocked by URL policy" in result.content[0].text
 
 
 def _mcp_gateway(url: str, transport: str) -> SimpleNamespace:
@@ -1134,9 +1140,9 @@ async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeyp
     monkeypatch.setattr("mcpgateway.services.tool_service.extract_using_jq", lambda data, _filt: data)
     monkeypatch.setattr("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock()))
 
-    with pytest.raises(Exception):
-        await service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+    result = await service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
+    assert result.is_error is True, "the capture stub stops the call, which surfaces as an MCP error result"
     client = captured["factory"](headers={}, timeout=None, auth=None)
     try:
         assert isinstance(client._transport, SniPinningTransport)
