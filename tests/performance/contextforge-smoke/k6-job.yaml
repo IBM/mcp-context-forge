@@ -1,0 +1,74 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cf-k6-smoke
+  namespace: mcp-context-forge
+  labels:
+    app.kubernetes.io/name: cf-k6-smoke
+    app.kubernetes.io/part-of: cf-performance-smoke
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cf-k6-smoke
+        app.kubernetes.io/part-of: cf-performance-smoke
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: pull-secret
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: us.icr.io/perf_tools/watson-perf-k6@sha256:31e65b66982b146f628c3034d5179dc59dc3a8ea0c7ef118972017388d889f2f
+          imagePullPolicy: IfNotPresent
+          command: ["k6"]
+          args: ["run", "--no-usage-report", "/scripts/k6-contextforge-smoke.js"]
+          env:
+            - name: CF_MCP_ENDPOINT
+              value: "http://mcp-context-forge.mcp-context-forge.svc/servers/REPLACE_WITH_SERVER_ID/mcp"
+            - name: CF_TOOL_NAME
+              value: "REPLACE_WITH_FEDERATED_TOOL_NAME"
+            - name: CF_TEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cf-k6-test-auth
+                  key: token
+            - name: BENCH_USERS
+              value: "10"
+            - name: BENCH_SECONDS
+              value: "60"
+            - name: BENCH_SPAWN_RATE
+              value: "5"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: cf-k6-smoke-script
+            defaultMode: 0444

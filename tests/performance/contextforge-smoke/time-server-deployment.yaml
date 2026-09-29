@@ -1,0 +1,79 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cf-perf-fast-time
+  namespace: mcp-context-forge
+  labels:
+    app.kubernetes.io/name: cf-perf-fast-time
+    app.kubernetes.io/part-of: cf-performance-smoke
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cf-perf-fast-time
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cf-perf-fast-time
+        app.kubernetes.io/part-of: cf-performance-smoke
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 15
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fast-time-server
+          image: ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:78f93ca1e1befca2c6fd2ce54b5ab4685a2de3e9cf639d38ad0d2da54a7ea3b7
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: BIND_ADDRESS
+              value: "0.0.0.0:9080"
+            - name: MCP_PROTOCOL_MODE
+              value: "dual"
+            - name: RUST_LOG
+              value: "info"
+          ports:
+            - name: http-mcp
+              containerPort: 9080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http-mcp
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-mcp
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-mcp
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
