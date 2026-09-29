@@ -92,6 +92,9 @@ def patch_logger(monkeypatch):
 @pytest.fixture(autouse=True)
 def patch_settings_and_classvars(monkeypatch):
     """Patch settings and SecurityValidator class variables for testing."""
+    from mcpgateway.config import get_settings
+    real = get_settings()
+    monkeypatch.setattr(real, "validation_allowed_url_schemes", DummySettings.validation_allowed_url_schemes)
     with patch("mcpgateway.config.settings", new=DummySettings):
         # Update all class variables to use test settings
         SecurityValidator.MAX_NAME_LENGTH = DummySettings.validation_max_name_length
@@ -102,7 +105,6 @@ def patch_settings_and_classvars(monkeypatch):
         SecurityValidator.MAX_URL_LENGTH = DummySettings.validation_max_url_length
         SecurityValidator.DANGEROUS_HTML_PATTERN = DummySettings.validation_dangerous_html_pattern
         SecurityValidator.DANGEROUS_JS_PATTERN = DummySettings.validation_dangerous_js_pattern
-        SecurityValidator.ALLOWED_URL_SCHEMES = DummySettings.validation_allowed_url_schemes
         SecurityValidator.NAME_PATTERN = DummySettings.validation_name_pattern
         SecurityValidator.IDENTIFIER_PATTERN = DummySettings.validation_identifier_pattern
         SecurityValidator.VALIDATION_SAFE_URI_PATTERN = DummySettings.validation_safe_uri_pattern
@@ -1171,7 +1173,8 @@ class TestValidateUrlSecurity:
 
     def test_protocol_relative_url_blocked_even_if_allowed_schemes_misconfigured(self, monkeypatch):
         """Protocol-relative URLs must be blocked even if // is (incorrectly) whitelisted (line 1019)."""
-        monkeypatch.setattr(SecurityValidator, "ALLOWED_URL_SCHEMES", ["//", "http://", "https://", "ws://", "wss://"])
+        from mcpgateway.config import get_settings
+        monkeypatch.setattr(get_settings(), "validation_allowed_url_schemes", ["//", "http://", "https://", "ws://", "wss://"])
         with pytest.raises(ValueError, match="protocol-relative"):
             SecurityValidator.validate_url("//example.com", "URL")
 
@@ -1364,6 +1367,7 @@ class TestValidateUrlPercentEncoding:
     def test_encoded_loopback_blocked_with_ssrf(self):
         """Encoded `127.0.0.1` in hostname must be caught by SSRF once enabled."""
         ssrf_settings = MagicMock()
+        ssrf_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
         ssrf_settings.ssrf_protection_enabled = True
         ssrf_settings.ssrf_blocked_networks = []
         ssrf_settings.ssrf_blocked_hosts = []
@@ -1896,6 +1900,7 @@ class TestGatewayTestUrlValidation:
         # Explicitly set SSRF protection to enabled
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
             mock_settings.gateway_test_dns_timeout = 5.0
 
             for url in private_ips:
@@ -1923,6 +1928,7 @@ class TestGatewayTestUrlValidation:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             for url in loopback_urls:
                 with pytest.raises(ValueError, match="is not allowed"):
@@ -1943,6 +1949,7 @@ class TestGatewayTestUrlValidation:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             with pytest.raises(ValueError, match="is not allowed"):
                 await SecurityValidator.validate_gateway_test_url(
@@ -1957,6 +1964,7 @@ class TestGatewayTestUrlValidation:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             with pytest.raises(ValueError, match="is not allowed"):
                 await SecurityValidator.validate_gateway_test_url(
@@ -2416,6 +2424,7 @@ class TestOutboundUrlConnectionPinningValidation:
             "ssrf_allowed_networks": [],
             "ssrf_dns_fail_closed": True,
             "gateway_test_dns_timeout": 5.0,
+            "validation_allowed_url_schemes": ["http://", "https://", "ws://", "wss://"],
         }
         values.update(overrides)
         return MagicMock(**values)

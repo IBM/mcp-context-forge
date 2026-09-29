@@ -3782,6 +3782,7 @@ Disallow: /
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
+    strict_scheme_enforcement: bool = False
 
     # Character validation patterns
     validation_name_pattern: str = r"^[a-zA-Z0-9_.\- ]+$"  # Allow spaces for names (literal space, not \s to reject control chars)
