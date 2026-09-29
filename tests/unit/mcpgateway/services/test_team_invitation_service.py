@@ -8,17 +8,24 @@ Comprehensive tests for Team Invitation Service functionality.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 # Third-Party
 import pytest
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.schemas import EmailDeliveryStatus
-from mcpgateway.services.team_invitation_service import InvitationDeliveryResult, TeamInvitationService
+from mcpgateway.services.team_invitation_service import (
+    InvitationDeliveryResult,
+    InvitationEmailMismatchError,
+    InvitationNotFoundError,
+    TeamInvitationService,
+)
 from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
 
 
@@ -451,12 +458,11 @@ class TestTeamInvitationService:
 
     @pytest.mark.asyncio
     async def test_get_invitation_by_token_database_error(self, service, mock_db):
-        """Test getting invitation by token with database error."""
+        """Database failures are surfaced to the route."""
         mock_db.query.side_effect = Exception("Database error")
 
-        result = await service.get_invitation_by_token("token")
-
-        assert result is None
+        with pytest.raises(Exception, match="Database error"):
+            await service.get_invitation_by_token("token")
 
     # =========================================================================
     # Invitation Acceptance Tests
@@ -867,28 +873,50 @@ class TestTeamInvitationService:
     @pytest.mark.asyncio
     async def test_decline_invitation_success(self, service, mock_db, mock_invitation):
         """Test successful invitation decline."""
-        with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
-            result = await service.decline_invitation("secure_token_123")
+        mock_invitation.email = "user@example.com"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_invitation
 
-            assert result is True
-            assert mock_invitation.is_active is False
-            mock_db.commit.assert_called_once()
+        result = await service.decline_invitation("secure_token_123", "user@example.com")
+
+        assert result is True
+        assert mock_invitation.is_active is False
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_decline_invitation_not_found(self, service):
+    async def test_decline_expired_invitation_success(self, service, mock_db, mock_invitation):
+        """Expired active invitations may still be declined."""
+        mock_invitation.email = "user@example.com"
+        mock_invitation.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_invitation
+
+        result = await service.decline_invitation("expired-token", "user@example.com")
+
+        assert result is True
+        assert mock_invitation.is_active is False
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_decline_invitation_not_found(self, service, mock_db):
         """Test declining non-existent invitation."""
-        with patch.object(service, "get_invitation_by_token", return_value=None):
-            result = await service.decline_invitation("nonexistent_token")
+        mock_db.query.return_value.filter.return_value.first.return_value = None
 
-            assert result is False
+        with pytest.raises(InvitationNotFoundError):
+            await service.decline_invitation("nonexistent_token", "user@example.com")
+
+        mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_decline_invitation_email_mismatch(self, service, mock_invitation):
+    async def test_decline_invitation_email_mismatch(self, service, mock_db, mock_invitation):
         """Test declining invitation with mismatched email."""
-        with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
-            result = await service.decline_invitation("token", declining_user_email="wrong@example.com")
+        mock_invitation.email = "user@example.com"
+        mock_invitation.is_active = True
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_invitation
 
-            assert result is False
+        with pytest.raises(InvitationEmailMismatchError):
+            await service.decline_invitation("token", declining_user_email="wrong@example.com")
+
+        assert mock_invitation.is_active is True
+        mock_db.commit.assert_not_called()
 
     # =========================================================================
     # Invitation Revocation Tests
@@ -982,13 +1010,81 @@ class TestTeamInvitationService:
         mock_invitations = [MagicMock(spec=EmailTeamInvitation) for _ in range(2)]
 
         mock_query = MagicMock()
-        mock_query.filter.return_value.filter.return_value.order_by.return_value.all.return_value = mock_invitations
+        mock_query.options.return_value.filter.return_value.filter.return_value.order_by.return_value.all.return_value = mock_invitations
         mock_db.query.return_value = mock_query
 
         result = await service.get_user_invitations("user@example.com")
 
         assert result == mock_invitations
         mock_db.query.assert_called_once_with(EmailTeamInvitation)
+        mock_query.options.assert_called_once()
+        mock_query.options.return_value.filter.assert_called_once()
+        mock_query.options.return_value.filter.return_value.filter.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_user_invitations_filters_pending_rows_and_eager_loads_team(self, test_db):
+        """Inbox query returns only caller's active, unexpired invitations."""
+        suffix = uuid4().hex
+        owner_email = f"owner-{suffix}@example.com"
+        invitee_email = f"invitee-{suffix}@example.com"
+        other_email = f"other-{suffix}@example.com"
+        now = utc_now()
+
+        owner = EmailUser(email=owner_email, password_hash="x", is_active=True)  # pragma: allowlist secret
+        team = EmailTeam(name=f"Team {suffix}", slug=f"team-{suffix}", created_by=owner_email, visibility="private")
+        test_db.add_all([owner, team])
+        test_db.flush()
+
+        pending = EmailTeamInvitation(
+            team_id=team.id,
+            email=invitee_email,
+            role="member",
+            invited_by=owner_email,
+            invited_at=now,
+            expires_at=now + timedelta(days=1),
+            token=f"pending-{suffix}",
+            is_active=True,
+        )
+        expired = EmailTeamInvitation(
+            team_id=team.id,
+            email=invitee_email,
+            role="member",
+            invited_by=owner_email,
+            invited_at=now,
+            expires_at=now - timedelta(days=1),
+            token=f"expired-{suffix}",
+            is_active=True,
+        )
+        inactive = EmailTeamInvitation(
+            team_id=team.id,
+            email=invitee_email,
+            role="member",
+            invited_by=owner_email,
+            invited_at=now,
+            expires_at=now + timedelta(days=1),
+            token=f"inactive-{suffix}",
+            is_active=False,
+        )
+        other_user = EmailTeamInvitation(
+            team_id=team.id,
+            email=other_email,
+            role="member",
+            invited_by=owner_email,
+            invited_at=now,
+            expires_at=now + timedelta(days=1),
+            token=f"other-{suffix}",
+            is_active=True,
+        )
+        test_db.add_all([pending, expired, inactive, other_user])
+        test_db.commit()
+        pending_id = pending.id
+        test_db.expunge_all()
+
+        result = await TeamInvitationService(test_db).get_user_invitations(invitee_email)
+
+        assert [invitation.id for invitation in result] == [pending_id]
+        assert "team" not in inspect(result[0]).unloaded
+        assert result[0].team.name == f"Team {suffix}"
 
     # =========================================================================
     # Invitation Cleanup Tests
@@ -1034,15 +1130,17 @@ class TestTeamInvitationService:
 
     @pytest.mark.asyncio
     async def test_database_error_handling(self, service, mock_db):
-        """Test various database error scenarios return appropriate defaults."""
+        """Only legacy best-effort service methods hide database failures."""
         mock_db.query.side_effect = Exception("Database connection failed")
 
-        # Test methods that should return None on error
-        assert await service.get_invitation_by_token("token") is None
+        with pytest.raises(Exception, match="Database connection failed"):
+            await service.get_invitation_by_token("token")
 
-        # Test methods that should return empty lists on error
-        assert await service.get_team_invitations("team123") == []
-        assert await service.get_user_invitations("user@example.com") == []
+        with pytest.raises(Exception, match="Database connection failed"):
+            await service.get_team_invitations("team123")
+
+        with pytest.raises(Exception, match="Database connection failed"):
+            await service.get_user_invitations("user@example.com")
 
         # Test cleanup returns 0 on error
         assert await service.cleanup_expired_invitations() == 0

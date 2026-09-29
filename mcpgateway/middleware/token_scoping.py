@@ -170,6 +170,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
+    # Invitee-facing team invitation routes
+    ("GET", re.compile(r"^/users/me/invitations/?$"), Permissions.TEAMS_JOIN),
+    ("POST", re.compile(r"^/teams/invitations/[^/]+/(?:accept|decline)/?$"), Permissions.TEAMS_JOIN),
     # Token permissions
     ("GET", re.compile(r"^/tokens(?:$|/)"), Permissions.TOKENS_READ),
     ("POST", re.compile(r"^/tokens/?$"), Permissions.TOKENS_CREATE),  # Only exact /tokens or /tokens/
