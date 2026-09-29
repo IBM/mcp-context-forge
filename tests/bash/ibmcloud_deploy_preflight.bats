@@ -86,7 +86,7 @@ teardown() {
     cat > "${TMP_BIN}/ibmcloud" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$*" == *"secret get"* ]]; then
-    echo "Secret 'my-regcred' not found" >&2
+    echo "Secret my-regcred not found" >&2
     exit 1
 fi
 exit 0
