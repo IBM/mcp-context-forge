@@ -2778,7 +2778,15 @@ PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(PROD_BENCH_MODE))
 PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
 PROD_BENCH_USERS ?= 125
 PROD_BENCH_SPAWN_RATE ?= 30
-PROD_BENCH_RUN_TIME ?= 1800s
+TIME ?= 1800s
+
+# Honor only an explicit `make ... TOKEN=<jwt>`. A TOKEN or MCPGATEWAY_BEARER_TOKEN
+# left exported in the shell goes stale when the stack restarts with a new
+# JWT_SECRET_KEY, and every benchmark call then returns 401; legacy mode mints a
+# fresh token from the running gateway instead. Modern mode cannot mint (the Rust
+# dataplane verifies RS256 against its JWKS), so it still takes the exported token.
+PROD_BENCH_TOKEN = $(if $(filter command line,$(origin TOKEN)),$(TOKEN),$(if $(filter modern,$(PROD_BENCH_MODE)),$(MCPGATEWAY_BEARER_TOKEN)))
+PROD_BENCH_USER ?= admin@example.com
 PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE).html
 PROD_BENCH_CSV_PREFIX ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE)
 RL_LIMIT_PER_MIN ?= 30
@@ -2875,19 +2883,34 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 	@echo "   Mode: $(PROD_BENCH_MODE) (handshake: $(if $(filter modern,$(PROD_BENCH_MODE)),skipped,initialize))"
 	@echo "   Host: $(PROD_BENCH_HOST)"
 	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
-	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(PROD_BENCH_RUN_TIME)"
+	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(TIME)"
 	@$(if $(filter modern,$(PROD_BENCH_MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		GW_SECRET="$(gateway_jwt_secret)" && \
+		BENCH_TOKEN="$(PROD_BENCH_TOKEN)" && \
+		if [ -z "$$BENCH_TOKEN" ] && [ -n "$$GW_SECRET" ]; then \
+			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(PROD_BENCH_USER) --exp 10080 2>/dev/null); \
+		fi; \
+		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp" \
+			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}" || true); \
+		if [ "$$CODE" = "401" ]; then \
+			echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
+			echo "Fix: unset TOKEN MCPGATEWAY_BEARER_TOKEN so the benchmark mints its own, or pass TOKEN=<jwt> on the command line."; \
+			exit 1; \
+		fi; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
 		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
 		PROD_BENCH_MODE=$(PROD_BENCH_MODE) \
+		JWT_SECRET_KEY=$${GW_SECRET:-$${JWT_SECRET_KEY:-}} \
+		MCPGATEWAY_BEARER_TOKEN=$$BENCH_TOKEN \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(PROD_BENCH_HOST) \
 			--users=$(PROD_BENCH_USERS) \
 			--spawn-rate=$(PROD_BENCH_SPAWN_RATE) \
-			--run-time=$(PROD_BENCH_RUN_TIME) \
+			--run-time=$(TIME) \
 			--headless \
 			--exit-code-on-error=0 \
 			--html=$(PROD_BENCH_HTML_REPORT) \
@@ -5650,7 +5673,7 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
-# help: prod-up              - Start stack with production resource overrides (docker-compose.prod.yml)
+# help: prod-up              - Start stack with production resource overrides (REPLICA=3)
 # help: prod-down             - Stop production-override stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
@@ -5794,14 +5817,26 @@ compose-up: compose-validate
 
 PROD_COMPOSE_FILE := docker-compose.prod.yml
 PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
+REPLICA ?= 3
 
-prod-up: compose-validate                 ## Start stack with production resource overrides
+prod-up: compose-validate                 ## Start stack with production resource overrides (REPLICA=3)
 	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
 		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
 		exit 1; \
 	fi
-	@echo "🚀  Using $(COMPOSE_CMD) + $(PROD_COMPOSE_FILE); starting production stack..."
-	IMAGE_LOCAL=$(call get_image_name) $(PROD_COMPOSE) up -d
+	@echo "🚀  Using $(COMPOSE_CMD) + $(PROD_COMPOSE_FILE); starting production stack ($(REPLICA) gateway replica(s))..."
+	IMAGE_LOCAL=$(call get_image_name) GATEWAY_REPLICAS=$(REPLICA) $(PROD_COMPOSE) up -d
+
+# Signing secret of the running gateway container; empty when no gateway is up.
+# The container wins over .env: compose lets a shell JWT_SECRET_KEY override the
+# file, so .env can hold a secret the running gateway never saw (every call 401s).
+gateway_jwt_secret = $$(docker ps -q -f label=com.docker.compose.service=gateway 2>/dev/null | { read -r id; [ -n "$$id" ] && docker exec "$$id" printenv JWT_SECRET_KEY 2>/dev/null; } || true)
+
+# help: create-token          - Print a bare admin JWT (use: export TOKEN=$(make create-token))
+.PHONY: create-token
+create-token:                             ## Print a bare admin JWT signed with the running gateway's secret
+	@SECRET="$(gateway_jwt_secret)"; \
+	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
 
 prod-down: compose-validate               ## Stop production-override stack
 	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
