@@ -2337,6 +2337,64 @@ class TestToolService:
         assert preview_result.validated is False
         assert any(w.code == "invalid_arguments" and bounded_phrase in w.message for w in preview_result.warnings), f"validation must be stopped by the budget, not by an unrelated refusal; got {preview_result.warnings!r}"
 
+    @pytest.mark.timeout(30)
+    @pytest.mark.asyncio
+    async def test_invoke_tool_offloads_hostile_output_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A catastrophic output_schema must not stall the loop through ``invoke_tool``.
+
+        The output path validates in ``_extract_and_validate_structured_content``, offloaded
+        with ``asyncio.to_thread`` at its call site. Removing that offload stalls the loop for
+        the sandbox timeout, so the budget is half of ``regex_timeout_seconds``, as in the
+        input-path test above.
+        """
+        # First-Party
+        from mcpgateway.config import settings
+        from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+
+        min_heartbeats = 15
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.output_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+        }
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"q": "a" * 28 + "b"})
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        start_validation_pool()
+        try:
+            lateness: list[float] = []
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                """Wake every 10 ms and record how late each wake-up was."""
+                while not stop.is_set():
+                    start = time.perf_counter()
+                    await asyncio.sleep(0.01)
+                    lateness.append(time.perf_counter() - start - 0.01)
+
+            beat = asyncio.create_task(heartbeat())
+            await asyncio.sleep(0.2)
+            with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+                result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+            stop.set()
+            await beat
+        finally:
+            shutdown_validation_pool()
+
+        assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+        budget = 0.5 * settings.regex_timeout_seconds
+        assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
+        assert result.is_error, "the hostile output must fail validation, not pass"
+
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         # ----------------  DB  -----------------

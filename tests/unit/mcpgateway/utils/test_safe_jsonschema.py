@@ -62,6 +62,7 @@ def _pool():
     start_validation_pool()
     yield
     shutdown_validation_pool()
+    safe_jsonschema._SANDBOX_DOWN = False  # pylint: disable=protected-access
 
 
 def test_schema_without_regex_is_detected():

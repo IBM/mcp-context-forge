@@ -1296,6 +1296,14 @@ class TestSecurityValidation:
         assert runaway is not None, "a truncated validation must fail closed"
         assert "exceeded the execution time limit" in runaway, f"the budget must be what stopped it; got {runaway!r}"
 
+        # The other four settle at once, so a broken pool would show as the fail-closed
+        # message here. Pin each real outcome: three patterns match the subject, and the
+        # literal "{x}" quantifier of the fourth cannot.
+        for pattern in ("([a-zA-Z]+)*", "(a|a)*", "((a*)*)*b"):
+            assert outcomes[pattern] is None, f"pattern {pattern!r} matches the subject; got {outcomes[pattern]!r}"
+        mismatch = outcomes["(.*a){x}"]
+        assert mismatch is not None and "could not be completed safely" not in mismatch and "exceeded" not in mismatch, f"expected a plain mismatch; got {mismatch!r}"
+
         # Test 2: SSTI validation patterns should not be vulnerable to ReDoS
         # The SSTI patterns previously used .* which could cause catastrophic backtracking
         logger.debug("Testing SSTI ReDoS prevention")

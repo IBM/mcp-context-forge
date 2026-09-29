@@ -43,3 +43,29 @@ def test_warning_never_raises():
     warn_unprovable_patterns(None, source="tool:none")
     warn_unprovable_patterns({"pattern": "("}, source="tool:broken")
     warn_unprovable_patterns([1, 2, 3], source="tool:list")
+
+
+def test_tool_insert_listener_warns(caplog):
+    """Flushing a regex-bearing Tool warns through the ``before_insert`` listener.
+
+    Args:
+        caplog: Pytest fixture that captures log records.
+    """
+    # Third-Party
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
+
+    # First-Party
+    from mcpgateway.db import Base, Tool
+
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine) as session, caplog.at_level(logging.WARNING):
+            session.add(Tool(original_name="weather", custom_name="weather", custom_name_slug="weather", input_schema=RISKY, integration_type="REST", request_type="GET", url="http://example.com"))
+            session.flush()
+            session.rollback()
+    finally:
+        engine.dispose()
+    assert any(getattr(r, "source", None) == "tool:weather" for r in caplog.records)
