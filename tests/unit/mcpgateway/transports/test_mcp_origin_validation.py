@@ -385,6 +385,31 @@ class TestCheckMcpHost:
         self._patch_allowed(monkeypatch, set())
         assert _check_mcp_host("") is True
 
+    def test_loopback_ipv4_accepted_when_allowlist_set(self, monkeypatch):
+        """127.0.0.1 is accepted regardless of the allowlist (in-process self-call)."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("127.0.0.1:4444") is True
+
+    def test_loopback_ipv4_bare_accepted_when_allowlist_set(self, monkeypatch):
+        """127.0.0.1 without port is accepted regardless of the allowlist."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("127.0.0.1") is True
+
+    def test_localhost_accepted_when_allowlist_set(self, monkeypatch):
+        """localhost is accepted regardless of the allowlist."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("localhost:4444") is True
+
+    def test_loopback_ipv6_bracketed_accepted_when_allowlist_set(self, monkeypatch):
+        """[::1] is accepted regardless of the allowlist."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("[::1]:4444") is True
+
+    def test_non_loopback_still_rejected(self, monkeypatch):
+        """A non-loopback host that is not in the allowlist is still rejected."""
+        self._patch_allowed(monkeypatch, {"myapp.example.com:4444"})
+        assert _check_mcp_host("attacker.invalid:4444") is False
+
 
 # ---------------------------------------------------------------------------
 # handle_streamable_http: Host gate
@@ -419,6 +444,41 @@ async def test_unapproved_host_returns_403(monkeypatch):
 
     assert sent[0]["status"] == 403, f"Expected 403 for unlisted Host, got {sent}"
     assert not downstream_called, "Downstream must NOT be called for rejected Host"
+
+
+@pytest.mark.asyncio
+async def test_loopback_host_not_rejected_when_allowlist_set(monkeypatch):
+    """A loopback Host (127.0.0.1) must not be rejected even when MCP_ALLOWED_HOSTS is set.
+
+    Covers the test_server_mcp_handshake in-process self-call path: that code sends
+    Host: 127.0.0.1:{PORT} via internal_loopback_base_url() and must not be blocked.
+    """
+    monkeypatch.setattr(tr.settings, "mcp_allowed_origins", set())
+    monkeypatch.setattr(tr.settings, "mcp_allowed_hosts", {"myapp.example.com:4444"})
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+
+    downstream_called = []
+
+    async def downstream(scope, receive, send):
+        downstream_called.append(True)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    gate = MCPOriginHostGate(downstream)
+    scope = _make_scope("/servers/abc/mcp", headers=[(b"host", b"127.0.0.1:4444")])
+    await gate(scope, receive, send)
+
+    host_403 = any(m.get("status") == 403 for m in sent if m.get("type") == "http.response.start")
+    assert not host_403, f"Loopback Host must not produce a 403 when allowlist is set, got {sent}"
+    assert downstream_called, "Downstream must be called for loopback Host"
 
 
 @pytest.mark.asyncio

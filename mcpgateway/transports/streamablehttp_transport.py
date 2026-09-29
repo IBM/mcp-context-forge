@@ -162,13 +162,22 @@ def _check_mcp_origin(origin: Optional[str]) -> bool:
     return origin in settings.mcp_allowed_origins
 
 
+# Loopback hostname literals. Port is stripped before the check.
+# A DNS-rebound page cannot control the loopback address in Host; only genuine
+# same-host callers (e.g. test_server_handshake in-process self-calls) send these.
+_LOOPBACK_HOSTNAMES: frozenset[str] = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+
 def _check_mcp_host(host: Optional[str]) -> bool:
     """Return True when the Host header is allowed for MCP Streamable HTTP ingress.
 
     Missing Host (``None``) is always accepted. An empty-string Host is treated as
-    present-and-must-match. When ``mcp_allowed_hosts`` is empty, all hosts are
-    accepted (opt-in enforcement). Otherwise the host must be an exact member of the
-    configured set or the request must be rejected with HTTP 403.
+    present-and-must-match. Loopback literals (``127.0.0.1``, ``localhost``,
+    ``[::1]``) are always accepted regardless of the allowlist — in-process
+    self-calls (e.g. ``test_server_handshake``) send these and a DNS-rebound page
+    cannot forge a loopback hostname in ``Host``. When ``mcp_allowed_hosts`` is
+    empty all other hosts are accepted (opt-in enforcement). Otherwise the host
+    must be an exact member of the configured set or the request is rejected.
 
     Args:
         host: Value of the Host header, or None when absent.
@@ -177,6 +186,13 @@ def _check_mcp_host(host: Optional[str]) -> bool:
         True when the request should proceed, False when it must be rejected.
     """
     if host is None:
+        return True
+    # Strip port suffix (host:port or [::1]:port) before loopback check.
+    bare = host.rsplit(":", 1)[0] if ":" in host else host
+    # De-bracket IPv6 literals: "[::1]" → "::1"
+    if bare.startswith("[") and bare.endswith("]"):
+        bare = bare[1:-1]
+    if bare in _LOOPBACK_HOSTNAMES:
         return True
     if not settings.mcp_allowed_hosts:
         return True
