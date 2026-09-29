@@ -6856,6 +6856,47 @@ class TestHandleGatewayFailureThreshold:
 
 class TestMarkGatewayReachableErrorCleanup:
     @pytest.mark.asyncio
+    async def test_catalog_conflict_recovers_reachability_without_failure_handling(self, gateway_service, monkeypatch):
+        """Healthy gateway remains reachable when catalog rediscovery finds a collision."""
+        status_db = MagicMock()
+        status_db.__enter__ = MagicMock(return_value=status_db)
+        status_db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=status_db))
+        gateway_service.set_gateway_state = AsyncMock(side_effect=GatewayToolNameConflictError("prod-search"))
+        gateway_service._recover_gateway_reachability_after_catalog_conflict = AsyncMock()
+
+        await gateway_service._mark_gateway_reachable("gw-1", "prod", True, False)
+
+        gateway_service._recover_gateway_reachability_after_catalog_conflict.assert_awaited_once_with("gw-1", "prod")
+
+    @pytest.mark.asyncio
+    async def test_catalog_conflict_recovery_marks_existing_catalog_reachable(self, gateway_service, monkeypatch):
+        """Fallback restores gateway and existing tool reachability without catalog sync."""
+        recovered = SimpleNamespace(id="gw-1", url="https://prod.example", enabled=True, reachable=False, last_seen=None, last_error="outage", updated_at=None)
+        recovery_db = MagicMock()
+        recovery_db.__enter__ = MagicMock(return_value=recovery_db)
+        recovery_db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=recovery_db))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", Mock(return_value=recovered))
+        cache = MagicMock()
+        cache.invalidate_gateways = AsyncMock()
+        cache.invalidate_tools = AsyncMock()
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", Mock(return_value=cache))
+        tool_cache = MagicMock()
+        tool_cache.invalidate_gateway = AsyncMock()
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", Mock(return_value=tool_cache))
+
+        await gateway_service._recover_gateway_reachability_after_catalog_conflict("gw-1", "prod")
+
+        assert recovered.reachable is True
+        assert recovered.last_error is None
+        assert "https://prod.example" in gateway_service._active_gateways
+        recovery_db.commit.assert_called_once()
+        cache.invalidate_gateways.assert_awaited_once()
+        cache.invalidate_tools.assert_awaited_once()
+        tool_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
+
+    @pytest.mark.asyncio
     async def test_recovery_clears_last_error_for_enabled_gateway(self, gateway_service, monkeypatch):
         """A successful probe of an enabled gateway removes the previous outage reason."""
         recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired", enabled=True)

@@ -132,7 +132,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
-from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -359,7 +359,7 @@ class GatewayToolNameConflictError(GatewayError):
 
 def _build_gateway_tool_invocation_name(gateway_name: str, tool_name: str) -> str:
     """Return gateway-prefixed invocation name using ORM naming semantics."""
-    return slugify(gateway_name) + settings.gateway_tool_name_separator + slugify(tool_name)
+    return build_gateway_tool_invocation_name(gateway_name, tool_name)
 
 
 class GatewayNotFoundError(GatewayError):
@@ -4889,8 +4889,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         if gateway_enabled and not gateway_reachable:
             logger.info("Reactivating gateway: %s, as it is %s", gateway_name, reactivation_reason)
-            with cast(Any, SessionLocal)() as status_db:
-                await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+            try:
+                with cast(Any, SessionLocal)() as status_db:
+                    await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+            except GatewayToolNameConflictError:
+                await self._recover_gateway_reachability_after_catalog_conflict(gateway_id, gateway_name)
 
         try:
             with fresh_db_session() as update_db:
@@ -4909,6 +4912,39 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     update_db.commit()
         except Exception as update_error:
             logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+
+    async def _recover_gateway_reachability_after_catalog_conflict(self, gateway_id: str, gateway_name: str) -> None:
+        """Restore reachability after health recovery rejects a conflicting catalog refresh.
+
+        Args:
+            gateway_id: Gateway DB identifier.
+            gateway_name: Human-readable gateway name for logs.
+        """
+        now = datetime.now(timezone.utc)
+        with cast(Any, SessionLocal)() as recovery_db:
+            gateway = get_for_update(recovery_db, DbGateway, gateway_id)
+            if gateway is None or not gateway.enabled:
+                recovery_db.rollback()
+                return
+            gateway.reachable = True
+            gateway.last_seen = now
+            gateway.last_error = None
+            gateway.updated_at = now
+            recovery_db.execute(
+                update(DbTool)
+                .where(DbTool.gateway_id == gateway_id)
+                .where(DbTool.reachable.is_(False))
+                .values(reachable=True, updated_at=now)
+            )
+            recovery_db.commit()
+            self._active_gateways.add(gateway.url)
+
+        cache = _get_registry_cache()
+        await cache.invalidate_gateways()
+        await cache.invalidate_tools()
+        tool_lookup_cache = _get_tool_lookup_cache()
+        await tool_lookup_cache.invalidate_gateway(str(gateway_id))
+        logger.warning("Gateway %s recovered, but catalog refresh was rejected because of a tool-name collision", SecurityValidator.sanitize_log_message(gateway_name))
 
     async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None) -> None:
         """Check health of a single gateway.

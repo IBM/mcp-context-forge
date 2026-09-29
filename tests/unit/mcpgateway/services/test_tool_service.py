@@ -2045,6 +2045,43 @@ class TestToolService:
         assert "statement" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_update_gateway_tool_custom_name_checks_final_invocation_name(self, tool_service, mock_tool, test_db, monkeypatch):
+        """Gateway-backed custom-name updates reject collisions with full local invocation names."""
+        mock_tool.gateway.name = "prod"
+        conflicting_tool = MagicMock(spec=DbTool)
+        conflicting_tool.id = "2"
+        conflicting_tool.name = "prod-search"
+        conflicting_tool.enabled = True
+        conflicting_tool.visibility = "public"
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_for_update", Mock(side_effect=[mock_tool, conflicting_tool]))
+        tool_service._server_ids_for_tool_cache_invalidation = Mock(return_value=())
+        test_db.rollback = Mock()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.update_tool(test_db, "1", ToolUpdate(custom_name="search"))
+
+        test_db.rollback.assert_called_once()
+        assert mock_tool.custom_name == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_tool_visibility_checks_final_invocation_name(self, tool_service, mock_tool, test_db, monkeypatch):
+        """Gateway-backed visibility updates validate full invocation name in target scope."""
+        mock_tool.gateway.name = "prod"
+        conflicting_tool = MagicMock(spec=DbTool)
+        conflicting_tool.id = "2"
+        conflicting_tool.name = "prod-test-tool"
+        conflicting_tool.enabled = True
+        conflicting_tool.visibility = "team"
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_for_update", Mock(side_effect=[mock_tool, conflicting_tool]))
+        tool_service._server_ids_for_tool_cache_invalidation = Mock(return_value=())
+        test_db.rollback = Mock()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.update_tool(test_db, "1", ToolUpdate(visibility="team"))
+
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_tool_not_found(self, tool_service, test_db):
         """Test updating a non-existent tool."""
         # Mock DB get to return None
