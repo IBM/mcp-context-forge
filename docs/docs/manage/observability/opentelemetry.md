@@ -6,6 +6,17 @@ ContextForge includes production-grade OpenTelemetry instrumentation for distrib
 
 The observability implementation is **vendor-agnostic** at the transport/export layer and works with any OTLP-compatible backend. ContextForge also supports optional Langfuse-oriented span enrichment when you point OTLP at a Langfuse ingestion endpoint, or when you explicitly enable that schema with `OTEL_EMIT_LANGFUSE_ATTRIBUTES=true`.
 
+### MCP Protocol Logging
+
+MCP `2026-07-28` removes the `logging/setLevel` method and makes `notifications/message` a per-request opt-in. ContextForge follows the protocol's guidance for these clients:
+
+- ContextForge does not advertise the `logging` capability to `2026-07-28` clients.
+- ContextForge does not send `notifications/message` to `2026-07-28` clients.
+- Operators get gateway telemetry from OpenTelemetry traces (this page) and structured logging instead. See [Configuration Reference](#configuration-reference).
+- Clients on `2025-11-25` and older keep the `logging` capability and `logging/setLevel` compatibility.
+
+The gateway accepts `2026-07-28` clients only when `MCP_INBOUND_PROTOCOL_MODE=auto`. See [Inbound MCP Protocol Mode](../configuration.md#inbound-mcp-protocol-mode-mcp-clients-gateway).
+
 ## Recommended Backend Options
 
 ### Langfuse - LLM Observability and Analytics
