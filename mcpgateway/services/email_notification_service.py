@@ -23,7 +23,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape, TemplateNot
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings
+from mcpgateway.config import FRONTEND_MOUNT_PREFIX, settings
 from mcpgateway.schemas import EmailDeliveryStatus
 from mcpgateway.services.logging_service import LoggingService
 
@@ -31,7 +31,6 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
-FRONTEND_MOUNT_PREFIX = "/app"
 PASSWORD_ROUTES = frozenset({"/forgot-password", "/reset-password"})
 
 

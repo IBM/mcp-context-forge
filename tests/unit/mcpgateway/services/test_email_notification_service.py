@@ -14,8 +14,9 @@ from jinja2 import TemplateNotFound
 import pytest
 
 # First-Party
-from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
+from mcpgateway.config import Settings
 from mcpgateway.schemas import EmailDeliveryStatus
+from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
 
 
 class TestAuthEmailNotificationService:
@@ -25,6 +26,14 @@ class TestAuthEmailNotificationService:
     def service(self):
         """Create service instance."""
         return AuthEmailNotificationService()
+
+    @pytest.mark.parametrize("prefix", ["", "/contextforge", "/myapp"])
+    @pytest.mark.parametrize("suffix", ["/app/app", "/app/app/", "/app/app/app/"])
+    def test_configured_repeated_mount_produces_one_frontend_mount(self, prefix, suffix):
+        """Settings normalization and link generation preserve the deployment prefix."""
+        configured = Settings(ui_base_url=f"https://ui.example.com{prefix}{suffix}", environment="development", _env_file=None)
+        with patch("mcpgateway.services.email_notification_service.settings", configured):
+            assert build_frontend_url("/accept-invitation", "test-token") == f"https://ui.example.com{prefix}/app/accept-invitation/test-token"
 
     def test_smtp_password_none(self, service):
         """_smtp_password returns None when not configured."""
