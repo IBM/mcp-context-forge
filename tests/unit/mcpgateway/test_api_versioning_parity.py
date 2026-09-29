@@ -164,6 +164,7 @@ def test_legacy_prefixes_documented():
         "/prompts",
         "/resources",
         "/gateways",
+        "/users",
     ],
 )
 def test_core_prefixes_present(prefix: str):
