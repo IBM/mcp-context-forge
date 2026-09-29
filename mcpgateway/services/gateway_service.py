@@ -6541,9 +6541,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         validation guard, not a replacement for a database uniqueness constraint;
         concurrent writers remain outside this operation's transaction-level scope.
         """
-        if any(tool is None for tool in tools):
-            raise ValueError("Gateway catalog contains invalid tool entry")
-
         existing_tools_by_original_name = existing_tools_by_original_name or {}
         projected: list[tuple[str, str, str | None, str | None]] = []
         external_conflict_candidates: list[tuple[str, str, str | None, str | None]] = []
@@ -6617,8 +6614,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     ) -> GatewayCatalogSyncResult:
         """Update/create fetched catalog rows inside caller transaction."""
         tools = [tool for tool in tools if tool is not None]
-        resources = [resource for resource in resources if resource is not None]
-        prompts = [prompt for prompt in prompts if prompt is not None]
         existing_tools_by_original_name = {tool.original_name: tool for tool in gateway.tools}
         self._validate_tool_name_collisions(
             db,

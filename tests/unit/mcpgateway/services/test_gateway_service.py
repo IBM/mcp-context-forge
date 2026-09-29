@@ -288,24 +288,6 @@ class TestGatewayToolNameCollisions:
             tools=[SimpleNamespace(name="api-search")],
         )
 
-    def test_none_tool_entry_is_rejected(self):
-        """Validator rejects unnormalized catalog entries before querying."""
-        service = GatewayService()
-        db = MagicMock()
-
-        with pytest.raises(ValueError, match="invalid tool entry"):
-            service._validate_tool_name_collisions(
-                db,
-                gateway_name="prod",
-                gateway_id=None,
-                gateway_team_id=None,
-                gateway_owner_email="owner@example.com",
-                gateway_visibility="public",
-                tools=[None],
-            )
-
-        db.execute.assert_not_called()
-
     def test_incoming_normalized_duplicates_are_rejected_before_query(self):
         """One incoming gateway catalog cannot expose duplicate invocation names."""
         service = GatewayService()
@@ -638,6 +620,33 @@ class TestGatewayService:
         assert result.url == expected_url
         assert result.description == "A test gateway"
         mock_model.url = expected_url
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_tool_collision_runs_real_validator_and_rolls_back(self, gateway_service, test_db):
+        """Registration propagates a real projected-name collision before persistence."""
+        existing_tool = SimpleNamespace(name="prod-api-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[existing_tool]),
+            ]
+        )
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
+        test_db.add = Mock()
+        test_db.rollback = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="api-search")], [], [], []))
+
+        with pytest.raises(GatewayToolNameConflictError) as error:
+            await gateway_service.register_gateway(
+                test_db,
+                GatewayCreate(name="prod", url="http://example.com/gateway"),
+                owner_email="owner@example.com",
+                visibility="public",
+            )
+
+        assert error.value.invocation_name == "prod-api-search"
+        test_db.rollback.assert_called_once()
+        test_db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_register_gateway_async_enabled_returns_pending(self, gateway_service, test_db, monkeypatch):
@@ -1963,6 +1972,25 @@ class TestGatewayService:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert "Public Gateway already exists with name" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_catalog_collision_re_raises_and_rolls_back(self, gateway_service, mock_gateway, test_db):
+        """Catalog collision escapes update reinitialization and reaches outer rollback."""
+        mock_gateway.team_id = 1
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="search")], [], [], []))
+        gateway_service._sync_gateway_catalog = MagicMock(side_effect=GatewayToolNameConflictError("prod-search"))
+
+        with pytest.raises(GatewayToolNameConflictError, match="Gateway tool name conflicts"):
+            await gateway_service.update_gateway(test_db, mock_gateway.id, GatewayUpdate(description="updated"))
+
+        test_db.rollback.assert_called_once()
+        test_db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_with_auth_update(self, gateway_service, mock_gateway, test_db):
@@ -6477,6 +6505,72 @@ class TestSetGatewayState:
         # Should still activate even if initialization fails (logs warning)
         result = await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
         assert gw.enabled is True
+
+    @pytest.mark.asyncio
+    async def test_reactivation_collision_removes_provisional_active_gateway(self, gateway_service, _mock_caches):
+        """Failed reactivation removes URL added before catalog validation."""
+        gw = _make_gateway(
+            id="gw-1",
+            name="prod",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="prod",
+            auth_type=None,
+            auth_query_params=None,
+            oauth_config=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._active_gateways = set()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="search")], [], [], []))
+        gateway_service._sync_gateway_catalog = MagicMock(side_effect=GatewayToolNameConflictError("prod-search"))
+
+        with pytest.raises(GatewayToolNameConflictError):
+            await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
+
+        assert gw.url not in gateway_service._active_gateways
+        db.rollback.assert_called_once()
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_collision_rolls_back_and_preserves_existing_active_entry(self, gateway_service, _mock_caches):
+        """Outer collision handler rolls back without removing pre-existing active URL."""
+        gw = _make_gateway(
+            id="gw-1",
+            name="prod",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="prod",
+            auth_type=None,
+            auth_query_params=None,
+            oauth_config=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._active_gateways = {gw.url}
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="search")], [], [], []))
+        gateway_service._sync_gateway_catalog = MagicMock(side_effect=GatewayToolNameConflictError("prod-search"))
+
+        with pytest.raises(GatewayToolNameConflictError):
+            await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
+
+        assert gw.url in gateway_service._active_gateways
+        db.rollback.assert_called_once()
+        db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_generic_exception_raises_gateway_error(self, gateway_service, _mock_caches):
