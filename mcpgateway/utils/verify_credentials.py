@@ -2377,7 +2377,7 @@ async def build_trusted_external_identity(provider: SSOProvider, verified_claims
     elif detect_app_only_token(verified_claims) and verified_claims.get("groups") is None and settings.jwt_trust_overage_policy == "graph_lookup":
         # App-only tokens (idtyp="app") carry no groups claim and no overage
         # markers. Under graph_lookup the service principal's group membership
-        # resolves through /servicePrincipals/{oid}/getMemberObjects with the
+        # resolves through /servicePrincipals/{oid}/getMemberGroups with the
         # provider's client-credentials token; the inbound bearer token is
         # never used. Mirrors the bearer funnel (auth.py::get_current_user).
         try:

@@ -11,7 +11,7 @@ of a groups array. Under ``jwt_trust_overage_policy = "graph_lookup"`` this
 client resolves the user's security groups with an app-only
 client-credentials token. App-only tokens (``idtyp == "app"``) carry no
 groups claim at all; under the same policy the client resolves the service
-principal's security groups through ``/servicePrincipals/{oid}/getMemberObjects``
+principal's security groups through ``/servicePrincipals/{oid}/getMemberGroups``
 (a service principal is not a user). The token is acquired from the SSO
 provider record's token endpoint with the stored encrypted client secret,
 decrypted at call time. The inbound bearer token is never used: it is
@@ -271,12 +271,12 @@ class EntraGraphClient:
         return access_token
 
     async def _fetch_member_groups(self, provider: Any, oid: str, app_only: bool = False) -> List[str]:
-        """Call Graph getMemberObjects for the user or service principal ``oid``.
+        """Call Graph getMemberGroups for the user or service principal ``oid``.
 
-        Posts ``{"securityEnabledOnly": true}`` to the getMemberObjects
+        Posts ``{"securityEnabledOnly": true}`` to the getMemberGroups
         endpoint with the app-only token. User tokens resolve through
-        ``/users/{oid}/getMemberObjects``; app-only tokens (``idtyp ==
-        "app"``) resolve through ``/servicePrincipals/{oid}/getMemberObjects``
+        ``/users/{oid}/getMemberGroups``; app-only tokens (``idtyp ==
+        "app"``) resolve through ``/servicePrincipals/{oid}/getMemberGroups``
         because a service principal is not a user. Requests are bounded by
         ``sso_entra_graph_api_timeout`` and results by
         ``sso_entra_graph_api_max_groups``.
@@ -302,19 +302,19 @@ class EntraGraphClient:
         client = await get_http_client()
         try:
             response = await client.post(
-                f"{GRAPH_BASE_URL}/{entity}/{oid}/getMemberObjects",
+                f"{GRAPH_BASE_URL}/{entity}/{oid}/getMemberGroups",
                 headers={"Authorization": f"Bearer {app_token}"},
                 json={"securityEnabledOnly": True},
                 timeout=settings.sso_entra_graph_api_timeout,
             )
         except Exception as exc:
-            raise EntraGraphError(f"Graph getMemberObjects request for oid {oid} failed: {exc}") from exc
+            raise EntraGraphError(f"Graph getMemberGroups request for oid {oid} failed: {exc}") from exc
         if response.status_code != 200:
-            raise EntraGraphError(f"Graph getMemberObjects for oid {oid} returned HTTP {response.status_code}.")
+            raise EntraGraphError(f"Graph getMemberGroups for oid {oid} returned HTTP {response.status_code}.")
 
         group_values = response.json().get("value", [])
         if not isinstance(group_values, list):
-            raise EntraGraphError(f"Graph getMemberObjects for oid {oid} returned an unexpected payload: 'value' is not a list.")
+            raise EntraGraphError(f"Graph getMemberGroups for oid {oid} returned an unexpected payload: 'value' is not a list.")
 
         deduped_groups: List[str] = []
         seen_groups: set = set()

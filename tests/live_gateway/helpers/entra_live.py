@@ -585,14 +585,14 @@ def provision_entra_app_only_identity() -> tuple[str, dict[str, str]]:
             raise _ProvisioningError(f"service-principal membership failed with HTTP {member.status_code if member else 'n/a'}: {member.text[:200] if member else ''} (group={cleanup['group_id']} sp={sp_id})")
         for _attempt in range(9):
             visible = httpx.post(
-                f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_id}/getMemberObjects",
+                f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_id}/getMemberGroups",
                 headers=headers,
                 json={"securityEnabledOnly": False},
                 timeout=30,
             )
             if visible.status_code == 200 and cleanup["group_id"] in visible.json().get("value", []):
                 break
-            time.sleep(10)  # getMemberObjects can lag the members/$ref write; the gateway reads it at request time
+            time.sleep(10)  # getMemberGroups can lag the members/$ref write; the gateway reads it at request time
 
         return token, cleanup
     except _ProvisioningError:
