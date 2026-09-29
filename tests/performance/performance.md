@@ -61,8 +61,8 @@ These wrappers target the nginx-exposed compose stack on
 `tests/loadtest/locustfile_mcp_protocol.py`.
 
 For the fixed-tool workload, run `make prod-benchmark-tools PROD_BENCH_RUN_TIME=10s`.
-The default duration is 30 minutes. The default `PROD_BENCH_MODE=legacy` sends `initialize`;
-`PROD_BENCH_MODE=modern` skips it. Any other value stops the target.
+The default duration is 30 minutes. The default `MODE=legacy` sends `initialize`;
+`MODE=modern` skips it. Any other value stops the target.
 The target checks the gateway with one `initialize` request and stops on any non-2xx reply.
 Locust exits 1 when any request failed; set `PROD_BENCH_EXIT_CODE_ON_ERROR=0` to exit 0 instead.
 The summary and the report paths print in both cases.
