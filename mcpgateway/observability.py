@@ -823,6 +823,9 @@ def _should_trace_request_path(path: str) -> bool:
     normalized = path.rstrip("/") or "/"
     if normalized in {"/rpc", "/mcp", "/mcp/sse", "/mcp/message", "/message", "/sse"}:
         return True
+    path_parts = normalized.split("/")
+    if normalized == "/a2a/invoke" or (len(path_parts) == 4 and path_parts[1] == "a2a" and path_parts[2] and path_parts[3] == "invoke"):
+        return True
     if normalized.startswith("/servers/") and (normalized.endswith("/mcp") or normalized.endswith("/message") or normalized.endswith("/sse")):
         return True
     if normalized.startswith("/_internal/mcp/"):

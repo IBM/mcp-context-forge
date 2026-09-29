@@ -421,6 +421,100 @@ class TestObservability:
         result = inject_trace_context_headers(None)
         assert isinstance(result, dict)
 
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("/a2a/invoke", True),
+            ("/a2a/invoke/", True),
+            ("/a2a/example-agent/invoke", True),
+            ("/a2a/example-agent/invoke/", True),
+            ("/a2a", False),
+            ("/a2a/example-agent", False),
+            ("/a2a/example-agent/card/invoke", False),
+            ("/a2a/example-agent/invoke/extra", False),
+            ("/unrelated/invoke", False),
+        ],
+    )
+    def test_should_trace_only_a2a_invoke_paths(self, path, expected):
+        """Trace only the two supported A2A invocation route shapes."""
+        assert observability._should_trace_request_path(path) is expected
+
+    @pytest.mark.asyncio
+    async def test_a2a_request_adopts_incoming_w3c_parent(self, monkeypatch):
+        """The request and A2A spans remain children in the incoming W3C trace."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("a2a-trace-test"))
+
+        async def app(_scope, _receive, send):
+            with create_span("a2a.invoke"):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+        incoming_trace_id = "0af7651916cd43dd8448eb211c80319c"  # pragma: allowlist secret
+        incoming_span_id = "b7ad6b7169203331"  # pragma: allowlist secret
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/a2a/example-agent/invoke",
+            "headers": [(b"traceparent", f"00-{incoming_trace_id}-{incoming_span_id}-01".encode())],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        await middleware(scope, receive, send)
+
+        spans = {span.name: span for span in exporter.get_finished_spans()}
+        request_span = spans["POST /a2a/example-agent/invoke"]
+        invoke_span = spans["a2a.invoke"]
+        assert f"{request_span.context.trace_id:032x}" == incoming_trace_id
+        assert f"{request_span.parent.span_id:016x}" == incoming_span_id
+        assert invoke_span.context.trace_id == request_span.context.trace_id
+        assert invoke_span.parent.span_id == request_span.context.span_id
+        assert invoke_span.context.span_id != request_span.context.span_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("incoming_headers", [[], [(b"traceparent", b"malformed")]])
+    async def test_a2a_request_handles_missing_or_malformed_context(self, monkeypatch, incoming_headers):
+        """Missing or malformed W3C context safely creates a new root span."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("a2a-safe-context-test"))
+
+        async def app(_scope, _receive, send):
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+        scope = {"type": "http", "method": "POST", "path": "/a2a/invoke", "headers": incoming_headers}
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        await middleware(scope, receive, send)
+
+        (request_span,) = exporter.get_finished_spans()
+        assert request_span.context.is_valid
+        assert request_span.parent is None
+
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")
     @patch("mcpgateway.observability.TracerProvider")

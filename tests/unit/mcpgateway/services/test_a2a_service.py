@@ -652,12 +652,25 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
+        def inject_active_trace(headers):
+            assert mock_span_context.__enter__.called
+            return {**headers, "traceparent": "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"}  # pragma: allowlist secret
+
         # Execute
-        result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+        with (
+            patch("mcpgateway.services.a2a_service.create_span") as mock_create_span,
+            patch("mcpgateway.services.a2a_service.inject_trace_context_headers", side_effect=inject_active_trace) as mock_inject,
+        ):
+            mock_span_context = mock_create_span.return_value
+            result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
         # Verify
         assert result["response"] == "Test response"
         mock_client.post.assert_called_once()
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+        assert outbound_headers["traceparent"].endswith("-00f067aa0ba902b7-01")
+        assert outbound_headers["Content-Type"] == "application/json"
+        mock_inject.assert_called_once()
         # Metrics recorded via buffer service
         mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
         # last_interaction updated via fresh_db_session
