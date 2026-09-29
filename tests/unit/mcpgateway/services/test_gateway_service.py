@@ -212,6 +212,82 @@ class TestGatewayToolNameCollisions:
             tools=[SimpleNamespace(name="search")],
         )
 
+    def test_ordinary_refresh_ignores_historical_external_collision(self):
+        """Unchanged gateway tools do not block refresh because of legacy duplicates."""
+        service = GatewayService()
+        db = MagicMock()
+        existing_tool = SimpleNamespace(
+            original_name="search",
+            name="prod-search",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+        )
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="public",
+            tools=[SimpleNamespace(name="search")],
+            existing_tools_by_original_name={"search": existing_tool},
+        )
+
+        db.execute.assert_not_called()
+
+    def test_new_refresh_tool_still_rejects_external_collision(self):
+        """New discovery tools still reject existing namespace collisions."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        existing_tool = SimpleNamespace(
+            original_name="search",
+            name="prod-search",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+        )
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id="current",
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[SimpleNamespace(name="search"), SimpleNamespace(name="api-search")],
+                existing_tools_by_original_name={"search": existing_tool},
+            )
+
+    @pytest.mark.parametrize(
+        ("visibility", "scope_field"),
+        [("team", "team_id"), ("private", "owner_email")],
+    )
+    def test_missing_scope_identity_does_not_match_null_existing_scope(self, visibility, scope_field):
+        """Missing team or owner identity does not form a collision namespace."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility=visibility, team_id=None, owner_email=None, gateway_id="other")]
+        )
+        gateway_team_id = None if scope_field == "team_id" else "team-one"
+        gateway_owner_email = None if scope_field == "owner_email" else "owner@example.com"
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id=None,
+            gateway_team_id=gateway_team_id,
+            gateway_owner_email=gateway_owner_email,
+            gateway_visibility=visibility,
+            tools=[SimpleNamespace(name="api-search")],
+        )
+
     def test_none_tool_entry_is_rejected(self):
         """Validator rejects unnormalized catalog entries before querying."""
         service = GatewayService()
@@ -2806,7 +2882,6 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=mock_gateway),  # SELECT
-                _make_execute_result(scalars_list=[]),  # federated tool collision check
                 Mock(),  # DELETE ToolMetric (stale-tool)
                 Mock(),  # DELETE server_tool_association
                 Mock(),  # DELETE DbTool

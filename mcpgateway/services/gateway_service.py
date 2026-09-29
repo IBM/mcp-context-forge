@@ -6515,6 +6515,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         existing_tools_by_original_name = existing_tools_by_original_name or {}
         projected: list[tuple[str, str, str | None, str | None]] = []
+        external_conflict_candidates: list[tuple[str, str, str | None, str | None]] = []
         for tool in tools:
             original_name = tool.original_name if isinstance(tool, DbTool) else tool.name
             existing = existing_tools_by_original_name.get(original_name)
@@ -6528,16 +6529,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if project_gateway_visibility and visibility == original_gateway_visibility:
                     visibility = gateway_visibility
                 upstream_visibility = getattr(tool, "visibility", None) if update_visibility else None
-                projected.append((candidate_name, upstream_visibility or visibility, existing.team_id, existing.owner_email))
+                candidate = (candidate_name, upstream_visibility or visibility, existing.team_id, existing.owner_email)
+                projected.append(candidate)
+                if candidate_name != existing.name or candidate[1] != existing.visibility:
+                    external_conflict_candidates.append(candidate)
             else:
-                projected.append(
-                    (
-                        _build_gateway_tool_invocation_name(gateway_name, original_name),
-                        getattr(tool, "visibility", None) or gateway_visibility,
-                        gateway_team_id,
-                        gateway_owner_email,
-                    )
+                candidate = (
+                    _build_gateway_tool_invocation_name(gateway_name, original_name),
+                    getattr(tool, "visibility", None) or gateway_visibility,
+                    gateway_team_id,
+                    gateway_owner_email,
                 )
+                projected.append(candidate)
+                external_conflict_candidates.append(candidate)
 
         by_name: dict[str, int] = {}
         for name, _visibility, _team_id, _owner_email in projected:
@@ -6546,14 +6550,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if duplicates:
             raise GatewayToolNameConflictError(duplicates[0])
 
-        candidate_names = sorted(by_name)
+        candidate_names = sorted({name for name, _visibility, _team_id, _owner_email in external_conflict_candidates})
         if not candidate_names:
             return
 
         with db.no_autoflush:
             matching_tools = db.execute(select(DbTool).where(DbTool.name.in_(candidate_names))).scalars().all()
 
-        for candidate_name, visibility, team_id, owner_email in sorted(projected, key=lambda item: item[0]):
+        for candidate_name, visibility, team_id, owner_email in sorted(external_conflict_candidates, key=lambda item: item[0]):
             for existing in matching_tools:
                 if gateway_id is not None and str(existing.gateway_id) == str(gateway_id):
                     continue
@@ -6561,9 +6565,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     continue
                 if visibility == "public" and existing.visibility == "public":
                     raise GatewayToolNameConflictError(candidate_name)
-                if visibility == "team" and existing.visibility == "team" and existing.team_id == team_id:
+                if visibility == "team" and team_id and existing.visibility == "team" and existing.team_id == team_id:
                     raise GatewayToolNameConflictError(candidate_name)
-                if visibility == "private" and existing.visibility == "private" and existing.owner_email == owner_email:
+                if visibility == "private" and owner_email and existing.visibility == "private" and existing.owner_email == owner_email:
                     raise GatewayToolNameConflictError(candidate_name)
 
     def _sync_gateway_catalog(

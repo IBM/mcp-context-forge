@@ -3887,3 +3887,61 @@ class TestGatewayLifecycle:
             },
         )
         assert duplicate.status == 409, f"duplicate POST /gateways returned {duplicate.status}, expected 409: {duplicate.text()[:500]}"
+
+    def test_tool_name_collision_rejects_second_gateway(self, admin_api: APIRequestContext, admin_token: str) -> None:
+        """A second gateway cannot persist a normalized tool-name collision.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        uid = uuid.uuid4().hex[:8]
+        first_name = f"gateway-collision-{uid}-api"
+        second_name = f"{first_name}-api"
+        collision_name = f"{first_name}-api-echo"
+        first_id: str | None = None
+        second_id: str | None = None
+        try:
+            first = admin_api.post(
+                "/gateways",
+                data={
+                    "name": first_name,
+                    "url": f"{_GATEWAY_UPSTREAM_URL}?gateway_collision={uid}",
+                    "transport": "STREAMABLEHTTP",
+                },
+            )
+            assert first.status in (200, 201), f"first POST /gateways returned {first.status}: {first.text()[:500]}"
+            first_id = _json_or_fail(first, "first POST /gateways")["id"]
+            assert _wait_for_gateway_tool_names(admin_api, first_id), f"gateway {first_id} did not sync tools"
+
+            echo_tool = next((tool for tool in _gateway_tools(admin_api, first_id) if tool["name"].endswith("-echo")), None)
+            assert echo_tool, f"gateway {first_id} did not expose echo tool"
+            renamed = admin_api.put(f"/tools/{echo_tool['id']}", data={"custom_name": "api-echo"})
+            assert renamed.status == 200, f"PUT /tools/{echo_tool['id']} returned {renamed.status}: {renamed.text()[:500]}"
+            assert collision_name in _wait_for_gateway_tool_names(admin_api, first_id), f"renamed tool {collision_name} did not persist"
+
+            second = admin_api.post(
+                "/gateways",
+                data={
+                    "name": second_name,
+                    "url": _GATEWAY_UPSTREAM_URL,
+                    "transport": "STREAMABLEHTTP",
+                },
+            )
+            if second.status in (200, 201):
+                second_id = second.json().get("id")
+            assert second.status == 409, f"colliding POST /gateways returned {second.status}: {second.text()[:500]}"
+            assert second.json() == {"message": "Gateway tool name conflicts with an existing tool"}
+
+            gateways = _json_or_fail(admin_api.get("/gateways"), "GET /gateways")
+            assert all(gateway["name"] != second_name for gateway in gateways), "colliding gateway persisted"
+            tools = _json_or_fail(admin_api.get("/tools", params={"limit": 0}), "GET /tools")
+            assert sum(tool["name"] == collision_name for tool in tools) == 1, "colliding tool persisted"
+
+            result = _mcp_tool_call(admin_token, collision_name, {"message": "collision-guard"})
+            assert result.is_error is False, f"original tool call failed: {result.content}"
+        finally:
+            for gateway_id in (second_id, first_id):
+                if gateway_id:
+                    with suppress(Exception):
+                        admin_api.delete(f"/gateways/{gateway_id}")
