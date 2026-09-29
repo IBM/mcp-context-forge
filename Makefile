@@ -2771,10 +2771,10 @@ MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
 MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
-PROD_BENCH_MODE ?= legacy
+MODE ?= legacy
 # modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
 # proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
-PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(PROD_BENCH_MODE)),/contextforge-rs)
+PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
 PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
 PROD_BENCH_USERS ?= 125
 PROD_BENCH_SPAWN_RATE ?= 30
@@ -2788,8 +2788,8 @@ TIME ?= 1800s
 # A token that went stale on a stack restart stops at the 401 preflight below.
 PROD_BENCH_TOKEN = $(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))
 PROD_BENCH_USER ?= admin@example.com
-PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE).html
-PROD_BENCH_CSV_PREFIX ?= reports/prod_benchmark_tools_$(PROD_BENCH_MODE)
+PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(MODE).html
+PROD_BENCH_CSV_PREFIX ?= reports/prod_benchmark_tools_$(MODE)
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2877,17 +2877,17 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
-# help: prod-benchmark-tools     - Fixed-tool-list MCP benchmark (PROD_BENCH_MODE=legacy|modern)
+# help: prod-benchmark-tools     - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
 .PHONY: prod-benchmark-tools
 prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
-	@case "$(PROD_BENCH_MODE)" in legacy|modern) ;; *) echo "❌ PROD_BENCH_MODE must be legacy or modern (got: $(PROD_BENCH_MODE))"; exit 1 ;; esac
+	@case "$(MODE)" in legacy|modern) ;; *) echo "❌ MODE must be legacy or modern (got: $(MODE))"; exit 1 ;; esac
 	@echo "📊 Running production tool benchmark..."
 	@echo "🔑 Token: run \`export TOKEN=\$$(make create-token)\`"
-	@echo "   Mode: $(PROD_BENCH_MODE) (handshake: $(if $(filter modern,$(PROD_BENCH_MODE)),skipped,initialize))"
+	@echo "   Mode: $(MODE) (handshake: $(if $(filter modern,$(MODE)),skipped,initialize))"
 	@echo "   Host: $(PROD_BENCH_HOST)"
 	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
 	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(TIME)"
-	@$(if $(filter modern,$(PROD_BENCH_MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
+	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
@@ -2915,7 +2915,7 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 		STATUS=0; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
 		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
-		PROD_BENCH_MODE=$(PROD_BENCH_MODE) \
+		PROD_BENCH_MODE=$(MODE) \
 		JWT_SECRET_KEY=$${GW_SECRET:-$${JWT_SECRET_KEY:-}} \
 		MCPGATEWAY_BEARER_TOKEN=$$BENCH_TOKEN \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
@@ -2930,7 +2930,7 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 			--only-summary \
 			ProdToolUser || STATUS=$$?; \
 		GATEWAY_REPLICAS=$(REPLICA) $(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$(PROD_BENCH_CSV_PREFIX)_stats.csv" \
-			--mode "$(PROD_BENCH_MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --compose "$(PROD_COMPOSE_FILE)"; \
+			--mode "$(MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --compose "$(PROD_COMPOSE_FILE)"; \
 		echo ""; \
 		echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"; \
 		echo "📊 CSV Reports: $(PROD_BENCH_CSV_PREFIX)_stats.csv"; \
