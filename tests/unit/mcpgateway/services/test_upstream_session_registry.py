@@ -1363,7 +1363,7 @@ async def test_default_session_factory_sse_path(monkeypatch):
 async def test_default_session_factory_passes_httpx_factory(monkeypatch):
     """A provided httpx_client_factory is wrapped (not replaced) so pinning still applies.
 
-    Outbound DNS pinning (issue #6518) requires the pooled factory to pin every
+    Outbound DNS pinning requires the pooled factory to pin every
     transport's connection, including one built by a caller-supplied factory. The
     caller's factory must still be exercised — that's where its TLS settings (custom
     CA, client certs) live — so the transport threaded through to the SDK is a wrapper
@@ -1586,7 +1586,7 @@ async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch
     """SSE transport + httpx_client_factory routes through sse_client with the factory wrapped, not replaced.
 
     Covers the SSE + httpx_client_factory branch of _default_session_factory.
-    Outbound DNS pinning (issue #6518) requires the caller's factory to still be
+    Outbound DNS pinning requires the caller's factory to still be
     exercised — that's where its TLS settings (custom CA, client certs) live — so the
     factory threaded through to sse_client is a pinning wrapper around it.
     """
