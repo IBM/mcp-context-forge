@@ -138,6 +138,7 @@ def test_streamable_server_capabilities_modern_keep_mcp_apps_and_hide_logging(mo
     finally:
         user_context_var.reset(token)
 
+    assert capabilities.extensions is not None
     assert MCP_UI_EXTENSION in capabilities.extensions
     assert capabilities.logging is None
 
