@@ -239,6 +239,81 @@ export const viewGateway = async function (gatewayId) {
 /**
  * SECURE: Edit Gateway function
  */
+const updateEditGatewayTeamSelectorState = () => {
+  const teamContainer = safeGetElement("edit-gateway-team-container");
+  const teamSelect = safeGetElement("edit-gateway-team-id");
+  const teamRadio = safeGetElement("edit-gateway-visibility-team");
+  const teamMessage = safeGetElement("edit-gateway-team-message");
+
+  if (!teamContainer || !teamSelect) {
+    return;
+  }
+
+  const hasOwnerTeams = teamSelect.dataset.hasOwnerTeams === "true";
+  const isTeamVisibility = Boolean(teamRadio?.checked);
+  teamContainer.classList.toggle("hidden", !isTeamVisibility);
+  teamSelect.disabled = !isTeamVisibility || !hasOwnerTeams;
+
+  if (teamMessage) {
+    teamMessage.textContent = hasOwnerTeams
+      ? ""
+      : "You have no teams you own; team visibility is unavailable.";
+  }
+};
+
+const initializeEditGatewayTeamSelector = (currentTeamId) => {
+  const teamSelect = safeGetElement("edit-gateway-team-id");
+  const teamRadio = safeGetElement("edit-gateway-visibility-team");
+  if (!teamSelect) {
+    return;
+  }
+
+  const ownerTeams = Array.isArray(window.USER_TEAMS_DATA)
+    ? window.USER_TEAMS_DATA.filter((team) => team?.role === "owner")
+    : [];
+  const placeholderOption = document.createElement("option");
+  placeholderOption.value = "";
+  placeholderOption.textContent = "— Select a team —";
+  const teamOptions = ownerTeams.map((team) => {
+    const option = document.createElement("option");
+    option.value = team.id;
+    option.textContent = team.name;
+    return option;
+  });
+
+  teamSelect.replaceChildren(placeholderOption, ...teamOptions);
+  teamSelect.dataset.hasOwnerTeams = String(ownerTeams.length > 0);
+  teamSelect.value = "";
+  if (teamRadio) {
+    teamRadio.disabled = ownerTeams.length === 0;
+  }
+
+  const normalizedTeamId =
+    currentTeamId === null || currentTeamId === undefined
+      ? ""
+      : String(currentTeamId);
+  if (
+    normalizedTeamId &&
+    teamOptions.some((option) => option.value === normalizedTeamId)
+  ) {
+    teamSelect.value = normalizedTeamId;
+  }
+
+  [
+    "edit-gateway-visibility-public",
+    "edit-gateway-visibility-team",
+    "edit-gateway-visibility-private",
+  ].forEach((radioId) => {
+    const radio = safeGetElement(radioId);
+    if (radio) {
+      radio.removeEventListener("change", updateEditGatewayTeamSelectorState);
+      radio.addEventListener("change", updateEditGatewayTeamSelectorState);
+    }
+  });
+
+  updateEditGatewayTeamSelectorState();
+};
+
 export const editGateway = async function (gatewayId) {
   try {
     console.log(`Editing gateway ID: ${gatewayId}`);
@@ -305,16 +380,6 @@ export const editGateway = async function (gatewayId) {
       tagsField.value = rawTags.join(", ");
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
-
     const visibility = gateway.visibility
       ? gateway.visibility.toLowerCase()
       : null;
@@ -350,6 +415,8 @@ export const editGateway = async function (gatewayId) {
         privateRadio.checked = true;
       }
     }
+
+    initializeEditGatewayTeamSelector(gateway.teamId);
 
     if (transportField) {
       transportField.value = gateway.transport || "SSE"; // falls back to Admin.SSE(default)
