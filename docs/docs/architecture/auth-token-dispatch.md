@@ -140,7 +140,7 @@ against a live tenant:
 App-only tokens (`idtyp == "app"`) carry no `groups` claim. Entra emits no
 overage markers for them. Under `JWT_TRUST_OVERAGE_POLICY=graph_lookup`,
 both trust funnels resolve the service principal's groups through
-`/servicePrincipals/{oid}/getMemberObjects`. The funnels are
+`/servicePrincipals/{oid}/getMemberGroups`. The funnels are
 `get_current_user` (bearer) and `build_trusted_external_identity`
 (external IdP). The lookup uses the provider's client-credentials token;
 the inbound bearer token is never used. Under `fail_closed` (default) and

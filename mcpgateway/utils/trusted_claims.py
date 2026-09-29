@@ -572,7 +572,7 @@ async def resolve_service_principal_groups(payload: Dict[str, Any], settings: An
     Applies under ``jwt_trust_overage_policy = "graph_lookup"`` when the token
     is app-only (``idtyp == "app"``) and carries no ``groups`` claim. A
     service principal is not a user, so the client posts to
-    ``/servicePrincipals/{oid}/getMemberObjects`` (never ``/users/``) with an
+    ``/servicePrincipals/{oid}/getMemberGroups`` (never ``/users/``) with an
     app-only client-credentials token; the inbound bearer token is never
     used. Results are cached oid-keyed with a TTL bounded by the token's
     ``exp``. The SSO provider record matching the token issuer supplies the
