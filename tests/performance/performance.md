@@ -62,14 +62,22 @@ These wrappers target the nginx-exposed compose stack on
 
 For the fixed-tool workload, run `make prod-benchmark-tools PROD_BENCH_RUN_TIME=10s`.
 The default duration is 30 minutes. The default `PROD_BENCH_MODE=legacy` sends `initialize`;
-`PROD_BENCH_MODE=modern` skips it.
+`PROD_BENCH_MODE=modern` skips it. Any other value stops the target.
+The target checks the gateway with one `initialize` request and stops on any non-2xx reply.
+Locust exits 1 when any request failed; set `PROD_BENCH_EXIT_CODE_ON_ERROR=0` to exit 0 instead.
+The summary and the report paths print in both cases.
 
 The HTML report starts with a centered, single-row table of final aggregate RPS, error percentage, request counts,
 and response times: average, minimum, maximum, p50, p90, p95, and p99.
 A centered endpoint breakdown follows, with request counts, failures, RPS, average latency,
 and p99 latency. Its rows use final statistics and sort by descending request count.
-The stats CSV places the aggregate row immediately
-after its header and retains the endpoint rows and standard Locust columns.
+A run context table follows, with the mode, the host and the server id.
+A service resource table closes the report, read from `docker-compose.prod.yml`:
+replicas, CPU limit, memory limit, CPU reservation, and memory reservation per service.
+The stats CSV holds the same two tables as leading blocks, each closed by a blank line.
+The Locust table follows, with the aggregate row immediately
+after its header and the endpoint rows and standard Locust columns after that.
+The Locust tables label percentile columns `p50` through `p100`, not `50%ile (ms)`.
 Both summaries include initialization requests in legacy mode.
 Reports use `reports/prod_benchmark_tools_<mode>.html` and
 `reports/prod_benchmark_tools_<mode>_stats.csv` by default.
