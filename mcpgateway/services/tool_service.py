@@ -8006,9 +8006,7 @@ class ToolService(BaseService):
             raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 
     @staticmethod
-    def _check_gateway_tool_invocation_name_conflict(
-        db: Session, invocation_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None
-    ) -> None:
+    def _check_gateway_tool_invocation_name_conflict(db: Session, invocation_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
         """Raise ToolNameConflictError for a conflicting persisted gateway-tool name.
 
         Args:

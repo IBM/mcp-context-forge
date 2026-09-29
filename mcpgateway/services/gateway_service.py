@@ -4930,12 +4930,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway.last_seen = now
             gateway.last_error = None
             gateway.updated_at = now
-            recovery_db.execute(
-                update(DbTool)
-                .where(DbTool.gateway_id == gateway_id)
-                .where(DbTool.reachable.is_(False))
-                .values(reachable=True, updated_at=now)
-            )
+            recovery_db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable.is_(False)).values(reachable=True, updated_at=now))
             recovery_db.commit()
             self._active_gateways.add(gateway.url)
 
