@@ -170,6 +170,14 @@ async def test_apply_headers_forces_clean_authority(fake_resolver):
     assert headers == {"X-Keep": "1", "Host": "example.com"}
 
 
+@pytest.mark.parametrize("unsafe_authority", ["example.com\r\nX-Injected: 1", "example.com\nX-Injected: 1", "user@example.com"])
+def test_apply_headers_refuses_an_unsafe_authority(unsafe_authority):
+    target = PinnedTarget(validated_url="https://example.com/mcp", hostname="example.com", original_authority=unsafe_authority, resolved_ips=("93.184.216.34",))
+
+    with pytest.raises(ValueError, match="unsafe authority"):
+        target.apply_headers({"X-Keep": "1"})
+
+
 async def test_resolve_pinned_target_blocks_metadata_address(fake_resolver):
     fake_resolver(["169.254.169.254"])
 
@@ -226,6 +234,62 @@ async def test_no_pinning_when_egress_proxy_configured(fake_resolver, monkeypatc
     target = await resolve_pinned_target("https://example.com/mcp", "Gateway URL")
 
     assert target.is_pinned is False
+
+
+@pytest.fixture
+def clean_proxy_env(monkeypatch):
+    """Remove every proxy variable so each test sets only the ones it needs.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    for name in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("proxy_var", "url", "pinned"),
+    [
+        # httpx sends an https:// request direct when only HTTP_PROXY is set, so it must stay pinned.
+        ("HTTP_PROXY", "https://example.com/mcp", True),
+        ("HTTPS_PROXY", "http://example.com/mcp", True),
+        ("HTTP_PROXY", "http://example.com/mcp", False),
+        ("HTTPS_PROXY", "https://example.com/mcp", False),
+        ("ALL_PROXY", "https://example.com/mcp", False),
+        ("ALL_PROXY", "http://example.com/mcp", False),
+    ],
+)
+@pytest.mark.usefixtures("clean_proxy_env")
+async def test_egress_proxy_only_skips_pinning_for_its_own_scheme(fake_resolver, monkeypatch, proxy_var, url, pinned):
+    fake_resolver(["93.184.216.34"])
+    monkeypatch.setenv(proxy_var, "http://proxy.internal:3128")
+
+    target = await resolve_pinned_target(url, "Gateway URL")
+
+    assert target.is_pinned is pinned
+
+
+@pytest.mark.parametrize(
+    ("no_proxy", "pinned"),
+    [
+        ("*", True),
+        ("example.com", True),
+        (".example.com", True),
+        ("other.test, api.example.com", True),
+        ("other.test", False),
+        ("ample.com", False),
+    ],
+)
+@pytest.mark.usefixtures("clean_proxy_env")
+async def test_no_proxy_exemption_keeps_pinning(fake_resolver, monkeypatch, no_proxy, pinned):
+    """A host that NO_PROXY exempts is dialled directly, so it must stay pinned."""
+    fake_resolver(["93.184.216.34"])
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.internal:3128")
+    monkeypatch.setenv("NO_PROXY", no_proxy)
+
+    target = await resolve_pinned_target("https://api.example.com/mcp", "Gateway URL")
+
+    assert target.is_pinned is pinned
 
 
 async def test_client_kwargs_keeps_env_proxies_when_unpinned():
@@ -287,6 +351,25 @@ async def test_transport_refuses_an_unvalidated_host():
 
     with pytest.raises(httpx2.UnsupportedProtocol):
         await transport.handle_async_request(httpx2.Request("GET", "https://evil.test/mcp"))
+
+
+@pytest.mark.parametrize("error_type", [httpx2.ConnectError, httpx2.ConnectTimeout])
+async def test_transport_raises_the_last_error_when_every_address_fails(monkeypatch, error_type):
+    dialled = []
+
+    async def _fail(_self, request):
+        dialled.append(request.url.host)
+        raise error_type(f"no route to {request.url.host}", request=request)
+
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _fail)
+    transport = SniPinningTransport(sni_hostname="example.com", pinned_hosts=["93.184.216.34", "93.184.216.35"])
+    request = httpx2.Request("GET", "https://example.com/mcp")
+
+    with pytest.raises(error_type, match="93.184.216.35"):
+        await transport.handle_async_request(request)
+
+    assert dialled == ["93.184.216.34", "93.184.216.35"]
+    assert request.url.host == "example.com"
 
 
 # First-Party
@@ -446,6 +529,36 @@ async def test_health_check_refuses_a_rebound_address(fake_resolver, monkeypatch
         await service._http_client.aclose()
 
     assert failures, "a blocked health-check target must mark the gateway unhealthy"
+
+
+async def test_streamablehttp_health_check_dials_the_pinned_address(fake_resolver, monkeypatch):
+    fake_resolver(["93.184.216.34"])
+    captured = {}
+
+    @asynccontextmanager
+    async def _capture_proxy_client(*_args, **kwargs):
+        captured["factory"] = kwargs["httpx_client_factory"]
+        yield None
+
+    service = GatewayService()
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", _isolated_client_stub(httpx.MockTransport(lambda _r: httpx.Response(200)), {}))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", _capture_proxy_client)
+    monkeypatch.setattr(service, "_mark_gateway_reachable", _noop_async)
+    monkeypatch.setattr(service, "_handle_gateway_failure", _noop_async)
+
+    try:
+        await service._check_single_gateway_health(_health_check_gateway("https://example.com/mcp", "streamablehttp"))
+    finally:
+        await service._http_client.aclose()
+
+    client = captured["factory"](headers={}, timeout=None, auth=None)
+    try:
+        assert isinstance(client._transport, SniPinningTransport)
+        assert client._transport._sni_hostname == "example.com"
+        assert client._transport._pinned_hosts == ("93.184.216.34",)
+        assert client.follow_redirects is False
+    finally:
+        await client.aclose()
 
 
 # First-Party
@@ -681,6 +794,30 @@ async def test_oauth_token_post_uses_an_isolated_client(fake_resolver, monkeypat
     assert clients[0][0] is not clients[1][0]
     assert clients[0][1].get("follow_redirects") is False, "redirect refusal must be preserved"
     assert clients[1][1].get("follow_redirects") is False, "redirect refusal must be preserved"
+
+
+async def test_oauth_token_post_with_custom_ca_uses_the_pinned_address(fake_resolver, monkeypatch):
+    fake_resolver(["93.184.216.34"])
+    custom_ctx = ssl.create_default_context()
+    seen = {}
+    real_async_client = httpx.AsyncClient
+
+    def _handler(request):
+        seen["dialled_host"] = request.url.host
+        seen["host_header"] = request.headers.get("Host")
+        seen["sni"] = request.extensions.get("sni_hostname")
+        return httpx.Response(200, json={"access_token": "t"})
+
+    def _custom_ca_client(*_args, **kwargs):
+        seen["verify"] = kwargs.get("verify")
+        return real_async_client(transport=httpx.MockTransport(_handler))
+
+    monkeypatch.setattr("mcpgateway.services.oauth_manager.get_cached_ssl_context", lambda *_a, **_k: custom_ctx)
+    monkeypatch.setattr(httpx, "AsyncClient", _custom_ca_client)
+
+    await OAuthManager()._post_token_request("https://example.com/token", {"grant_type": "client_credentials"}, ca_certificate="ca-pem")
+
+    assert seen == {"verify": custom_ctx, "dialled_host": "93.184.216.34", "host_header": "example.com", "sni": "example.com"}
 
 
 # First-Party
@@ -1034,7 +1171,7 @@ async def test_tool_invoke_mcp_refuses_a_rebound_address(fake_resolver, monkeypa
 
 
 # First-Party
-from mcpgateway.services.upstream_session_registry import _default_session_factory, SessionCreateRequest, TransportType
+from mcpgateway.services.upstream_session_registry import _default_session_factory, _wrap_httpx_client_factory, SessionCreateRequest, TransportType
 
 
 def _session_request(url: str, httpx_client_factory=None):
@@ -1080,7 +1217,7 @@ async def test_pooled_session_refuses_a_rebound_address(fake_resolver, monkeypat
     fake_resolver(["169.254.169.254"])
     monkeypatch.setattr("mcpgateway.services.upstream_session_registry.sse_client", _refuse_to_dial)
 
-    with pytest.raises(Exception, match="blocked by URL policy"):
+    with pytest.raises(RuntimeError, match="blocked by URL policy"):
         await _default_session_factory(_session_request("https://rebind.example/sse"))
 
 
@@ -1162,6 +1299,33 @@ async def test_pooled_session_wrap_fails_closed_when_tls_context_missing(fake_re
     # the captured factory directly, outside that flow, isolates the fail-closed check itself.
     with pytest.raises(RuntimeError, match="TLS context was not found"):
         captured["factory"](headers={}, timeout=None, auth=None)
+
+
+async def test_wrap_returns_the_caller_client_unchanged_when_unpinned():
+    unpinned = PinnedTarget(validated_url="https://example.com/sse", hostname="", original_authority="", resolved_ips=())
+    caller_client = httpx2.AsyncClient()
+    caller_transport = caller_client._transport
+
+    client = _wrap_httpx_client_factory(unpinned, lambda *_args: caller_client)(headers={}, timeout=None, auth=None)
+    try:
+        assert client is caller_client
+        assert client._transport is caller_transport
+    finally:
+        await client.aclose()
+
+
+async def test_wrap_returns_the_caller_client_unchanged_when_its_transport_has_no_pool():
+    """A transport with no connection pool never dials the network, so there is nothing to pin."""
+    pinned = PinnedTarget(validated_url="https://example.com/sse", hostname="example.com", original_authority="example.com", resolved_ips=("93.184.216.34",))
+    in_process_transport = httpx2.MockTransport(lambda _r: httpx2.Response(200))
+    caller_client = httpx2.AsyncClient(transport=in_process_transport)
+
+    client = _wrap_httpx_client_factory(pinned, lambda *_args: caller_client)(headers={}, timeout=None, auth=None)
+    try:
+        assert client is caller_client
+        assert client._transport is in_process_transport
+    finally:
+        await client.aclose()
 
 
 async def test_transport_restores_the_request_url_after_success(monkeypatch):

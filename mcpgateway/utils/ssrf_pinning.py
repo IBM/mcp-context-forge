@@ -14,8 +14,10 @@ Constraint for callers: httpcore keys pooled connections by URL origin and does 
 ``sni_hostname`` in that key. A URL pinned by :meth:`PinnedTarget.pin` therefore carries the
 address as its origin, so two hostnames pinned to one address would collapse into a single
 pooled connection whose certificate was verified for only the first of them. Never issue a
-pinned request on a client shared with another destination: use an isolated per-call client,
-as every caller in this repository does.
+URL pinned by :meth:`PinnedTarget.pin` on a client shared with another destination: use an
+isolated per-call client, as every caller in this repository does. :class:`SniPinningTransport`
+is exempt: each instance accepts only its one validated hostname, so its pool never mixes
+hostnames.
 """
 
 # Standard
@@ -34,7 +36,12 @@ from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
-_PROXY_ENV_VARS = ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+# httpx mounts HTTP_PROXY on http:// only and HTTPS_PROXY on https:// only. A variable for the
+# other scheme must not skip pinning, because httpx then connects directly and re-resolves DNS.
+_PROXY_ENV_VARS_BY_SCHEME = {
+    "http": ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"),
+    "https": ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"),
+}
 
 
 def _egress_proxy_applies(url: str) -> bool:
@@ -44,11 +51,12 @@ def _egress_proxy_applies(url: str) -> bool:
         url: Outbound URL to test.
 
     Returns:
-        bool: True when a proxy variable applies and NO_PROXY does not exempt the host.
+        bool: True when a proxy variable for the URL's scheme applies and NO_PROXY does not exempt the host.
     """
-    if not any(os.environ.get(name) for name in _PROXY_ENV_VARS):
+    parsed = urlparse(url)
+    if not any(os.environ.get(name) for name in _PROXY_ENV_VARS_BY_SCHEME.get(parsed.scheme.lower(), ())):
         return False
-    hostname = (urlparse(url).hostname or "").lower()
+    hostname = (parsed.hostname or "").lower()
     no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
     for entry in (item.strip().lower().lstrip(".") for item in no_proxy.split(",")):
         if entry == "*":
