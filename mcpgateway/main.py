@@ -63,7 +63,7 @@ from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import DataError, IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
@@ -96,11 +96,12 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
@@ -245,6 +246,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
@@ -1454,6 +1456,72 @@ def _restore_default_sighup_handler() -> None:
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 
+def _check_url_scheme_compliance() -> None:
+    """Check active gateway, tool, and A2A agent URLs against the configured scheme allowlist.
+
+    Logs a WARNING per non-compliant record. When ``STRICT_SCHEME_ENFORCEMENT``
+    is ``True``, raises ``SystemExit`` instead so the process refuses to start.
+    """
+    allowed = [s.lower() for s in settings.validation_allowed_url_schemes]
+    violations: list[str] = []
+    db_error = False
+
+    scans: list[tuple[str, Any]] = [
+        (
+            "gateways",
+            lambda db: [
+                f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {sanitize_url_for_logging(gw.url)}"
+                for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all()
+                if gw.url and not url_scheme_allowed(gw.url, allowed)
+            ],
+        ),
+        (
+            "tools",
+            lambda db: [
+                f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {sanitize_url_for_logging(tool.url)}"
+                for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all()
+                if tool.url and not url_scheme_allowed(tool.url, allowed)
+            ],
+        ),
+        (
+            "agents",
+            lambda db: [
+                f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {sanitize_url_for_logging(agent.endpoint_url)}"
+                for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all()
+                if agent.endpoint_url and not url_scheme_allowed(agent.endpoint_url, allowed)
+            ],
+        ),
+    ]
+
+    try:
+        with SessionLocal() as db:
+            for table_name, scan_fn in scans:
+                try:
+                    violations.extend(scan_fn(db))
+                except SQLAlchemyError:
+                    db.rollback()
+                    db_error = True
+                    logger.warning(f"URL scheme compliance check failed for {table_name} table")
+                except ValueError:
+                    db_error = True
+                    logger.warning(f"URL scheme compliance check encountered a malformed URL in {table_name} table")
+    except SQLAlchemyError:
+        db_error = True
+        logger.warning("URL scheme compliance check skipped: database unavailable")
+
+    if db_error and not violations and settings.strict_scheme_enforcement:
+        raise SystemExit("STRICT_SCHEME_ENFORCEMENT is enabled but the URL scheme compliance check could not query the database. Resolve the database connection or disable enforcement to start.")
+
+    if not violations:
+        return
+
+    for v in violations:
+        logger.warning(v)
+
+    if settings.strict_scheme_enforcement:
+        raise SystemExit(f"STRICT_SCHEME_ENFORCEMENT is enabled and {len(violations)} record(s) violate the URL scheme allowlist. Fix records or disable enforcement to start.")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1806,6 +1874,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
 
         refresh_slugs_on_startup()
+
+        await asyncio.to_thread(_check_url_scheme_compliance)
 
         # Initialize experimental dataplane publisher to send config data to redis
         if settings.dataplane_publisher:

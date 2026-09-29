@@ -17,16 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 async def sighup_reload() -> None:
-    """Clear SSL context cache + drain upstream sessions on SIGHUP for certificate rotation.
+    """Reload runtime state on SIGHUP: SSL certs, upstream sessions, and settings cache.
 
-    Three things have to happen in order for new TLS material to take effect
-    on a worker without restart:
+    Four things have to happen for a graceful reload without restart:
       1. Clear the SSL context cache so the next build uses new certs.
       2. Close every in-process upstream MCP session — they hold their TLS
          context on the socket and would keep using the old certs forever.
       3. Drain the session-affinity in-memory mapping so the next downstream
          request re-registers (Redis state survives; only the local fast-
          path cache is cleared).
+      4. Clear the ``get_settings`` lru_cache so the next attribute access
+         re-reads environment variables (e.g. ``VALIDATION_ALLOWED_URL_SCHEMES``).
     """
     try:
         # First-Party
@@ -62,6 +63,24 @@ async def sighup_reload() -> None:
         logger.info("SIGHUP: session-affinity mapping drained")
     except Exception as exc:
         logger.debug(f"SIGHUP: session-affinity drain skipped: {exc}")
+
+    try:
+        # First-Party
+        from mcpgateway.config import Settings, get_settings  # pylint: disable=import-outside-toplevel
+
+        # Build a trial Settings to validate the new environment before
+        # evicting the known-good cached instance.
+        trial = Settings()
+        trial.validate_transport()
+        trial.validate_database()
+        status = trial.get_security_status()
+        if status["status"] == "FAIL":
+            raise ValueError(status["message"])
+        get_settings.cache_clear()
+        get_settings()
+        logger.info("SIGHUP: settings reloaded")
+    except Exception as exc:
+        logger.error(f"SIGHUP: settings reload failed, keeping previous settings: {exc}")
 
 
 def sighup_handler(_signum: int, _frame: Any) -> None:

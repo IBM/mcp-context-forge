@@ -913,6 +913,17 @@ mcpContextForge:
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
     Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
+### URL Scheme Allowlist
+
+Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation; restart required to re-run the startup database scan.
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `VALIDATION_ALLOWED_URL_SCHEMES` | Permitted URL scheme prefixes | `["http://", "https://", "ws://", "wss://"]` | JSON array |
+| `STRICT_SCHEME_ENFORCEMENT` | Fail startup when existing records violate the allowlist | `false` | bool |
+
+When `STRICT_SCHEME_ENFORCEMENT` is `false` (default), the startup check logs a warning per non-compliant record. Set to `true` to prevent the gateway from starting until all records use allowed schemes.
+
 ### Content Security - Size Limits
 
 Content size limits prevent DoS attacks and resource exhaustion from oversized content submissions. Validation occurs at the service layer before database writes and returns **HTTP 413 Payload Too Large** with structured error details.

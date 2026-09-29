@@ -21,7 +21,7 @@ class DummySettings:
     # Updated to match the patterns in the code (no double escaping)
     validation_dangerous_html_pattern = r"<(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>"
     validation_dangerous_js_pattern = r"javascript:|vbscript:|on\w+\s*=|data:.*script"  # <-- fix: single backslash
-    validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
+    validation_allowed_url_schemes = ["http://", "https://"]
     validation_name_pattern = r"^[a-zA-Z0-9_\-]+$"
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
@@ -53,6 +53,9 @@ def patch_logger(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def patch_settings_and_classvars(monkeypatch):
+    from mcpgateway.config import get_settings
+    real = get_settings()
+    monkeypatch.setattr(real, "validation_allowed_url_schemes", DummySettings.validation_allowed_url_schemes)
     with patch("mcpgateway.config.settings", new=DummySettings):
         SecurityValidator.MAX_NAME_LENGTH = DummySettings.validation_max_name_length
         SecurityValidator.MAX_DESCRIPTION_LENGTH = DummySettings.validation_max_description_length
@@ -62,7 +65,6 @@ def patch_settings_and_classvars(monkeypatch):
         SecurityValidator.MAX_URL_LENGTH = DummySettings.validation_max_url_length
         SecurityValidator.DANGEROUS_HTML_PATTERN = DummySettings.validation_dangerous_html_pattern
         SecurityValidator.DANGEROUS_JS_PATTERN = DummySettings.validation_dangerous_js_pattern
-        SecurityValidator.ALLOWED_URL_SCHEMES = DummySettings.validation_allowed_url_schemes
         SecurityValidator.NAME_PATTERN = DummySettings.validation_name_pattern
         SecurityValidator.IDENTIFIER_PATTERN = DummySettings.validation_identifier_pattern
         SecurityValidator.VALIDATION_SAFE_URI_PATTERN = DummySettings.validation_safe_uri_pattern
