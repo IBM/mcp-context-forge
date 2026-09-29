@@ -1582,10 +1582,16 @@ async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
     """The transport rewrites the request onto the pinned address while keeping Host and TLS identity."""
     transport = _SniPinningTransport(sni_hostname="example.com", pinned_hosts=["8.8.8.8"])
     request = httpx2.Request("GET", "http://example.com/mcp")
+    dialled = []
 
-    with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
+    async def _capture(req):
+        dialled.append(str(req.url))
+        return httpx2.Response(200)
+
+    with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(side_effect=_capture)):
         await transport.handle_async_request(request)
 
+    assert dialled == ["http://8.8.8.8/mcp"]
     assert str(request.url) == "http://example.com/mcp"
     assert request.headers["Host"] == "example.com"
     assert request.extensions["sni_hostname"] == "example.com"
@@ -1657,10 +1663,16 @@ async def test_sni_pinning_transport_accepts_punycode_host():
     """An internationalized hostname is matched in its IDNA-encoded form, not rejected."""
     transport = _SniPinningTransport(sni_hostname="xn--nicode-2ya.com", pinned_hosts=["8.8.8.8"])
     request = httpx2.Request("GET", "http://xn--nicode-2ya.com/mcp")
+    dialled = []
 
-    with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
+    async def _capture(req):
+        dialled.append(str(req.url))
+        return httpx2.Response(200)
+
+    with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(side_effect=_capture)):
         await transport.handle_async_request(request)
 
+    assert dialled == ["http://8.8.8.8/mcp"]
     assert str(request.url) == "http://xn--nicode-2ya.com/mcp"
     await transport.aclose()
 
