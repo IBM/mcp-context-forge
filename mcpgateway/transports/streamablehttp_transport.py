@@ -220,11 +220,7 @@ class MCPOriginHostGate:
         hdrs = _parse_mcp_scope_headers(scope)
         _client = scope.get("client")
         _client_host = _client[0] if _client else None
-        is_loopback_forward = (
-            settings.mcpgateway_session_affinity_enabled
-            and _client_host in ("127.0.0.1", "::1")
-            and hdrs.get("x-forwarded-internally") == "true"
-        )
+        is_loopback_forward = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and hdrs.get("x-forwarded-internally") == "true"
 
         if not is_loopback_forward:
             _raw_origin: Optional[str] = hdrs.get("origin")
