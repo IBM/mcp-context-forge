@@ -8024,19 +8024,19 @@ class ToolService(BaseService):
             existing_tool = get_for_update(
                 db,
                 DbTool,
-                where=and_(DbTool.name == invocation_name, DbTool.visibility == "public", DbTool.id != tool_id),
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "public", DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
             )
         elif visibility == "team" and team_id:
             existing_tool = get_for_update(
                 db,
                 DbTool,
-                where=and_(DbTool.name == invocation_name, DbTool.visibility == "team", DbTool.team_id == team_id, DbTool.id != tool_id),
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "team", DbTool.team_id == team_id, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
             )
         elif visibility == "private" and owner_email:
             existing_tool = get_for_update(
                 db,
                 DbTool,
-                where=and_(DbTool.name == invocation_name, DbTool.visibility == "private", DbTool.owner_email == owner_email, DbTool.id != tool_id),
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "private", DbTool.owner_email == owner_email, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
             )
         else:
             logger.warning("Skipping gateway-tool conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
