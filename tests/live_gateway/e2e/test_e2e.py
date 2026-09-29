@@ -129,7 +129,7 @@ skip_no_mcp_apps = pytest.mark.skipif(
 _MODERN_INBOUND_E2E_ENABLED = os.getenv("MCP_INBOUND_PROTOCOL_MODE", "legacy").strip().lower() == "auto"
 skip_no_modern_inbound = pytest.mark.skipif(
     not _MODERN_INBOUND_E2E_ENABLED,
-    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto",
+    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto and RUST_MCP_MODE=off",
 )
 
 
