@@ -17,10 +17,10 @@ not a production capacity benchmark.
 | ContextForge service |
 +----------+-----------+
            v
-+----------------------+
-| ContextForge pod     |
-| + enabled plugins    |
-+----------+-----------+
++------------------------+
+| ContextForge pod       |
+| + enabled wxO plugins  |
++-----------+------------+
            v
 +----------------------+
 | Registered virtual   |
