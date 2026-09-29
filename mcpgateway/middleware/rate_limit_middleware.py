@@ -39,7 +39,9 @@ from starlette.responses import JSONResponse
 from mcpgateway import auth
 from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.config import settings
+from mcpgateway.middleware.token_scoping import _normalize_scope_path, _strip_v1_prefix
 from mcpgateway.services.security_logger import SecurityEventType, SecurityLogger, SecuritySeverity
+from mcpgateway.utils.paths import replace_api_path_alias
 
 logger = logging.getLogger(__name__)
 
@@ -106,13 +108,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "burst": settings.rate_limit_critical_burst,
             },
             "CRITICAL_INVITATION": {
-                "pattern": r"^/(?:v1/)?teams/[^/]+/invitations/?$",
+                "pattern": r"^/teams/[^/]+/invitations/?$",
                 "methods": {"POST"},
                 "limit": settings.rate_limit_critical_rpm,
                 "burst": settings.rate_limit_critical_burst,
             },
             "SESSION_REFRESH": {
-                "pattern": r"^(/v1)?/auth/refresh$",
+                "pattern": r"^/auth/refresh$",
                 "limit": settings.session_refresh_rate_limit,
                 "burst": settings.session_refresh_rate_limit,
             },
@@ -189,10 +191,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         methods = config.get("methods")
         return not methods or (method is not None and method.upper() in methods)
 
+    def _normalize_path_for_matching(self, path: str) -> str:
+        """Normalize path for tier matching by stripping root path, aliases, and /v1 prefix."""
+        normalized = _normalize_scope_path(path or "/", settings.app_root_path or "")
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        normalized = replace_api_path_alias(normalized)
+        return _strip_v1_prefix(normalized)
+
     def get_endpoint_tier(self, path: str, method: Optional[str] = None) -> Dict[str, Any]:
         """Get tier config for endpoint and request method."""
+        return self._get_tier_for_normalized(self._normalize_path_for_matching(path), method)
+
+    def _get_tier_for_normalized(self, normalized_path: str, method: Optional[str] = None) -> Dict[str, Any]:
+        """Get tier config for an already-normalized path."""
         for pattern, config in self.compiled_tiers:
-            if pattern.match(path) and self._tier_allows_method(config, method):
+            if pattern.match(normalized_path) and self._tier_allows_method(config, method):
                 return config
         return self.default_tier
 
@@ -226,10 +240,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
-        tier = self.get_endpoint_tier(request.url.path, request.method)
+        normalized_path = self._normalize_path_for_matching(request.url.path)
+        tier = self._get_tier_for_normalized(normalized_path, request.method)
         dimensions = self._get_client_dimensions(request)
 
-        tier_name = self._get_tier_name(request.url.path, request.method)
+        tier_name = self._get_tier_name_for_normalized(normalized_path, request.method)
 
         # Check lockout first — a locked-out dimension blocks regardless of
         # whether the sliding window has cleared.
@@ -296,8 +311,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _get_tier_name(self, path: str, method: Optional[str] = None) -> str:
         """Get tier name for logging by endpoint and request method."""
+        return self._get_tier_name_for_normalized(self._normalize_path_for_matching(path), method)
+
+    def _get_tier_name_for_normalized(self, normalized_path: str, method: Optional[str] = None) -> str:
+        """Get tier name for an already-normalized path."""
         for tier_name, config in self.endpoint_tiers.items():
-            if re.match(config["pattern"], path) and self._tier_allows_method(config, method):
+            if re.match(config["pattern"], normalized_path) and self._tier_allows_method(config, method):
                 return tier_name
         return "LOW"
 
