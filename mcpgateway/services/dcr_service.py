@@ -45,7 +45,7 @@ class _PinnedDcrTarget:
     Attributes:
         url: Request URL whose host is the address resolved at validation time.
         headers: Headers that restore the original authority.
-        extensions: httpx extensions that bind TLS verification to the original hostname.
+        extensions: httpx extensions that set the TLS SNI hostname, which httpx also uses to verify the server certificate.
     """
 
     url: str
@@ -73,9 +73,11 @@ class DcrService:
 
         The authorization server controls its own metadata document, so a URL
         read from that document is untrusted input. Two gates apply. The URL
-        must share the issuer origin, which the request schema already
-        validated. The URL must then pass the outbound URL policy, and the
-        connection dials the address resolved during that check. Pinning closes
+        must share the issuer origin. For URLs read from metadata documents,
+        this check is the SSRF gate. For discovery URLs built from the issuer,
+        it is a consistency check. The URL must then pass the outbound URL
+        policy, and the connection dials the address resolved during that
+        check. Pinning closes
         the DNS rebinding window that GHSA-9hgc-g3w5-67cm describes.
 
         Args:
@@ -121,6 +123,10 @@ class DcrService:
         1. RFC 8414: /.well-known/oauth-authorization-server inserted between host and path
         2. OIDC fallback: {issuer}/.well-known/openid-configuration
 
+        The fallback runs only after a transport error or a non-200 RFC 8414
+        response. A URL policy refusal raises DcrError at once and skips the
+        fallback, because both URLs share the issuer host.
+
         Args:
             issuer: The AS issuer URL
 
@@ -128,7 +134,7 @@ class DcrService:
             Dict containing AS metadata
 
         Raises:
-            DcrError: If metadata cannot be discovered
+            DcrError: If metadata cannot be discovered or the URL policy blocks discovery
         """
         # Normalize issuer URL by removing trailing slash for consistency.
         # Per RFC 8414 Section 3.1, any terminating "/" MUST be removed before
