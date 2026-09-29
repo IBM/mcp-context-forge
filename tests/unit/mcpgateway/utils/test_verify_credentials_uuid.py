@@ -1016,17 +1016,25 @@ async def test_verify_oauth_access_token_jwks_uri_override_skips_discovery(monke
     """An admin-configured jwks_uri_override is used as-is, without discovery or the same-origin check."""
     from mcpgateway.utils import verify_credentials as vc
     from unittest.mock import AsyncMock
+    from cryptography.hazmat.primitives.asymmetric import rsa
     import jwt
 
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     token_payload = {"sub": "user@example.com", "iss": "https://auth.example.com", "aud": "my-api", "exp": 9999999999}
-    token = jwt.encode(token_payload, "secret", algorithm="HS256")
+    token = jwt.encode(token_payload, private_key, algorithm="RS256")
     override = "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
+
+    class FakeJWKSClient:
+        def __init__(self, uri):
+            self.uri = uri
+
+        def get_signing_key_from_jwt(self, _token):
+            return MagicMock(key=private_key.public_key())
 
     discover = AsyncMock()
     monkeypatch.setattr(vc, "_discover_oidc_metadata", discover)
     monkeypatch.setattr(vc, "_oauth_jwks_client_cache", {})
-    mock_signing_key = MagicMock(key="secret")
-    monkeypatch.setattr("asyncio.to_thread", AsyncMock(side_effect=lambda fn, *args, **kwargs: token_payload if fn == jwt.decode else mock_signing_key))
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKSClient)
 
     result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"], expected_audience="my-api", jwks_uri_override=f"  {override}  ")
 
