@@ -2574,44 +2574,47 @@ def test_mcp_inbound_protocol_mode_env_var_honored(monkeypatch):
 # --------------------------------------------------------------------------- #
 #                    _parse_mcp_origin_sets                                    #
 # --------------------------------------------------------------------------- #
+# _parse_allowed_origins (unified validator for allowed_origins, mcp_allowed_origins,
+# mcp_allowed_hosts)
+# --------------------------------------------------------------------------- #
 def test_parse_mcp_origin_sets_json_array():
     """JSON array string is parsed into a set."""
-    result = Settings._parse_mcp_origin_sets('["https://a.com","https://b.com"]')
+    result = Settings._parse_allowed_origins('["https://a.com","https://b.com"]')
     assert result == {"https://a.com", "https://b.com"}
 
 
 def test_parse_mcp_origin_sets_csv_string():
     """Comma-separated string is parsed into a set."""
-    result = Settings._parse_mcp_origin_sets("https://x.com , https://y.com")
+    result = Settings._parse_allowed_origins("https://x.com , https://y.com")
     assert result == {"https://x.com", "https://y.com"}
 
 
 def test_parse_mcp_origin_sets_empty_string():
     """Blank string returns empty set."""
-    assert Settings._parse_mcp_origin_sets("") == set()
-    assert Settings._parse_mcp_origin_sets("   ") == set()
+    assert Settings._parse_allowed_origins("") == set()
+    assert Settings._parse_allowed_origins("   ") == set()
 
 
 def test_parse_mcp_origin_sets_quoted_string():
     """Outer quote pair is stripped before parsing."""
-    result = Settings._parse_mcp_origin_sets('"https://a.com,https://b.com"')
+    result = Settings._parse_allowed_origins('"https://a.com,https://b.com"')
     assert "https://a.com" in result
     assert "https://b.com" in result
 
 
 def test_parse_mcp_origin_sets_set_passthrough():
     """An already-parsed set is returned as-is."""
-    assert Settings._parse_mcp_origin_sets({"https://a.com"}) == {"https://a.com"}
+    assert Settings._parse_allowed_origins({"https://a.com"}) == {"https://a.com"}
 
 
 def test_parse_mcp_origin_sets_list_passthrough():
     """A list is converted to a set."""
-    assert Settings._parse_mcp_origin_sets(["https://a.com", "https://b.com"]) == {"https://a.com", "https://b.com"}
+    assert Settings._parse_allowed_origins(["https://a.com", "https://b.com"]) == {"https://a.com", "https://b.com"}
 
 
 def test_parse_mcp_origin_sets_unknown_type_returns_empty():
     """An unrecognised type (e.g. int) falls back to empty set."""
-    assert Settings._parse_mcp_origin_sets(42) == set()  # type: ignore[arg-type]
+    assert Settings._parse_allowed_origins(42) == set()  # type: ignore[arg-type]
 
 
 def test_mcp_allowed_origins_settings_field():

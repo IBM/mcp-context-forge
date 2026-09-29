@@ -144,9 +144,10 @@ def _parse_mcp_scope_headers(scope: Scope) -> dict[str, str]:
 def _check_mcp_origin(origin: Optional[str]) -> bool:
     """Return True when the Origin header is allowed for MCP Streamable HTTP ingress.
 
-    Missing Origin is always accepted. When ``mcp_allowed_origins`` is empty, all
-    origins are accepted (opt-in enforcement). Otherwise the origin must be an exact
-    member of the configured set or the request must be rejected with HTTP 403.
+    Missing Origin (``None``) is always accepted. An empty-string Origin is treated as
+    present-and-must-match. When ``mcp_allowed_origins`` is empty, all origins are
+    accepted (opt-in enforcement). Otherwise the origin must be an exact member of the
+    configured set or the request must be rejected with HTTP 403.
 
     Args:
         origin: Value of the Origin header, or None when absent.
@@ -164,9 +165,10 @@ def _check_mcp_origin(origin: Optional[str]) -> bool:
 def _check_mcp_host(host: Optional[str]) -> bool:
     """Return True when the Host header is allowed for MCP Streamable HTTP ingress.
 
-    Missing Host is always accepted. When ``mcp_allowed_hosts`` is empty, all
-    hosts are accepted (opt-in enforcement). Otherwise the host must be an exact
-    member of the configured set or the request must be rejected with HTTP 403.
+    Missing Host (``None``) is always accepted. An empty-string Host is treated as
+    present-and-must-match. When ``mcp_allowed_hosts`` is empty, all hosts are
+    accepted (opt-in enforcement). Otherwise the host must be an exact member of the
+    configured set or the request must be rejected with HTTP 403.
 
     Args:
         host: Value of the Host header, or None when absent.
@@ -179,6 +181,70 @@ def _check_mcp_host(host: Optional[str]) -> bool:
     if not settings.mcp_allowed_hosts:
         return True
     return host in settings.mcp_allowed_hosts
+
+
+class MCPOriginHostGate:
+    """ASGI gate that enforces MCP Origin/Host allowlists at the public /mcp mount.
+
+    Runs before any ingress dispatch (Python, rust-internal, rust-public) so the
+    check is not duplicated per-transport. The ``/_internal/mcp/transport`` bridge
+    is mounted separately and intentionally bypasses this gate — requests on that
+    path arrive from the trusted Rust sidecar at 127.0.0.1 only.
+
+    When session-affinity is enabled, loopback-sourced requests carrying
+    ``x-forwarded-internally: true`` are also bypassed (worker-to-worker routing).
+    The bypass is gated on affinity being enabled so a DNS-rebound page on loopback
+    cannot spoof the header when affinity is off (the default).
+    """
+
+    def __init__(self, app: Any) -> None:
+        """Wrap an ASGI application with the Origin/Host gate.
+
+        Args:
+            app: Downstream ASGI callable.
+        """
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Enforce Origin/Host allowlists before dispatching to the wrapped app.
+
+        Args:
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+
+        hdrs = _parse_mcp_scope_headers(scope)
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_loopback_forward = (
+            settings.mcpgateway_session_affinity_enabled
+            and _client_host in ("127.0.0.1", "::1")
+            and hdrs.get("x-forwarded-internally") == "true"
+        )
+
+        if not is_loopback_forward:
+            _raw_origin: Optional[str] = hdrs.get("origin")
+            _raw_host: Optional[str] = hdrs.get("host")
+            if not _check_mcp_origin(_raw_origin):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Origin: %s",
+                    sanitize_for_log(str(_raw_origin)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+            if not _check_mcp_host(_raw_host):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Host: %s",
+                    sanitize_for_log(str(_raw_host)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+
+        await self._app(scope, receive, send)
 
 
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
@@ -4536,22 +4602,12 @@ class SessionManagerWrapper:
 
         # Internal-forward bypass: only valid when session-affinity is enabled (the sole code path
         # that sets x-forwarded-internally). Gate on loopback source to prevent external spoofing.
+        # Origin/Host checks are enforced at the /mcp mount level (main.py MCPOriginHostGate) so
+        # that all ingress shapes — Python, rust-internal, and rust-public — are covered by a single
+        # gate without duplicating the logic here.
         _client = scope.get("client")
         _client_host = _client[0] if _client else None
         is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
-
-        # Reject unapproved Origin/Host before any session or backend logic (MCP §transport-security).
-        _raw_origin: Optional[str] = headers.get("origin") or None
-        _raw_host: Optional[str] = headers.get("host") or None
-        if not is_internally_forwarded:
-            if not _check_mcp_origin(_raw_origin):
-                logger.warning("Rejecting MCP Streamable HTTP request — invalid Origin: %s", sanitize_for_log(str(_raw_origin)))
-                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
-                return
-            if not _check_mcp_host(_raw_host):
-                logger.warning("Rejecting MCP Streamable HTTP request — invalid Host: %s", sanitize_for_log(str(_raw_host)))
-                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
-                return
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"

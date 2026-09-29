@@ -926,18 +926,29 @@ async def test_handle_streamable_http_rejects_non_hex_server_id_via_defense_in_d
 
 
 # ---------------------------------------------------------------------------
-# Origin validation tests for RustMCPRuntimeProxy (MCP §transport-security)
+# Origin/Host gate coverage for RustMCPRuntimeProxy
 # ---------------------------------------------------------------------------
+# Origin/Host enforcement was moved to MCPOriginHostGate (main.py /mcp mount).
+# RustMCPRuntimeProxy no longer has its own gate; these tests verify that the
+# proxy does not reject requests itself (gate coverage lives in
+# test_mcp_origin_validation.py::MCPOriginHostGate integration tests).
 
 
 @pytest.mark.asyncio
-async def test_rust_proxy_rejects_unapproved_origin_with_403(monkeypatch):
-    """RustMCPRuntimeProxy must return HTTP 403 when Origin is present but not in the allowlist."""
+async def test_rust_proxy_does_not_reject_unapproved_origin(monkeypatch):
+    """RustMCPRuntimeProxy does not gate on Origin — MCPOriginHostGate at the /mcp mount does.
+
+    A request with an unapproved Origin must pass through the proxy itself
+    (to the Rust runtime or fallback). The 403 for bad origins is emitted by
+    MCPOriginHostGate before the proxy is ever called.
+    """
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
     monkeypatch.setattr(proxy_mod.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
 
-    get_http_client_mock = AsyncMock()
+    # ConnectError: the proxy attempts the Rust call — it did not short-circuit on Origin.
+    get_http_client_mock = AsyncMock(side_effect=httpx.ConnectError("no runtime"))
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", get_http_client_mock)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context", lambda: None)
 
     fallback = AsyncMock()
     proxy = RustMCPRuntimeProxy(fallback)
@@ -963,88 +974,6 @@ async def test_rust_proxy_rejects_unapproved_origin_with_403(monkeypatch):
         send,
     )
 
-    fallback.assert_not_awaited()
-    get_http_client_mock.assert_not_awaited()
-    assert events, "Expected at least one ASGI message"
-    assert events[0]["status"] == 403
-    assert b"Origin not allowed" in events[1]["body"]
-
-
-@pytest.mark.asyncio
-async def test_rust_proxy_accepts_missing_origin_when_allowlist_set(monkeypatch):
-    """RustMCPRuntimeProxy must NOT reject requests with no Origin header, even when allowlist is set."""
-    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
-    monkeypatch.setattr(proxy_mod.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
-
-    # The request will proceed past the Origin check and attempt a Rust runtime call.
-    # We do not need it to succeed — just confirm it is NOT rejected with 403.
-    get_http_client_mock = AsyncMock(side_effect=httpx.ConnectError("no runtime"))
-    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", get_http_client_mock)
-    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context", lambda: None)
-
-    fallback = AsyncMock()
-    proxy = RustMCPRuntimeProxy(fallback)
-    events = []
-
-    async def send(message):
-        events.append(message)
-
-    await proxy.handle_streamable_http(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/mcp",
-            "modified_path": "/mcp",
-            "query_string": b"",
-            "client": ("10.0.0.1", 51234),
-            "headers": [(b"content-type", b"application/json")],  # no Origin
-        },
-        _make_receive(b"{}"),
-        send,
-    )
-
-    # A 403 from the Origin guard must not have been sent.
+    # A 502 (Rust unavailable) means the proxy proceeded; a 403 would mean it gated.
     origin_403 = any(m.get("status") == 403 for m in events if m.get("type") == "http.response.start")
-    assert not origin_403, f"Missing Origin must not produce a 403 from the Rust proxy, got {events}"
-
-
-@pytest.mark.asyncio
-async def test_rust_proxy_loopback_internal_forward_bypasses_origin_check(monkeypatch):
-    """Internally-forwarded loopback requests skip Origin validation in RustMCPRuntimeProxy when affinity is enabled."""
-    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
-    monkeypatch.setattr(proxy_mod.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
-    monkeypatch.setattr(proxy_mod.settings, "mcpgateway_session_affinity_enabled", True)
-
-    # Request will proceed past Origin check; allow it to fail at the Rust call rather than
-    # asserting a 403.
-    get_http_client_mock = AsyncMock(side_effect=httpx.ConnectError("no runtime"))
-    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", get_http_client_mock)
-    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context", lambda: None)
-
-    fallback = AsyncMock()
-    proxy = RustMCPRuntimeProxy(fallback)
-    events = []
-
-    async def send(message):
-        events.append(message)
-
-    await proxy.handle_streamable_http(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/mcp",
-            "modified_path": "/mcp",
-            "query_string": b"",
-            "client": ("127.0.0.1", 0),
-            "headers": [
-                (b"origin", b"https://attacker.invalid"),
-                (b"x-forwarded-internally", b"true"),
-            ],
-        },
-        _make_receive(b"{}"),
-        send,
-    )
-
-    # The Origin guard must NOT fire a 403 for internal forwards.
-    origin_403 = any(m.get("status") == 403 for m in events if m.get("type") == "http.response.start")
-    assert not origin_403, f"Loopback internal forward must not get 403 from Origin guard, got {events}"
+    assert not origin_403, f"Proxy must not emit 403 for Origin — gate is at mount level, got {events}"

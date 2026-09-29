@@ -2142,16 +2142,20 @@ class Settings(BaseSettings):
             return set()
         return set(v)  # type: ignore[arg-type]
 
-    @field_validator("allowed_origins", mode="before")
+    @field_validator("allowed_origins", "mcp_allowed_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _parse_allowed_origins(cls, v: Any) -> Set[str]:
-        """Parse allowed_origins from environment variable or config value.
+        """Parse origin/host allowlist fields from a JSON array, CSV string, or collection.
+
+        Handles ``allowed_origins``, ``mcp_allowed_origins``, and ``mcp_allowed_hosts``.
+        Non-string, non-collection input (e.g. ``None``) returns an empty set rather
+        than propagating a ``TypeError``.
 
         Args:
             v: The input value to parse.
 
         Returns:
-            Set[str]: A set of allowed origin strings.
+            Set[str]: A set of allowed origin/host strings.
 
         Examples:
             >>> sorted(Settings._parse_allowed_origins('["https://a.com", "https://b.com"]'))
@@ -2166,19 +2170,6 @@ class Settings(BaseSettings):
             ['http://a.com', 'http://b.com']
             >>> Settings._parse_allowed_origins({'http://existing.com'})
             {'http://existing.com'}
-        """
-        return cls._parse_origin_set(v)
-
-    @field_validator("mcp_allowed_origins", "mcp_allowed_hosts", mode="before")
-    @classmethod
-    def _parse_mcp_origin_sets(cls, v: Any) -> Set[str]:
-        """Parse mcp_allowed_origins / mcp_allowed_hosts from JSON array, CSV string, or collection.
-
-        Args:
-            v: Raw env-var string, set, list, or other iterable.
-
-        Returns:
-            Set[str]: Parsed values, empty set for blank or unrecognised input.
         """
         return cls._parse_origin_set(v, coerce_non_iterable_to_empty=True)
 
@@ -3198,8 +3189,10 @@ class Settings(BaseSettings):
     # Empty (default) disables enforcement. Set via MCP_ALLOWED_ORIGINS.
     mcp_allowed_origins: Annotated[Set[str], NoDecode] = set()
 
-    # MCP Host allowlist — enables SDK-level Host validation when non-empty.
-    # Set via MCP_ALLOWED_HOSTS. Entries: "host:port" or "host:*" for wildcard port.
+    # MCP Host allowlist — present-but-unlisted Host returns HTTP 403.
+    # Empty (default) disables enforcement. Set via MCP_ALLOWED_HOSTS.
+    # Entries use exact "host:port" matching (browsers omit default ports; list
+    # both "example.com:80" and "example.com" when default port may be absent).
     mcp_allowed_hosts: Annotated[Set[str], NoDecode] = set()
 
     # GET /mcp server-to-client stream (ADR-052)
