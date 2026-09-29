@@ -1608,7 +1608,7 @@ async def _resolve_trusted_principal(payload: dict) -> tuple[Any, str]:
         # App-only tokens (idtyp="app") carry no groups claim and no
         # overage markers. Under graph_lookup (#6756) the service
         # principal's group membership resolves through
-        # /servicePrincipals/{oid}/getMemberObjects (cached,
+        # /servicePrincipals/{oid}/getMemberGroups (cached,
         # oid-keyed, TTL bounded by exp); the resolved group IDs feed
         # the same external-group resolver as claim groups. Under
         # fail_closed (default) and proceed_without_groups this branch

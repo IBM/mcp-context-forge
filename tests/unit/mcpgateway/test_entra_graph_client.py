@@ -17,7 +17,7 @@ encrypted client secret; the inbound bearer token is never used.
 
 App-only (client-credentials) tokens carry ``idtyp="app"`` and no groups
 claim. ``resolve_service_principal_groups`` resolves the service principal's
-group membership through ``/servicePrincipals/{oid}/getMemberObjects`` under
+group membership through ``/servicePrincipals/{oid}/getMemberGroups`` under
 the ``graph_lookup`` policy; under ``fail_closed`` (default) and
 ``proceed_without_groups`` the token authenticates with empty teams and the
 roles claim keeps the app-role path.
@@ -139,9 +139,9 @@ class _BrokenRedis:
 
 
 def _graph_http_client(graph_calls, graph_status=200, graph_payload=None, token_status=200):
-    """HTTP client double: client-credentials token POST plus getMemberObjects.
+    """HTTP client double: client-credentials token POST plus getMemberGroups.
 
-    Every getMemberObjects call is recorded with its URL so tests assert the
+    Every getMemberGroups call is recorded with its URL so tests assert the
     endpoint selection (``/users/`` versus ``/servicePrincipals/``).
     """
     if graph_payload is None:
@@ -150,7 +150,7 @@ def _graph_http_client(graph_calls, graph_status=200, graph_payload=None, token_
     async def _post(url, **kwargs):
         if url == TOKEN_URL:
             return SimpleNamespace(status_code=token_status, json=lambda: {"access_token": APP_ONLY_TOKEN}, text="")
-        if url.endswith("/getMemberObjects"):
+        if url.endswith("/getMemberGroups"):
             graph_calls.append({"url": url, **kwargs})
             return SimpleNamespace(status_code=graph_status, json=lambda: graph_payload, text="")
         raise AssertionError(f"unexpected URL {url}")
@@ -196,6 +196,8 @@ class TestOveragePolicyMatrix:
 
         assert groups == ["group-1", "group-2"]
         assert len(graph_calls) == 1
+        # getMemberGroups works with User.ReadBasic.All + GroupMember.Read.All; getMemberObjects returns 403 with them.
+        assert graph_calls[0]["url"] == f"{GRAPH_BASE_URL}/users/{OID}/getMemberGroups"
         # The Graph call carries the client-credentials token, never the inbound bearer token.
         assert graph_calls[0]["headers"]["Authorization"] == f"Bearer {APP_ONLY_TOKEN}"
         assert graph_calls[0]["json"] == {"securityEnabledOnly": True}
@@ -302,7 +304,7 @@ class TestAppOnlyEndpointSelection:
     """App-only tokens resolve through /servicePrincipals, never /users."""
 
     async def test_app_only_calls_service_principals_endpoint(self, monkeypatch):
-        """AC: /servicePrincipals/{oid}/getMemberObjects is called; /users/ never."""
+        """AC: /servicePrincipals/{oid}/getMemberGroups is called; /users/ never."""
         graph_calls = []
         _patch_http_and_encryption(monkeypatch, _graph_http_client(graph_calls))
         graph_client, _ = _client_with_redis(None)
@@ -311,7 +313,7 @@ class TestAppOnlyEndpointSelection:
 
         assert groups == ["group-1", "group-2"]
         assert len(graph_calls) == 1
-        assert graph_calls[0]["url"] == f"{GRAPH_BASE_URL}/servicePrincipals/{OID}/getMemberObjects"
+        assert graph_calls[0]["url"] == f"{GRAPH_BASE_URL}/servicePrincipals/{OID}/getMemberGroups"
         assert "/users/" not in graph_calls[0]["url"]
         # The Graph call carries the client-credentials token, never the inbound bearer token.
         assert graph_calls[0]["headers"]["Authorization"] == f"Bearer {APP_ONLY_TOKEN}"
@@ -440,7 +442,7 @@ class TestAppOnlyTrustPathDispatch:
         # group-1 maps to team-sp; group-2 is unmapped and contributes nothing.
         assert request.state.token_teams == ["team-sp"]
         assert len(graph_calls) == 1
-        assert graph_calls[0]["url"] == f"{GRAPH_BASE_URL}/servicePrincipals/{OID}/getMemberObjects"
+        assert graph_calls[0]["url"] == f"{GRAPH_BASE_URL}/servicePrincipals/{OID}/getMemberGroups"
         assert "/users/" not in graph_calls[0]["url"]
 
     async def test_app_only_fail_closed_default_keeps_roles_only_path(self, monkeypatch, funnel_db):
