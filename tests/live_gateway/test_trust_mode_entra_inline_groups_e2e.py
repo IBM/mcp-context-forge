@@ -306,7 +306,7 @@ def test_uc5_app_only_group_resolved_via_graph_allows_invoke(entra_app_only_toke
 
     The token carries idtyp=app and no groups claim. The gateway resolves
     the service principal's group membership through
-    /servicePrincipals/{oid}/getMemberObjects and maps it to the agent
+    /servicePrincipals/{oid}/getMemberGroups and maps it to the agent
     team. The echo round-trip proves the invocation reached the stub
     agent under the mapped developer role.
     """
