@@ -194,6 +194,7 @@ from mcpgateway.services.gateway_service import (
     GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
+    GatewayToolNameConflictError,
     test_server_handshake,
 )
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -224,6 +225,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
+    MCPOriginHostGate,
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
@@ -7441,6 +7443,8 @@ async def set_gateway_state(
         raise HTTPException(status_code=403, detail=str(e))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except GatewayToolNameConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -7636,6 +7640,8 @@ async def register_gateway(
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
             return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
             return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
@@ -7774,6 +7780,8 @@ async def update_gateway(
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
             return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
             return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
@@ -10500,14 +10508,14 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
         if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", get_worker_id(), session_short, method)
         try:
             # First-Party
             from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
@@ -10523,20 +10531,20 @@ async def _maybe_forward_affinitized_rpc_request(
                 encoded_auth_context,
             )
             if forwarded_response is not None:
-                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", get_worker_id(), session_short, method)
                 if "error" in forwarded_response:
                     return {"jsonrpc": "2.0", "error": forwarded_response["error"], "id": req_id}
                 return {"jsonrpc": "2.0", "result": forwarded_response.get("result", {}), "id": req_id}
         except RuntimeError:
-            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
+            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", get_worker_id(), session_short, method)
         return None
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import get_worker_id  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", get_worker_id(), session_short, method)
 
     return None
 
@@ -10604,11 +10612,11 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
             pool = get_session_affinity()
             await pool.register_session_owner(mcp_session_id)
-            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
+            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", get_worker_id(), mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
 
@@ -13529,8 +13537,13 @@ class InternalTrustedMCPTransportBridge:
 mcp_transport_app = _build_mcp_transport_app()
 internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_http_session)
 
+
 # Streamable http Mount
-app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
+# MCPOriginHostGate wraps the entire /mcp dispatch surface (Python, rust-internal,
+# rust-public). The /_internal/mcp/transport bridge is mounted separately — it
+# receives only trusted Rust-sidecar traffic and must not run the browser Origin/Host
+# gate.
+app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect

@@ -280,7 +280,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService, GatewayToolNameConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
@@ -3677,6 +3677,19 @@ class TestAdminGatewayRoutes:
         response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_admin_set_gateway_state_tool_name_collision(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Admin activation redirects with generic collision text."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
+        conflict = GatewayToolNameConflictError("prod-api-search")
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.set_gateway_state", AsyncMock(side_effect=conflict))
+
+        response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 303
+        assert "error=Gateway%20tool%20name%20conflicts%20with%20an%20existing%20tool" in response.headers["location"]
+        assert "prod-api-search" not in response.headers["location"]
 
     @pytest.mark.asyncio
     async def test_admin_discover_oauth_missing_issuer(self, mock_request):
@@ -7492,6 +7505,7 @@ class TestOAuthFunctionality:
         cases = [
             (GatewayDuplicateConflictError(duplicate_gateway), 409),
             (GatewayNameConflictError("name"), 409),
+            (GatewayToolNameConflictError("prod-api-search"), 409),
             (GatewayCredentialError("Stored credential contains invalid characters"), 422),
             (ValueError("bad"), 400),
             (ValidationError.from_exception_data("test", error_details), 422),
@@ -7533,6 +7547,24 @@ class TestOAuthFunctionality:
             mock_update_gateway.side_effect = exc
             response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert response.status_code == expected
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_tool_name_collision(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
+        """Admin form update returns exact generic collision response."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "Gateway", "url": "https://example.com", "oauth_config": "None"}))
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.side_effect = GatewayToolNameConflictError("prod-api-search")
+
+        response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 409
+        assert json.loads(response.body) == {"message": "Gateway tool name conflicts with an existing tool", "success": False}
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_invalid_json_body(self, mock_register_gateway, mock_request, mock_db):
@@ -7952,6 +7984,27 @@ class TestErrorHandlingPaths:
         mock_update_gateway.assert_called_once()
         gateway_update = mock_update_gateway.call_args[0][2]
         assert gateway_update.auth_type == "oauth"
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_tool_name_collision(self, mock_update_gateway, mock_request, mock_db):
+        """Admin REST update returns exact generic collision response."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
+        mock_request.headers = {"content-type": "application/json"}
+        mock_update_gateway.side_effect = GatewayToolNameConflictError("prod-api-search")
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            response = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 409
+        assert json.loads(response.body) == {"message": "Gateway tool name conflicts with an existing tool", "success": False}
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_update_gateway_rest_permission_error(self, mock_update_gateway, mock_request, mock_db):
@@ -21203,6 +21256,23 @@ class TestCatalogEndpoints:
         result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
         assert isinstance(result, HTMLResponse)
         assert "Registered Successfully" in result.body.decode()
+
+    @pytest.mark.asyncio
+    async def test_register_catalog_server_htmx_tool_name_collision(self, monkeypatch, allow_permission, mock_db):
+        """Admin catalog HTMX response renders only generic collision text."""
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        reg_result = SimpleNamespace(success=False, message="Gateway tool name conflicts with an existing tool", oauth_required=False, error=None)
+        monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
+        request = MagicMock(spec=Request)
+        request.headers = {"HX-Request": "true"}
+
+        result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+
+        body = result.body.decode()
+        assert result.status_code == 200
+        assert "Gateway tool name conflicts with an existing tool" in body
+        assert "prod-api-search" not in body
 
     @pytest.mark.asyncio
     async def test_check_catalog_server_status_disabled(self, monkeypatch, mock_db):
