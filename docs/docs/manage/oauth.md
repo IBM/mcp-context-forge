@@ -83,6 +83,7 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
    - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers that use an `audience` request parameter)
    - Resource (optional, RFC 8707 audience indicator — see [OAuth Resource Configuration](oauth-resource-configuration.md))
    - Authorization URL and Redirect URI (required for Authorization Code)
+   - Extra Authorization Parameters (optional, Authorization Code only; see [Extra Authorization Parameters](#extra-authorization-parameters))
 
 5. Save.
 
@@ -159,6 +160,20 @@ The `audience` parameter:
 - Is included in both authorization and token exchange requests
 - Can coexist with `resource` parameter for providers that accept both
 - When set without `resource`, the RFC 8707 `resource` parameter is automatically omitted
+
+### Extra Authorization Parameters
+
+Google issues a refresh token only when the authorization request has `access_type=offline`, and only on consent. Without a refresh token, users must authorize again when the access token expires after one hour.
+
+Add such provider-specific parameters as name and value rows under **Extra Authorization Parameters** (for Google, `access_type` = `offline` and `prompt` = `consent`), or set them through the API as `oauth_config.extra_auth_params` (`{"access_type": "offline", "prompt": "consent"}`).
+
+`extra_auth_params`:
+
+- Is a JSON object of string values. Names may use letters, digits, `.`, `_`, and `-`
+- Goes to the authorization request only, not to token exchange or refresh requests
+- Cannot use a name that the gateway sets or that has its own field (for example `redirect_uri`, `state`, `scope`, `audience`, `resource`), or a known secret name such as `client_secret`
+- Compares names case-insensitively, with `.` and `-` read as `_`, so `Redirect-URI` counts as `redirect_uri`
+- Is checked by name only. Values are not scanned, so never put secrets in them: the authorization URL is visible in the browser
 
 ### Resource Parameter (RFC 8707) — per-user audience learning, origin fallback, advisory validation
 

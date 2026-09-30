@@ -38,7 +38,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
+from mcpgateway.common.oauth import is_reserved_authorization_param, OAUTH_SENSITIVE_KEYS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -127,6 +127,8 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
 )
 
+_OAUTH_PARAM_NAME: Pattern[str] = re.compile(r"[A-Za-z0-9._-]+")  # RFC 6749 section 8.2 param-name
+
 
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
@@ -170,6 +172,31 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(server, str):
             raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
         validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+    return v
+
+
+def _validate_oauth_extra_auth_params(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate ``oauth_config["extra_auth_params"]``, the extra authorization URL parameters.
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If an entry is not a string value under an unreserved RFC 6749 parameter name.
+    """
+    extra_auth_params = v.get("extra_auth_params") if isinstance(v, dict) else None
+    if extra_auth_params is None:
+        return v
+    if not isinstance(extra_auth_params, dict):
+        raise ValueError("oauth_config.extra_auth_params must be an object")
+    for name, value in extra_auth_params.items():
+        if not isinstance(value, str):
+            raise ValueError("oauth_config.extra_auth_params values must be strings")
+        if is_reserved_authorization_param(name) or not _OAUTH_PARAM_NAME.fullmatch(name):
+            raise ValueError(f"oauth_config.extra_auth_params cannot set {name!r:.64}")
     return v
 
 
@@ -3389,13 +3416,13 @@ class GatewayCreate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries and reject deprecated grants.
+        """Validate URL-bearing OAuth configuration entries and extra authorization parameters, and reject deprecated grants.
 
         The OAuth 2.1 resource owner password credentials grant is rejected for
         new MCP server registrations. Existing records keep working via
         ``GatewayUpdate`` (backwards compatibility).
         """
-        v = _validate_oauth_config_urls(v)
+        v = _validate_oauth_extra_auth_params(_validate_oauth_config_urls(v))
         if isinstance(v, dict) and v.get("grant_type") == "password":
             raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
         return v
@@ -3765,8 +3792,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing OAuth configuration entries and extra authorization parameters."""
+        return _validate_oauth_extra_auth_params(_validate_oauth_config_urls(v))
 
     @field_validator("description", mode="before")
     @classmethod

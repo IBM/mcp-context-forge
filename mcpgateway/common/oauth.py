@@ -34,3 +34,28 @@ def is_sensitive_oauth_key(key: Any) -> bool:
         bool: True when key maps to sensitive OAuth material.
     """
     return isinstance(key, str) and key.lower() in OAUTH_SENSITIVE_KEYS
+
+
+# extra_auth_params must not set these parameters. The gateway or a dedicated oauth_config
+# field sets them (PKCE included), or they override the others (RFC 9101 request objects).
+OAUTH_RESERVED_AUTHORIZATION_PARAMS: frozenset[str] = frozenset(
+    {"response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method", "code_verifier", "audience", "resource", "request", "request_uri"}
+)
+
+
+def is_reserved_authorization_param(name: Any) -> bool:
+    """Return whether ``oauth_config["extra_auth_params"]`` must not use a parameter name.
+
+    Names compare case-insensitively with ``.`` and ``-`` read as ``_``, because some
+    servers normalize names that way. Secret names also count as reserved.
+
+    Args:
+        name: Candidate authorization request parameter name.
+
+    Returns:
+        bool: True when the name is reserved or is not a string.
+    """
+    if not isinstance(name, str):
+        return True
+    canonical = name.lower().replace(".", "_").replace("-", "_")
+    return canonical in OAUTH_RESERVED_AUTHORIZATION_PARAMS or is_sensitive_oauth_key(canonical)
