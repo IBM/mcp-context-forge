@@ -185,6 +185,8 @@ class RustMCPRuntimeProxy:
             await self.python_fallback_app(scope, receive, send)
             return
 
+        # Origin/Host checks are enforced at the /mcp mount level by MCPOriginHostGate
+        # in main.py before any ingress (Python, rust-internal, rust-public) is called.
         modified_path = str(scope.get("modified_path") or scope.get("path") or "")
         match = _SERVER_ID_RE.search(modified_path)
         validated = await _validate_server_id(match, modified_path, scope, receive, send)

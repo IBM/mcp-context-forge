@@ -409,6 +409,8 @@ mcpContextForge:
     CORS_ENABLED: "true"             # enable CORS processing in gateway
     CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
     ALLOWED_ORIGINS: '["https://gateway.local"]' # JSON list of allowed CORS origins (CHANGE to match APP_DOMAIN)
+    # MCP_ALLOWED_ORIGINS: ""        # opt-in MCP Origin allowlist (DNS-rebinding guard); comma-separated list
+    # MCP_ALLOWED_HOSTS: ""          # opt-in MCP Host allowlist; exact "host:port" entries
     SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
 
     # ─ Security Headers ─

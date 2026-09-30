@@ -225,6 +225,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
+    MCPOriginHostGate,
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
@@ -13536,8 +13537,13 @@ class InternalTrustedMCPTransportBridge:
 mcp_transport_app = _build_mcp_transport_app()
 internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_http_session)
 
+
 # Streamable http Mount
-app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
+# MCPOriginHostGate wraps the entire /mcp dispatch surface (Python, rust-internal,
+# rust-public). The /_internal/mcp/transport bridge is mounted separately — it
+# receives only trusted Rust-sidecar traffic and must not run the browser Origin/Host
+# gate.
+app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
