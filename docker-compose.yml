@@ -644,21 +644,11 @@ services:
       - SSE_RAPID_YIELD_WINDOW_MS=1000                          # Detection window in ms (default: 1000)
       - SSE_RAPID_YIELD_MAX=50                                  # Max yields before disconnect (default: 50, 0=disabled)
       # ─────────────────────────────────────────────────────────────────────────
-      # Layer 2: Cleanup Timeouts
-      # ─────────────────────────────────────────────────────────────────────────
-      # Limit how long cleanup waits for stuck tasks. Short timeouts (0.5s) reduce
-      # CPU waste during cancelled connection cleanup. Only affects cleanup, not
-      # normal operation.
-      - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
-      - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
-      # ─────────────────────────────────────────────────────────────────────────
-      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
-      # ─────────────────────────────────────────────────────────────────────────
-      # Last resort: patches anyio to limit _deliver_cancellation iterations.
-      # Enable only if Layers 1-2 don't fully resolve the issue.
-      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=${ANYIO_CANCEL_DELIVERY_PATCH_ENABLED:-false}  # Experimental workaround; disabled for current AnyIO
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
+      # NOTE: The former Layer 2 cleanup-timeout knobs (MCP_SESSION_POOL_CLEANUP_TIMEOUT,
+      # SSE_TASK_GROUP_CLEANUP_TIMEOUT) and the Layer 3 anyio monkey-patch were removed.
+      # anyio >= 4.15.0 fixes the _deliver_cancellation spin upstream (anyio#695/#1111);
+      # cleanup waits remain bounded internally (fixed 5-second windows).
+
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording

@@ -22,6 +22,9 @@
 
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
 
+### Breaking Changes
+
+- **Experimental anyio cancellation monkey-patch removed** ([#5427](https://github.com/IBM/mcp-context-forge/pull/5427)) - Removed the opt-in `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED` and `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS` workaround from `mcpgateway/transports/sse_transport.py`, together with the `SSE_TASK_GROUP_CLEANUP_TIMEOUT` setting. The gateway now requires `anyio>=4.15.0`, which fixes the `_deliver_cancellation` CPU spin loop upstream (anyio issues [#695](https://github.com/agronholm/anyio/issues/695) and [#1111](https://github.com/agronholm/anyio/issues/1111)). Unknown environment keys are ignored, so existing deployments start without changes. Remove the retired variables from your configuration to keep it accurate. The matching Helm values and docker-compose entries are also removed. Dangling `MCP_SESSION_POOL_CLEANUP_TIMEOUT` references, which no code path ever read, are removed from docker-compose, the Helm chart, and `.env.example`. SSE connection protection and cleanup timeouts remain the containment strategy; see [`docs/docs/operations/cpu-spin-loop-mitigation.md`](docs/docs/operations/cpu-spin-loop-mitigation.md).
 
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
 
