@@ -191,14 +191,6 @@ class ToolLookupCache:
         """
         return f"{self._cache_prefix}tool_lookup:server:{server_id}"
 
-    def _scoped_set_key(self) -> str:
-        """Build the Redis set key for all virtual-server-scoped lookups.
-
-        Returns:
-            Redis set key for all server-scoped lookup keys.
-        """
-        return f"{self._cache_prefix}tool_lookup_index:scoped"
-
     async def _get_redis_client(self) -> Any:
         """Return a Redis client if L2 is enabled and available.
 
@@ -325,9 +317,9 @@ class ToolLookupCache:
                 await redis.sadd(gateway_set_key, cache_key)
                 await redis.expire(gateway_set_key, max(ttl, self._ttl_seconds))
             if server_id:
-                for set_key in (self._server_set_key(server_id), self._scoped_set_key()):
-                    await redis.sadd(set_key, cache_key)
-                    await redis.expire(set_key, max(ttl, self._ttl_seconds))
+                server_set_key = self._server_set_key(server_id)
+                await redis.sadd(server_set_key, cache_key)
+                await redis.expire(server_set_key, max(ttl, self._ttl_seconds))
             if negative_name:
                 negative_set_key = self._negative_name_set_key(negative_name)
                 now = time.time()
@@ -467,6 +459,9 @@ class ToolLookupCache:
             >>> asyncio.run(cache.get("t1")) is None
             True
         """
+        if server_id is not None and affected_server_ids is not None:
+            raise ValueError("server_id and affected_server_ids are mutually exclusive")
+
         if not self._enabled:
             return
 
@@ -475,9 +470,8 @@ class ToolLookupCache:
 
         await self.invalidate_negative_name(name)
 
-        if server_id is None:
-            for affected_server_id in sorted(set(affected_server_ids or ())):
-                await self.invalidate_server(affected_server_id)
+        for affected_server_id in sorted(set(affected_server_ids or ())):
+            await self.invalidate_server(affected_server_id)
 
         cache_key = self._cache_key(name, server_id)
 
@@ -492,7 +486,6 @@ class ToolLookupCache:
             await redis.delete(self._redis_key(cache_key))
             if server_id:
                 await redis.srem(self._server_set_key(server_id), cache_key)
-                await redis.srem(self._scoped_set_key(), cache_key)
             await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:key:{cache_key}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
@@ -545,29 +538,53 @@ class ToolLookupCache:
             return len(parts) == 5 and parts[2] == "negative" and parts[4] == name
         return False
 
-    async def invalidate_all_scoped(self) -> None:
-        """Invalidate every virtual-server-scoped tool lookup."""
+    @classmethod
+    def _cache_key_matches_name(cls, cache_key: str, name: str) -> bool:
+        """Return whether an internal positive or negative key matches a tool name.
+
+        Args:
+            cache_key: Internal cache key.
+            name: Requested tool name.
+
+        Returns:
+            True when the key identifies the tool name.
+        """
+        if cache_key == name or cls._negative_key_matches_name(cache_key, name):
+            return True
+        if cache_key.startswith("server:"):
+            parts = cache_key.split(":", 2)
+            return len(parts) == 3 and parts[2] == name
+        return False
+
+    async def invalidate_legacy_name(self, name: str) -> None:
+        """Invalidate every current-format entry named by a legacy Pub/Sub message.
+
+        Args:
+            name: Tool name from a pre-v3 invalidation message.
+        """
         if not self._enabled:
             return
 
         with self._lock:
-            for cache_key in [key for key in self._cache if key.startswith("server:")]:
+            for cache_key in [key for key in self._cache if self._cache_key_matches_name(key, name)]:
                 self._cache.pop(cache_key, None)
 
         redis = await self._get_redis_client()
         if not redis:
             return
 
-        set_key = self._scoped_set_key()
         try:
-            cache_keys = await redis.smembers(set_key)
-            if cache_keys:
-                keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
-                await redis.delete(*keys)
-            await redis.delete(set_key)
-            await redis.publish("mcpgw:cache:invalidate", "tool_lookup:scoped")
+            redis_keys = {self._redis_key(name), self._negative_name_set_key(name)}
+            patterns = (
+                self._redis_key(f"server:*:{name}"),
+                self._redis_key(f"negative:*:{name}"),
+            )
+            for pattern in patterns:
+                async for redis_key in redis.scan_iter(match=pattern):
+                    redis_keys.add(redis_key.decode() if isinstance(redis_key, bytes) else redis_key)
+            await redis.delete(*sorted(redis_keys))
         except Exception as exc:
-            logger.debug("ToolLookupCache Redis invalidate_all_scoped failed: %s", exc)
+            logger.debug("ToolLookupCache Redis legacy-name invalidation failed: %s", exc)
 
     async def invalidate_server(self, server_id: str) -> None:
         """Invalidate all cached tool lookups scoped to a virtual server.
@@ -593,7 +610,6 @@ class ToolLookupCache:
             if cache_keys:
                 keys = [self._redis_key(cache_key.decode() if isinstance(cache_key, bytes) else cache_key) for cache_key in cache_keys]
                 await redis.delete(*keys)
-                await redis.srem(self._scoped_set_key(), *cache_keys)
             await redis.delete(set_key)
             await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:server:{server_id}")
         except Exception as exc:

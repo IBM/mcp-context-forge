@@ -248,9 +248,8 @@ async def test_tool_lookup_cache_set_with_gateway_and_server_updates_redis(tool_
     assert redis.sadd.await_args_list == [
         call("mcpgw:tool_lookup:gateway:gw-1", "server:srv-1:tool-a"),
         call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:tool-a"),
-        call("mcpgw:tool_lookup_index:scoped", "server:srv-1:tool-a"),
     ]
-    assert redis.expire.await_count == 3
+    assert redis.expire.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -273,11 +272,10 @@ async def test_tool_lookup_cache_set_negative_updates_all_redis_indexes(tool_loo
     assert redis.sadd.await_args_list == [
         call("mcpgw:tool_lookup:gateway:gw-1", cache_key),
         call("mcpgw:tool_lookup:server:srv-1", cache_key),
-        call("mcpgw:tool_lookup_index:scoped", cache_key),
     ]
     redis.zadd.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", {cache_key: 1010.0})
     redis.zremrangebyscore.assert_awaited_once_with("mcpgw:tool_lookup:negative_name:tool-a", "-inf", 1000.0)
-    assert redis.expire.await_count == 4
+    assert redis.expire.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -371,6 +369,7 @@ async def test_tool_lookup_cache_invalidate_exact_server_scope_redis(tool_lookup
     """Targeted scoped invalidation must publish an unambiguous exact-key message."""
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
+    redis.get = AsyncMock(return_value=None)
     redis.delete = AsyncMock()
     redis.srem = AsyncMock()
     redis.publish = AsyncMock()
@@ -379,10 +378,7 @@ async def test_tool_lookup_cache_invalidate_exact_server_scope_redis(tool_lookup
     await tool_lookup_cache_instance.invalidate("shared-tool", server_id="srv-1")
 
     redis.delete.assert_awaited_once_with("mcpgw:tool_lookup:v3:server:srv-1:shared-tool")
-    assert redis.srem.await_args_list == [
-        call("mcpgw:tool_lookup:server:srv-1", "server:srv-1:shared-tool"),
-        call("mcpgw:tool_lookup_index:scoped", "server:srv-1:shared-tool"),
-    ]
+    redis.srem.assert_awaited_once_with("mcpgw:tool_lookup:server:srv-1", "server:srv-1:shared-tool")
     redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:key:server:srv-1:shared-tool")
 
 
@@ -425,31 +421,88 @@ async def test_tool_lookup_cache_invalidate_server_redis(tool_lookup_cache_insta
 
     redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup:server:srv-1")
     assert redis.delete.await_count == 2
-    redis.srem.assert_awaited_once()
-    assert redis.srem.await_args.args[0] == "mcpgw:tool_lookup_index:scoped"
-    assert set(redis.srem.await_args.args[1:]) == {b"server:srv-1:tool-a", "server:srv-1:tool-b"}
+    redis.srem.assert_not_awaited()
     redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:server:srv-1")
 
 
 @pytest.mark.asyncio
-async def test_tool_lookup_cache_invalidate_all_scoped_redis(tool_lookup_cache_instance):
+async def test_tool_lookup_cache_legacy_name_invalidation_clears_all_variants(tool_lookup_cache_instance):
+    """Legacy bare-name messages must clear matching L1 and current Redis variants."""
+    matching = {"status": "active", "tool": {"name": "tool-a"}}
+    unrelated = {"status": "active", "tool": {"name": "tool-b"}}
+    await tool_lookup_cache_instance.set("tool-a", matching)
+    await tool_lookup_cache_instance.set("tool-a", matching, server_id="srv-1")
+    await tool_lookup_cache_instance.set_negative("tool-a", "missing", "caller-a")
+    await tool_lookup_cache_instance.set_negative("tool-a", "offline", "caller-b", server_id="srv-1")
+    await tool_lookup_cache_instance.set("tool-b", unrelated, server_id="srv-2")
+
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
-    redis.smembers = AsyncMock(return_value={b"server:srv-1:tool-a", "server:srv-2:tool-b"})
+    redis.get = AsyncMock(return_value=None)
     redis.delete = AsyncMock()
     redis.publish = AsyncMock()
+
+    async def _scan_iter(match):
+        entries = {
+            "mcpgw:tool_lookup:v3:server:*:tool-a": [
+                b"mcpgw:tool_lookup:v3:server:srv-1:tool-a",
+                b"mcpgw:tool_lookup:v3:server:srv-1:negative:caller-b:tool-a",
+            ],
+            "mcpgw:tool_lookup:v3:negative:*:tool-a": [b"mcpgw:tool_lookup:v3:negative:caller-a:tool-a"],
+        }
+        for key in entries.get(match, []):
+            yield key
+
+    redis.scan_iter = _scan_iter
     tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
 
-    await tool_lookup_cache_instance.invalidate_all_scoped()
+    await tool_lookup_cache_instance.invalidate_legacy_name("tool-a")
 
-    redis.smembers.assert_awaited_once_with("mcpgw:tool_lookup_index:scoped")
-    assert redis.delete.await_count == 2
-    assert set(redis.delete.await_args_list[0].args) == {
+    assert await tool_lookup_cache_instance.get("tool-a") is None
+    assert await tool_lookup_cache_instance.get("tool-a", server_id="srv-1") is None
+    assert await tool_lookup_cache_instance.get_negative("tool-a", "caller-a") is None
+    assert await tool_lookup_cache_instance.get_negative("tool-a", "caller-b", "srv-1") is None
+    assert await tool_lookup_cache_instance.get("tool-b", server_id="srv-2") == unrelated
+    assert set(redis.delete.await_args.args) == {
+        "mcpgw:tool_lookup:v3:tool-a",
         "mcpgw:tool_lookup:v3:server:srv-1:tool-a",
-        "mcpgw:tool_lookup:v3:server:srv-2:tool-b",
+        "mcpgw:tool_lookup:v3:negative:caller-a:tool-a",
+        "mcpgw:tool_lookup:v3:server:srv-1:negative:caller-b:tool-a",
+        "mcpgw:tool_lookup:negative_name:tool-a",
     }
-    assert redis.delete.await_args_list[1] == call("mcpgw:tool_lookup_index:scoped")
-    redis.publish.assert_awaited_once_with("mcpgw:cache:invalidate", "tool_lookup:scoped")
+    redis.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_does_not_read_pre_v3_redis_keys(tool_lookup_cache_instance):
+    """Current cache code must leave legacy Redis payload keys unread."""
+    tool_lookup_cache_instance._l2_enabled = True
+    legacy_payload = orjson.dumps({"status": "active", "tool": {"id": "legacy"}})
+
+    async def _get(key):
+        return legacy_payload if key == "mcpgw:tool_lookup:tool-a" else None
+
+    redis = MagicMock(get=AsyncMock(side_effect=_get))
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    assert await tool_lookup_cache_instance.get("tool-a") is None
+    redis.get.assert_awaited_once_with("mcpgw:tool_lookup:v3:tool-a")
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_rejects_conflicting_invalidation_scopes_before_mutation(tool_lookup_cache_instance):
+    """Conflicting scopes must fail before L1 or Redis state changes."""
+    payload = {"status": "active", "tool": {"name": "tool-a"}}
+    await tool_lookup_cache_instance.set("tool-a", payload, server_id="srv-1")
+    original_cache = dict(tool_lookup_cache_instance._cache)
+    tool_lookup_cache_instance._l2_enabled = True
+    tool_lookup_cache_instance._get_redis_client = AsyncMock()
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        await tool_lookup_cache_instance.invalidate("tool-a", server_id="srv-1", affected_server_ids=["srv-2"])
+
+    assert tool_lookup_cache_instance._cache == original_cache
+    tool_lookup_cache_instance._get_redis_client.assert_not_awaited()
 
 
 def test_tool_lookup_cache_import_error_defaults(monkeypatch):
@@ -534,7 +587,7 @@ async def test_tool_lookup_cache_disabled_noops():
     await cache.invalidate("tool-x")
     await cache.invalidate_gateway("gw-1")
     await cache.invalidate_server("srv-1")
-    await cache.invalidate_all_scoped()
+    await cache.invalidate_legacy_name("tool-x")
     assert len(cache._cache) == 0
 
 
