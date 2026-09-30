@@ -20,7 +20,7 @@ Choose the general area(s) that this chore affects:
 
 - [ ] GitHub Actions / CI Pipelines
 - [ ] Pre-commit hooks / linters
-- [ ] Formatting (black, isort, ruff, etc.)
+- [ ] Formatting (ruff, isort, etc.)
 - [ ] Type-checking (mypy, pyright, pytype, etc.)
 - [ ] Dependency cleanup or updates
 - [ ] Build system or `Makefile`

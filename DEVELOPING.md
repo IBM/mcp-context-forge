@@ -30,7 +30,7 @@ cp .env.example .env && make venv install-dev check-env
 make dev
 
 # Run quality checks before committing
-make autoflake isort black pre-commit
+make autoflake isort pre-commit
 make doctest test htmlcov pylint verify
 
 # If you changed Rust code (crates/mcp_runtime/):
@@ -212,7 +212,7 @@ python3 -m mcpgateway --host 0.0.0.0 --port 8080
 
 ```bash
 # Auto-format code (run before committing)
-make autoflake isort black pre-commit
+make autoflake isort pre-commit
 
 # Comprehensive linting
 make bandit interrogate pylint verify
@@ -240,7 +240,7 @@ make pre-commit-install
 make pre-commit
 
 # Complete quality pipeline (recommended before commits)
-make autoflake isort black pre-commit
+make autoflake isort pre-commit
 make doctest test htmlcov smoketest
 make bandit interrogate pylint verify
 
@@ -289,7 +289,7 @@ volumes:
 
 ### Style Guidelines
 
-- **Python**: PEP 8 with Black formatting (line length 200)
+- **Python**: PEP 8 with Ruff formatting (line length 200)
 - **Type hints**: Required for all public APIs
 - **Docstrings**: Google style, required for all public functions
 - **Imports**: Organized with isort (black profile)
@@ -304,7 +304,6 @@ Readability follows *Clean Code*: [Coding Standards](docs/docs/development/codin
 
 ```bash
 # Format code
-make black              # Python formatter (CHECK=1 for dry-run)
 make isort              # Import sorter (CHECK=1 for dry-run)
 make autoflake          # Remove unused imports
 
