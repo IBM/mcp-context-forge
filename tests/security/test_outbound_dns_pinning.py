@@ -128,6 +128,7 @@ async def test_validator_passes_through_when_dns_fails_open():
         mock_settings.ssrf_dns_fail_closed = False
         mock_settings.gateway_test_dns_timeout = 5.0
         mock_settings.ssrf_blocked_hosts = []
+        mock_settings.validation_allowed_url_schemes = ["http://", "https://"]
         result = await SecurityValidator.validate_url_for_connection_pinning("http://does-not-resolve.invalid/mcp", "Gateway URL")
 
     assert result["resolved_ips"] == []
