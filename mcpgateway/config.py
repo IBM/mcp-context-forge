@@ -658,7 +658,7 @@ class Settings(BaseSettings):
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
     mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
-        default="legacy",
+        default="auto",
         description=(
             "Upstream MCP connect mode: 'auto' negotiates modern protocol revisions (e.g. 2026-07-28) "
             "via server/discover with legacy initialize fallback; 'legacy' forces the pre-2026 "
@@ -666,7 +666,7 @@ class Settings(BaseSettings):
         ),
     )
     mcp_inbound_protocol_mode: Literal["auto", "legacy"] = Field(
-        default="legacy",
+        default="auto",
         description=(
             "Inbound MCP protocol mode: 'auto' accepts all supported protocol versions "
             "including 2026-07-28; 'legacy' accepts only handshake-era versions "
