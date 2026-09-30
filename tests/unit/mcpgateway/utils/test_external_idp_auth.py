@@ -1910,7 +1910,7 @@ async def test_alternate_claim_token_rejected_for_disabled_or_untrusted_provider
         sso_service.invalidate_trusted_provider_cache()
         oauth_calls = []
 
-        async def fake_oauth(token, authorization_servers, *, expected_audience=None):
+        async def fake_oauth(token, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
             oauth_calls.append(authorization_servers)
             return _alt_claims()
 

@@ -63,6 +63,8 @@ def _force_safe_test_db_defaults() -> None:
     os.environ["DB"] = "sqlite"
     os.environ["DATABASE_URL"] = TEST_SQLITE_MEMORY_URL
     os.environ["TEST_DATABASE_URL"] = TEST_SQLITE_MEMORY_URL
+    # External-IdP fallback queries sso_providers on every auth path; tests opt in via settings patch.
+    os.environ["SSO_API_TOKEN_AUTH_ENABLED"] = "false"
 
 
 _force_safe_test_db_defaults()
