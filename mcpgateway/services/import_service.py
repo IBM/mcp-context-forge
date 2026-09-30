@@ -1521,6 +1521,7 @@ class ImportService:
         Returns:
             ResourceCreate schema object
         """
+        # Naming provenance is export metadata; name remains the literal import value.
         return ResourceCreate(
             uri=resource_data["uri"],
             name=resource_data["name"],
@@ -1539,6 +1540,7 @@ class ImportService:
         Returns:
             ResourceUpdate schema object
         """
+        # As with creation, do not restore the exported upstream/base provenance.
         return ResourceUpdate(
             name=resource_data.get("name"), description=resource_data.get("description"), mime_type=resource_data.get("mime_type"), content=resource_data.get("content"), tags=resource_data.get("tags")
         )

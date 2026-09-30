@@ -2915,6 +2915,21 @@ class TestAdminResourceUriConflictMessage:
         assert first.status_code == 200
         assert second.status_code == 200
 
+    @pytest.mark.parametrize("custom_name", [None, "Weekly Report", "gateway-report"])
+    @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_explicit_base(self, mock_update_resource, mock_request, mock_db, custom_name):
+        """Admin accepts federated forms that omit the legacy derived name."""
+        form = dict(await mock_request.form())
+        form.pop("name", None)
+        if custom_name is not None:
+            form["customName"] = custom_name
+        mock_request.form.return_value = form
+        result = await admin_edit_resource("resource-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        update = mock_update_resource.call_args.args[2]
+        assert update.name is None
+        assert update.custom_name == custom_name
+
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_special_uri_characters(self, mock_update_resource, mock_request, mock_db):
         """Test editing resource with special characters in URI."""
@@ -17151,6 +17166,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
         ssrf_blocked_networks = ["169.254.169.254/32"]
         ssrf_blocked_hosts = []
         ssrf_dns_fail_closed = False
+        validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     class ShouldNotBeCalled:
         async def __aenter__(self):
