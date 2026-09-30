@@ -1,9 +1,12 @@
 # ADR-055: Scope Tool Lookup Cache Entries
 
-- *Status:* Accepted
+- *Status:* Superseded by ADR-056
 - *Date:* 2026-09-24
 - *Deciders:* Platform Team
 - *Supersedes:* ADR-033
+
+!!! warning
+    ADR-056 supersedes this decision. It preserves scoped cache keys and adds shared resolution, rolling-deployment invalidation, and corrected query costs.
 
 ## Context
 
