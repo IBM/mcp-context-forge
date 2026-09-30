@@ -18,14 +18,49 @@ token is accepted and correctly team-scoped on GET /tools, while an
 untrusted/misconfigured token is still rejected.
 
 Requirements:
-    - ContextForge running with docker-compose --profile sso, started with
-      SSO_API_TOKEN_AUTH_ENABLED=true in the environment (default: http://localhost:8080)
-    - Keycloak running (default: http://localhost:8180) with the mcp-gateway realm imported
-    - playwright installed: pip install playwright
+    - ContextForge running (default: http://localhost:8080) with SSO_ENABLED=true,
+      SSO_KEYCLOAK_ENABLED=true and SSO_API_TOKEN_AUTH_ENABLED=true
+    - Keycloak with the mcp-gateway realm imported (infra/keycloak/realm-export.json)
+    - playwright installed: pip install playwright. pyproject.toml disables the plugin by
+      default (-p no:playwright), so pass -p playwright to pytest.
+    - The four positive tests (a trusted token for a group member and for a non-member, on
+      GET /tools and POST /rpc) also need an https Keycloak. verify_oauth_access_token accepts
+      only an https issuer and jwks_uri, and the Keycloak of the sso compose profile is plain
+      http, so these four tests skip against it.
 
-Usage:
+Usage, deny paths only (sso compose profile):
     SSO_API_TOKEN_AUTH_ENABLED=true docker compose --profile sso up -d
-    pytest tests/live_gateway/sso/test_external_idp_rest_auth_e2e.py -v -s --tb=short
+    SSO_API_TOKEN_AUTH_ENABLED=true pytest -p playwright tests/live_gateway/sso/test_external_idp_rest_auth_e2e.py -v -rs
+
+Usage, all nine tests (https Keycloak in Docker, gateway from this checkout on the host).
+Run from the repository root. Keep the certificate under $HOME: some Docker runtimes on macOS
+(for example Rancher Desktop and Colima) share only $HOME with the container VM by default.
+
+    mkdir -p ~/kc-tls
+    openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj "/CN=localhost" \
+        -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" -keyout ~/kc-tls/tls.key -out ~/kc-tls/tls.crt
+    chmod 644 ~/kc-tls/tls.key
+    docker run -d --name kc-tls -p 8543:8443 \
+        -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=changeme \
+        -e KC_HTTPS_CERTIFICATE_FILE=/opt/tls/tls.crt -e KC_HTTPS_CERTIFICATE_KEY_FILE=/opt/tls/tls.key \
+        -v ~/kc-tls:/opt/tls:ro \
+        -v "$PWD/infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" \
+        quay.io/keycloak/keycloak:26.1 start-dev --import-realm
+
+    # Settings for both the gateway and pytest. JWT_SECRET_KEY (and the other secrets the
+    # gateway needs, for example from `make init-secrets-patch-env`) must be the same in both.
+    export SSL_CERT_FILE=~/kc-tls/tls.crt
+    export SSO_ENABLED=true SSO_KEYCLOAK_ENABLED=true SSO_API_TOKEN_AUTH_ENABLED=true
+    export SSO_KEYCLOAK_BASE_URL=https://localhost:8543 SSO_KEYCLOAK_REALM=mcp-gateway
+    export SSO_KEYCLOAK_CLIENT_ID=mcp-gateway SSO_KEYCLOAK_CLIENT_SECRET=keycloak-dev-secret
+    export MCPGATEWAY_ADMIN_API_ENABLED=true
+    export KEYCLOAK_URL=https://localhost:8543 KEYCLOAK_INTERNAL_URL=https://localhost:8543
+
+    uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8080 &
+    pytest -p playwright tests/live_gateway/sso/test_external_idp_rest_auth_e2e.py -v -rs
+
+    The suite changes the bootstrapped keycloak provider and adds an audience mapper to the
+    Keycloak client; its fixtures restore both on teardown.
 """
 
 # Future
@@ -185,7 +220,8 @@ def _get_keycloak_token(email: str, password: str = KEYCLOAK_TEST_PASSWORD) -> s
         if token:
             return token
 
-    # Fallback: request from host (issuer may differ; only useful for manual debugging)
+    # Fallback: request from the host. The issuer matches the gateway's only when KEYCLOAK_URL
+    # equals KEYCLOAK_INTERNAL_URL, as in the https setup in the module docstring.
     # Third-Party
     import httpx
 
