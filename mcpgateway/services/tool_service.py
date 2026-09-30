@@ -101,7 +101,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
@@ -8005,6 +8005,45 @@ class ToolService(BaseService):
         if existing_tool:
             raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 
+    @staticmethod
+    def _check_gateway_tool_invocation_name_conflict(db: Session, invocation_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
+        """Raise ToolNameConflictError for a conflicting persisted gateway-tool name.
+
+        Args:
+            db: The SQLAlchemy database session.
+            invocation_name: The final gateway-prefixed invocation name.
+            visibility: The target visibility scope.
+            tool_id: The tool being updated, excluded from the conflict search.
+            team_id: Team namespace identity for team-visible tools.
+            owner_email: Owner namespace identity for private tools.
+
+        Raises:
+            ToolNameConflictError: If another tool occupies the target namespace.
+        """
+        if visibility == "public":
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "public", DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
+            )
+        elif visibility == "team" and team_id:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "team", DbTool.team_id == team_id, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
+            )
+        elif visibility == "private" and owner_email:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "private", DbTool.owner_email == owner_email, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
+            )
+        else:
+            logger.warning("Skipping gateway-tool conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
+            return
+        if existing_tool:
+            raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+
     async def update_tool(
         self,
         db: Session,
@@ -8112,6 +8151,23 @@ class ToolService(BaseService):
             # Track whether a name change occurred (before tool.name is mutated)
             name_is_changing = bool(tool_update.name and tool_update.name != tool.name)
 
+            visibility_is_changing = tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility
+            gateway_id = getattr(tool, "gateway_id", None)
+            gateway_name = getattr(getattr(tool, "gateway", None), "name", None)
+            gateway_collision_check = isinstance(gateway_id, str) and bool(gateway_id) and isinstance(gateway_name, str) and (tool_update.custom_name is not None or visibility_is_changing)
+            if gateway_collision_check:
+                final_custom_name = tool.custom_name if tool_update.custom_name is None else tool_update.custom_name
+                invocation_name = build_gateway_tool_invocation_name(gateway_name, final_custom_name)
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                self._check_gateway_tool_invocation_name_conflict(
+                    db,
+                    invocation_name,
+                    tool_visibility_ref,
+                    tool.id,
+                    team_id=tool.team_id,
+                    owner_email=tool.owner_email,
+                )
+
             # Check for name change and ensure uniqueness
             if name_is_changing:
                 # Always derive ownership fields from the DB record — never trust client-provided team_id/owner_email
@@ -8122,13 +8178,14 @@ class ToolService(BaseService):
                     custom_name_ref = tool_update.name  # custom_name will track the rename
                 else:
                     custom_name_ref = tool.custom_name  # custom_name stays unchanged
-                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+                if not gateway_collision_check:
+                    self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
 
             # Check for conflicts when visibility changes without a name change
-            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
+            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing and not gateway_collision_check:
                 new_visibility = tool_update.visibility.lower()
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 

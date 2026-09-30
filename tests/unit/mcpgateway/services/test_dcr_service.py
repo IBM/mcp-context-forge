@@ -1409,9 +1409,11 @@ class TestPreparePinnedRequest:
         dcr_service = DcrService()
         dcr_service.settings = SimpleNamespace(ssrf_protection_enabled=False)
 
-        permissive = MagicMock()
-        permissive.ssrf_protection_enabled = False
-        permissive.gateway_test_dns_timeout = 5.0
+        permissive = SimpleNamespace(
+            ssrf_protection_enabled=False,
+            gateway_test_dns_timeout=5.0,
+            validation_allowed_url_schemes=["http://", "https://", "ws://", "wss://"],
+        )
 
         with patch("mcpgateway.common.validators.settings", permissive):
             target = await dcr_service._prepare_pinned_request(

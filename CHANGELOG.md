@@ -6,6 +6,15 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
+## [Unreleased]
+
+- **Federated gateway tool-name collisions** - Gateway registration, refresh, OAuth discovery, reactivation, rename, and visibility updates now reject detected tool-name collisions in public, team, and private visibility scopes. Gateway automation must handle the endpoint's conflict response when a previously accepted colliding registration is rejected. Existing duplicate rows require administrator review before affected invocation names are usable. Operators can identify duplicates with:
+
+  ```sql
+  SELECT name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'public' GROUP BY name HAVING COUNT(*) > 1 ORDER BY name;
+  SELECT team_id, name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'team' GROUP BY team_id, name HAVING COUNT(*) > 1 ORDER BY team_id, name;
+  SELECT owner_email, name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'private' GROUP BY owner_email, name HAVING COUNT(*) > 1 ORDER BY owner_email, name;
+  ```
 
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
 

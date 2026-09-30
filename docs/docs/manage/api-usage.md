@@ -322,6 +322,8 @@ When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration rem
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
+Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](../../../CHANGELOG.md#unreleased).
+
 **Async create response example (`202 Accepted`):**
 
 ```json
@@ -365,6 +367,8 @@ Retry metadata is returned while a gateway is `pending`:
 Gateway name is the natural deduplication key for async lifecycle retries. With async lifecycle enabled, retrying `POST /gateways` with the same name while the existing gateway is `pending` returns the current pending record with `202 Accepted`; retrying while the existing gateway is `active` returns `409 Conflict`. Retrying an update while the gateway is already `pending` returns the current pending record with `202 Accepted`. A client-side transport timeout or lost response does not prove server-side failure: poll `GET /gateways/{id|name|slug}` before retrying or deleting.
 
 Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. After each failed initialization attempt, the next delay is `min(2 ** (registrationAttempts - 1), 300)` seconds. `nextRetryAt` is the source of truth for when the worker may retry next.
+
+An async tool-name collision keeps the gateway `pending`, stores the generic collision message in `statusMessage` and `lastError`, and follows this retry schedule. Remove or rename the conflicting tool, then poll the gateway until initialization succeeds or delete the pending gateway.
 
 DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Retrying DELETE while the gateway is already `deleting` is safe: clients should treat the resource as still being removed and keep polling until `404 Not Found`. Once deleted, polling returns `404 Not Found`.
 

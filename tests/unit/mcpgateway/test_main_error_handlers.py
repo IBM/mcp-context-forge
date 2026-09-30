@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayToolNameConflictError
 
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
@@ -219,6 +219,19 @@ class TestGatewayCreateErrorHandlers:
             assert response.status_code == 409
             assert "already exists" in response.json()["message"]
 
+    def test_register_gateway_tool_name_conflict_error(self, test_client, auth_headers):
+        """Gateway registration returns exact sanitized collision response."""
+        with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
+            mock_register.side_effect = GatewayToolNameConflictError("prod-api-search")
+            response = test_client.post(
+                "/gateways/",
+                json={"name": "test-gateway", "url": "http://localhost:9000", "description": "Test gateway"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 409
+        assert response.json() == {"message": "Gateway tool name conflicts with an existing tool"}
+
     def test_register_gateway_runtime_error(self, test_client, auth_headers):
         """Test RuntimeError handling in register_gateway."""
         with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
@@ -368,6 +381,28 @@ class TestGatewayUpdateErrorHandlers:
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 409
+
+    def test_update_gateway_tool_name_conflict_error(self, test_client, auth_headers):
+        """Gateway update returns exact sanitized collision response."""
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = GatewayToolNameConflictError("prod-api-search")
+            response = test_client.put(
+                "/gateways/test-id",
+                json={"name": "updated-gateway", "url": "http://localhost:9000", "description": "Updated gateway"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 409
+        assert response.json() == {"message": "Gateway tool name conflicts with an existing tool"}
+
+    def test_set_gateway_state_tool_name_conflict_error(self, test_client, auth_headers):
+        """Gateway activation returns exact sanitized collision response."""
+        with patch("mcpgateway.main.gateway_service.set_gateway_state", new_callable=AsyncMock) as mock_state:
+            mock_state.side_effect = GatewayToolNameConflictError("prod-api-search")
+            response = test_client.post("/gateways/test-id/state?activate=true", headers=auth_headers)
+
+        assert response.status_code == 409
+        assert response.json() == {"detail": "Gateway tool name conflicts with an existing tool"}
 
     def test_update_gateway_runtime_error(self, test_client, auth_headers):
         """Test RuntimeError handling in update_gateway."""

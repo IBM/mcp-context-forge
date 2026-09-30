@@ -37,7 +37,7 @@ from mcpgateway.schemas import (
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
 )
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayService, GatewayToolNameConflictError
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -808,6 +808,9 @@ class CatalogService:
 
         except CatalogRegistrationPermissionError:
             raise
+        except GatewayToolNameConflictError as e:
+            logger.warning("Catalog gateway registration rejected because a tool name conflicts")
+            return CatalogServerRegisterResponse(success=False, server_id="", message=str(e), error=None)
         except ValidationError as e:
             # Pydantic's default str(e)/repr(e) embeds the raw input value for every
             # failed field ("input_value={...}"). For GatewayCreate(**gateway_data) that
