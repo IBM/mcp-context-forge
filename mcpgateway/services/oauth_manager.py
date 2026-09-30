@@ -31,6 +31,7 @@ from requests_oauthlib import OAuth2Session
 from mcpgateway.common.oauth import (
     CLIENT_ASSERTION_TYPE_JWT_BEARER,
     DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG,
+    is_reserved_authorization_param,
     load_private_key_for_signing,
     MAX_CLIENT_ASSERTION_TTL_SECONDS,
     normalize_token_endpoint_auth_method,
@@ -1924,6 +1925,9 @@ class OAuthManager:
     def _create_authorization_url_with_pkce(self, credentials: Dict[str, Any], state: str, code_challenge: str, code_challenge_method: str) -> str:
         """Create authorization URL with PKCE parameters (RFC 7636).
 
+        Appends the string entries of ``credentials["extra_auth_params"]``, except
+        reserved names and parameters that the gateway already set.
+
         Args:
             credentials: OAuth configuration
             state: State parameter for CSRF protection
@@ -1959,6 +1963,12 @@ class OAuthManager:
         resource = credentials.get("resource")
         if self._should_include_resource_parameter(credentials, scopes):
             params["resource"] = resource  # urlencode with doseq=True handles lists
+
+        extra_auth_params = credentials.get("extra_auth_params")
+        if isinstance(extra_auth_params, dict):
+            for name, value in extra_auth_params.items():
+                if isinstance(value, str) and not is_reserved_authorization_param(name):
+                    params.setdefault(name, value)
 
         # Build full URL (doseq=True handles list values like multiple resource params)
         query_string = urlencode(params, doseq=True)

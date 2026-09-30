@@ -2,12 +2,14 @@
  * Unit tests for gateway.js module
  * Tests: viewGateway, editGateway, initGatewaySelect, getSelectedGatewayIds,
  *        testGateway, handleGatewayTestSubmit, handleGatewayTestClose,
- *        cleanupGatewayTestModal
+ *        cleanupGatewayTestModal, addExtraAuthParam, loadExtraAuthParams
  */
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
 import {
+  addExtraAuthParam,
+  loadExtraAuthParams,
   viewGateway,
   editGateway,
   initGatewaySelect,
@@ -16,6 +18,7 @@ import {
   refreshToolsForSelectedGateways,
 } from "../../../mcpgateway/admin_ui/gateways.js";
 import { fetchWithTimeout, showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils";
+import { initializeEventDelegation, resetEventDelegation } from "../../../mcpgateway/admin_ui/eventDelegation.js";
 import { openModal } from "../../../mcpgateway/admin_ui/modals";
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
@@ -1122,6 +1125,8 @@ describe("editGateway - auth types", () => {
       <input id="oauth-scopes-gw-edit" />
       <input id="oauth-resource-gw-edit" />
       <div id="oauth-auth-code-fields-gw-edit" style="display:none"></div>
+      <div id="extra-auth-params-container-gw-edit"></div>
+      <input id="extra-auth-params-json-gw-edit" />
       <div id="auth-query_param-fields-gw-edit" style="display:none">
         <input name="auth_query_param_key" />
         <input name="auth_query_param_value" type="password" />
@@ -1217,6 +1222,54 @@ describe("editGateway - auth types", () => {
       document.getElementById("oauth-redirect-after-success-gw-edit").value
     ).toBe("https://app.example.com/oauth-complete");
     expect(document.getElementById("edit-gateway-visibility-private").checked).toBe(true);
+  });
+
+  test("loads extra authorization parameters and clears them for the next gateway", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createGatewayEditHTML();
+    const rows = document.getElementById("extra-auth-params-container-gw-edit");
+    const hidden = document.getElementById("extra-auth-params-json-gw-edit");
+
+    fetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "Google Workspace",
+          url: "https://mcp.example.com",
+          visibility: "public",
+          transport: "SSE",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "authorization_code",
+            extra_auth_params: { access_type: "offline", prompt: "consent" },
+          },
+          tags: [],
+        }),
+    });
+    await editGateway("gw-google");
+
+    expect(rows.children).toHaveLength(2);
+    expect(JSON.parse(hidden.value)).toEqual({
+      access_type: "offline",
+      prompt: "consent",
+    });
+
+    fetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "Basic GW",
+          url: "https://basic.example.com",
+          visibility: "public",
+          transport: "SSE",
+          authType: "basic",
+          tags: [],
+        }),
+    });
+    await editGateway("gw-basic");
+
+    expect(rows.children).toHaveLength(0);
+    expect(hidden.value).toBe("");
   });
 
   test("populates OAuth resource field from string shape for gateway edit", async () => {
@@ -2101,5 +2154,87 @@ describe("refreshToolsForSelectedGateways", () => {
     expect(showErrorMessage).toHaveBeenCalledWith(
       "1 gateway(s) failed. No changes detected"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Extra authorization parameters
+// ---------------------------------------------------------------------------
+describe("extra authorization parameters", () => {
+  const containerId = "extra-auth-params-container-gw";
+
+  function setup() {
+    document.body.innerHTML = `
+      <button type="button" data-action-click="addExtraAuthParam" data-arg0="extra-auth-params-container-gw">Add Parameter</button>
+      <div id="extra-auth-params-container-gw"></div>
+      <input id="extra-auth-params-json-gw" />
+    `;
+    return {
+      container: document.getElementById(containerId),
+      hidden: document.getElementById("extra-auth-params-json-gw"),
+    };
+  }
+
+  afterEach(() => {
+    resetEventDelegation();
+    delete window.Admin;
+  });
+
+  test("the Add Parameter button adds an empty row through event delegation", () => {
+    const { container, hidden } = setup();
+    window.Admin = { addExtraAuthParam };
+    resetEventDelegation();
+    initializeEventDelegation();
+
+    document.querySelector("[data-action-click]").click();
+
+    expect(container.querySelectorAll(".extra-auth-param-key")).toHaveLength(1);
+    expect(container.querySelector(".extra-auth-param-key").value).toBe("");
+    expect(hidden.value).toBe("");
+  });
+
+  test("stored values go into input properties, not markup", () => {
+    const { container, hidden } = setup();
+    const payload = '"><img src=x onerror="window.pwned = true">';
+
+    loadExtraAuthParams(containerId, { login_hint: payload });
+
+    expect(container.querySelector("img")).toBeNull();
+    const valueInput = container.querySelector(".extra-auth-param-value");
+    expect(valueInput.value).toBe(payload);
+    expect(JSON.parse(hidden.value)).toEqual({ login_hint: payload });
+  });
+
+  test("a parameter named __proto__ survives loading and editing", () => {
+    const { container, hidden } = setup();
+    loadExtraAuthParams(
+      containerId,
+      JSON.parse('{"__proto__":"provider-value","prompt":"consent"}')
+    );
+
+    const value = container.querySelector(".extra-auth-param-value");
+    value.value = "edited";
+    value.dispatchEvent(new Event("input"));
+
+    expect(Object.entries(JSON.parse(hidden.value))).toEqual([
+      ["__proto__", "edited"],
+      ["prompt", "consent"],
+    ]);
+  });
+
+  test("typing and removing rows update the hidden input", () => {
+    const { container, hidden } = setup();
+    loadExtraAuthParams(containerId, {
+      access_type: "offline",
+      prompt: "consent",
+    });
+
+    container.querySelector("button").click();
+    expect(JSON.parse(hidden.value)).toEqual({ prompt: "consent" });
+
+    const value = container.querySelector(".extra-auth-param-value");
+    value.value = "select_account";
+    value.dispatchEvent(new Event("input"));
+    expect(JSON.parse(hidden.value)).toEqual({ prompt: "select_account" });
   });
 });
