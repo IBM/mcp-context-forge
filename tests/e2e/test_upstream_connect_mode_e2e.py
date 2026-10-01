@@ -143,6 +143,10 @@ def _gateway_env(db_path: str, mode: str) -> dict[str, str]:
         "DATABASE_URL": f"sqlite:///{db_path}",
         "JWT_SECRET_KEY": TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": "T3stEncS3cr3t!XyZ#9kPqR@vW2mN8hL",  # pragma: allowlist secret
+        # Settings.validate_security_combinations rejects the weak built-in
+        # defaults, and the curated env hides the values conftest exports.
+        "PLATFORM_ADMIN_PASSWORD": os.environ["PLATFORM_ADMIN_PASSWORD"],
+        "DEFAULT_USER_PASSWORD": os.environ["DEFAULT_USER_PASSWORD"],
         "AUTH_REQUIRED": "true",
         "REQUIRE_USER_IN_DB": "false",
         "REQUIRE_JTI": "false",

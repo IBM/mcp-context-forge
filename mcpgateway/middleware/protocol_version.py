@@ -67,7 +67,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             >>> resp.status_code
             200
 
-            MCP endpoints default to the latest protocol version (auto mode is the default):
+            A headerless MCP request records the mode default in request state.
+            Era routing stays header-driven in the SDK, so an absent header still
+            takes the legacy handshake path:
 
             >>> from mcp_types.version import LATEST_PROTOCOL_VERSION
             >>> scope_rpc = {
