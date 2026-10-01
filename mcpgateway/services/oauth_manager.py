@@ -30,10 +30,11 @@ from requests_oauthlib import OAuth2Session
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
-from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 
 logger = logging.getLogger(__name__)
 
@@ -342,8 +343,13 @@ class OAuthManager:
         an isolated ``httpx.AsyncClient`` is created with the corresponding SSL
         context so that OAuth token exchange works against self-signed or
         custom-CA upstream servers and/or presents client certificates for mTLS.
-        Otherwise the shared HTTP client (which respects the global
-        ``SKIP_SSL_VERIFY`` setting) is used.
+        Otherwise a per-call isolated HTTP client (``get_isolated_http_client``)
+        is used, not the shared pooled client. A pinned request must not share
+        a connection pool with another destination: httpcore keys pooled
+        connections by resolved address and ignores which hostname's
+        certificate was actually verified, so two token endpoints pinned to
+        the same address could otherwise collapse onto one pooled connection
+        and reuse a TLS handshake verified for a different hostname.
 
         Note:
             When only ``client_cert``/``client_key`` are provided (no custom CA),
@@ -360,17 +366,32 @@ class OAuthManager:
 
         Returns:
             The HTTP response from the token endpoint.
+
+        Raises:
+            OAuthError: If the token endpoint URL is blocked by outbound URL policy.
         """
-        # SSRF defense: never follow redirects on token endpoints. The shared HTTP
-        # client sets follow_redirects=True, which would let a validated public
-        # token_url 302-redirect into an internal target (e.g. 169.254.169.254)
-        # after pre-fetch SSRF validation has already passed.
+        # SSRF defense: never follow redirects on token endpoints. get_isolated_http_client
+        # defaults follow_redirects to True, which would let a validated public token_url
+        # 302-redirect into an internal target (e.g. 169.254.169.254) after pre-fetch SSRF
+        # validation has already passed. The redirect-refusal behavior must be requested
+        # explicitly, not assumed, so both branches below pass follow_redirects=False.
+        try:
+            pinned_target = await resolve_pinned_target(url, "OAuth token URL")
+            pinned_url = pinned_target.pin(url)
+            pinned_headers = pinned_target.apply_headers(headers or {})
+        except ValueError as exc:
+            raise OAuthError(f"Token endpoint blocked by URL policy: {exc}") from exc
+
+        extensions = pinned_target.extensions
         if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
-        client = await self._get_client()
-        return await client.post(url, data=data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
+                return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
+        # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
+        # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
+        # would reuse a connection whose certificate was verified for that other name.
+        async with get_isolated_http_client(follow_redirects=False) as client:
+            return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token"})
@@ -747,8 +768,7 @@ class OAuthManager:
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
+                response = await self._post_token_request(token_url, token_data, headers=headers)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)

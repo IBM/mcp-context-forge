@@ -22,7 +22,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
 from mcpgateway.llm_schemas import (
@@ -33,6 +32,7 @@ from mcpgateway.llm_schemas import (
     UsageStats,
 )
 from mcpgateway.observability import create_span, set_span_attribute
+from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.llm_provider_service import (
     decrypt_provider_config_for_runtime,
     LLMModelNotFoundError,
@@ -40,6 +40,7 @@ from mcpgateway.services.llm_provider_service import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Initialize logging
@@ -475,9 +476,8 @@ class LLMProxyService:
         # Ensure non-streaming
         body["stream"] = False
 
-        # Validate the constructed URL to prevent SSRF attacks
         try:
-            SecurityValidator.validate_url(url, "LLM provider URL")
+            pinned_target = await resolve_pinned_target(url, "LLM provider URL")
         except ValueError as url_err:
             raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
@@ -494,7 +494,21 @@ class LLMProxyService:
 
         with create_span("llm.proxy", span_attributes) as span:
             try:
-                response = await self._client.post(url, headers=headers, json=body)
+                # An isolated client keeps this pinned request out of the shared pool. httpcore keys
+                # pooled connections by origin and ignores sni_hostname, so two providers pinned to one
+                # address would share a connection whose certificate was verified for only the first.
+                async with get_isolated_http_client(
+                    timeout=settings.llm_request_timeout,
+                    connect_timeout=30.0,
+                    verify=not settings.skip_ssl_verify,
+                    follow_redirects=False,
+                ) as client:
+                    response = await client.post(
+                        pinned_target.pin(url),
+                        headers=pinned_target.apply_headers(headers),
+                        json=body,
+                        extensions=pinned_target.extensions,
+                    )
                 response.raise_for_status()
                 data = response.json()
 
@@ -561,9 +575,8 @@ class LLMProxyService:
         # Ensure streaming
         body["stream"] = True
 
-        # Validate the constructed URL to prevent SSRF attacks
         try:
-            SecurityValidator.validate_url(url, "LLM provider URL")
+            pinned_target = await resolve_pinned_target(url, "LLM provider URL")
         except ValueError as url_err:
             raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
@@ -586,7 +599,23 @@ class LLMProxyService:
 
         with create_span("llm.proxy", span_attributes) as span:
             try:
-                async with self._client.stream("POST", url, headers=headers, json=body) as response:
+                # The isolated client is acquired in the same statement as the stream so it stays open
+                # for the whole response body; closing it after headers arrive would truncate the stream.
+                async with (
+                    get_isolated_http_client(
+                        timeout=settings.llm_request_timeout,
+                        connect_timeout=30.0,
+                        verify=not settings.skip_ssl_verify,
+                        follow_redirects=False,
+                    ) as client,
+                    client.stream(
+                        "POST",
+                        pinned_target.pin(url),
+                        headers=pinned_target.apply_headers(headers),
+                        json=body,
+                        extensions=pinned_target.extensions,
+                    ) as response,
+                ):
                     response.raise_for_status()
 
                     async for line in response.aiter_lines():
