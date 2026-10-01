@@ -144,7 +144,8 @@ class SandboxPool:
         with self._lock:
             if self._pool is not None and self._pool_pid == os.getpid():
                 return
-            pool = self._build()
+            workers = self._workers_fn()
+            pool = self._build(workers)
             try:
                 # Force worker creation now, while the process has the fewest threads,
                 # rather than mid-request on the first hostile input.
@@ -154,7 +155,7 @@ class SandboxPool:
                 raise
             self._pool = pool
             self._pool_pid = os.getpid()
-            logger.info("%s sandbox started with %s worker(s)", self._name, self._workers_fn())
+            logger.info("%s sandbox started with %s worker(s)", self._name, workers)
 
     def shutdown(self) -> None:
         """Kill this pool's workers and clear its state."""
@@ -207,13 +208,13 @@ class SandboxPool:
         finally:
             gate.release()
 
-    def _build(self) -> ProcessPoolExecutor:
+    def _build(self, workers: Optional[int] = None) -> ProcessPoolExecutor:
         """Create a worker pool and stamp its ownership and admission gate.
 
         Returns:
             A new executor.
         """
-        workers = self._workers_fn()
+        workers = self._workers_fn() if workers is None else workers
         pool = ProcessPoolExecutor(
             max_workers=workers,
             mp_context=multiprocessing.get_context(self._start_method),

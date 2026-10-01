@@ -89,6 +89,28 @@ def test_pool_serves_the_next_call_after_a_kill(pool):
     assert pool.submit(_echo, "still here") == "still here"
 
 
+def test_start_reads_worker_count_once():
+    """Starting a pool must not evaluate its worker-count callable twice."""
+    calls = 0
+
+    def workers_fn():
+        """Count worker setting reads.
+
+        Returns:
+            One worker.
+        """
+        nonlocal calls
+        calls += 1
+        return 1
+
+    instance = SandboxPool(name="test-worker-count", workers_fn=workers_fn, timeout_fn=lambda: 5.0)
+    try:
+        instance.start()
+        assert calls == 1
+    finally:
+        instance.shutdown()
+
+
 def test_busy_pool_raises_busy_not_timeout():
     """No free worker is a retryable condition, not a runaway."""
     instance = SandboxPool(name="test-busy", workers_fn=lambda: 1, timeout_fn=lambda: 5.0)
