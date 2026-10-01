@@ -1170,8 +1170,8 @@ def _build_admin_redirect(
     Args:
         root_path: The root path prefix for the application.
         fragment: The URL fragment/hash (e.g. "tools", "catalog").
-        error: Optional error message to include as a query parameter.
-        message: Optional success/info message to include as a query parameter.
+        error: Optional error code for the flash banner; admin.html maps it to display text.
+        message: Optional info code for the flash banner; admin.html maps it to display text.
         include_inactive: Whether the include_inactive flag was set.
         team_id: Optional team ID to preserve in the redirect.
 
@@ -3454,7 +3454,7 @@ async def admin_set_server_state(
         'admin_set_server_state'
     """
     form = await request.form()
-    error_message = None
+    error_code = None
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is setting server ID {server_id} state with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
@@ -3463,17 +3463,17 @@ async def admin_set_server_state(
         await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
     except ServerLockConflictError as e:
         LOGGER.warning("Lock conflict for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
-        error_message = "Server is being modified by another request. Please try again."
+        error_code = "conflict"
     except Exception as e:
         LOGGER.error(f"Error setting server status: {e}")
-        error_message = "Error setting server status. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -3505,21 +3505,21 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
-    error_message = None
+    error_code = None
     try:
         user_email = get_user_email(user)
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s deleting server %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), SecurityValidator.sanitize_log_message(server_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting server: {e}")
-        error_message = "Failed to delete server. Please try again."
+        error_code = "delete_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -3725,7 +3725,7 @@ async def admin_set_gateway_state(
         >>> admin_set_gateway_state.__name__
         'admin_set_gateway_state'
     """
-    error_message = None
+    error_code = None
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is setting gateway state for ID {gateway_id}")
     form = await request.form()
@@ -3736,16 +3736,16 @@ async def admin_set_gateway_state(
         await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
-        error_message = str(e)
-    except GatewayToolNameConflictError as e:
-        error_message = str(e)
+        error_code = "permission_denied"
+    except GatewayToolNameConflictError:
+        error_code = "name_conflict"
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
-        error_message = "Failed to set gateway state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -6658,8 +6658,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote("Team name is required")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="team_name_required"), status_code=303)
 
         # Validate name and description for XSS (same validation as schema)
         if not re.match(settings.validation_name_pattern, name):
@@ -6672,8 +6671,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote("Team name contains invalid characters")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="team_name_invalid"), status_code=303)
 
         try:
             SecurityValidator.validate_no_xss(name, "Team name")
@@ -6693,8 +6691,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote(str(ve))
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="invalid_input"), status_code=303)
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
@@ -6721,8 +6718,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote("Team cannot be updated")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="update_failed"), status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -6750,8 +6746,7 @@ async def admin_update_team(
             response.headers["HX-Retarget"] = "#edit-team-error"
             response.headers["HX-Reswap"] = "innerHTML"
             return response
-        error_msg = urllib.parse.quote(str(e))
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(_build_admin_redirect(root_path, "teams", error="invalid_input"), status_code=303)
     except Exception as e:
         db.rollback()
         LOGGER.error(f"Error updating team {team_id}: {e}")
@@ -6762,8 +6757,7 @@ async def admin_update_team(
         if is_htmx:
             return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=500)
         # For regular form submission, redirect to admin page with error parameter
-        error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(_build_admin_redirect(root_path, "teams", error="update_failed"), status_code=303)
 
 
 @admin_router.delete("/teams/{team_id}")
@@ -12548,19 +12542,19 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
-    error_message = None
+    error_code = None
     try:
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting tool: {e}")
-        error_message = "Failed to delete tool. Please try again."
+        error_code = "delete_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -12596,7 +12590,7 @@ async def admin_set_tool_state(
         >>> admin_set_tool_state.__name__
         'admin_set_tool_state'
     """
-    error_message = None
+    error_code = None
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling tool ID {tool_id}")
     form = await request.form()
@@ -12606,17 +12600,17 @@ async def admin_set_tool_state(
         await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting tool state {tool_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except ToolLockConflictError as e:
         LOGGER.warning(f"Lock conflict for user {user_email} setting tool {tool_id} state: {e}")
-        error_message = "Tool is being modified by another request. Please try again."
+        error_code = "conflict"
     except Exception as e:
         LOGGER.error(f"Error setting tool state: {e}")
-        error_message = "Failed to set tool state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -13391,18 +13385,18 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
-    error_message = None
+    error_code = None
     accepted_message = None
     try:
         result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
         if getattr(result, "status", None) == "deleting":
-            accepted_message = "Gateway deletion accepted and pending cleanup."
+            accepted_message = "gateway_delete_pending"
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
-        error_message = "Failed to delete gateway. Please try again."
+        error_code = "delete_failed"
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -13411,7 +13405,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     redirect_url = _build_admin_redirect(
         root_path,
         "gateways",
-        error=error_message,
+        error=error_code,
         message=accepted_message,
         include_inactive=is_inactive_checked.lower() == "true",
         team_id=team_id,
@@ -13807,7 +13801,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
-    error_message = None
+    error_code = None
     try:
         await resource_service.delete_resource(
             db,  # Use endpoint's db session (user["db"] is now closed early)
@@ -13817,13 +13811,13 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
         )
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting resource: {e}")
-        error_message = "Failed to delete resource. Please try again."
+        error_code = "delete_failed"
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -13862,21 +13856,21 @@ async def admin_set_resource_state(
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling resource ID {resource_id}")
     form = await request.form()
-    error_message = None
+    error_code = None
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting resource state {resource_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error setting resource state: {e}")
-        error_message = "Failed to set resource state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14199,18 +14193,18 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
-    error_message = None
+    error_code = None
     try:
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {prompt_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting prompt: {e}")
-        error_message = "Failed to delete prompt. Please try again."
+        error_code = "delete_failed"
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14248,7 +14242,7 @@ async def admin_set_prompt_state(
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling prompt ID {prompt_id}")
-    error_message = None
+    error_code = None
     form = await request.form()
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
@@ -14256,14 +14250,14 @@ async def admin_set_prompt_state(
         await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting prompt state {prompt_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error setting prompt state: {e}")
-        error_message = "Failed to set prompt state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14463,7 +14457,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> admin_add_root.__name__
         'admin_add_root'
     """
-    error_message = None
+    error_code = None
     await _require_unrestricted_root_admin(request, user, db)
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is adding a new root")
@@ -14482,20 +14476,20 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
     except RootServiceValidationError as e:
         LOGGER.warning("Failed to add root for user %s: reason=%s", user_email, e.reason_code)
-        error_message = "Failed to add root. Please check the URI format."
+        error_code = "invalid_uri"
     except RootServiceError:
         LOGGER.warning("Failed to add root for user %s", user_email)
-        error_message = "Failed to add root. Please check the URI format."
+        error_code = "invalid_uri"
     except ValueError as e:
         LOGGER.warning(f"Invalid input from user {user_email}: {e}")
-        error_message = "Invalid input. Please try again."
+        error_code = "invalid_input"
     except Exception as e:
         LOGGER.error(f"Error adding root: {e}")
-        error_message = "Failed to add root. Please try again."
+        error_code = "create_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "roots", error=error_message, team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "roots", error=error_code, team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14554,7 +14548,7 @@ async def admin_update_root(uri: str, request: Request, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail=str(e))
     except RootServiceValidationError:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="Failed to update root. Please check the URI format."), status_code=303)
+        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="invalid_uri"), status_code=303)
     except Exception as e:
         LOGGER.error(f"Error updating root {uri}: {e}")
         raise e
@@ -14595,7 +14589,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     try:
         await root_service.remove_root(uri)
     except RootServiceValidationError:
-        redirect_url = _build_admin_redirect(root_path, "roots", error="Failed to delete root. Please check the URI format.", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        redirect_url = _build_admin_redirect(root_path, "roots", error="invalid_uri", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
         return RedirectResponse(redirect_url, status_code=303)
     redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -16755,7 +16749,7 @@ async def admin_set_a2a_agent_state(
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
-    error_message = None
+    error_code = None
     is_inactive_checked = "false"
     team_id = ""
     try:
@@ -16769,16 +16763,16 @@ async def admin_set_a2a_agent_state(
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent state change failed - not found: {e}")
-        error_message = "A2A agent not found."
+        error_code = "not_found"
     except Exception as e:
         LOGGER.error(f"Error setting A2A agent state: {e}")
-        error_message = "Failed to set state of A2A agent. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
-    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -16808,7 +16802,7 @@ async def admin_delete_a2a_agent(
         root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
-    error_message = None
+    error_code = None
     is_inactive_checked = "false"
     team_id = ""
     try:
@@ -16820,16 +16814,16 @@ async def admin_delete_a2a_agent(
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting A2A agent {agent_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent delete failed - not found: {e}")
-        error_message = "A2A agent not found."
+        error_code = "not_found"
     except Exception as e:
         LOGGER.error(f"Error deleting A2A agent: {e}")
-        error_message = "Failed to delete A2A agent. Please try again."
+        error_code = "delete_failed"
 
     root_path = _resolve_root_path(request)
-    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 

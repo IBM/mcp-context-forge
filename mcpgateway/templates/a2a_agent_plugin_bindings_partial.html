@@ -48,7 +48,7 @@
     <label for="a2a-bp-team-filter" class="text-sm font-medium text-gray-700 dark:text-gray-300">Team:</label>
     <select id="a2a-bp-team-filter"
             class="mt-1 block w-64 rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            onchange="filterByTeam(this.value)">
+            data-action="filter-team">
       <option value="">All Teams</option>
       {% for team in teams %}
       {% if selected_team_id == team.id %}
@@ -66,7 +66,7 @@
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
         Bindings ({{ bindings|length }})
       </h3>
-      <button onclick="showAddBindingForm()"
+      <button type="button" data-action="open-binding-form"
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
         + Add Binding
       </button>
@@ -109,7 +109,7 @@
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{{ binding.created_by }}</td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
               <form method="post" action="{{ root_path }}/admin/a2a/plugin-bindings/{{ binding.id }}/delete"
-                    onsubmit="return confirm('Are you sure you want to delete this binding?')"
+                    hx-confirm="Are you sure you want to delete this binding?"
                     hx-post="{{ root_path }}/admin/a2a/plugin-bindings/{{ binding.id }}/delete"
                     hx-target="#a2a-plugin-bindings-panel"
                     hx-swap="innerHTML"
@@ -142,14 +142,13 @@
   <!-- Add Binding Modal -->
   <div id="add-binding-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
     <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-      <div class="fixed inset-0 bg-gray-500 bg-opacity-75 dark:bg-gray-900 dark:bg-opacity-75 transition-opacity" onclick="closeAddBindingForm()"></div>
+      <div class="fixed inset-0 bg-gray-500 bg-opacity-75 dark:bg-gray-900 dark:bg-opacity-75 transition-opacity" data-action="close-binding-form"></div>
       <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
       <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
         <form id="add-binding-form"
               hx-post="{{ root_path }}/admin/a2a/plugin-bindings"
               hx-target="#a2a-plugin-bindings-panel"
-              hx-swap="innerHTML"
-              onsubmit="return validateBindingForm(event)">
+              hx-swap="innerHTML">
           <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Add Plugin Binding</h3>
           </div>
@@ -217,7 +216,7 @@
             </div>
           </div>
           <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end space-x-3">
-            <button type="button" onclick="closeAddBindingForm()"
+            <button type="button" data-action="close-binding-form"
                     class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600">
               Cancel
             </button>
@@ -232,7 +231,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce(request) }}">
 function filterByTeam(teamId) {
   const params = new URLSearchParams(window.location.search);
   if (teamId) {
@@ -252,7 +251,7 @@ function closeAddBindingForm() {
   document.getElementById('add-binding-modal').classList.add('hidden');
 }
 
-function validateBindingForm(event) {
+function validateBindingForm() {
   const team = document.getElementById('new-binding-team').value;
   const agent = document.getElementById('new-binding-agent').value;
   const plugin = document.getElementById('new-binding-plugin').value;
@@ -260,7 +259,6 @@ function validateBindingForm(event) {
 
   if (!team || !agent || !plugin) {
     alert('Please fill in Team, Agent, and Plugin fields.');
-    event.preventDefault();
     return false;
   }
 
@@ -268,11 +266,25 @@ function validateBindingForm(event) {
     JSON.parse(configRaw);
   } catch (e) {
     alert('Invalid JSON in config field: ' + e.message);
-    event.preventDefault();
     return false;
   }
 
   closeAddBindingForm();
   return true;
 }
+
+(function bindA2aPluginBindingHandlers() {
+  const container = document.getElementById('a2a-bindings-container');
+  if (!container) {
+    return;
+  }
+  container.querySelector('[data-action="filter-team"]')?.addEventListener('change', (e) => filterByTeam(e.target.value));
+  container.querySelector('[data-action="open-binding-form"]')?.addEventListener('click', showAddBindingForm);
+  container.querySelectorAll('[data-action="close-binding-form"]').forEach((el) => el.addEventListener('click', closeAddBindingForm));
+  container.querySelector('#add-binding-form')?.addEventListener('htmx:beforeRequest', (e) => {
+    if (!validateBindingForm()) {
+      e.preventDefault();
+    }
+  });
+})();
 </script>
