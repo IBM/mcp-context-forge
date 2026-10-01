@@ -1359,6 +1359,7 @@ async def _check_streamable_permission(
     user_email = user_context.get("email")
     if not user_email:
         return False
+    is_trusted = user_context.get("token_use") == "trusted"  # nosec B105 - JWT claim type marker, not a password
 
     try:
         async with get_db() as db:
@@ -1369,6 +1370,8 @@ async def _check_streamable_permission(
                 token_teams=user_context.get("teams"),
                 allow_admin_bypass=allow_admin_bypass,
                 check_any_team=check_any_team,
+                token_is_admin=bool(is_trusted and user_context.get("is_admin")),
+                token_roles=list(user_context.get("roles") or []) if is_trusted else None,
             )
             if not granted:
                 logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
@@ -5698,12 +5701,83 @@ class _StreamableHttpAuthHandler:
         set_trace_context_from_teams([], auth_method="anonymous")
         return True  # Allow request to proceed with public-only access
 
+    async def _auth_trusted_issuer(self, token: str) -> Optional[bool]:
+        """Authenticate a token from a configured trust root (JWT-trust mode).
+
+        Mirrors the REST trust branch (``auth.get_current_user`` ->
+        ``_try_external_verification``): fail-closed external verification,
+        then the per-request revocation check. No local user lookup.
+
+        Args:
+            token: Bearer token value extracted from the Authorization header.
+
+        Returns:
+            None if the issuer is not a configured trust root (caller falls
+            through), True if authenticated, False if rejected (401/503 sent).
+        """
+        # First-Party
+        from mcpgateway.auth import _check_token_revoked_sync, resolve_trace_team_name  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils import verify_credentials as _vc  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.trusted_claims import extract_revocation_id  # pylint: disable=import-outside-toplevel
+
+        try:
+            trusted = await _vc._maybe_verify_external(token, None, fail_closed=True)  # pylint: disable=protected-access
+        except _vc.ExternalIssuerVerificationError as exc:
+            logger.warning(
+                "Rejected bearer from a configured trust root at MCP ingress (fail-closed): %s",
+                sanitize_for_log(str(exc)),
+                extra={"security_event": "trust_root_token_rejected_ingress"},
+            )
+            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+        if trusted is None:
+            return None
+
+        # The verified identity is cached by token hash, so revocation must be
+        # checked on every request, as the REST trust branch does.
+        try:
+            revocation_id = extract_revocation_id(trusted, settings)
+            is_revoked = await asyncio.to_thread(_check_token_revoked_sync, revocation_id)
+        except HTTPException:
+            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+        except SQLAlchemyError:
+            logger.exception("Database error during MCP trust-mode revocation check")
+            return await self._send_error(detail="Service unavailable — unable to verify authentication", status_code=503)
+        if is_revoked:
+            return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
+
+        teams = list(trusted.get("teams") or [])
+        is_admin = bool(trusted.get("is_admin", False))
+        trusted_ctx: dict[str, Any] = {
+            "email": trusted.get("email"),
+            "user_id": trusted.get("user_id"),
+            "teams": teams,
+            "roles": list(trusted.get("roles") or []),
+            "is_authenticated": True,
+            "is_admin": is_admin,
+            "permission_is_admin": is_admin,
+            "auth_method": "jwt",
+            "exp": trusted.get("exp"),
+            "token_use": "trusted",  # nosec B105 - JWT claim type marker, not a password
+        }
+        user_context_var.set(trusted_ctx)
+        _set_user_identity_from_dict(trusted_ctx)
+        set_trace_context_from_teams(
+            teams,
+            user_email=trusted_ctx["email"],
+            is_admin=is_admin,
+            auth_method="jwt",
+            team_name=await resolve_trace_team_name(trusted, teams),
+        )
+        return True
+
     async def _auth_jwt(self, *, token: str) -> bool:  # noqa: PLR0911
         """Verify a JWT Bearer token and populate the user context.
 
         Routes to ContextForge-issued or IdP-issued (OAuth) verification based
         on the token's ``iss`` claim. IdP-issued tokens are only accepted for
-        virtual servers with ``oauth_enabled=True``.
+        virtual servers with ``oauth_enabled=True``. In JWT-trust mode, tokens
+        from a configured trust root are handled by ``_auth_trusted_issuer``
+        first.
 
         Args:
             token: Bearer token value extracted from the Authorization header.
@@ -5711,6 +5785,11 @@ class _StreamableHttpAuthHandler:
         Returns:
             True if verification succeeds, False if rejected (401/403/503 sent).
         """
+        if settings.jwt_trust_mode == "jwt-trust":
+            trusted = await self._auth_trusted_issuer(token)
+            if trusted is not None:
+                return trusted
+
         routed = await self._route_idp_issued_token(token)
         if routed is not None:
             return routed
