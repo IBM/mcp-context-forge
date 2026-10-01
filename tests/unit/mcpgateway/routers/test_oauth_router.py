@@ -469,7 +469,7 @@ class TestOAuthRouter:
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_dcr_disabled_missing_client_id(self, mock_db, mock_request, mock_current_user):
-        """Test OAuth flow when issuer exists but DCR auto-registration is disabled."""
+        """Disabling DCR blocks auto-registration even when its trigger remains enabled."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
@@ -483,9 +483,9 @@ class TestOAuthRouter:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+        with patch("mcpgateway.routers.oauth_router.DcrService") as mock_dcr_service, patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.dcr_enabled = False
-            mock_settings.dcr_auto_register_on_missing_credentials = False
+            mock_settings.dcr_auto_register_on_missing_credentials = True
 
             from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
@@ -494,6 +494,7 @@ class TestOAuthRouter:
 
             assert exc_info.value.status_code == 400
             assert "incomplete" in str(exc_info.value.detail).lower()
+            mock_dcr_service.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_uses_persisted_resource_as_is(self, mock_db, mock_request, mock_current_user):

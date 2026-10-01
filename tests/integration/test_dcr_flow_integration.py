@@ -101,6 +101,7 @@ class TestPKCEFlowIntegration:
         from unittest.mock import patch
 
         # First-Party
+        from mcpgateway.config import get_settings
         from mcpgateway.db import OAuthState
         from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -109,10 +110,7 @@ class TestPKCEFlowIntegration:
             yield test_db
 
         with patch("mcpgateway.db.get_db", mock_get_db):
-            with patch("mcpgateway.config.get_settings") as mock_settings:
-                # Configure settings to use database cache
-                mock_settings.return_value.cache_type = "database"
-
+            with patch("mcpgateway.config.get_settings", return_value=get_settings()):
                 token_storage = TokenStorageService(test_db)
                 oauth_manager = OAuthManager(token_storage=token_storage)
 
@@ -135,7 +133,13 @@ class TestPKCEFlowIntegration:
 
                 # Manually store state in database for this test
                 oauth_state_record = OAuthState(
-                    gateway_id="test-gateway-123", state=state, code_verifier=pkce_params["code_verifier"], expires_at=datetime.now(timezone.utc) + timedelta(seconds=600), used=False
+                    gateway_id="test-gateway-123",
+                    state=state,
+                    code_verifier=pkce_params["code_verifier"],
+                    app_user_email="user@example.com",
+                    redirect_uri=credentials["redirect_uri"],
+                    expires_at=datetime.now(timezone.utc) + timedelta(seconds=600),
+                    used=False,
                 )
                 test_db.add(oauth_state_record)
                 test_db.commit()
