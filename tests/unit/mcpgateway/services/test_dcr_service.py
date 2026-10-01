@@ -72,13 +72,13 @@ def patch_isolated_client(mock_client):
         mock_client: Mock standing in for ``httpx.AsyncClient``.
 
     Yields:
-        None: The patch stays active for the duration of the block.
+        MagicMock: Patched isolated HTTP client factory.
     """
     context_manager = MagicMock()
     context_manager.__aenter__ = AsyncMock(return_value=mock_client)
     context_manager.__aexit__ = AsyncMock(return_value=False)
-    with patch("mcpgateway.services.dcr_service.get_isolated_http_client", return_value=context_manager):
-        yield
+    with patch("mcpgateway.services.dcr_service.get_isolated_http_client", return_value=context_manager) as client_factory:
+        yield client_factory
 
 
 class TestDiscoverASMetadata:
@@ -1652,6 +1652,90 @@ class TestRegisterClientSsrfDenyPath:
                 )
 
         mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("registration_endpoint", "resolved_ip", "policy_overrides"),
+        [
+            ("https://blocked.example/register", PUBLIC_TEST_IP, {"ssrf_blocked_hosts": ["blocked.example"]}),
+            ("https://as.example.com/register", "8.8.8.8", {"ssrf_blocked_networks": ["8.8.8.0/24"]}),
+            ("https://as.example.com/register", "127.0.0.1", {"ssrf_allow_localhost": False}),
+            ("https://as.example.com/register", "10.0.0.8", {"ssrf_allow_private_networks": False}),
+        ],
+        ids=["blocked-host", "blocked-network", "loopback", "private-network"],
+    )
+    async def test_register_client_enforces_same_origin_ssrf_policy(self, test_db, monkeypatch, registration_endpoint, resolved_ip, policy_overrides):
+        """Same-origin registration endpoints still obey every SSRF deny policy."""
+
+        def _policy_getaddrinfo(_host, port, *_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolved_ip, port or 443))]
+
+        policy = SimpleNamespace(
+            validation_allowed_url_schemes=["http://", "https://", "ws://", "wss://"],
+            gateway_test_dns_timeout=5.0,
+            ssrf_protection_enabled=True,
+            ssrf_blocked_hosts=[],
+            ssrf_blocked_networks=[],
+            ssrf_allow_localhost=True,
+            ssrf_allow_private_networks=True,
+            ssrf_allowed_networks=[],
+            ssrf_dns_fail_closed=True,
+        )
+        for setting_name, setting_value in policy_overrides.items():
+            setattr(policy, setting_name, setting_value)
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _policy_getaddrinfo)
+        dcr_service = DcrService()
+        issuer = registration_endpoint.rsplit("/register", maxsplit=1)[0]
+        metadata = {"issuer": issuer, "registration_endpoint": registration_endpoint, "grant_types_supported": ["authorization_code"]}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+
+        with patch("mcpgateway.common.validators.settings", policy), patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client):
+            with pytest.raises(DcrError, match="URL policy"):
+                await dcr_service.register_client(
+                    gateway_id="gw-policy-deny",
+                    gateway_name="Policy Deny Gateway",
+                    issuer=issuer,
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_client_does_not_follow_redirect(self, test_db):
+        """A registration redirect never causes a request to its target."""
+        dcr_service = DcrService()
+        metadata = {
+            "issuer": "https://as.example.com",
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code"],
+        }
+        redirect_response = MagicMock()
+        redirect_response.status_code = 307
+        redirect_response.headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+        redirect_response.json = MagicMock(return_value={"error": "redirect_refused"})
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=redirect_response)
+
+        with patch.object(dcr_service, "discover_as_metadata", AsyncMock(return_value=metadata)), patch_isolated_client(mock_client) as client_factory:
+            with pytest.raises(DcrError, match="redirect_refused"):
+                await dcr_service.register_client(
+                    gateway_id="gw-redirect",
+                    gateway_name="Redirect Gateway",
+                    issuer="https://as.example.com",
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+        client_factory.assert_called_once_with(follow_redirects=False)
+        mock_client.post.assert_awaited_once()
+        post_call = mock_client.post.await_args
+        assert post_call is not None
+        assert post_call.args[0] == f"https://{PUBLIC_TEST_IP}/register"
 
     @pytest.mark.asyncio
     async def test_register_client_posts_to_pinned_address(self, test_db):
