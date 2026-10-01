@@ -76,13 +76,15 @@ def _snapshot_config(bind, rev: str, values: dict) -> None:
         logger.warning("migration_metadata table not found; skipping config snapshot. " "Downgrade will use live settings (non-hermetic).")
         return
     for key, value in values.items():
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
         bind.execute(
             text(
                 "INSERT INTO migration_metadata (revision, key, value, created_at) "
                 "VALUES (:rev, :key, :value, :ts) "
                 "ON CONFLICT (revision, key) DO UPDATE SET value = excluded.value, created_at = excluded.created_at"
             ),
-            {"rev": rev, "key": key, "value": value, "ts": datetime.now(timezone.utc)},
+            {"rev": rev, "key": key, "value": value, "ts": datetime.now(timezone.utc) if bind.dialect.name == "postgresql" else datetime.now(timezone.utc).isoformat(" ")},
         )
     print(f"  ✓ Snapshotted {len(values)} config value(s) into migration_metadata (revision={rev})")
 
@@ -307,13 +309,15 @@ def upgrade() -> None:
                 role_id = team_owner_role_id if membership_role == "owner" else team_member_role_id
                 # Use self-grant for compatibility with deployments where granted_by
                 # enforces a foreign key to email_users.email.
+                # Match the sqlite3 default adapter's storage format exactly; binding a
+                # datetime object would trip the Python 3.12+ deprecated-adapter warning.
                 params = {
                     "id": _generate_uuid(),
                     "user_email": user_email,
                     "role_id": role_id,
                     "team_id": team_id,
                     "granted_by": user_email,
-                    "granted_at": datetime.now(timezone.utc),
+                    "granted_at": (datetime.now(timezone.utc) if bind.dialect.name == "postgresql" else datetime.now(timezone.utc).isoformat(" ")),
                 }
                 if has_migration_source:
                     params["migration_source"] = MIGRATION_SOURCE
