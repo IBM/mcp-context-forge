@@ -698,6 +698,9 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
+| `REGEX_TIMEOUT_SECONDS`   | Time budget for validating against a schema that carries `pattern` or `patternProperties`; on expiry validation fails closed | `1.0` | float > 0 |
+| `REGEX_WORKERS`           | Worker processes in the JSON Schema regex sandbox | `2`                                         | int > 0    |
+| `REGEX_MAX_SUBJECT_BYTES` | Largest value a regex-bearing schema validates; larger values fail closed | `262144`                        | int >= 1024 |
 | `HSTS_ENABLED`            | Enable HSTS header             | `true`                                         | bool       |
 | `HSTS_MAX_AGE`            | HSTS max age in seconds        | `31536000`                                     | int        |
 | `HSTS_INCLUDE_SUBDOMAINS` | Include subdomains in HSTS header | `true`                                      | bool       |
