@@ -10,64 +10,114 @@ Put aggregate benchmark metrics first in Locust HTML and stats CSV reports.
 import argparse
 from collections.abc import Sequence
 import csv
+from datetime import datetime
 from html import escape
-import os
 from pathlib import Path
 import re
+import subprocess
 
-# Third-Party
-import yaml
-
-RESOURCE_HEADERS = ("Service", "Replicas", "CPU limit", "Mem limit", "CPU reservation", "Mem reservation")
-_COMPOSE_VAR = re.compile(r"^\$\{(\w+)(?::-([^}]*))?\}$")
+# Docker drops compose `reservations.cpus` outside swarm, so no CPU reservation column:
+# the value a compose file declares is never applied to a container.
+RESOURCE_HEADERS = ("Service", "Replicas", "CPU limit", "Mem limit", "Mem reservation")
+_DOCKER_FORMAT = '{{index .Config.Labels "com.docker.compose.service"}}\t{{.HostConfig.NanoCpus}}\t{{.HostConfig.CpuQuota}}\t{{.HostConfig.CpuPeriod}}\t{{.HostConfig.Memory}}\t{{.HostConfig.MemoryReservation}}'
 # The Locust bundle titles percentile columns `100*<expr>+"%ile (ms)"`. Rewrite the
 # suffix so the rendered header reads p50, p90, p99 like the summary table above it.
 _PERCENTILE_TITLE = re.compile(r'(100\*[^+"]{1,20}?)\+"%ile \(ms\)"')
 
 
-def _expand(value: object) -> str:
-    """Resolve a compose `${VAR:-default}` placeholder against the environment.
-
-    Args:
-        value: Raw compose value, either a literal or a variable placeholder.
+def _git_version() -> str:
+    """Describe the checked-out commit as a short SHA plus any tag on it.
 
     Returns:
-        The environment value, the placeholder default, or the literal.
+        `<sha>`, `<sha> (<tag>)`, or an empty string outside a git checkout.
     """
-    text = str(value).strip()
-    match = _COMPOSE_VAR.match(text)
-    if not match:
-        return text
-    return os.environ.get(match.group(1)) or match.group(2) or ""
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        tags = subprocess.run(["git", "tag", "--points-at", "HEAD"], capture_output=True, text=True, check=True).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return f"{sha} ({', '.join(tags)})" if tags else sha
 
 
-def compose_resources(compose_path: Path) -> list[tuple[str, ...]]:
-    """Read the per-service replica count and resource pins from a compose file.
+def append_history(history_path: Path, summary: Sequence[tuple[str, str]], reports: Sequence[tuple[str, str]] = ()) -> None:
+    """Append one benchmark summary row to the historic results CSV.
 
     Args:
-        compose_path: Compose file holding the `deploy` blocks.
+        history_path: CSV collecting every run; written with a header when absent.
+        summary: Label/value pairs of the aggregate metrics for this run.
+        reports: Label/value pairs naming the report files of this run.
+    """
+    header = ["Timestamp", "Commit"] + [label for label, _ in summary] + [label for label, _ in reports]
+    write_header = not history_path.exists() or not history_path.read_text(encoding="utf-8").strip()
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with history_path.open("a", encoding="utf-8", newline="") as destination:
+        writer = csv.writer(destination)
+        if write_header:
+            writer.writerow(header)
+        writer.writerow([datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z"), _git_version()] + [value for _, value in summary] + [value for _, value in reports])
+
+
+def _cpus(nanocpus: str, quota: str, period: str) -> str:
+    """Render a container CPU limit as a core count.
+
+    Args:
+        nanocpus: `HostConfig.NanoCpus`, set by compose `limits.cpus`.
+        quota: `HostConfig.CpuQuota`, set by `--cpu-quota`.
+        period: `HostConfig.CpuPeriod` matching `quota`.
 
     Returns:
-        One row per service, matching `RESOURCE_HEADERS`.
+        The core count, or `-` when the container runs unlimited.
     """
-    services = (yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}).get("services") or {}
-    rows = []
-    for name, service in services.items():
-        deploy = (service or {}).get("deploy") or {}
-        resources = deploy.get("resources") or {}
-        limits = resources.get("limits") or {}
-        reservations = resources.get("reservations") or {}
-        rows.append(
-            (
-                name,
-                _expand(deploy.get("replicas", 1)),
-                str(limits.get("cpus", "-")),
-                str(limits.get("memory", "-")),
-                str(reservations.get("cpus", "-")),
-                str(reservations.get("memory", "-")),
-            )
-        )
-    return rows
+    cores = int(nanocpus) / 1e9
+    if not cores and int(quota) > 0 and int(period) > 0:
+        cores = int(quota) / int(period)
+    return f"{cores:g}" if cores else "-"
+
+
+def _bytes(value: str) -> str:
+    """Render a container memory limit in the unit compose files use.
+
+    Args:
+        value: Byte count from `HostConfig`; `0` means unlimited.
+
+    Returns:
+        A size such as `4G` or `512M`, or `-` when unlimited.
+    """
+    size = int(value)
+    for unit, scale in (("G", 2**30), ("M", 2**20)):
+        if size >= scale:
+            return f"{size / scale:g}{unit}"
+    return str(size) if size else "-"
+
+
+def docker_resources(project: str) -> list[tuple[str, ...]]:
+    """Read the running replica count and resource limits of a compose project.
+
+    Args:
+        project: Compose project label, usually the directory the stack started from.
+
+    Returns:
+        One row per service, matching `RESOURCE_HEADERS`; empty when docker is
+        unreachable or the project has no running container.
+    """
+    try:
+        ids = subprocess.run(["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={project}"], capture_output=True, text=True, check=True).stdout.split()
+        if not ids:
+            return []
+        inspected = subprocess.run(["docker", "inspect", "--format", _DOCKER_FORMAT, *ids], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    replicas: dict[str, int] = {}
+    limits: dict[str, tuple[str, str, str]] = {}
+    for line in inspected.splitlines():
+        service, nanocpus, quota, period, memory, reservation = line.split("\t")
+        if not service:
+            continue
+        replicas[service] = replicas.get(service, 0) + 1
+        # ponytail: first container of a service wins; scale a service with uneven
+        # limits and the odd replica stays hidden.
+        limits.setdefault(service, (_cpus(nanocpus, quota, period), _bytes(memory), _bytes(reservation)))
+    return [(service, str(replicas[service]), *limits[service]) for service in sorted(replicas)]
 
 
 def _table(anchor: str, title: str, headers: Sequence[str], rows: Sequence[Sequence[str]], row_header: bool = False) -> str:
@@ -105,23 +155,26 @@ def _table(anchor: str, title: str, headers: Sequence[str], rows: Sequence[Seque
     )
 
 
-def summarize_reports(html_path: Path, csv_path: Path, context: list[tuple[str, str]] | None = None, resources: list[tuple[str, ...]] | None = None) -> None:
-    """Add HTML summary tables and move the aggregate CSV row before endpoint rows.
+def summarize_reports(
+    html_path: Path,
+    csv_path: Path,
+    context: list[tuple[str, str]] | None = None,
+    resources: list[tuple[str, ...]] | None = None,
+    history_path: Path | None = None,
+) -> None:
+    """Add the summary tables to the Locust HTML report.
 
     Args:
         html_path: Locust HTML report to update after Locust exits.
-        csv_path: Locust stats CSV containing the aggregate metrics.
+        csv_path: Locust stats CSV containing the aggregate metrics; read only.
         context: Run settings such as mode, host and server, shown before the metrics.
         resources: Service resource rows matching `RESOURCE_HEADERS`.
+        history_path: CSV that collects the aggregate metrics of every run.
     """
     context = context or []
     resources = resources or []
     with csv_path.open(encoding="utf-8", newline="") as source:
-        reader = csv.DictReader(source)
-        fields = reader.fieldnames
-        if fields is None:
-            raise ValueError("Locust stats CSV has no header")
-        rows = list(reader)
+        rows = list(csv.DictReader(source))
     aggregate = next(row for row in rows if row["Name"] == "Aggregated" and not row["Type"])
     metrics = (
         ("Average", "Average Response Time"),
@@ -145,11 +198,14 @@ def summarize_reports(html_path: Path, csv_path: Path, context: list[tuple[str, 
         value = aggregate[column]
         formatted = f"{float(value):.2f}" if value and value != "N/A" else "N/A"
         summary.append((f"{label} (ms)", formatted))
+    if history_path:
+        append_history(history_path, summary, (("HTML Report", html_path.name),))
     html = _PERCENTILE_TITLE.sub(r'"p"+\1', html_path.read_text(encoding="utf-8"))
     root = '<div id="root"></div>'
     if root not in html:
         raise ValueError("Locust HTML report has no root container")
-    panel = _table("benchmark-summary", "Benchmark summary", tuple(label for label, _ in summary), [tuple(value for _, value in summary)])
+    title = f"Benchmark summary Commit - {_git_version() or 'unknown'}"
+    panel = _table("benchmark-summary", title, tuple(label for label, _ in summary), [tuple(value for _, value in summary)])
     endpoint_rows = []
     for row in sorted((row for row in rows if row is not aggregate), key=lambda row: int(row["Request Count"]), reverse=True):
         p99 = row["99%"]
@@ -169,16 +225,6 @@ def summarize_reports(html_path: Path, csv_path: Path, context: list[tuple[str, 
     if resources:
         panel += _table("service-resources", "Service resources", RESOURCE_HEADERS, resources, row_header=True)
     html_path.write_text(html.replace(root, panel + root, 1), encoding="utf-8")
-    with csv_path.open("w", encoding="utf-8", newline="") as destination:
-        writer = csv.writer(destination)
-        for block in ([("Setting", "Value"), *context], [RESOURCE_HEADERS, *resources]):
-            if len(block) > 1:
-                writer.writerows(block)
-                writer.writerow([])
-        writer = csv.DictWriter(destination, fieldnames=fields)
-        writer.writeheader()
-        writer.writerow(aggregate)
-        writer.writerows(row for row in rows if row is not aggregate)
 
 
 if __name__ == "__main__":
@@ -188,7 +234,8 @@ if __name__ == "__main__":
     parser.add_argument("--mode")
     parser.add_argument("--host")
     parser.add_argument("--server")
-    parser.add_argument("--compose", type=Path)
+    parser.add_argument("--project")
+    parser.add_argument("--history", type=Path, default=Path("tests/loadtest/historic_load_data.csv"))
     args = parser.parse_args()
     run_context = [(label, value) for label, value in (("Mode", args.mode), ("Host", args.host), ("Server", args.server)) if value]
-    summarize_reports(args.html, args.csv, run_context, compose_resources(args.compose) if args.compose else [])
+    summarize_reports(args.html, args.csv, run_context, docker_resources(args.project) if args.project else [], args.history)

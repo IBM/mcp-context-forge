@@ -72,15 +72,20 @@ and response times: average, minimum, maximum, p50, p90, p95, and p99.
 A centered endpoint breakdown follows, with request counts, failures, RPS, average latency,
 and p99 latency. Its rows use final statistics and sort by descending request count.
 A run context table follows, with the mode, the host and the server id.
-A service resource table closes the report, read from `docker-compose.prod.yml`:
-replicas, CPU limit, memory limit, CPU reservation, and memory reservation per service.
-The stats CSV holds the same two tables as leading blocks, each closed by a blank line.
-The Locust table follows, with the aggregate row immediately
-after its header and the endpoint rows and standard Locust columns after that.
-The Locust tables label percentile columns `p50` through `p100`, not `50%ile (ms)`.
-Both summaries include initialization requests in legacy mode.
-Reports use `reports/prod_benchmark_tools_<mode>.html` and
-`reports/prod_benchmark_tools_<mode>_stats.csv` by default.
+A service resource table closes the report, read from the running containers of the
+compose project: replicas, CPU limit, memory limit, and memory reservation per service.
+Replicas count the containers that are up, so a dead replica lowers the number.
+The table has no CPU reservation column: docker drops compose `reservations.cpus`
+outside swarm, so the declared value never reaches a container.
+The table is omitted when docker is unreachable or the stack is down.
+The Locust table in the report labels percentile columns `p50` through `p100`, not `50%ile (ms)`.
+The report includes initialization requests in legacy mode.
+The run writes one file: `reports/prod_benchmark_tools_<commit>.html`, where `<commit>`
+is the short SHA of `HEAD`. A rerun of the same commit overwrites its own report,
+in either mode; the run context table names the mode that produced it.
+Locust also writes a stats CSV, but into a temp dir that the run deletes.
+Each history row in `tests/loadtest/historic_load_data.csv` names the report in the
+`HTML Report` column.
 
 Recommended Rust MCP validation sequence:
 
