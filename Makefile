@@ -2788,8 +2788,16 @@ TIME ?= 1800s
 # A token that went stale on a stack restart stops at the 401 preflight below.
 PROD_BENCH_TOKEN = $(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))
 PROD_BENCH_USER ?= admin@example.com
-PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(MODE).html
-PROD_BENCH_CSV_PREFIX ?= reports/prod_benchmark_tools_$(MODE)
+# Reports carry the commit they measured, so a rerun of the same commit overwrites
+# its own report instead of clobbering another commit's numbers.
+PROD_BENCH_COMMIT ?= $(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit)
+PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_COMMIT).html
+# Compose project label of the running stack; its containers carry the resource table.
+PROD_BENCH_PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
+# Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
+# summary and the history row, so it is deleted when the run ends.
+# Appended one row per run, tracked in git so results are comparable across commits.
+PROD_BENCH_HISTORY_CSV ?= tests/loadtest/historic_load_data.csv
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2912,6 +2920,7 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 				echo "Preflight failed (HTTP $$CODE) from $(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp"; \
 				exit 1 ;; \
 		esac; \
+		STATS_DIR=$$(mktemp -d); trap "rm -rf $$STATS_DIR" EXIT; \
 		STATUS=0; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
 		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
@@ -2926,14 +2935,15 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 			--headless \
 			--exit-code-on-error=$(PROD_BENCH_EXIT_CODE_ON_ERROR) \
 			--html=$(PROD_BENCH_HTML_REPORT) \
-			--csv=$(PROD_BENCH_CSV_PREFIX) \
+			--csv="$$STATS_DIR/stats" \
 			--only-summary \
 			ProdToolUser || STATUS=$$?; \
-		GATEWAY_REPLICAS=$(REPLICA) $(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$(PROD_BENCH_CSV_PREFIX)_stats.csv" \
-			--mode "$(MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --compose "$(PROD_COMPOSE_FILE)"; \
+		$(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$$STATS_DIR/stats_stats.csv" \
+			--mode "$(MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --project "$(PROD_BENCH_PROJECT)" \
+			--history "$(PROD_BENCH_HISTORY_CSV)"; \
 		echo ""; \
 		echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"; \
-		echo "📊 CSV Reports: $(PROD_BENCH_CSV_PREFIX)_stats.csv"; \
+		echo "🗂  History:     $(PROD_BENCH_HISTORY_CSV)"; \
 		exit $$STATUS'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing

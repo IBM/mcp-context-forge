@@ -7,12 +7,12 @@ Check report summaries when no requests complete.
 """
 
 # Standard
-import csv
 from pathlib import Path
+import subprocess
 from xml.etree import ElementTree
 
 # Local
-from tests.loadtest.summarize_prod_benchmark import summarize_reports
+from tests.loadtest.summarize_prod_benchmark import docker_resources, summarize_reports
 
 
 def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:
@@ -27,7 +27,7 @@ def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    summarize_reports(html_path, csv_path, [("Mode", "legacy"), ("Host", "http://localhost:8080")], [("gateway", "3", "4", "4G", "4", "4G")])
+    summarize_reports(html_path, csv_path, [("Mode", "legacy"), ("Host", "http://localhost:8080")], [("gateway", "3", "4", "4G", "4G")])
 
     html = html_path.read_text(encoding="utf-8")
     table = ElementTree.fromstring(html).find(".//table")
@@ -46,10 +46,52 @@ def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:
     context_table = ElementTree.fromstring(html).find('.//table[@aria-labelledby="run-context-heading"]')
     assert [(row.findtext("th"), row.findtext("td")) for row in context_table.findall("./tbody/tr")] == [("Mode", "legacy"), ("Host", "http://localhost:8080")]
     resource_table = ElementTree.fromstring(html).find('.//table[@aria-labelledby="service-resources-heading"]')
-    assert [cell.text for cell in resource_table.findall("./tbody/tr/td")] == ["3", "4", "4G", "4", "4G"]
-    blocks = csv_path.read_text(encoding="utf-8").split("\n\n")
-    assert blocks[0].splitlines() == ["Setting,Value", "Mode,legacy", "Host,http://localhost:8080"]
-    assert blocks[1].splitlines()[1] == "gateway,3,4,4G,4,4G"
-    rows = list(csv.DictReader(blocks[-1].splitlines()))
-    assert [row["Name"] for row in rows] == ["Aggregated", "tools/call"]
-    assert rows[0]["99%"] == "N/A"
+    assert [cell.text for cell in resource_table.findall("./tbody/tr/td")] == ["3", "4", "4G", "4G"]
+
+
+def test_docker_resources_groups_replicas_and_renders_limits(monkeypatch) -> None:
+    """Count one row per service and convert docker's raw limits to compose units."""
+    inspected = "\n".join(
+        (
+            "gateway\t4000000000\t0\t100000\t4294967296\t4294967296",
+            "gateway\t4000000000\t0\t100000\t4294967296\t4294967296",
+            "redis\t0\t50000\t100000\t536870912\t0",
+        )
+    )
+
+    def fake_run(command, **_kwargs):
+        """Answer `docker ps` with container ids and `docker inspect` with fixed limits.
+
+        Args:
+            command: Argument list the module passes to `subprocess.run`.
+            _kwargs: Ignored `subprocess.run` options.
+
+        Returns:
+            A completed process carrying the matching stdout.
+        """
+        stdout = "a b c\n" if command[1] == "ps" else inspected
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert docker_resources("proj") == [("gateway", "2", "4", "4G", "4G"), ("redis", "1", "0.5", "512M", "-")]
+
+
+def test_docker_resources_without_docker(monkeypatch) -> None:
+    """Drop the table instead of failing the run when docker is unreachable."""
+
+    def fail(command, **_kwargs):
+        """Raise the error `subprocess.run` raises when docker is absent.
+
+        Args:
+            command: Argument list the module passes to `subprocess.run`.
+            _kwargs: Ignored `subprocess.run` options.
+
+        Raises:
+            FileNotFoundError: Always, standing in for a missing docker binary.
+        """
+        raise FileNotFoundError(command[0])
+
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    assert docker_resources("proj") == []
