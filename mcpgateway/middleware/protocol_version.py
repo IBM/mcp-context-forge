@@ -67,9 +67,11 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             >>> resp.status_code
             200
 
-            MCP endpoints default to the latest handshake version (legacy mode is the default):
+            A headerless MCP request records the mode default in request state.
+            Era routing stays header-driven in the SDK, so an absent header still
+            takes the legacy handshake path:
 
-            >>> from mcp_types.version import LATEST_HANDSHAKE_VERSION
+            >>> from mcp_types.version import LATEST_PROTOCOL_VERSION
             >>> scope_rpc = {
             ...     "type": "http",
             ...     "asgi": {"version": "3.0"},
@@ -84,7 +86,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ... }
             >>> req = Request(scope_rpc)
             >>> _ = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(req, call_next))
-            >>> req.state.mcp_protocol_version == LATEST_HANDSHAKE_VERSION
+            >>> req.state.mcp_protocol_version == LATEST_PROTOCOL_VERSION
             True
 
             Unsupported versions return `400`:

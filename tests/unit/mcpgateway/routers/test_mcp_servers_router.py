@@ -1854,13 +1854,14 @@ async def test_handshake_matches_registered_root_url_with_query_string(team_b_ga
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("configure_allowlist")
-async def test_handshake_legacy_mode_skips_discover_uses_initialize(handshake_request, user_ctx, db_session):
+async def test_handshake_legacy_mode_skips_discover_uses_initialize(handshake_request, user_ctx, db_session, monkeypatch):
     """In legacy mode the server/discover probe is not attempted; SDK initialize runs directly.
 
     This is the mirror of test_handshake_discover_success and covers the acceptance criterion
     in issue #6767: mcp_client_connect_mode='legacy' must bypass the stateless discover probe
     entirely and report negotiation_path='initialize'.
     """
+    monkeypatch.setattr("mcpgateway.config.settings.mcp_client_connect_mode", "legacy")
     db_session.execute.return_value.scalars.return_value.first.return_value = None
 
     # No discover responses queued — the probe must not fire.
