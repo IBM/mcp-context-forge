@@ -7326,6 +7326,55 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
 
+    @pytest.mark.parametrize(
+        ("submitted", "expected"),
+        [('{"access_type": "offline", "prompt": "consent"}', {"access_type": "offline", "prompt": "consent"}), ("", None)],
+    )
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_oauth_with_extra_auth_params(self, mock_update_gateway, submitted, expected, mock_request, mock_db, monkeypatch):
+        """The edit form stores the parameters from its key-value rows, and no rows clear them."""
+        form_data = FakeForm(
+            {
+                "name": "Edited_Gateway",
+                "url": "https://edited.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "client-id",
+                "oauth_extra_auth_params": submitted,
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        assert mock_update_gateway.call_args.args[2].oauth_config.get("extra_auth_params") == expected
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_oauth_rejects_malformed_extra_auth_params(self, mock_update_gateway, mock_request, mock_db):
+        """A value that is not JSON stops the edit instead of being dropped."""
+        form_data = FakeForm(
+            {
+                "name": "Edited_Gateway",
+                "url": "https://edited.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "client-id",
+                "oauth_extra_auth_params": "access_type=offline",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 400
+        mock_update_gateway.assert_not_called()
+
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Cover false branches in admin_edit_gateway's OAuth field assembly."""

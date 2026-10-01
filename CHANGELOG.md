@@ -18,6 +18,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Extra OAuth authorization parameters** ([#4115](https://github.com/IBM/mcp-context-forge/issues/4115)) - `oauth_config.extra_auth_params` adds provider-specific parameters to the authorization request, such as Google `access_type=offline` for refresh tokens. The Admin UI edits them as name and value rows. The gateway schemas reject reserved and known secret names. Token exchange and refresh requests do not include them.
+
 ### Security
 
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.

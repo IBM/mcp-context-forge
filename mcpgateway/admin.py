@@ -972,6 +972,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
       (UI edit/add handlers); ``False`` stores it as submitted (the gateway
       create path, where encryption happens downstream in the service layer).
+    * ``oauth_extra_auth_params`` is a JSON object of extra authorization URL
+      parameters. The key-value rows of the gateway forms fill it.
 
     Args:
         fields: Mapping with ``.get()`` (a form dict or parsed JSON body)
@@ -982,6 +984,10 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     Returns:
         Assembled ``oauth_config`` dict, or ``None`` when no meaningful OAuth
         field was provided.
+
+    Raises:
+        ValueError: If the post-OAuth redirect URI uses a disallowed origin, or
+            ``oauth_extra_auth_params`` is not valid JSON.
     """
     oauth_grant_type = str(fields.get("oauth_grant_type", ""))
     oauth_issuer = str(fields.get("oauth_issuer", ""))
@@ -1035,6 +1041,12 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
             oauth_config["scopes"] = scopes
     if oauth_resource:
         oauth_config["resource"] = oauth_resource
+    oauth_extra_auth_params = str(fields.get("oauth_extra_auth_params", "")).strip()
+    if oauth_extra_auth_params:
+        try:
+            oauth_config["extra_auth_params"] = orjson.loads(oauth_extra_auth_params)
+        except orjson.JSONDecodeError as exc:
+            raise ValueError("oauth_extra_auth_params must be a JSON object") from exc
     return oauth_config
 
 

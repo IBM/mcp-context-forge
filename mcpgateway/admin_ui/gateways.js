@@ -29,6 +29,123 @@ import {
   showSuccessMessage,
 } from "./utils.js";
 
+let extraAuthParamCounter = 0;
+
+/**
+ * Append a key-value row for an extra OAuth authorization parameter.
+ * Values go into input properties, never into HTML.
+ * @param {string} containerId - ID of the rows container
+ * @param {string} key - Parameter name
+ * @param {string} value - Parameter value
+ * @returns {HTMLInputElement|null} The name input, or null without a container
+ */
+function appendExtraAuthParamRow(containerId, key, value) {
+  const container = safeGetElement(containerId);
+  if (!container) {
+    console.error(`Container with ID ${containerId} not found`);
+    return null;
+  }
+
+  const row = document.createElement("div");
+  row.id = `extra-auth-param-row-${++extraAuthParamCounter}`;
+  row.className = "flex items-center space-x-2";
+  row.innerHTML = `
+    <div class="flex-1">
+      <input
+        type="text"
+        placeholder="Parameter name (e.g., access_type)"
+        class="extra-auth-param-key block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+      />
+    </div>
+    <div class="flex-1">
+      <input
+        type="text"
+        placeholder="Value (e.g., offline)"
+        class="extra-auth-param-value block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+      />
+    </div>
+    <button
+      type="button"
+      class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
+      title="Remove parameter"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+      </svg>
+    </button>
+  `;
+
+  const keyInput = row.querySelector(".extra-auth-param-key");
+  const valueInput = row.querySelector(".extra-auth-param-value");
+  keyInput.value = key;
+  valueInput.value = value;
+
+  const sync = () => updateExtraAuthParamsJSON(containerId);
+  keyInput.addEventListener("input", sync);
+  valueInput.addEventListener("input", sync);
+  row.querySelector("button").addEventListener("click", () => {
+    row.remove();
+    sync();
+  });
+
+  container.appendChild(row);
+  sync();
+  return keyInput;
+}
+
+/**
+ * Add an empty extra authorization parameter row ("Add Parameter" button).
+ * Event delegation also passes the click event, so the function reads only the container ID.
+ * @param {string} containerId - ID of the rows container
+ */
+export function addExtraAuthParam(containerId) {
+  appendExtraAuthParamRow(containerId, "", "")?.focus();
+}
+
+/**
+ * Write the rows of a container into its hidden JSON input.
+ * @param {string} containerId - ID of the rows container
+ */
+function updateExtraAuthParamsJSON(containerId) {
+  const container = safeGetElement(containerId);
+  const hiddenInput = safeGetElement(
+    containerId.replace("-container", "-json")
+  );
+  if (!container || !hiddenInput) {
+    return;
+  }
+
+  const params = Object.create(null);
+  container.querySelectorAll('[id^="extra-auth-param-row-"]').forEach((row) => {
+    const key = row.querySelector(".extra-auth-param-key").value.trim();
+    if (key) {
+      params[key] = row.querySelector(".extra-auth-param-value").value.trim();
+    }
+  });
+  hiddenInput.value =
+    Object.keys(params).length > 0 ? JSON.stringify(params) : "";
+}
+
+/**
+ * Replace the rows of a container with the given parameters.
+ * @param {string} containerId - ID of the rows container
+ * @param {Object<string, string>} [params] - Parameters to show
+ */
+export function loadExtraAuthParams(containerId, params) {
+  const container = safeGetElement(containerId);
+  if (!container) {
+    return;
+  }
+
+  container.replaceChildren();
+  if (params && typeof params === "object") {
+    Object.entries(params).forEach(([key, value]) => {
+      appendExtraAuthParamRow(containerId, key, String(value ?? ""));
+    });
+  }
+  updateExtraAuthParamsJSON(containerId);
+}
+
 /**
  * SECURE: View Gateway function
  */
@@ -424,6 +541,11 @@ export const editGateway = async function (gatewayId) {
     if (authQueryParamSection) {
       authQueryParamSection.style.display = "none";
     }
+    // Reset on every edit so rows from a previously edited gateway never carry over
+    loadExtraAuthParams(
+      "extra-auth-params-container-gw-edit",
+      gateway.oauthConfig?.extra_auth_params
+    );
 
     switch (gateway.authType) {
       case "basic":

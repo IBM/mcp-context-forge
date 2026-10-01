@@ -5744,6 +5744,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </p>
                     </div>
 
+                    <div>
+                      <div class="flex items-center justify-between">
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
+                          Extra Authorization Parameters
+                        </label>
+                        <button
+                          type="button"
+                          data-action-click="addExtraAuthParam" data-arg0="extra-auth-params-container-gw"
+                          class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        >
+                          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                          </svg>
+                          Add Parameter
+                        </button>
+                      </div>
+                      <div id="extra-auth-params-container-gw" class="mt-2 space-y-2"></div>
+                      <input type="hidden" name="oauth_extra_auth_params" id="extra-auth-params-json-gw" />
+                      <p class="mt-1 text-sm text-gray-500">
+                        Extra query parameters for the provider's authorization URL (e.g.,
+                        access_type=offline and prompt=consent for Google refresh tokens).
+                        They are visible in the browser, so do not add secrets.
+                      </p>
+                    </div>
+
                     <div
                       class="bg-blue-50 border border-blue-200 rounded-md p-4 dark:bg-blue-900/20 dark:border-blue-800"
                     >
@@ -10325,6 +10352,32 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <p class="mt-1 text-sm text-gray-500">
                               Space-separated list of OAuth scopes (e.g., "repo
                               read:user")
+                            </p>
+                          </div>
+                          <div>
+                            <div class="flex items-center justify-between">
+                              <label
+                                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                              >
+                                Extra Authorization Parameters
+                              </label>
+                              <button
+                                type="button"
+                                data-action-click="addExtraAuthParam" data-arg0="extra-auth-params-container-gw-edit"
+                                class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                              >
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                </svg>
+                                Add Parameter
+                              </button>
+                            </div>
+                            <div id="extra-auth-params-container-gw-edit" class="mt-2 space-y-2"></div>
+                            <input type="hidden" name="oauth_extra_auth_params" id="extra-auth-params-json-gw-edit" />
+                            <p class="mt-1 text-sm text-gray-500">
+                              Extra query parameters for the provider's authorization URL (e.g.,
+                              access_type=offline and prompt=consent for Google refresh tokens).
+                              They are visible in the browser, so do not add secrets.
                             </p>
                           </div>
                         </div>
