@@ -972,8 +972,8 @@ async def test_process_pending_gateway_records_retry_metadata_on_failure():
     service._reconcile_gateway_catalog.assert_not_called()
     compiled_params = db.execute.call_args.args[0].compile().params
     assert compiled_params["registration_attempts"] == 3
-    assert compiled_params["last_error"] == "dial tcp refused"
-    assert compiled_params["status_message"] == "dial tcp refused"
+    assert compiled_params["last_error"].startswith("An unexpected error occurred")
+    assert compiled_params["status_message"].startswith("An unexpected error occurred")
     assert compiled_params["reachable"] is False
     lower_bound = before.timestamp() + expected_delay
     upper_bound = after.timestamp() + expected_delay

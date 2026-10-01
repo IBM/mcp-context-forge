@@ -65,6 +65,7 @@ from mcpgateway.services.email_notification_service import AuthEmailNotification
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 # Initialize logging
 logging_service = LoggingService()
@@ -1227,7 +1228,7 @@ class EmailAuthService:
         # a cached detached object would silently discard the unlock.
         user = self._fetch_user_from_db(normalized_email)
         if not user:
-            raise ValueError(f"User {normalized_email} not found")
+            raise PublicValidationError(f"User {normalized_email} not found")
 
         user.failed_login_attempts = 0
         user.locked_until = None
@@ -1779,7 +1780,7 @@ class EmailAuthService:
 
         total_users = await self.count_users()
         if total_users > _GET_ALL_USERS_LIMIT:
-            raise ValueError("get_all_users() supports up to 10,000 users. Use list_users() pagination instead.")
+            raise PublicValidationError("get_all_users() supports up to 10,000 users. Use list_users() pagination instead.")
 
         result = await self.list_users(limit=_GET_ALL_USERS_LIMIT)
         return result.data  # Large limit to get all users
@@ -1864,13 +1865,13 @@ class EmailAuthService:
             user = result.scalar_one_or_none()
 
             if not user:
-                raise ValueError(f"User {email} not found")
+                raise PublicValidationError(f"User {email} not found")
 
             normalized_requester_email = requesting_user_email.lower().strip() if requesting_user_email else None
 
             admin_status_changes = is_admin is not None and is_admin != user.is_admin
             if admin_status_changes and not normalized_requester_email:
-                raise ValueError("Requesting user email is required to change administrator privileges")
+                raise PublicValidationError("Requesting user email is required to change administrator privileges")
 
             # Admin protection guard. Peer-admin changes are allowed; self-removal and
             # removal of the last active admin are always denied.
@@ -1878,11 +1879,11 @@ class EmailAuthService:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
                 if would_lose_admin:
                     if not normalized_requester_email:
-                        raise ValueError("Requesting user email is required to demote or deactivate an admin user")
+                        raise PublicValidationError("Requesting user email is required to demote or deactivate an admin user")
                     if normalized_requester_email == email:
-                        raise ValueError("Administrators cannot demote or deactivate their own account")
+                        raise PublicValidationError("Administrators cannot demote or deactivate their own account")
                     if await self.is_last_active_admin(email):
-                        raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+                        raise PublicValidationError("Cannot demote or deactivate the last remaining active admin user")
 
             if is_passwordless_user(user):
                 if password is not None:
@@ -1903,7 +1904,7 @@ class EmailAuthService:
                     # Validated before mutation. Keep grant attribution tied to authenticated actor.
                     role_granter = normalized_requester_email
                     if role_granter is None:  # Defensive guard for future refactors.
-                        raise ValueError("Requesting user email is required to change administrator privileges")
+                        raise PublicValidationError("Requesting user email is required to change administrator privileges")
                     user.is_admin = is_admin
                     user.admin_origin = admin_origin_source if is_admin else None
 
@@ -1933,17 +1934,17 @@ class EmailAuthService:
                         else:
                             # Demotion: revoke admin role, assign user role
                             if not admin_role:
-                                raise ValueError(f"{admin_role_name} role not found; refusing unsafe administrator demotion")
+                                raise PublicValidationError(f"{admin_role_name} role not found; refusing unsafe administrator demotion")
 
                             existing_admin_assignment = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                             if existing_admin_assignment:
                                 revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, commit=False)
                                 if not revoked:
-                                    raise ValueError(f"Failed to revoke {admin_role_name} role; refusing unsafe administrator demotion")
+                                    raise PublicValidationError(f"Failed to revoke {admin_role_name} role; refusing unsafe administrator demotion")
                                 logger.info("Revoked %s role from %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
 
                             if not user_role:
-                                raise ValueError(f"{user_role_name} role not found; refusing unsafe administrator demotion")
+                                raise PublicValidationError(f"{user_role_name} role not found; refusing unsafe administrator demotion")
 
                             existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                             if not existing or not existing.is_active:
@@ -1952,7 +1953,7 @@ class EmailAuthService:
 
                     except Exception as e:
                         if not is_admin:
-                            raise ValueError("Administrator demotion failed because role synchronization did not complete") from e
+                            raise PublicValidationError("Administrator demotion failed because role synchronization did not complete") from e
                         logger.warning("Failed to sync global roles for %s: %s", SecurityValidator.sanitize_log_message(email), e)
                         # Don't fail user update if role sync fails
 
@@ -2032,7 +2033,7 @@ class EmailAuthService:
             user = result.scalar_one_or_none()
 
             if not user:
-                raise ValueError(f"User {email} not found")
+                raise PublicValidationError(f"User {email} not found")
 
             user.is_active = True
             user.updated_at = datetime.now(timezone.utc)
@@ -2082,7 +2083,7 @@ class EmailAuthService:
             user = result.scalar_one_or_none()
 
             if not user:
-                raise ValueError(f"User {email} not found")
+                raise PublicValidationError(f"User {email} not found")
 
             # Check if user owns any teams
             teams_owned_stmt = select(EmailTeam).where(EmailTeam.created_by == email)
@@ -2135,7 +2136,7 @@ class EmailAuthService:
                                 self.db.delete(team)
                         else:
                             # Multi-member team with no other owners - cannot delete user
-                            raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
+                            raise PublicValidationError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
 
             # ----------------------------------------------------------------
             # Transfer owned gateways to prevent orphaned resources
@@ -2179,7 +2180,7 @@ class EmailAuthService:
                             new_owner_email = admin_user.email
 
                 if not new_owner_email:
-                    raise ValueError(f"Cannot delete user {email}: gateway {gw.id} would become orphaned and no fallback owner is available")
+                    raise PublicValidationError(f"Cannot delete user {email}: gateway {gw.id} would become orphaned and no fallback owner is available")
 
                 # Transfer gateway ownership
                 gw.owner_email = new_owner_email
@@ -2251,7 +2252,7 @@ class EmailAuthService:
         except IntegrityError as e:
             self.db.rollback()
             logger.error("FK constraint violation deleting user %s: %s", SecurityValidator.sanitize_log_message(email), str(e))
-            raise ValueError("Cannot delete user due to existing references") from e
+            raise PublicValidationError("Cannot delete user due to existing references") from e
         except Exception as e:
             self.db.rollback()
             logger.error("Error deleting user %s: %s", SecurityValidator.sanitize_log_message(email), e, exc_info=True)

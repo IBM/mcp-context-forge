@@ -34,6 +34,7 @@ from mcpgateway.services.http_client_service import get_http_client, get_isolate
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 
 logger = logging.getLogger(__name__)
@@ -194,11 +195,13 @@ class OAuthManager:
 
         # Validate format (URI or hostname)
         if not _AUDIENCE_PATTERN.match(audience):
-            raise ValueError(f"Invalid audience format: '{sanitize_for_log(audience)}'. Audience must be a URI or hostname (alphanumeric, dots, hyphens, underscores, colons, slashes only).")
+            raise PublicValidationError(
+                f"Invalid audience format: '{sanitize_for_log(audience)}'. Audience must be a URI or hostname (alphanumeric, dots, hyphens, underscores, colons, slashes only)."
+            )
 
         # Validate length
         if len(audience) > _AUDIENCE_MAX_LENGTH:
-            raise ValueError(f"Audience parameter too long ({len(audience)} chars, max {_AUDIENCE_MAX_LENGTH}): '{sanitize_for_log(audience[:100])}...'")
+            raise PublicValidationError(f"Audience parameter too long ({len(audience)} chars, max {_AUDIENCE_MAX_LENGTH}): '{sanitize_for_log(audience[:100])}...'")
 
         return audience
 
@@ -279,7 +282,7 @@ class OAuthManager:
             return response["access_token"]
         if grant_type == "authorization_code":
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
-        raise ValueError(f"Unsupported grant type: {grant_type}")
+        raise PublicValidationError(f"Unsupported grant type: {grant_type}")
 
     @staticmethod
     async def _prepare_runtime_credentials(credentials: Dict[str, Any], flow_name: str) -> Dict[str, Any]:
@@ -612,7 +615,7 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {str(e)}")
+                    raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
         # This should never be reached due to the exception above, but needed for type safety
@@ -682,7 +685,7 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {str(e)}")
+                    raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
         # This should never be reached due to the exception above, but needed for type safety
@@ -782,7 +785,7 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {str(e)}")
+                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
         # This should never be reached due to the exception above, but needed for type safety
@@ -899,7 +902,7 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.debug("Token exchange attempt %s failed: %s", attempt + 1, e)
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
+                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)
 
         raise OAuthError("Token exchange failed after all retry attempts")
@@ -1859,7 +1862,7 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {str(e)}")
+                    raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
         # This should never be reached due to the exception above, but needed for type safety
@@ -1985,7 +1988,7 @@ class OAuthManager:
             except httpx.HTTPError as e:
                 logger.warning("Token refresh attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
-                    raise OAuthError(f"Failed to refresh token after {self.max_retries} attempts: {str(e)}")
+                    raise OAuthError(f"Failed to refresh token after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
         raise OAuthError("Failed to refresh token after all retry attempts")
