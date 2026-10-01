@@ -856,7 +856,7 @@ clean:
 # help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
 # help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
-# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
+# help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
 # help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -928,6 +928,16 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
+.PHONY: bats
+bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
+	@command -v bats >/dev/null 2>&1 || { echo "❌ bats not found - install with 'brew install bats-core' or see https://bats-core.readthedocs.io"; exit 1; }
+	@echo "🦇 Running bats shell tests..."
+	@files=$$(find tests -type f -name '*.bats' | sort); \
+	if [ -z "$$files" ]; then echo "ℹ️  No .bats files found under tests/"; exit 0; fi; \
+	echo "$$files" | sed 's/^/   /'; \
+	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
+	@echo "✅ bats tests passed!"
+
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
@@ -948,16 +958,7 @@ test-mcp-cli: test-e2e
 	$(call deprecated_target,test-mcp-cli,make test-e2e,1.3.0)
 
 .PHONY: test-bats
-test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
-	@command -v bats >/dev/null 2>&1 || { \
-		echo "❌  bats not found - install it to run tests/bash:"; \
-		echo "    macOS:          brew install bats-core"; \
-		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
-		echo "    npm:            npm install -g bats"; \
-		exit 1; \
-	}
-	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
-	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
+test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
 # deprecated: test-mcp-rbac - Use "make test-e2e" instead (v1.3.0)
 test-mcp-rbac: test-e2e
@@ -5053,6 +5054,11 @@ container-build-rust-lite:
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
+
+.PHONY: container-bump-image-versions
+container-bump-image-versions: ## Bump pinned UBI image tags in Containerfiles to latest within their minor line
+	@echo "🔄 Checking Red Hat Catalog for newer UBI image tags..."
+	@bash scripts/container-bump-image-versions.sh
 
 container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
 	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
