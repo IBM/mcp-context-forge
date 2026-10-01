@@ -143,9 +143,16 @@ main() {
     fi
 
     # ---- Apply phase ----
-    # sed -i.bak leaves the backup behind if it fails mid-write; remove any
-    # stray backups on exit, including the die path, so nothing leaks.
-    trap 'rm -f "${CONTAINERFILE_PATH}.bak" "${WHEELS_CONTAINERFILE_PATH}.bak" "${NGINX_DOCKERFILE_PATH}.bak"' EXIT
+    # Write all files under a commit-or-rollback discipline:
+    #   - sed -i.bak creates one backup per file before touching it.
+    #   - If the loop completes without error, ok=1 and EXIT removes the backups.
+    #   - If any write fails, ok stays 0 and EXIT restores every backup that
+    #     was created, leaving the repo in its original state.
+    _bump_ok=0
+    trap 'for f in "${CONTAINERFILE_PATH}" "${WHEELS_CONTAINERFILE_PATH}" "${NGINX_DOCKERFILE_PATH}"; do
+              [ -e "${f}.bak" ] || continue
+              if [ "${_bump_ok:-0}" = 1 ]; then rm -f "${f}.bak"; else mv -f "${f}.bak" "$f"; fi
+          done' EXIT
     for i in "${!MANAGED_ARGS[@]}"; do
         [ -n "${new_tags[$i]}" ] || continue
         arg="${MANAGED_ARGS[$i]}"
@@ -161,6 +168,7 @@ main() {
             echo "  updated $f"
         done
     done
+    _bump_ok=1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

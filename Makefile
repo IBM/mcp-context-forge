@@ -856,7 +856,7 @@ clean:
 # help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
 # help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
-# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
+# help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
 # help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -958,16 +958,7 @@ test-mcp-cli: test-e2e
 	$(call deprecated_target,test-mcp-cli,make test-e2e,1.3.0)
 
 .PHONY: test-bats
-test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
-	@command -v bats >/dev/null 2>&1 || { \
-		echo "❌  bats not found - install it to run tests/bash:"; \
-		echo "    macOS:          brew install bats-core"; \
-		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
-		echo "    npm:            npm install -g bats"; \
-		exit 1; \
-	}
-	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
-	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
+test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
 # deprecated: test-mcp-rbac - Use "make test-e2e" instead (v1.3.0)
 test-mcp-rbac: test-e2e
