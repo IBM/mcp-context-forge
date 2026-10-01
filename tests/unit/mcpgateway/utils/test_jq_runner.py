@@ -233,7 +233,7 @@ def test_start_jq_pool_cleans_up_on_warmup_failure(monkeypatch):
             self.shutdown_calls.append((wait, cancel_futures))
 
     failing_pool = _FailingPool()
-    monkeypatch.setattr(jq_runner._SANDBOX, "_build", lambda: failing_pool)  # pylint: disable=protected-access
+    monkeypatch.setattr(jq_runner._SANDBOX, "_build", lambda _workers: failing_pool)  # pylint: disable=protected-access
 
     with pytest.raises(TimeoutError):
         start_jq_pool()
@@ -288,7 +288,7 @@ def test_run_jq_filter_wraps_a_generic_submit_failure(monkeypatch):
             raise RuntimeError("cannot schedule new futures after shutdown")
 
     monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(jq_runner._SANDBOX, "_ensure", lambda: _BrokenSubmitPool())  # pylint: disable=protected-access
+    monkeypatch.setattr(jq_runner._SANDBOX, "_ensure", _BrokenSubmitPool)  # pylint: disable=protected-access
 
     with pytest.raises(JqFilterError):
         run_jq_filter(".a", {"a": 1})
@@ -315,7 +315,7 @@ def test_run_jq_filter_translates_a_sandbox_error_without_losing_the_cause(monke
             raise original
 
     monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(jq_runner._SANDBOX, "_ensure", lambda: _DirectlyFailingPool())  # pylint: disable=protected-access
+    monkeypatch.setattr(jq_runner._SANDBOX, "_ensure", _DirectlyFailingPool)  # pylint: disable=protected-access
 
     with pytest.raises(JqFilterError) as excinfo:
         run_jq_filter(".a", {"a": 1})

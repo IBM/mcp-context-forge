@@ -211,6 +211,9 @@ class SandboxPool:
     def _build(self, workers: Optional[int] = None) -> ProcessPoolExecutor:
         """Create a worker pool and stamp its ownership and admission gate.
 
+        Args:
+            workers: Worker count, or None to read the current setting.
+
         Returns:
             A new executor.
         """
