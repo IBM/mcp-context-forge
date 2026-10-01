@@ -33,6 +33,7 @@ Specific subsuites need additional services on top:
 | `e2e/` | gateway with MCP transports and Playwright | `make testing-up` (default profile) |
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
 | `mcp/test_oauth_status_live.py` | Postgres reachable at `localhost:5433` (the compose default) | `make testing-up` |
+| `mcp_a2a/` | vault-enabled stack (VaultPlugin + header passthrough) | `ENABLE_HEADER_PASSTHROUGH=true ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true PLUGINS_CONFIG_FILE=plugins/vault/config_vault_e2e.yaml make testing-up` |
 | `sso/` | Keycloak (jwks tests) and/or Entra ID (entra tests) | `docker compose --profile sso up -d` for Keycloak; `AZURE_*` env vars for Entra |
 | `e2e_rust/` | gateway built with the Rust transport (edge or full mode) | `make testing-up` with the Rust profile, or rebuild compose images with Rust enabled |
 
@@ -51,6 +52,7 @@ make test-mcp-plugin-parity        # tests/live_gateway/mcp/test_mcp_plugin_pari
 make test-mcp-access-matrix        # tests/live_gateway/e2e_rust/test_mcp_access_matrix.py
 make test-mcp-session-isolation    # tests/live_gateway/e2e_rust/test_mcp_session_isolation.py
 make test-e2e-sso                  # tests/live_gateway/sso/
+make test-mcp-a2a                  # tests/live_gateway/mcp_a2a/
 make test-oauth-status-live        # tests/live_gateway/mcp/test_oauth_status_live.py
 
 # Or run a specific file directly via uv

@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+- **Vault tool-path E2E migrated to the live-gateway `mcp_a2a` suite** ([#7059](https://github.com/IBM/mcp-context-forge/issues/7059)) - Recast the Vault plugin tool-path test as `tests/live_gateway/mcp_a2a/test_vault_header_injection.py`. The new suite runs against the `make testing-up` compose stack. It asserts over the wire via the fast-time-server `whoami` header-reflection tool. It replaces the subprocess test that scraped echo-backend logs, and it self-skips on a default stack. Run it with `make test-mcp-a2a` against a vault-enabled boot (`ENABLE_HEADER_PASSTHROUGH=true ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true PLUGINS_CONFIG_FILE=plugins/vault/config_vault_e2e.yaml make testing-up`). `docker-compose.yml` bumps the `cfex-mcp-fast-time-server` digest to the image carrying `whoami`, and parameterizes the two header-passthrough flags with `false` defaults.
+
+- **Upstream connect-mode E2E moved to `tests/live_gateway/mcp/`** - The test requires the compose testing upstream, so it leaves `tests/e2e/`. Its curated subprocess environment now sets strong `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` values. Startup secret validation rejected the defaults and broke the test.
+
 - **Federated gateway tool-name collisions** - Gateway registration, refresh, OAuth discovery, reactivation, rename, and visibility updates now reject detected tool-name collisions in public, team, and private visibility scopes. Gateway automation must handle the endpoint's conflict response when a previously accepted colliding registration is rejected. Existing duplicate rows require administrator review before affected invocation names are usable. Operators can identify duplicates with:
 
   ```sql

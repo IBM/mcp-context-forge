@@ -483,6 +483,12 @@ services:
       - PLUGINS_ENABLED=true
       - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
       - PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=${PLUGINS_CAN_OVERRIDE_AUTH_HEADERS:-false}
+      # Header passthrough master switches (both default off). The Vault plugin
+      # E2E suite (tests/live_gateway/mcp_a2a/) needs both set at boot:
+      #   ENABLE_HEADER_PASSTHROUGH=true ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true \
+      #   PLUGINS_CONFIG_FILE=plugins/vault/config_vault_e2e.yaml make testing-up
+      - ENABLE_HEADER_PASSTHROUGH=${ENABLE_HEADER_PASSTHROUGH:-false}
+      - ENABLE_SENSITIVE_HEADER_PASSTHROUGH=${ENABLE_SENSITIVE_HEADER_PASSTHROUGH:-false}
       - PRIMARY_WORKER_ELECTION_BACKEND=${PRIMARY_WORKER_ELECTION_BACKEND:-filelock} # filelock (per host) or redis (per cluster)
       - PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY=${PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY:-fail_closed}
       - STREAMABLE_HTTP_MAX_EVENTS_PER_STREAM=${STREAMABLE_HTTP_MAX_EVENTS_PER_STREAM:-100}
@@ -1565,10 +1571,12 @@ services:
   # Rust server from contextforge-examples (CI-built image); serves /mcp
   # (Streamable HTTP), /sse, /health, /version on BIND_ADDRESS.
   # Pinned by digest so `docker compose pull` cannot change the tool inventory
-  # under the benchmarks. Digest resolved 2026-08-07 (== commit tag
-  # 9b97731fab3cce083d09fe48b4d4760a38d17248); 8 tools exposed:
+  # under the benchmarks. Digest resolved 2026-09-30 (== commit tag
+  # c8082fb243edbd08ffdfb20ee4cd351ed61f306c); 9 tools exposed:
   #   echo, flaky, get_system_time, convert_time, schema_error, schema_success,
-  #   get_stats, verify-protocol
+  #   get_stats, verify-protocol, whoami
+  # `whoami` reflects the tool call's HTTP headers (lowercased map,
+  # `authorization` null when absent) for header-propagation test assertions.
   # When bumping this digest: re-run `tools/list` against the new image and
   # update MCP_BENCHMARK_TOOL_DENYLIST in the Makefile if new failure fixtures
   # were added (see tests/loadtest/locustfile_mcp_protocol.py).
@@ -1576,7 +1584,7 @@ services:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:110e1826f5d763e5afadba770b731dac93e0819c1bbadb68671b0124260603cf}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:a0d5ec277813aeff4f10947a1d9ee35c1cfb455f803e7dd9fc5042530d6072b0}
     restart: unless-stopped
     networks: [mcpnet]
     ports:

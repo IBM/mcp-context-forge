@@ -861,6 +861,7 @@ clean:
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
+# help: test-mcp-a2a         - MCP/A2A invocation-path E2E (Vault header injection; vault-enabled testing stack)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
@@ -898,7 +899,7 @@ clean:
 # help: query-log-clear      - Clear database query log files
 
 .PHONY: smoketest test-e2e test-mcp-cli test-mcp-protocol-e2e test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
-	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live test-mcp-a2a \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
@@ -914,7 +915,7 @@ clean:
 # transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-e2e, test-mcp-plugin-parity,
-# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
+# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso, test-mcp-a2a).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
 
@@ -1010,6 +1011,15 @@ test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
+
+test-mcp-a2a: uv  ## MCP/A2A invocation-path E2E (Vault header injection) against a vault-enabled testing stack
+	@echo "🔐 Running MCP/A2A invocation-path E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: vault-enabled stack via ENABLE_HEADER_PASSTHROUGH=true ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true \\"
+	@echo "             PLUGINS_CONFIG_FILE=plugins/vault/config_vault_e2e.yaml make testing-up"
+	@echo "   Self-skips against a default 'make testing-up' stack (VaultPlugin disabled)."
+	@$(UV_BIN) run pytest tests/live_gateway/mcp_a2a/ -v -s --tb=short \
+		|| { echo "❌ MCP/A2A invocation-path E2E tests failed!"; exit 1; }
+	@echo "✅ MCP/A2A invocation-path E2E tests passed!"
 
 test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "🌐 Running all tests in tests/live_gateway/ ..."

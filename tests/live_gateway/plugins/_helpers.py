@@ -163,13 +163,22 @@ def assert_plugin_active(client: httpx.Client, name: str, *, expected_mode: str 
     return match
 
 
-def register_fast_time_gateway(client: httpx.Client, *, name: str, team_id: str | None = None, visibility: str = "public") -> str:
+def register_fast_time_gateway(
+    client: httpx.Client,
+    *,
+    name: str,
+    team_id: str | None = None,
+    visibility: str = "public",
+    tags: list[str] | None = None,
+    passthrough_headers: list[str] | None = None,
+    url: str | None = None,
+) -> str:
     """Register the fast-time-server federation gateway (idempotently).
 
     When ``team_id`` is supplied the gateway (and the tools it federates) are
     scoped to that team. This is required by the tool-plugin-bindings path: a
     binding keys on ``(team_id, tool_name)``, and the invoke path falls back to
-    the bare server id when a tool has no team \u2014 in which case a binding never
+    the bare server id when a tool has no team — in which case a binding never
     matches.
 
     Args:
@@ -178,14 +187,28 @@ def register_fast_time_gateway(client: httpx.Client, *, name: str, team_id: str 
         team_id: Optional team to scope the gateway to.
         visibility: Visibility to register under when ``team_id`` is set
             (defaults to ``"public"`` for the team-less static path).
+        tags: Optional gateway tags. Header-affecting plugins resolve their
+            target system from gateway tags (e.g. the Vault plugin's
+            ``system:<name>`` tag).
+        passthrough_headers: Optional per-gateway inbound header whitelist.
+            Required for headers a plugin must observe (e.g. ``X-Vault-Tokens``)
+            when ``ENABLE_HEADER_PASSTHROUGH`` is on.
+        url: Optional upstream URL override. Defaults to ``FAST_TIME_URL``.
+            Compose-stack suites need the docker-network name
+            (``http://fast_time_server:9080/mcp``), which the gateway container
+            resolves; the default suits gateways running on the host.
 
     Returns:
         The gateway id (newly created or pre-existing).
     """
-    body: dict[str, Any] = {"name": name, "url": FAST_TIME_URL, "transport": "STREAMABLEHTTP"}
+    body: dict[str, Any] = {"name": name, "url": url or FAST_TIME_URL, "transport": "STREAMABLEHTTP"}
     if team_id:
         body["team_id"] = team_id
         body["visibility"] = visibility
+    if tags:
+        body["tags"] = tags
+    if passthrough_headers:
+        body["passthrough_headers"] = passthrough_headers
     response = client.post("/gateways", json=body)
     if response.status_code in (200, 201):
         return response.json()["id"]
@@ -261,7 +284,28 @@ def find_flaky_tool(tools: list[dict[str, Any]]) -> dict[str, Any]:
         "Ensure the image referenced by FAST_TIME_IMAGE exposes the 'flaky' tool "
         "(ghcr.io/ibm/cfex-mcp-fast-time-server:latest should include it)."
     )
-    return flaky
+
+
+def find_whoami_tool(tools: list[dict[str, Any]]) -> dict[str, Any]:
+    """Locate the fast-time ``whoami`` header-reflection tool among synced tools.
+
+    The gateway prefixes federated tool names with the gateway slug, so the
+    whoami tool surfaces as e.g. ``fast-time-whoami``. Match on suffix rather
+    than a hardcoded prefix so the suite is robust to the registered gateway
+    name.
+
+    Args:
+        tools: Synced tool dicts (already filtered to one gateway).
+
+    Returns:
+        The whoami tool dict.
+
+    Raises:
+        AssertionError: If no whoami tool is present.
+    """
+    whoami = next((t for t in tools if t["name"].endswith("whoami") or t.get("originalName") == "whoami"), None)
+    assert whoami is not None, f"no whoami tool synced; available: {[t['name'] for t in tools]}"
+    return whoami
 
 
 def create_virtual_server(client: httpx.Client, *, name: str, tool_ids: list[str], prompt_ids: list[str] | None = None) -> str:
@@ -628,6 +672,7 @@ def call_tool(
     arguments: dict[str, Any],
     session_id: str | None = None,
     request_id: int = 1,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Invoke a tool over MCP and return the JSON-RPC ``result`` payload.
 
@@ -643,13 +688,19 @@ def call_tool(
         arguments: Tool arguments.
         session_id: Optional MCP session id from ``initialize_session``.
         request_id: JSON-RPC request id.
+        extra_headers: Optional extra request headers, merged over the standard
+            MCP headers. Suites for header-affecting plugins use this to carry
+            plugin inputs (e.g. the Vault plugin's ``X-Vault-Tokens``).
 
     Returns:
         The JSON-RPC ``result`` payload.
     """
+    headers = mcp_headers(token, session_id=session_id)
+    if extra_headers:
+        headers.update(extra_headers)
     response = client.post(
         f"/servers/{server_id}/mcp/",
-        headers=mcp_headers(token, session_id=session_id),
+        headers=headers,
         json={
             "jsonrpc": "2.0",
             "id": request_id,
