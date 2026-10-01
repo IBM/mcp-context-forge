@@ -131,9 +131,8 @@ The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` i
 
 ```bash
 # uv sync + lockfile upgrade for every pyproject.toml
-# Skips: mcp-servers/templates (generated), .venv* dirs, Rust crates (no uv)
+# Skips: templates dirs (generated), .venv* dirs, Rust crates (no uv)
 find . \
-  -path "./mcp-servers/templates" -prune -o \
   -name "templates" -prune -o \
   -name ".venv*" -prune -o \
   -path "*/target" -prune -o \

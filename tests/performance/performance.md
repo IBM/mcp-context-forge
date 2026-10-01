@@ -663,15 +663,12 @@ make load-test-ui
 ### Standalone Usage (Without Docker)
 
 ```bash
-# Build the benchmark server
-cd mcp-servers/rust/benchmark-server
-make release
+# Run the published benchmark-server image (see docker-compose.yml `benchmark_server` service)
+docker run --rm -p 9000:9000 ghcr.io/ibm/cfex-mcp-benchmark-server:latest \
+  -transport=http -port=9000 -tools=100
 
-# Run single server
-./target/release/benchmark-server -transport=http -port=9000 -tools=100
-
-# Run multi-server mode
-./target/release/benchmark-server -transport=http -server-count=10 -start-port=9000
+# Multi-server mode: use the compose profile instead
+#   BENCHMARK_SERVER_COUNT=10 make benchmark-up
 ```
 
 ### Performance Characteristics

@@ -101,7 +101,6 @@ recursive-include scripts *.json
 recursive-include tests/manual *.py *.md
 
 # recursive-include deployment *
-# recursive-include mcp-servers *
 recursive-include plugins *.py
 recursive-include plugins *.json
 recursive-include plugins *.sh
@@ -113,7 +112,7 @@ recursive-include plugins *.txt
 recursive-include supply-chain *.toml
 recursive-include supply-chain *.lock
 
-# Rust workspace (crates/): plugins, gateway_rs, mcp-servers, tools
+# Rust workspace (crates/): plugins, gateway_rs, tools
 recursive-include crates *.lock
 recursive-include crates *.toml
 recursive-include crates *.rs
@@ -140,10 +139,9 @@ exclude CLAUDE.*
 exclude llms-full.txt
 exclude AGENTS.md
 
-# Exclude deployment, mcp-servers, agent_runtimes, ansible and llms
+# Exclude deployment, agent_runtimes, ansible and llms
 prune ansible
 prune deployment
-prune mcp-servers
 prune a2a-agents
 prune agent_runtimes
 prune llms
