@@ -24,7 +24,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
-from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail, should_expose_error_details
+from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +52,13 @@ def _handle_token_integrity_error(err_str: str) -> None:
         or "uq_email_api_tokens_user_email_name" in err_str
         or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
     ):
-        if should_expose_error_details():
-            detail = "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."
-        else:
-            detail = "A token with this name already exists. Please choose a different name."
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+        )
 
     # Generic conflict error
-    if should_expose_error_details():
-        detail = "Token creation failed due to a conflict. Please try again."
-    else:
-        detail = "Request could not be completed. Please try again."
-    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
 
 
 def _require_authenticated_session(current_user: dict) -> None:

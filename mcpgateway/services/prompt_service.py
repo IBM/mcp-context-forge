@@ -72,6 +72,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -310,11 +311,11 @@ def _validate_prompt_team_assignment(db: Session, user_email: Optional[str], tar
         ValueError: If team does not exist or caller lacks ownership.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     if not user_email:
         return
@@ -325,7 +326,7 @@ def _validate_prompt_team_assignment(db: Session, user_email: Optional[str], tar
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 class PromptService(BaseService):
@@ -1018,7 +1019,7 @@ class PromptService(BaseService):
                 error=e,
                 custom_fields={"prompt_name": prompt.name},
             )
-            raise PromptError(f"Failed to register prompt: {str(e)}")
+            raise PromptError(f"Failed to register prompt: {unexpected_error_detail(e)}")
 
     async def register_prompts_bulk(
         self,
@@ -2103,7 +2104,7 @@ class PromptService(BaseService):
                         result = PromptResult(messages=messages, description=prompt.description)
                     except Exception as e:
                         set_span_error(span, e)
-                        raise PromptError(f"Failed to process prompt: {str(e)}")
+                        raise PromptError(f"Failed to process prompt: {unexpected_error_detail(e)}")
 
                 if has_post_fetch:
                     post_result, _ = await plugin_manager.invoke_hook(
@@ -2564,7 +2565,7 @@ class PromptService(BaseService):
                 resource_id=str(prompt_id),
                 error=e,
             )
-            raise PromptError(f"Failed to update prompt: {str(e)}")
+            raise PromptError(f"Failed to update prompt: {unexpected_error_detail(e)}")
 
     async def set_prompt_state(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> PromptRead:
         """
@@ -2701,7 +2702,7 @@ class PromptService(BaseService):
                 resource_id=str(prompt_id),
                 error=e,
             )
-            raise PromptError(f"Failed to set prompt state: {str(e)}")
+            raise PromptError(f"Failed to set prompt state: {unexpected_error_detail(e)}")
 
     # Get prompt details for admin ui
 
@@ -2932,7 +2933,7 @@ class PromptService(BaseService):
                 resource_id=str(prompt_id),
                 error=e,
             )
-            raise PromptError(f"Failed to delete prompt: {str(e)}")
+            raise PromptError(f"Failed to delete prompt: {unexpected_error_detail(e)}")
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to Prompt events via the EventService.
@@ -2965,7 +2966,7 @@ class PromptService(BaseService):
         try:
             self._jinja_env.parse(template)
         except Exception as e:
-            raise PromptValidationError(f"Invalid template syntax: {str(e)}")
+            raise PromptValidationError(f"Invalid template syntax: {unexpected_error_detail(e)}")
 
     def _get_required_arguments(self, template: str) -> Set[str]:
         """Extract required arguments from template.
@@ -3026,7 +3027,7 @@ class PromptService(BaseService):
             try:
                 return template.format(**arguments)
             except Exception as e:
-                raise PromptError(f"Failed to render template: {str(e)}")
+                raise PromptError(f"Failed to render template: {unexpected_error_detail(e)}")
 
     def _parse_messages(self, text: str) -> List[Message]:
         """Parse rendered text into messages.

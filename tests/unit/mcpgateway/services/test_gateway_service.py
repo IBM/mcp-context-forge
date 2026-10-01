@@ -1143,7 +1143,8 @@ class TestGatewayService:
             await gateway_service._initialize_gateway("https://example.com/mcp", authentication={"Authorization": "Bearer clean-token"}, transport="SSE", auth_type="bearer")
 
         assert not isinstance(exc_info.value, GatewayConnectionError)
-        assert "\\u2060" in str(exc_info.value) or "ascii" in str(exc_info.value)
+        assert "not valid ASCII" in str(exc_info.value)
+        assert "\u2060" not in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_self_heals_stored_credential_with_invisible_char(self, gateway_service):
@@ -2808,7 +2809,8 @@ class TestGatewayService:
             await gateway_service.set_gateway_state(test_db, 1, activate=False)
 
         assert "Failed to set gateway state" in str(exc_info.value)
-        assert "Bulk tool update failed" in str(exc_info.value)
+        assert "An unexpected error occurred" in str(exc_info.value)
+        assert "Bulk tool update failed" not in str(exc_info.value)
         test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3879,7 +3881,8 @@ class TestGatewayRefresh:
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", gateway=mock_gateway_with_relations)
 
         assert result["success"] is False
-        assert "Connection failed" in result["error"]
+        assert "An unexpected error occurred" in result["error"]
+        assert "Connection failed" not in result["error"]
 
     @pytest.mark.asyncio
     async def test_manual_refresh_success(self, gateway_service, mock_gateway_with_relations, mock_db_session):
@@ -6893,7 +6896,7 @@ class TestHandleGatewayFailureThreshold:
         _, kwargs = gateway_service.set_gateway_state.await_args
         assert kwargs.get("activate") is True and kwargs.get("reachable") is False
         assert kwargs.get("last_error") is not None
-        assert "REDACTED" in kwargs["last_error"]
+        assert kwargs["last_error"] == "An unexpected error occurred"
         assert "secret" not in kwargs["last_error"]
         db.execute.assert_not_called()
         db.commit.assert_not_called()
@@ -6915,7 +6918,7 @@ class TestHandleGatewayFailureThreshold:
         # Health-check call sites pass the decrypted dict explicitly:
         await gateway_service._handle_gateway_failure(gw, error, {"api_key": "live-secret-123"})
         _, kwargs = gateway_service.set_gateway_state.await_args
-        assert "REDACTED" in kwargs["last_error"]
+        assert kwargs["last_error"] == "An unexpected error occurred"
         assert "live-secret-123" not in kwargs["last_error"]
 
         # Fallback path (stored ciphertext only) redacts identically,
@@ -6923,7 +6926,7 @@ class TestHandleGatewayFailureThreshold:
         gateway_service.set_gateway_state.reset_mock()
         await gateway_service._handle_gateway_failure(gw, error)
         _, kwargs = gateway_service.set_gateway_state.await_args
-        assert "REDACTED" in kwargs["last_error"]
+        assert kwargs["last_error"] == "An unexpected error occurred"
         assert "live-secret-123" not in kwargs["last_error"]
 
     @pytest.mark.asyncio
@@ -6945,7 +6948,7 @@ class TestHandleGatewayFailureThreshold:
 
         await gateway_service._handle_gateway_failure(gw, BlankError())
         _, kwargs = gateway_service.set_gateway_state.await_args
-        assert kwargs["last_error"] == "BlankError"
+        assert kwargs["last_error"] == "An unexpected error occurred"
 
 
 class TestMarkGatewayReachableErrorCleanup:
@@ -7986,7 +7989,8 @@ class TestRefreshGatewayToolsResourcesPrompts:
         gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("connection refused"))
         result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
         assert result["success"] is False
-        assert "connection refused" in result["error"]
+        assert "An unexpected error occurred" in result["error"]
+        assert "connection refused" not in result["error"]
 
     @pytest.mark.asyncio
     async def test_validation_errors_propagated(self, gateway_service):
@@ -10001,7 +10005,8 @@ async def test_initialize_gateway_empty_exception_uses_type_name(gateway_service
     with pytest.raises(GatewayConnectionError) as exc_info:
         await gateway_service._initialize_gateway(url="http://localhost:9999", transport="SSE")
 
-    assert "RuntimeError" in str(exc_info.value)
+    assert "An unexpected error occurred" in str(exc_info.value)
+    assert "RuntimeError" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -10014,7 +10019,8 @@ async def test_initialize_gateway_exception_group_empty_str(gateway_service):
     with pytest.raises(GatewayConnectionError) as exc_info:
         await gateway_service._initialize_gateway(url="http://localhost:9999", transport="SSE")
 
-    assert "OSError" in str(exc_info.value)
+    assert "An unexpected error occurred" in str(exc_info.value)
+    assert "OSError" not in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
