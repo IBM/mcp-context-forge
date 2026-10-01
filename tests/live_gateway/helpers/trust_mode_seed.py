@@ -112,6 +112,19 @@ def seed_agent(client: httpx.Client, name: str, team_id: str, endpoint_url: str,
     assert response.status_code in (200, 201, 409), f"agent seed failed: {response.status_code} {response.text[:200]}"
 
 
+def seed_server(client: httpx.Client, name: str, team_id: str, description: str) -> str:
+    """Register a team-visible virtual server (delete-first idempotent); return its ID."""
+    listing = client.get(f"{BASE_URL}/servers")
+    if listing.status_code == 200:
+        for row in listing.json():
+            if isinstance(row, dict) and row.get("name") == name:
+                client.delete(f"{BASE_URL}/servers/{row['id']}")
+    payload = {"server": {"name": name, "description": description}, "team_id": team_id, "visibility": "team"}
+    response = client.post(f"{BASE_URL}/servers", json=payload)
+    assert response.status_code in (200, 201), f"server seed failed: {response.status_code} {response.text[:200]}"
+    return response.json()["id"]
+
+
 def seed_mapping(client: httpx.Client, issuer: str, tenant: Optional[str], external_group_id: str, cf_team_id: str, cf_role: str) -> str:
     """Map external group -> team + role; return the mapping ID (idempotent)."""
     payload = {
