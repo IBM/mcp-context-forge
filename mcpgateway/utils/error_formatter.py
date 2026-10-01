@@ -10,9 +10,16 @@ exceptions into user-friendly messages suitable for API responses.
 
 The ErrorFormatter class handles:
 - Pydantic ValidationError formatting
+- FastAPI RequestValidationError formatting (request-body parsing)
 - SQLAlchemy DatabaseError and IntegrityError formatting
 - Mapping technical error messages to user-friendly explanations
 - Consistent error response structure
+
+Policy: HTTP responses never carry raw exception text. Known error kinds
+(validation, database constraints) get a specific, user-actionable message
+built from a fixed vocabulary; anything else gets a generic fallback. Full
+technical detail is logged server-side only. There is no runtime switch that
+re-enables raw text in responses.
 
 Examples:
     >>> from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -31,8 +38,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import DatabaseError, IntegrityError
 
 # First-Party
-from mcpgateway.config import get_settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.correlation_id import get_correlation_id
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -52,52 +59,162 @@ class ErrorFormatter:
         True
     """
 
+    # Pydantic error types whose default message embeds Python-level detail
+    # (a model/class name, or the text of an arbitrary underlying exception).
+    # For these the message is replaced by a neutral "Invalid <field>".
+    _UNSAFE_MESSAGE_TYPES = frozenset(
+        {
+            "model_type",
+            "model_attributes_type",
+            "dataclass_type",
+            "dataclass_exact_type",
+            "is_instance_of",
+            "is_subclass_of",
+            "get_attribute_error",
+            "iteration_error",
+            "mapping_type",
+        }
+    )
+
+    # Pydantic prefixes a custom validator's own message with the error kind.
+    _CUSTOM_MSG_PREFIXES = ("Value error, ", "Assertion failed, ")
+
     @staticmethod
-    def format_validation_error(error: ValidationError) -> Dict[str, Any]:
+    def format_validation_error(error: Any) -> Dict[str, Any]:
         """Convert Pydantic errors to user-friendly format.
 
-        Transforms Pydantic ValidationError objects into a structured
-        dictionary containing user-friendly error messages. Maps technical
-        validation messages to more understandable explanations.
+        Transforms a Pydantic ``ValidationError`` (or any object exposing a
+        Pydantic-style ``errors()`` method, such as FastAPI's
+        ``RequestValidationError``) into a structured dictionary of
+        user-friendly, field-level messages. The output never contains the
+        model class name, the Pydantic version/docs URL, or the submitted
+        input value.
 
         Args:
-            error (ValidationError): The Pydantic validation error to format
+            error: The validation error to format
 
         Returns:
-            Dict[str, Any]: ``{"detail": str}`` by default, or
-                ``{"message": str, "details": [...], "success": bool}`` when verbose mode is enabled.
+            Dict[str, Any]: ``{"message": str, "detail": str, "details": [{"field": str, "message": str}, ...], "success": False}``.
+                ``message`` and ``detail`` carry the same one-line summary; ``detail`` is
+                kept for clients that read the FastAPI-style key.
+
+        Examples:
+            >>> from pydantic import BaseModel
+            >>> class M(BaseModel):
+            ...     count: int
+            >>> try:
+            ...     M(count="lots")
+            ... except ValidationError as e:
+            ...     out = ErrorFormatter.format_validation_error(e)
+            >>> out["success"]
+            False
+            >>> out["details"][0]["field"]
+            'count'
+            >>> "pydantic" in out["message"].lower() or "input_value" in out["message"]
+            False
         """
         # Log only loc/type — never msg, ctx, input, or input_value (Pydantic v2 includes input_value in str())
         logger.warning("Validation error: %s", sanitize_validation_error_for_log(error))
 
-        if not should_expose_error_details():
-            return {"detail": "An error occurred, please try again."}
-
-        errors = []
-        user_message = "Validation error"  # default; overwritten by each error in the loop
-
+        details: List[Dict[str, str]] = []
         for err in error.errors():
-            loc = err.get("loc", ["field"])
+            loc = err.get("loc") or ()
             field = str(loc[-1]) if loc else "field"
-            msg = err.get("msg", "Invalid value")
+            user_message = ErrorFormatter._get_user_message(field, err.get("msg", "Invalid value"), err.get("type", ""))
+            details.append({"field": field, "message": user_message})
 
-            # Map technical messages to user-friendly ones
-            user_message = ErrorFormatter._get_user_message(field, msg)
-            errors.append({"field": field, "message": user_message})
-
-        return {"message": f"Validation failed: {user_message}", "details": errors, "success": False}
+        summary = "; ".join(d["message"] for d in details) if details else "Validation error"
+        message = f"Validation failed: {summary}"
+        return {"message": message, "detail": message, "details": details, "success": False}
 
     @staticmethod
-    def _get_user_message(field: str, technical_msg: str) -> str:
+    def format_request_validation_error(error: Any) -> List[Dict[str, Any]]:
+        """Build a FastAPI-shaped, sanitized error list for request-parsing failures.
+
+        Keeps the standard ``{"type", "loc", "msg"}`` entries API clients expect
+        from a FastAPI 422 response, but drops the fields that leak detail:
+        ``input`` (echoes the submitted value), ``url`` (embeds the Pydantic
+        version), and any non-primitive ``ctx`` entries (exception objects).
+        Messages for error types that embed class names are neutralised.
+
+        Args:
+            error: A FastAPI ``RequestValidationError`` or any object with a Pydantic-style ``errors()`` method
+
+        Returns:
+            List[Dict[str, Any]]: Sanitized error entries suitable for ``{"detail": [...]}``
+
+        Examples:
+            >>> from pydantic import BaseModel
+            >>> class M(BaseModel):
+            ...     count: int
+            >>> try:
+            ...     M(count="lots")
+            ... except ValidationError as e:
+            ...     out = ErrorFormatter.format_request_validation_error(e)
+            >>> sorted(out[0].keys())
+            ['loc', 'msg', 'type']
+            >>> out[0]["loc"]
+            ['count']
+        """
+        entries: List[Dict[str, Any]] = []
+        for err in error.errors():
+            loc = list(err.get("loc") or ())
+            field = str(loc[-1]) if loc else "field"
+            err_type = err.get("type", "value_error")
+            entry: Dict[str, Any] = {
+                "type": err_type,
+                "loc": loc,
+                "msg": ErrorFormatter._safe_pydantic_message(field, err.get("msg", "Invalid value"), err_type),
+            }
+            ctx = err.get("ctx")
+            if isinstance(ctx, dict):
+                safe_ctx = {k: v for k, v in ctx.items() if v is None or isinstance(v, (str, int, float, bool))}
+                if safe_ctx:
+                    entry["ctx"] = safe_ctx
+            entries.append(entry)
+        return entries
+
+    @staticmethod
+    def _safe_pydantic_message(field: str, technical_msg: str, error_type: str) -> str:
+        """Return a Pydantic error message with Python-level detail removed.
+
+        Standard Pydantic messages ("Input should be a valid integer") are
+        fixed library strings and are passed through. Messages for the types in
+        ``_UNSAFE_MESSAGE_TYPES`` embed a class name or an arbitrary exception
+        text and are replaced with a neutral message.
+
+        Args:
+            field: Field name, used for the neutral replacement
+            technical_msg: The Pydantic ``msg`` value
+            error_type: The Pydantic ``type`` value
+
+        Returns:
+            str: A message safe to place in an HTTP response
+
+        Examples:
+            >>> ErrorFormatter._safe_pydantic_message("count", "Input should be a valid integer", "int_type")
+            'Input should be a valid integer'
+            >>> ErrorFormatter._safe_pydantic_message("cfg", "Input should be a valid dictionary or instance of GatewayCreate", "model_type")
+            'Invalid cfg'
+        """
+        if error_type in ErrorFormatter._UNSAFE_MESSAGE_TYPES or not technical_msg:
+            return f"Invalid {field}"
+        return technical_msg
+
+    @staticmethod
+    def _get_user_message(field: str, technical_msg: str, error_type: str = "") -> str:
         """Map technical validation messages to user-friendly ones.
 
-        Converts technical validation error messages into user-friendly
-        explanations based on pattern matching. Provides field-specific
-        context in the returned message.
+        Known project validator messages are mapped to a fixed friendly
+        sentence. Other messages are passed through with Pydantic's
+        "Value error, " prefix removed, unless the error type is one whose
+        message embeds Python-level detail, in which case a neutral
+        "Invalid <field>" is returned.
 
         Args:
             field (str): The field name that failed validation
             technical_msg (str): The technical validation message from Pydantic
+            error_type (str): The Pydantic error ``type`` (e.g. ``value_error``, ``model_type``)
 
         Returns:
             str: User-friendly error message with field context
@@ -128,10 +245,13 @@ class ErrorFormatter:
             >>> msg
             'Content cannot contain HTML or script tags'
 
-            >>> # Test fallback for unknown messages
-            >>> msg = ErrorFormatter._get_user_message("custom_field", "Some unknown error")
-            >>> msg
-            'Invalid custom_field'
+            >>> # Unknown custom-validator messages pass through, minus Pydantic's prefix
+            >>> ErrorFormatter._get_user_message("custom_field", "Value error, Some unknown error", "value_error")
+            'Some unknown error'
+
+            >>> # Error types that embed a class name are neutralised
+            >>> ErrorFormatter._get_user_message("config", "Input should be a valid dictionary or instance of GatewayCreate", "model_type")
+            'Invalid config'
         """
         mappings = {
             "Tool name must start with a letter, number, or underscore": f"{field.title()} must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes",
@@ -146,8 +266,15 @@ class ErrorFormatter:
             if pattern in technical_msg:
                 return friendly_msg
 
-        # Default fallback
-        return f"Invalid {field}"
+        if error_type in ErrorFormatter._UNSAFE_MESSAGE_TYPES:
+            return f"Invalid {field}"
+
+        msg = technical_msg
+        for prefix in ErrorFormatter._CUSTOM_MSG_PREFIXES:
+            if msg.startswith(prefix):
+                msg = msg[len(prefix) :]
+                break
+        return msg or f"Invalid {field}"
 
     @staticmethod
     def format_database_error(error: DatabaseError) -> Dict[str, Any]:
@@ -258,12 +385,8 @@ class ErrorFormatter:
                 or "uq_email_api_tokens_user_email_name" in error_str
                 or ("email_api_tokens.user_email" in error_str and "email_api_tokens.name" in error_str)
             ):
-                if should_expose_error_details():
-                    detail = "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."
-                else:
-                    detail = "A token with this name already exists. Please choose a different name."
                 return {
-                    "message": detail,
+                    "message": "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
                     "success": False,
                 }
             # Resource URI uniqueness: check before the generic UNIQUE handler so the specific message
@@ -322,49 +445,101 @@ def sanitize_validation_error_for_log(error: Union[ValidationError, Any]) -> str
     return f"{len(raw_errors)} error(s): {' '.join(parts)}"
 
 
-def should_expose_error_details() -> bool:
-    """Determine if verbose error details should be exposed in HTTP responses.
+UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred"
 
-    Verbose detail is exposed only when EXPOSE_ERROR_DETAILS=true OR
-    (DEBUG=true AND DEV_MODE=true). Bare DEBUG=true no longer unlocks
-    verbose responses.
+
+def _is_project_exception(exception: BaseException) -> bool:
+    """Return True when the exception type is defined inside the mcpgateway package.
+
+    Project exception classes (``ToolNotFoundError``, ``GatewayConnectionError``,
+    ``PublicValidationError`` ...) carry messages written in this codebase, so their
+    text is safe to show. Built-in and third-party exceptions carry whatever the
+    library put there.
+
+    Args:
+        exception: The exception to classify
 
     Returns:
-        bool: True if error details should be exposed, False otherwise
+        bool: True for mcpgateway-defined exception types
 
-    Note:
-        See tests/unit/mcpgateway/utils/test_error_formatter.py for comprehensive
-        test coverage of all flag combinations.
+    Examples:
+        >>> _is_project_exception(PublicValidationError("x"))
+        True
+        >>> _is_project_exception(ValueError("x"))
+        False
     """
-    settings = get_settings()
-    # Check if EXPOSE_ERROR_DETAILS is set (if it exists)
-    expose_flag = getattr(settings, "expose_error_details", False)
-    if expose_flag:
-        return True
-    # Otherwise require both DEBUG and DEV_MODE
-    return settings.debug and settings.dev_mode
+    return isinstance(exception, PublicValidationError) or type(exception).__module__.startswith("mcpgateway.")
+
+
+def _with_reference(message: str) -> str:
+    """Append the current request's correlation ID so the user can quote it to support.
+
+    Args:
+        message: The user-safe message
+
+    Returns:
+        str: ``message`` plus `` (reference: <id>)`` when a correlation ID is set
+
+    Examples:
+        >>> _with_reference("Something failed")  # no request context in doctests
+        'Something failed'
+    """
+    correlation_id = get_correlation_id()
+    return f"{message} (reference: {correlation_id})" if correlation_id else message
 
 
 def safe_error_detail(exception: Exception, fallback: str = "Invalid request. Please check your input and try again.") -> str:
-    """Return exception detail only if verbose mode is enabled, otherwise return fallback.
+    """Return a safe message for an HTTP response in place of raw exception text.
 
-    This is the single point of policy for "is it OK to expose this exception text?".
-    Used at HTTPException raise sites across routers and main.py.
+    This is the single point of policy for "what do we say about this exception?":
+
+    - A project-defined exception (see ``_is_project_exception``) carries a message
+      written in this codebase, so that message is returned as-is.
+    - Anything else (built-in or third-party) may carry library versions, class
+      names, database schema names or upstream error bodies, so ``fallback`` is
+      returned instead, with the request correlation ID appended for traceability.
+      The exception type is logged at debug level; callers log the full exception
+      themselves.
 
     Args:
-        exception: The exception whose detail may be exposed
-        fallback: The generic message to return in production mode
+        exception: The exception being reported
+        fallback: The generic, user-safe message for non-project exceptions
 
     Returns:
-        str: Exception detail if verbose mode is enabled, otherwise fallback message
+        str: A message safe to place in an HTTP response
 
-    Note:
-        See tests/unit/mcpgateway/utils/test_error_formatter.py for test coverage
-        of verbose and production modes.
+    Examples:
+        >>> safe_error_detail(ValueError("UNIQUE constraint failed: tools.name"), "Could not save the tool.")
+        'Could not save the tool.'
+        >>> safe_error_detail(RuntimeError("boom"))
+        'Invalid request. Please check your input and try again.'
+        >>> safe_error_detail(PublicValidationError("Token expiration cannot exceed 365 days"))
+        'Token expiration cannot exceed 365 days'
     """
-    if should_expose_error_details():
+    if _is_project_exception(exception) and str(exception):
         return str(exception)
-    return fallback
+    logger.debug("Suppressed %s detail in HTTP response", type(exception).__name__)
+    return _with_reference(fallback)
+
+
+def unexpected_error_detail(exception: Exception) -> str:
+    """Return the message for an exception caught by a catch-all handler.
+
+    Shorthand for ``safe_error_detail(exception, UNEXPECTED_ERROR_MESSAGE)``: project
+    exceptions keep their message, everything else becomes
+    ``"An unexpected error occurred (reference: <correlation id>)"``.
+
+    Args:
+        exception: The exception caught by ``except Exception``
+
+    Returns:
+        str: A message safe to place in an HTTP response
+
+    Examples:
+        >>> unexpected_error_detail(KeyError("secret_column"))
+        'An unexpected error occurred'
+    """
+    return safe_error_detail(exception, UNEXPECTED_ERROR_MESSAGE)
 
 
 class PublicValidationError(ValueError):

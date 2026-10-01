@@ -50,7 +50,6 @@ import warnings
 from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
-from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
@@ -234,7 +233,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
+from mcpgateway.utils.error_formatter import ErrorFormatter, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
@@ -1553,6 +1552,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
+    if settings.expose_error_details:
+        logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
 
     # Start the sandboxed jq worker pool before any service that might invoke
     # tool response filters is initialised. A failure here (BrokenProcessPool,
@@ -2447,31 +2448,12 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
         exc: The RequestValidationError exception containing failure details.
 
     Returns:
-        JSONResponse: A 422 Unprocessable Entity response with error details.
+        JSONResponse: A 422 Unprocessable Entity response with the standard FastAPI
+            ``{"detail": [{"type", "loc", "msg"}, ...]}`` shape, minus the fields that
+            leak detail (the echoed ``input`` value and the versioned ``url``).
     """
     logger.warning("Request validation error on %s: %s", _request.url.path if _request else "unknown", sanitize_validation_error_for_log(exc))
-
-    if not should_expose_error_details():
-        return ORJSONResponse(status_code=422, content={"detail": "An error occurred, please try again."})
-
-    if _request.url.path.startswith("/tools"):
-        error_details = []
-
-        for error in exc.errors():
-            loc = error.get("loc", [])
-            msg = error.get("msg", "Unknown error")
-            ctx = error.get("ctx", {"error": {}})
-            type_ = error.get("type", "value_error")
-            # Ensure ctx is JSON serializable
-            if isinstance(ctx, dict):
-                ctx_serializable = {k: (str(v) if isinstance(v, Exception) else v) for k, v in ctx.items()}
-            else:
-                ctx_serializable = str(ctx)
-            error_detail = {"type": type_, "loc": loc, "msg": msg, "ctx": ctx_serializable}
-            error_details.append(error_detail)
-
-        return ORJSONResponse(status_code=422, content={"detail": error_details})
-    return await fastapi_default_validation_handler(_request, exc)
+    return ORJSONResponse(status_code=422, content={"detail": ErrorFormatter.format_request_validation_error(exc)})
 
 
 @app.exception_handler(IntegrityError)
@@ -6104,7 +6086,8 @@ async def get_tool(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        logger.exception("Unexpected error in get_tool")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=unexpected_error_detail(e))
 
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
@@ -6207,7 +6190,8 @@ async def delete_tool(
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.exception("Unexpected error in delete_tool")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unexpected_error_detail(e))
 
 
 @tool_router.post("/{tool_id}/state")
@@ -6249,7 +6233,8 @@ async def set_tool_state(
     except ToolLockConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.exception("Unexpected error in set_tool_state")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unexpected_error_detail(e))
 
 
 @tool_router.post("/{tool_id}/toggle", deprecated=True)
@@ -6369,7 +6354,8 @@ async def set_resource_state(
     except ResourceLockConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.exception("Unexpected error in set_resource_state")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unexpected_error_detail(e))
 
 
 @resource_router.post("/{resource_id}/toggle", deprecated=True)
@@ -6936,7 +6922,8 @@ async def set_prompt_state(
     except PromptLockConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.exception("Unexpected error in set_prompt_state")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unexpected_error_detail(e))
 
 
 @prompt_router.post("/{prompt_id}/toggle", deprecated=True)
@@ -7446,7 +7433,8 @@ async def set_gateway_state(
     except GatewayToolNameConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.exception("Unexpected error in set_gateway_state")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unexpected_error_detail(e))
 
 
 @gateway_router.post("/{gateway_id}/toggle", deprecated=True)
@@ -8363,7 +8351,7 @@ async def handle_internal_mcp_initialize(request: Request):
         return ORJSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
                 "id": req_id,
             }
         )
@@ -8467,7 +8455,7 @@ async def handle_internal_mcp_notifications_initialized(request: Request):
         return ORJSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
                 "id": req_id,
             }
         )
@@ -8534,7 +8522,7 @@ async def handle_internal_mcp_notifications_message(request: Request):
         return ORJSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
                 "id": req_id,
             }
         )
@@ -8604,7 +8592,7 @@ async def handle_internal_mcp_notifications_cancelled(request: Request):
         return ORJSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
                 "id": req_id,
             }
         )
@@ -8664,8 +8652,9 @@ async def handle_internal_mcp_tools_list(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_tools_list")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -8761,8 +8750,9 @@ async def handle_internal_mcp_resources_list(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_resources_list")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -8886,8 +8876,9 @@ async def handle_internal_mcp_resources_read(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_resources_read")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -8988,8 +8979,9 @@ async def handle_internal_mcp_resources_subscribe(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_resources_subscribe")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -9074,8 +9066,9 @@ async def handle_internal_mcp_resources_unsubscribe(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_resources_unsubscribe")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -9314,8 +9307,9 @@ async def handle_internal_mcp_completion_complete(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_completion_complete")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -9380,8 +9374,9 @@ async def handle_internal_mcp_sampling_create_message(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_sampling_create_message")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -9450,8 +9445,9 @@ async def handle_internal_mcp_logging_set_level(request: Request):
             try:
                 db.invalidate()
             except Exception:
+                logger.exception("Unexpected error in handle_internal_mcp_logging_set_level")
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
     finally:
         db.close()
 
@@ -11916,7 +11912,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             try:
                 elicit_params = ElicitRequestParams(**params)
             except Exception as e:
-                raise JSONRPCError(-32602, f"Invalid elicitation params: {e}", params)
+                logger.warning("Invalid elicitation params: %s", e)
+                raise JSONRPCError(-32602, safe_error_detail(e, "Invalid elicitation params"), params)
 
             # Get target session (from params or find elicitation-capable session)
             target_session_id = params.get("session_id") or params.get("sessionId")
@@ -12544,8 +12541,8 @@ def healthcheck(response: Response = None):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        error_message = f"Database connection error: {str(e)}"
-        logger.error(error_message)
+        logger.error("Database connection error: %s", e)
+        error_message = "Database connection error"
         if response is not None:
             _apply_runtime_mode_headers(response)
         return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
@@ -12575,7 +12572,8 @@ def _check_db_ready() -> tuple[bool, str | None]:
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return (False, str(e))
+        logger.error("Database readiness check failed: %s", e)
+        return (False, "Database connection error")
     finally:
         db.close()
 

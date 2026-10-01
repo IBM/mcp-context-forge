@@ -149,6 +149,7 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 
 class MCPListMethod(Enum):
@@ -190,6 +191,44 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
         response = await list_method(cursor=cursor)
         mcp_responses.extend(getattr(response, response_attribute, []))
     return mcp_responses
+
+
+def _safe_connection_error_text(exc: BaseException) -> str:
+    """Describe a gateway connection failure without exposing library exception text.
+
+    Args:
+        exc: The exception raised while connecting to, or initializing, an upstream MCP server.
+
+    Returns:
+        str: A short fixed phrase for common transport failures, the exception's own message
+            for project-defined errors, or the generic unexpected-error text with a reference.
+
+    Examples:
+        >>> _safe_connection_error_text(httpx.ConnectTimeout("x"))
+        'connection timed out'
+        >>> _safe_connection_error_text(httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
+        'TLS handshake failed'
+        >>> _safe_connection_error_text(httpx.ConnectError("[Errno 111] Connection refused"))
+        'connection failed'
+        >>> _safe_connection_error_text(GatewayConnectionError("upstream rejected the token"))
+        'upstream rejected the token'
+        >>> _safe_connection_error_text(RuntimeError("anyio.EndOfStream at /usr/lib/python3.12/site-packages/..."))
+        'An unexpected error occurred'
+        >>> _safe_connection_error_text(UnicodeEncodeError("ascii", "tok\u2060en", 3, 4, "ordinal not in range(128)"))
+        'contains a character that is not valid ASCII (position 3)'
+    """
+    if isinstance(exc, (UnicodeEncodeError, UnicodeDecodeError)):
+        return f"contains a character that is not valid {exc.encoding.upper()} (position {exc.start})"
+    if isinstance(exc, (httpx.TimeoutException, httpx2.TimeoutException)):
+        return "connection timed out"
+    if isinstance(exc, ssl.SSLError):
+        return "TLS handshake failed"
+    if isinstance(exc, (httpx.ConnectError, httpx2.ConnectError)):
+        text = str(exc).lower()
+        return "TLS handshake failed" if ("ssl" in text or "certificate" in text or "tls" in text) else "connection failed"
+    if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        return f"server responded with HTTP {exc.response.status_code}"
+    return unexpected_error_detail(exc)
 
 
 def _resolve_tool_title(tool) -> Optional[str]:
@@ -558,11 +597,11 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
         ValueError: If team does not exist or caller lacks ownership.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     if not user_email:
         return
@@ -573,7 +612,7 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
@@ -910,10 +949,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return oauth_config
 
         if not oauth_config.get("target_audience"):
-            raise ValueError("target_audience is required for token-exchange grant type")
+            raise PublicValidationError("target_audience is required for token-exchange grant type")
         token_url = oauth_config.get("token_url")
         if not token_url:
-            raise ValueError("token_url is required for token-exchange grant type")
+            raise PublicValidationError("token_url is required for token-exchange grant type")
         # SSRF guard (B4): the user's inbound CF JWT is sent to token_url as the
         # subject_token, so token_url must pass the same egress validation the
         # auto-discover path applies to `issuer`. Raises ValueError on internal /
@@ -928,7 +967,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         source = oauth_config.setdefault("subject_token_source", "inbound_user_jwt")
         if source not in GatewayService._VALID_SUBJECT_TOKEN_SOURCES:
-            raise ValueError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
+            raise PublicValidationError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
 
         oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
         oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
@@ -1372,7 +1411,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 await self._redis_client.ping()
             except Exception as e:
-                raise ConnectionError(f"Redis ping failed: {e}") from e
+                raise ConnectionError(f"Redis ping failed: {unexpected_error_detail(e)}") from e
 
             is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
@@ -2375,14 +2414,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ).scalar_one_or_none()
 
             if not gateway:
-                raise ValueError(f"Gateway {gateway_id} not found")
+                raise PublicValidationError(f"Gateway {gateway_id} not found")
 
             if not gateway.oauth_config:
-                raise ValueError(f"Gateway {gateway_id} has no OAuth configuration")
+                raise PublicValidationError(f"Gateway {gateway_id} has no OAuth configuration")
 
             grant_type = gateway.oauth_config.get("grant_type")
             if grant_type != "authorization_code":
-                raise ValueError(f"Gateway {gateway_id} is not using Authorization Code flow")
+                raise PublicValidationError(f"Gateway {gateway_id} is not using Authorization Code flow")
 
             # Get OAuth tokens for this gateway using team-aware path selection.
             # SECURITY: Use teams parameter from request.state.token_teams to determine storage path:
@@ -2485,7 +2524,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         )
                     raise
             else:
-                raise ValueError(f"Unsupported transport type: {gateway.transport}")
+                raise PublicValidationError(f"Unsupported transport type: {gateway.transport}")
 
             catalog_sync = self._sync_gateway_catalog(
                 db,
@@ -3120,7 +3159,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if raw_oauth_update.get("grant_type") == "password":
                         original_grant_type = original_oauth_config.get("grant_type") if isinstance(original_oauth_config, dict) else None
                         if original_grant_type != "password":
-                            raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
+                            raise PublicValidationError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
 
                     await self._enforce_token_exchange_admin_only(db, raw_oauth_update, user_email)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
@@ -3179,7 +3218,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # Grandfather clause: Allow updates to existing query_param gateways
                         # unless they're trying to change credentials
                         if is_switching_to_queryparam or is_updating_queryparam_creds:
-                            raise ValueError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
+                            raise PublicValidationError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                     # Service-layer enforcement: Check host allowlist
                     if settings.insecure_queryparam_auth_allowed_hosts:
@@ -3188,7 +3227,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         hostname = (parsed.hostname or "").lower()
                         if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
                             allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                            raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
+                            raise PublicValidationError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
 
                     param_key = getattr(gateway_update, "auth_query_param_key", None) or (next(iter(gateway.auth_query_params.keys()), None) if gateway.auth_query_params else None)
                     param_value = getattr(gateway_update, "auth_query_param_value", None)
@@ -3351,7 +3390,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # a generic connection failure (502).
                         if init_affecting_changed and not isinstance(init_err, (GatewayConnectionError, GatewayCredentialError)):
                             safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
-                            safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
+                            safe_msg = _safe_connection_error_text(init_err)
                             raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
                         raise
                     if gateway_update.one_time_auth:
@@ -3590,7 +3629,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to update gateway: {str(e)}")
+            raise GatewayError(f"Failed to update gateway: {unexpected_error_detail(e)}")
 
     async def _check_gateway_access(
         self,
@@ -4126,7 +4165,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to set gateway state: {str(e)}")
+            raise GatewayError(f"Failed to set gateway state: {unexpected_error_detail(e)}")
 
     async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
         """
@@ -4314,7 +4353,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to delete gateway: {str(e)}")
+            raise GatewayError(f"Failed to delete gateway: {unexpected_error_detail(e)}")
 
     def _hard_delete_gateway(self, db: Session, gateway: DbGateway) -> None:
         """Delete gateway row plus dependent catalog rows."""
@@ -4657,7 +4696,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             await admin_stats_cache.invalidate_tags()
         except Exception as exc:
-            sanitized_error = sanitize_exception_message(str(exc), gateway.auth_query_params)
+            sanitized_error = _safe_connection_error_text(exc)
             next_attempt = (gateway.registration_attempts or 0) + 1
             if not self._finalize_pending_gateway_failure(db, gateway, sanitized_error, next_attempt):
                 db.rollback()
@@ -4749,8 +4788,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
-            raw_error = (str(error).strip() or type(error).__name__) if error is not None else "Unknown health-check failure"
-            sanitized_error = sanitize_exception_message(raw_error, auth_query_params or getattr(gateway, "auth_query_params", None))
+            sanitized_error = _safe_connection_error_text(error) if error is not None else "Unknown health-check failure"
             # Reset before the DB call: if set_gateway_state raises, a stale
             # count would retry the deactivation (and its audit entry) forever.
             self._gateway_failure_counts[gateway.id] = 0
@@ -5521,7 +5559,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         authentication = {"Authorization": f"Bearer {access_token}"}
                     except Exception as e:
                         logger.error("Failed to obtain OAuth access token: %s", e)
-                        raise GatewayConnectionError(f"OAuth authentication failed: {str(e)}")
+                        raise GatewayConnectionError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
                 elif grant_type == "token-exchange":
                     # Token-exchange (RFC 8693) requires an inbound end-user JWT as the subject
                     # token. Gateway initialization/registration has no associated user request,
@@ -5573,9 +5611,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if isinstance(root_cause, GatewayError):
                 raise root_cause
 
-            raw_error = str(root_cause) or type(root_cause).__name__
-            sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
-            logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitized_error, exc_info=True)
+            sanitized_error = _safe_connection_error_text(root_cause)
+            logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitize_exception_message(str(root_cause) or type(root_cause).__name__, auth_query_params), exc_info=True)
 
             # A header value that reaches the HTTP client encoding step is either an
             # OAuth-derived value or something else this method didn't sanitize up front.
@@ -5998,7 +6035,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Validate target user exists and is active
         target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
         if not target_user:
-            raise ValueError(f"Target user not found or inactive: {target_owner_email}")
+            raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
         gateway = get_for_update(db, DbGateway, gateway_id)
         if not gateway:
@@ -6006,9 +6043,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if token_teams is not None:
             current_team_id = gateway.team_id
             if not current_team_id or current_team_id not in token_teams:
-                raise ValueError("Gateway is outside the caller's token team scope")
+                raise PublicValidationError("Gateway is outside the caller's token team scope")
             if target_team_id and target_team_id not in token_teams:
-                raise ValueError("Target team is outside the caller's token team scope")
+                raise PublicValidationError("Target team is outside the caller's token team scope")
 
         previous_owner = gateway.owner_email
         previous_team = gateway.team_id
@@ -6024,7 +6061,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
             ).scalar_one_or_none()
             if not member:
-                raise ValueError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
+                raise PublicValidationError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
 
         if target_team_id and gateway.visibility != "team":
             # Validate target owner is active member of the explicit target team
@@ -6036,7 +6073,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
             ).scalar_one_or_none()
             if not member:
-                raise ValueError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
+                raise PublicValidationError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
 
         def _apply_team_transfer(entity: Any) -> None:
             """Assign a transferred entity to the target team and expose it to members."""
@@ -7043,7 +7080,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except Exception as e:
             logger.warning("Failed to fetch tools from gateway %s: %s", gateway_name, e)
             result["success"] = False
-            result["error"] = str(e)
+            result["error"] = _safe_connection_error_text(e)
             return result
 
         result["validation_errors"] = validation_errors
@@ -7533,8 +7570,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Note: This function is for OAuth servers only, which don't use query param auth
             # Still sanitize in case exception contains URL with static sensitive params
             sanitized_url = sanitize_url_for_logging(server_url)
-            sanitized_error = sanitize_exception_message(str(e))
-            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitized_error, exc_info=True)
+            sanitized_error = _safe_connection_error_text(e)
+            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitize_exception_message(str(e)), exc_info=True)
 
             # Surface diagnostic context for likely auth rejections (401/403)
             error_str = str(e).lower()
@@ -8354,7 +8391,7 @@ async def test_server_handshake(
                     root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
-                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                    copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
                 logger.warning("MCP handshake initialize failed for virtual server %s: %s", server_id, sanitize_exception_message(str(root_cause)))
                 return _failure(failure_class, copy)
     except TimeoutError:
@@ -8470,7 +8507,7 @@ async def test_gateway_connectivity(
                     return GatewayTestResponse(
                         status_code=500,
                         latency_ms=latency_ms,
-                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL."},
+                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL."},
                     )
             else:
                 # For Client Credentials flow, get token directly
@@ -8486,7 +8523,7 @@ async def test_gateway_connectivity(
                     return GatewayTestResponse(
                         status_code=502,
                         latency_ms=latency_ms,
-                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL."},
+                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL."},
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
@@ -8580,7 +8617,9 @@ async def test_gateway_connectivity(
         )
 
         return GatewayTestResponse(
-            status_code=502, latency_ms=latency_ms, body={"error": "The MCP server request failed. Verify the MCP server is running and reachable from this host.", "details": str(e)}
+            status_code=502,
+            latency_ms=latency_ms,
+            body={"error": "The MCP server request failed. Verify the MCP server is running and reachable from this host.", "details": _safe_connection_error_text(e)},
         )
 
 
@@ -8689,7 +8728,7 @@ async def test_gateway_handshake(
                 success=False,
                 latency_ms=_latency_ms(),
                 failure_class="auth",
-                error=f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL.",
+                error=f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL.",
             )
     elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
         if isinstance(gateway.auth_value, dict):
@@ -8782,7 +8821,7 @@ async def test_gateway_handshake(
                         response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
                     except httpx.RequestError as e:
                         logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
-                        return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {sanitize_exception_message(str(e))}")
+                        return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_safe_connection_error_text(e)}")
 
                     if response.status_code in (401, 403):
                         return _failure("auth", _HANDSHAKE_AUTH_COPY)
@@ -8879,7 +8918,7 @@ async def test_gateway_handshake(
                     root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
-                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                    copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
                 logger.warning("MCP handshake initialize failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(root_cause)))
                 return _failure(failure_class, copy)
     except TimeoutError:
