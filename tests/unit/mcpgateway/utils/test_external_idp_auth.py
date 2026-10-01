@@ -1641,3 +1641,286 @@ def test_load_trusted_provider_map_warns_on_internal_issuer_collision(caplog):
     assert any("dead config" in r.message for r in caplog.records), (
         "Expected a dead-config WARNING for provider whose issuer == jwt_issuer"
     )
+
+
+# ---------------------------------------------------------------------------
+# Alternate email claim (generic OIDC, no ``email`` claim) on the bearer path
+# ---------------------------------------------------------------------------
+
+_ALT_ISSUER = "https://idp.corp.example/realms/main"
+
+
+def _alt_provider(**overrides):
+    # First-Party
+    from mcpgateway.db import SSOProvider
+
+    values = {
+        "id": "corp-oidc",
+        "name": "corp-oidc",
+        "display_name": "Corp OIDC",
+        "provider_type": "oidc",
+        "is_enabled": True,
+        "client_id": "cid",
+        "client_secret_encrypted": "enc",
+        "authorization_url": f"{_ALT_ISSUER}/auth",
+        "token_url": f"{_ALT_ISSUER}/token",
+        "userinfo_url": f"{_ALT_ISSUER}/userinfo",
+        "issuer": _ALT_ISSUER,
+        "trusted_for_api_auth": True,
+        "api_audience": "forge-api",
+        "trusted_domains": [],
+        "team_mapping": {},
+        "provider_metadata": {},
+        "auto_create_users": True,
+    }
+    values.update(overrides)
+    return SSOProvider(**values)
+
+
+def _alt_claims(**overrides):
+    claims = {"iss": _ALT_ISSUER, "sub": "s-1", "aud": "forge-api", "name": "Jane Doe", "preferred_username": "Jane@Corp.com"}
+    claims.update(overrides)
+    return claims
+
+
+def _alt_service(monkeypatch, provider, existing_user=None):
+    """Real SSOService (real normalizer + real provisioning gates), stubbed persistence."""
+    # Standard
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    # First-Party
+    from mcpgateway.services.sso_service import SSOService
+    from mcpgateway.utils import verify_credentials as vc
+
+    with patch("mcpgateway.services.sso_service.get_encryption_service"):
+        svc = SSOService(MagicMock())
+    svc.get_provider = lambda _id: provider
+    svc.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+    svc.auth_service._invalidate_user_auth_cache = AsyncMock()
+    svc.auth_service.create_user = AsyncMock(return_value=SimpleNamespace(email="jane@corp.com", full_name="Jane Doe", auth_provider="corp-oidc", is_admin=False, admin_origin=None))
+    db_user = SimpleNamespace(email="jane@corp.com", is_admin=False)
+    svc.auth_service.get_user_by_email = AsyncMock(return_value=db_user)
+    svc._apply_team_mapping = AsyncMock()
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+    return svc
+
+
+@pytest.fixture
+def alt_settings(monkeypatch):
+    """Provisioning settings for the real SSOService, scoped to this module's alternate-claim tests."""
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    for name, value in {
+        "sso_auto_admin_domains": [],
+        "sso_github_admin_orgs": [],
+        "sso_google_admin_domains": [],
+        "sso_entra_admin_groups": [],
+        "sso_entra_sync_roles_on_login": False,
+        "sso_require_admin_approval": False,
+        "sso_allow_provider_linking": False,
+        "sso_generic_provider_id": None,
+        "sso_generic_admin_groups": [],
+    }.items():
+        monkeypatch.setattr(sso_service.settings, name, value, raising=False)
+
+    async def fake_jwt(_payload):
+        return "internal-jwt"
+
+    monkeypatch.setattr(sso_service, "create_jwt_token", fake_jwt)
+    monkeypatch.setattr("mcpgateway.utils.verify_credentials._record_external_auth_metric", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
+def session_teams(monkeypatch):
+    calls = []
+
+    async def fake_resolve(payload, email, db_user, **kw):
+        calls.append(email)
+        return ["team-a"]
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_alternate_claim_token_resolves_expected_local_principal(monkeypatch, alt_settings, session_teams):
+    """A verified token with no ``email`` claim maps to the address-shaped fallback claim."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _alt_provider()
+    svc = _alt_service(monkeypatch, provider)
+
+    payload = await vc.build_external_identity(provider, _alt_claims(), "raw-token", MagicMock())
+
+    assert payload is not None
+    assert payload["email"] == payload["sub"] == "jane@corp.com"
+    assert payload["token_use"] == "session"
+    assert payload["auth_provider"] == "corp-oidc"
+    assert payload["is_admin"] is False
+    assert payload["teams"] == ["team-a"]
+    assert svc.auth_service.create_user.await_args.kwargs["email"] == "jane@corp.com"
+    svc.auth_service.get_user_by_email.assert_awaited_once_with("jane@corp.com")
+
+
+@pytest.mark.asyncio
+async def test_alternate_claim_token_uses_configured_email_claim(monkeypatch, alt_settings, session_teams):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _alt_provider(provider_metadata={"email_claim": "corp_mail"})
+    svc = _alt_service(monkeypatch, provider)
+
+    payload = await vc.build_external_identity(provider, _alt_claims(corp_mail="jane@corp.com", preferred_username="someone-else@corp.com"), "raw-token", MagicMock())
+
+    assert payload["email"] == "jane@corp.com"
+    assert svc.auth_service.create_user.await_args.kwargs["email"] == "jane@corp.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claim_overrides,provider_overrides,resolved_email",
+    [
+        pytest.param({"email_verified": False}, {}, "jane@corp.com", id="explicitly-unverified"),
+        pytest.param({"email_verified": "false"}, {}, "jane@corp.com", id="explicitly-unverified-string"),
+        pytest.param({}, {"trusted_domains": ["other.example"]}, "jane@corp.com", id="domain-not-allowed"),
+        pytest.param({"preferred_username": "jane"}, {}, None, id="no-address-shaped-claim"),
+    ],
+)
+async def test_alternate_claim_token_denied_by_provisioning_gates(monkeypatch, alt_settings, session_teams, claim_overrides, provider_overrides, resolved_email):
+    """Fallback identities get no exemption from the verification, domain and address checks."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _alt_provider(**provider_overrides)
+    svc = _alt_service(monkeypatch, provider)
+    claims = _alt_claims(**claim_overrides)
+
+    normalized = svc._normalize_user_info(provider, claims)
+    assert (normalized["email"] or "").lower() == (resolved_email or ""), "the fallback must resolve the identity under test, so the denial comes from the gate"
+
+    assert await vc.build_external_identity(provider, claims, "raw-token", MagicMock()) is None
+    svc.auth_service.create_user.assert_not_awaited()
+    svc.auth_service.get_user_by_email.assert_not_awaited()
+    assert session_teams == []
+
+
+@pytest.mark.asyncio
+async def test_alternate_claim_token_cannot_take_over_account_bound_to_another_provider(monkeypatch, alt_settings, session_teams):
+    # Standard
+    from types import SimpleNamespace
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    existing = SimpleNamespace(email="jane@corp.com", full_name="Jane", auth_provider="github", email_verified=True, last_login=None, is_admin=False, admin_origin=None)
+    provider = _alt_provider()
+    svc = _alt_service(monkeypatch, provider, existing_user=existing)
+    assert svc._normalize_user_info(provider, _alt_claims())["email"].lower() == "jane@corp.com"
+
+    assert await vc.build_external_identity(provider, _alt_claims(), "raw-token", MagicMock()) is None
+    assert existing.auth_provider == "github"
+    assert existing.last_login is None
+    svc.auth_service.get_user_by_email.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_alternate_claim_token_admin_like_claims_do_not_grant_admin(monkeypatch, alt_settings, session_teams):
+    """``is_admin`` in the payload is read from the persisted user, never from token claims."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _alt_provider()
+    svc = _alt_service(monkeypatch, provider)
+    claims = _alt_claims(is_admin=True, groups=["admin", "platform_admin"], roles=["admin"])
+
+    payload = await vc.build_external_identity(provider, claims, "raw-token", MagicMock())
+
+    assert payload["is_admin"] is False
+    assert svc.auth_service.create_user.await_args.kwargs["is_admin"] is False
+
+
+@pytest.mark.asyncio
+async def test_alternate_claim_session_is_denied_by_layer2_rbac(monkeypatch, alt_settings, session_teams):
+    """A session built from a fallback identity has no RBAC exemption."""
+    # Third-Party
+    from fastapi import HTTPException
+
+    # First-Party
+    from mcpgateway.middleware import rbac
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _alt_provider()
+    _alt_service(monkeypatch, provider)
+    payload = await vc.build_external_identity(provider, _alt_claims(), "raw-token", MagicMock())
+    assert payload is not None
+
+    class DenyingPermissionService:
+        def __init__(self, db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            return False
+
+    monkeypatch.setattr(rbac, "PermissionService", DenyingPermissionService)
+
+    @rbac.require_permission("tools.execute")
+    async def protected(user=None):
+        return "should-not-run"
+
+    with pytest.raises(HTTPException) as exc:
+        await protected(user={**payload, "db": MagicMock()})
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "provider_overrides",
+    [
+        pytest.param({"is_enabled": False}, id="disabled-provider"),
+        pytest.param({"trusted_for_api_auth": False}, id="not-trusted-for-api-auth"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_alternate_claim_token_rejected_for_disabled_or_untrusted_provider(monkeypatch, provider_overrides):
+    """Provider resolution runs against real rows, before any claim is read for identity."""
+    # Third-Party
+    import jwt as pyjwt
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    # First-Party
+    from mcpgateway.db import SSOProvider
+    from mcpgateway.services import sso_service
+    from mcpgateway.utils import verify_credentials as vc
+
+    engine = create_engine("sqlite://")
+    SSOProvider.__table__.create(engine)
+    with sessionmaker(bind=engine)() as db:
+        db.add(_alt_provider(**provider_overrides))
+        db.commit()
+
+        sso_service.invalidate_trusted_provider_cache()
+        oauth_calls = []
+
+        async def fake_oauth(token, authorization_servers, *, expected_audience=None):
+            oauth_calls.append(authorization_servers)
+            return _alt_claims()
+
+        monkeypatch.setattr(vc, "verify_oauth_access_token", fake_oauth)
+        token = pyjwt.encode(_alt_claims(), "unused-signing-key-for-unverified-decode-only", algorithm="HS256")
+
+        assert await vc.verify_external_idp_token(token, db) == (None, None)
+        assert oauth_calls == [], "no token verification may run for a disabled or untrusted provider"
+
+        db.query(SSOProvider).update({"is_enabled": True, "trusted_for_api_auth": True})
+        db.commit()
+        sso_service.invalidate_trusted_provider_cache()
+
+        claims, provider = await vc.verify_external_idp_token(token, db)
+        assert provider.id == "corp-oidc"
+        assert claims["preferred_username"] == "Jane@Corp.com"
+        assert oauth_calls == [[_ALT_ISSUER]]
+
+    sso_service.invalidate_trusted_provider_cache()

@@ -2594,6 +2594,203 @@ class TestExtractGroupsAndRoles:
         assert result == ["eng", "shared", "admin"]
 
 
+class TestResolveEmailClaim:
+    """Tests for generic-OIDC email resolution."""
+
+    def test_prefers_standard_email_claim(self):
+        d = {"email": "a@e.com", "preferred_username": "b@e.com"}
+        assert SSOService._resolve_email_claim(d, {}, "p") == "a@e.com"
+
+    def test_falls_back_to_preferred_username(self):
+        d = {"preferred_username": "user@example.com"}
+        assert SSOService._resolve_email_claim(d, {}, "p") == "user@example.com"
+
+    def test_falls_back_to_upn_then_unique_name_then_mail(self):
+        assert SSOService._resolve_email_claim({"upn": "u@e.com"}, {}, "p") == "u@e.com"
+        assert SSOService._resolve_email_claim({"unique_name": "n@e.com"}, {}, "p") == "n@e.com"
+        assert SSOService._resolve_email_claim({"mail": "m@e.com"}, {}, "p") == "m@e.com"
+
+    def test_does_not_promote_a_bare_username(self):
+        """A fallback must look like an address; it becomes the identity key."""
+        assert SSOService._resolve_email_claim({"preferred_username": "jdoe"}, {}, "p") is None
+
+    def test_configured_email_claim_wins_and_skips_at_check(self):
+        d = {"email": "wrong@e.com", "corpMail": "right@e.com"}
+        assert SSOService._resolve_email_claim(d, {"email_claim": "corpMail"}, "p") == "right@e.com"
+
+    def test_configured_email_claim_missing_returns_none(self):
+        d = {"email": "present@e.com"}
+        assert SSOService._resolve_email_claim(d, {"email_claim": "absent"}, "p") is None
+
+    def test_returns_none_when_nothing_usable(self):
+        assert SSOService._resolve_email_claim({"sub": "abc", "name": "A"}, {}, "p") is None
+
+    def test_handles_missing_metadata(self):
+        assert SSOService._resolve_email_claim({"email": "a@e.com"}, None, "p") == "a@e.com"
+
+
+class TestAlternateEmailClaimAuthentication:
+    """A fallback identity must pass through the same gates as an ``email`` claim.
+
+    Claims go through the real generic-OIDC ``_normalize_user_info`` (no ``email``
+    claim) and then the real ``authenticate_or_create_user``.
+    """
+
+    ADMIN_LIKE_CLAIMS = {"is_admin": True, "groups": ["admin", "platform_admin"], "roles": ["admin"]}
+
+    @staticmethod
+    def _provider(**overrides):
+        return _make_provider(id="corp-oidc", name="corp-oidc", display_name="Corp OIDC", provider_type="oidc", scope="openid profile", **overrides)
+
+    @staticmethod
+    async def _login(sso_service, claims, provider, existing_user=None, **setting_overrides):
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service.create_user = AsyncMock(return_value=SimpleNamespace(email="created@corp.com", full_name="Created", auth_provider=provider.id, is_admin=False, admin_origin=None))
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: provider
+        sso_service._apply_team_mapping = AsyncMock()
+        user_info = sso_service._normalize_user_info(provider, claims)
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_settings.sso_require_admin_approval = False
+            mock_settings.sso_allow_provider_linking = False
+            mock_settings.sso_generic_provider_id = None
+            mock_settings.sso_generic_admin_groups = []
+            for name, value in setting_overrides.items():
+                setattr(mock_settings, name, value)
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user(user_info)
+        return result, user_info
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "claims,expected_email",
+        [
+            ({"sub": "s1", "preferred_username": "Jane@Corp.com", "name": "Jane"}, "jane@corp.com"),
+            ({"sub": "s1", "upn": "jane@corp.com"}, "jane@corp.com"),
+            ({"sub": "s1", "unique_name": "jane@corp.com"}, "jane@corp.com"),
+            ({"sub": "s1", "mail": "jane@corp.com"}, "jane@corp.com"),
+        ],
+    )
+    async def test_alternate_claim_provisions_user_keyed_on_that_claim(self, sso_service, claims, expected_email):
+        result, user_info = await self._login(sso_service, claims, self._provider())
+
+        assert result == "jwt-token"
+        assert user_info["email"].lower() == expected_email
+        sso_service.auth_service.create_user.assert_awaited_once()
+        assert sso_service.auth_service.create_user.await_args.kwargs["email"] == expected_email
+        assert sso_service.auth_service.create_user.await_args.kwargs["auth_provider"] == "corp-oidc"
+
+    @pytest.mark.asyncio
+    async def test_configured_email_claim_provisions_user(self, sso_service):
+        provider = self._provider(provider_metadata={"email_claim": "corp_mail"})
+        result, _ = await self._login(sso_service, {"sub": "s1", "corp_mail": "jane@corp.com", "preferred_username": "other@corp.com"}, provider)
+
+        assert result == "jwt-token"
+        assert sso_service.auth_service.create_user.await_args.kwargs["email"] == "jane@corp.com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verified", [False, "false", "0", 0])
+    async def test_explicitly_unverified_alternate_identity_is_rejected(self, sso_service, verified):
+        result, user_info = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@corp.com", "email_verified": verified}, self._provider())
+
+        assert user_info["email"] == "jane@corp.com", "the fallback must resolve an identity, so the denial below comes from the verification gate"
+        assert result is None
+        sso_service.auth_service.create_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unverified_alternate_identity_does_not_touch_existing_user(self, sso_service):
+        existing = SimpleNamespace(email="jane@corp.com", full_name="Jane", auth_provider="corp-oidc", email_verified=True, last_login=None, is_admin=False, admin_origin=None)
+
+        result, user_info = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@corp.com", "email_verified": False}, self._provider(), existing_user=existing)
+
+        assert user_info["email"] == "jane@corp.com"
+        assert result is None
+        assert existing.email_verified is True
+        assert existing.last_login is None
+
+    @pytest.mark.asyncio
+    async def test_absent_email_verified_claim_is_allowed_for_alternate_identity(self, sso_service):
+        result, user_info = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@corp.com"}, self._provider())
+
+        assert "email_verified" not in user_info
+        assert result == "jwt-token"
+
+    @pytest.mark.asyncio
+    async def test_alternate_identity_outside_trusted_domains_is_rejected(self, sso_service):
+        result, user_info = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@evil.example"}, self._provider(trusted_domains=["corp.com"]))
+
+        assert user_info["email"] == "jane@evil.example", "the fallback must resolve an identity, so the denial below comes from the trusted-domain gate"
+        assert result is None
+        sso_service.auth_service.create_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_alternate_identity_inside_trusted_domains_is_allowed(self, sso_service):
+        result, _ = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@CORP.com"}, self._provider(trusted_domains=["corp.com"]))
+
+        assert result == "jwt-token"
+
+    @pytest.mark.asyncio
+    async def test_trusted_domains_reject_existing_user_reached_through_alternate_claim(self, sso_service):
+        existing = SimpleNamespace(email="jane@evil.example", full_name="Jane", auth_provider="corp-oidc", email_verified=True, last_login=None, is_admin=False, admin_origin=None)
+
+        result, user_info = await self._login(sso_service, {"sub": "s1", "upn": "jane@evil.example"}, self._provider(trusted_domains=["corp.com"]), existing_user=existing)
+
+        assert user_info["email"] == "jane@evil.example"
+        assert result is None
+        assert existing.last_login is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("claims", [{"sub": "s1", "preferred_username": "jane"}, {"sub": "s1", "name": "Jane"}, {"sub": "s1", "preferred_username": ""}])
+    async def test_no_address_shaped_claim_is_rejected(self, sso_service, claims):
+        result, user_info = await self._login(sso_service, claims, self._provider())
+
+        assert result is None
+        assert not user_info["email"]
+        sso_service.auth_service.create_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_alternate_identity_cannot_take_over_account_bound_to_another_provider(self, sso_service):
+        """The provider-binding check applies to a fallback identity exactly as to an ``email`` claim."""
+        existing = SimpleNamespace(email="jane@corp.com", full_name="Jane", auth_provider="github", email_verified=True, last_login=None, is_admin=False, admin_origin=None)
+
+        result, user_info = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@corp.com"}, self._provider(), existing_user=existing)
+
+        assert user_info["email"] == "jane@corp.com"
+        assert result is None
+        assert existing.auth_provider == "github"
+        assert existing.last_login is None
+
+    @pytest.mark.asyncio
+    async def test_provider_without_auto_create_does_not_provision_alternate_identity(self, sso_service):
+        result, user_info = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@corp.com"}, self._provider(auto_create_users=False))
+
+        assert user_info["email"] == "jane@corp.com"
+        assert result is None
+        sso_service.auth_service.create_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_admin_like_claims_do_not_grant_admin_to_alternate_identity(self, sso_service):
+        result, _ = await self._login(sso_service, {"sub": "s1", "preferred_username": "jane@corp.com", **self.ADMIN_LIKE_CLAIMS}, self._provider())
+
+        assert result == "jwt-token"
+        assert sso_service.auth_service.create_user.await_args.kwargs["is_admin"] is False
+
+    @pytest.mark.asyncio
+    async def test_admin_domain_policy_applies_to_alternate_identity_domain_only(self, sso_service):
+        provider = self._provider()
+        await self._login(sso_service, {"sub": "s1", "upn": "jane@corp.com"}, provider, sso_auto_admin_domains=["admins.example"])
+        assert sso_service.auth_service.create_user.await_args.kwargs["is_admin"] is False
+
+        await self._login(sso_service, {"sub": "s2", "upn": "root@admins.example"}, provider, sso_auto_admin_domains=["admins.example"])
+        assert sso_service.auth_service.create_user.await_args.kwargs["is_admin"] is True
+
+
 class TestBuildNormalizedUserInfo:
     """Tests for the extracted _build_normalized_user_info helper."""
 
