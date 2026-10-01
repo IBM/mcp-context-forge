@@ -4088,9 +4088,7 @@ class TestGatewayRefresh:
 
         assert [tool.name for tool in valid_tools] == ["routed_tool"]
         assert valid_tools[0].input_schema["properties"]["region"]["x-mcp-header"] == "Region"
-        assert len(validation_errors) == 1
-        assert validation_errors[0].startswith("broken_tool:")
-        assert "x-mcp-header" in validation_errors[0]
+        assert validation_errors == ["broken_tool: invalid x-mcp-header annotation: property 'r': x-mcp-header '' is not an RFC 9110 token"]
 
     def test_validate_tools_preserves_mcp_apps_meta(self, gateway_service):
         """Gateway discovery should preserve upstream MCP Apps _meta.ui metadata."""
