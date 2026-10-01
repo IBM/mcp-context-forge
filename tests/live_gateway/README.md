@@ -30,7 +30,9 @@ Specific subsuites need additional services on top:
 
 | Subdir | Extra requirement | How to start |
 |---|---|---|
+| `e2e/` | gateway with MCP transports and Playwright | `make testing-up` (default profile) |
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
+| `mcp/test_oauth_status_live.py` | Postgres reachable at `localhost:5433` (the compose default) | `make testing-up` |
 | `sso/` | Keycloak (jwks tests) and/or Entra ID (entra tests) | `docker compose --profile sso up -d` for Keycloak; `AZURE_*` env vars for Entra |
 | `e2e_rust/` | gateway built with the Rust transport (edge or full mode) | `make testing-up` with the Rust profile, or rebuild compose images with Rust enabled |
 
@@ -44,16 +46,27 @@ subsuites (e.g., `BASE_URL`, `JWT_SECRET`, `skip_no_gateway`).
 make test-live-gateway
 
 # Or run a focused subsuite
-make test-mcp-protocol-e2e         # tests/live_gateway/mcp/test_mcp_protocol_e2e.py
-make test-mcp-rbac                 # tests/live_gateway/mcp/test_mcp_rbac_transport.py
+make test-e2e                      # tests/live_gateway/e2e/test_e2e.py
 make test-mcp-plugin-parity        # tests/live_gateway/mcp/test_mcp_plugin_parity.py
 make test-mcp-access-matrix        # tests/live_gateway/e2e_rust/test_mcp_access_matrix.py
 make test-mcp-session-isolation    # tests/live_gateway/e2e_rust/test_mcp_session_isolation.py
 make test-e2e-sso                  # tests/live_gateway/sso/
+make test-oauth-status-live        # tests/live_gateway/mcp/test_oauth_status_live.py
 
 # Or run a specific file directly via uv
 uv run --extra plugins pytest tests/live_gateway/mcp/test_langfuse_traces.py -v
 ```
+
+## Tuning sync deadlines
+
+`tests/live_gateway/e2e/test_e2e.py` polls the gateway for state that
+propagates asynchronously (tool catalog publish, cross-replica sync). Two
+env vars override the poll deadlines when a stack needs more time:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_E2E_PUBLISHER_SYNC_DEADLINE` | `75.0` (seconds) | Deadline for a registered gateway's tools to appear in `GET /tools`. Covers one 60-second publish interval plus 15 seconds of slack. |
+| `MCP_E2E_REPLICA_SYNC_DEADLINE` | `30.0` (seconds) | Deadline for the Streamable HTTP gateway's tool catalog to stabilize across Nginx-routed replica reads. Shorter than the publisher deadline because replica propagation is expected to be faster than the tool-catalog publish interval. |
 
 ## Skip behavior
 

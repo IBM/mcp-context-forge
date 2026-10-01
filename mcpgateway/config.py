@@ -65,10 +65,11 @@ from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_valida
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
+from mcpgateway._security_constants import calculate_entropy
 from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
-from mcpgateway._security_constants import calculate_entropy
+from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -485,6 +486,7 @@ class Settings(BaseSettings):
     sso_ibm_verify_client_id: Optional[str] = Field(default=None, description="IBM Security Verify client ID")
     sso_ibm_verify_client_secret: Optional[SecretStr] = Field(default=None, description="IBM Security Verify client secret")
     sso_ibm_verify_issuer: Optional[str] = Field(default=None, description="IBM Security Verify OIDC issuer URL")
+    ibm_verify_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of IBM Security Verify group names to team UUIDs")
 
     sso_okta_enabled: bool = Field(default=False, description="Enable Okta OIDC authentication")
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
@@ -583,6 +585,17 @@ class Settings(BaseSettings):
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
+    sso_allow_provider_linking: bool = Field(
+        default=False,
+        description=(
+            "Allow an existing account (matched by verified email) to sign in through a different trusted SSO provider, "
+            "rebinding it to the new provider. Only applies to email-verified logins that already pass trusted-domain policy. "
+            "This is a single global switch for ALL configured providers, not scoped to a specific trusted pair — enabling it "
+            "allows relinking between any two providers on this gateway. Admin status is re-vetted against the new provider "
+            "on relink regardless of how admin was originally granted, so a non-admin-granting provider cannot inherit admin. "
+            "Default: false (one email is bound to one provider; cross-provider sign-in is refused)."
+        ),
+    )
     sso_auto_disable_unconfigured_providers: bool = Field(
         default=False,
         description=(
@@ -644,6 +657,23 @@ class Settings(BaseSettings):
         description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+    mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
+        default="auto",
+        description=(
+            "Upstream MCP connect mode: 'auto' negotiates modern protocol revisions (e.g. 2026-07-28) "
+            "via server/discover with legacy initialize fallback; 'legacy' forces the pre-2026 "
+            "initialize handshake (rollback for misbehaving upstreams)."
+        ),
+    )
+    mcp_inbound_protocol_mode: Literal["auto", "legacy"] = Field(
+        default="auto",
+        description=(
+            "Inbound MCP protocol mode: 'auto' accepts all supported protocol versions "
+            "including 2026-07-28; 'legacy' accepts only handshake-era versions "
+            "(2024-11-05 through 2025-11-25), rejecting 2026-07-28 with 400 to steer "
+            "dual-era clients to legacy initialize negotiation."
+        ),
+    )
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(
@@ -999,6 +1029,28 @@ class Settings(BaseSettings):
             "the upstream MCP server to validate ``aud``."
         ),
     )
+    oauth_redirect_allowed_origin: Optional[str] = Field(
+        default=None,
+        description="Exact HTTPS origin allowed for post-OAuth redirects outside APP_DOMAIN.",
+    )
+
+    @field_validator("oauth_redirect_allowed_origin")
+    @classmethod
+    def validate_oauth_redirect_allowed_origin(cls, origin: Optional[str]) -> Optional[str]:
+        """Require the external post-OAuth redirect entry to be an exact HTTPS origin.
+
+        Args:
+            origin: Configured external redirect origin.
+
+        Returns:
+            Validated origin.
+
+        Raises:
+            ValueError: If the entry is not an exact HTTPS origin.
+        """
+        if origin is not None and not is_exact_https_origin(origin):
+            raise ValueError(f"OAuth redirect allowlist entry must be an exact HTTPS origin: {origin}")
+        return origin
 
     # ===================================
     # Dynamic Client Registration (DCR) - Client Mode
@@ -1185,6 +1237,9 @@ class Settings(BaseSettings):
 
     # Tool Execution Cancellation
     mcpgateway_tool_cancellation_enabled: bool = Field(default=True, description="Enable gateway-authoritative tool execution cancellation with REST API endpoints")
+
+    # Tool Preview (dry-run)
+    mcpgateway_tool_preview_enabled: bool = Field(default=True, description="Enable the tool preview (dry-run) endpoint at /tools/preview/{name}")
 
     # A2A (Agent-to-Agent) Feature Flags
     mcpgateway_a2a_enabled: bool = True
@@ -1611,18 +1666,63 @@ class Settings(BaseSettings):
 
         return v
 
+    @staticmethod
+    def _enforce_secret_strength(
+        field_name: str,
+        value: str,
+        weak_secrets: set[str],
+        *,
+        min_length: int = 0,
+        min_entropy: float = 0.0,
+        check_placeholder: bool = False,
+        hint: str = "",
+    ) -> None:
+        """Raise ``SecurityConfigurationError`` if *value* fails any enabled check.
+
+        Used by ``validate_security_combinations`` for both unconditional secret
+        enforcement (JWT, encryption) and feature-gated password enforcement.
+
+        Args:
+            field_name: Config field name for the error message.
+            value: The secret or password value to check.
+            weak_secrets: Lower-cased set of known-weak values.
+            min_length: Minimum length (0 = skip check).
+            min_entropy: Minimum Shannon entropy (0.0 = skip check).
+            check_placeholder: Also reject empty and ``__REPLACE_ME__`` values.
+            hint: Extra text appended to the error message (e.g. rotation guide URL).
+        """
+        remediation = "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, or use 'make init-secrets-patch-env' to write them directly into .env."
+
+        if check_placeholder and not value.strip():
+            raise SecurityConfigurationError(f"{field_name}: secret is empty. {remediation}{hint}")
+
+        if min_length and len(value) < min_length:
+            raise SecurityConfigurationError(f"{field_name}: too short ({len(value)} chars, minimum {min_length}). {remediation}{hint}")
+
+        if check_placeholder and value.lower().startswith(("__replace_me__", "replaceme")):
+            raise SecurityConfigurationError(f"{field_name}: unset placeholder (__REPLACE_ME__) rejected. {remediation}{hint}")
+
+        if value.lower() in weak_secrets:
+            raise SecurityConfigurationError(f"{field_name}: known-weak/default value rejected. {remediation}{hint}")
+
+        if min_entropy:
+            entropy = calculate_entropy(value)
+            if entropy < min_entropy:
+                raise SecurityConfigurationError(f"{field_name}: low entropy (score {entropy:.2f} < {min_entropy}). {remediation}{hint}")
+
     @model_validator(mode="after")
     def validate_security_combinations(self) -> Self:
         """Validate security setting combinations and raise on unsafe secrets.
 
-        Placeholder and weak/known secrets are rejected unconditionally in every
-        environment (development, staging, and production alike).  Some compose
-        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
-        sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
-        this validator, so per-process random generation cannot be used as a
-        fallback — gateway and sibling containers must share the same secret.
-        The only safe option is an unconditional hard-fail that forces operators
-        to provide a real secret before the process will start.
+        Secrets (``jwt_secret_key``, ``auth_encryption_secret``) are checked
+        unconditionally for empty, placeholder, weak, short, and low-entropy
+        values.  Password credentials (``basic_auth_password``,
+        empty, placeholder, known-weak, and too-short (below
+        ``password_min_length_user``, the OWASP baseline) values when their
+        consuming authentication feature is enabled (feature-gated fail-closed).
+        No entropy floor is applied to passwords: the Shannon-entropy check used
+        for random secrets is a poor signal for human-chosen passwords and the
+        length + known-weak-value checks already cover the realistic risk.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1632,59 +1732,55 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
-                is unset (placeholder), matches a known-weak value, is shorter than
-                ``min_secret_length`` characters, or has low per-character entropy.
+            SecurityConfigurationError: If a secret or feature-gated password
+                fails its strength checks.
         """
-        # client_mode is intentionally NOT exempted — secret-strength enforcement
-        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
-        env = str(self.environment).lower()
+        effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
+
+        # Unconditional: JWT + encryption secrets (full strength checks)
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
         ):
-            val = secret_field.get_secret_value()
-
-            # For auth_encryption_secret failures, append the secrets rotation guide URL
-            # so operators upgrading from 1.0.7 know how to re-encrypt stored credentials.
-            rotation_hint = (
+            hint = (
                 "\nIf you have stored credentials encrypted under the old key, "
                 "you must rotate them before starting the gateway.\n"
                 "Rotation guide: docs/docs/operations/auth-encryption-secret-rotation.md"
                 if field_name == "auth_encryption_secret"
                 else ""
             )
+            self._enforce_secret_strength(
+                field_name,
+                secret_field.get_secret_value(),
+                weak_secrets,
+                min_length=effective_min,
+                min_entropy=_MIN_ENTROPY,
+                check_placeholder=True,
+                hint=hint,
+            )
 
-            if not val.strip():
-                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
+        # Feature-gated: password credentials (empty, placeholder, weak, or too short)
+        if self.api_allow_basic_auth or self.docs_allow_basic_auth:
+            self._enforce_secret_strength(
+                "basic_auth_password",
+                self.basic_auth_password.get_secret_value(),
+                weak_secrets,
+                min_length=self.password_min_length_user,
+                check_placeholder=True,
+            )
 
-            effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
-            if len(val) < effective_min:
-                raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {effective_min}). "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
-                )
-
-            is_placeholder = val.lower().startswith("__replace_me__")
-            is_weak = val.lower() in weak_secrets
-            entropy = calculate_entropy(val)
-            is_low_entropy = entropy < _MIN_ENTROPY
-
-            if is_placeholder or is_weak or is_low_entropy:
-                if is_placeholder:
-                    reason = "unset placeholder (__REPLACE_ME__)"
-                elif is_weak:
-                    reason = "known-weak/default value"
-                else:
-                    reason = f"low entropy (score {entropy:.2f} < {_MIN_ENTROPY})"
-                raise SecurityConfigurationError(
-                    f"{field_name}: {reason} rejected in every environment (including '{env}'). "
-                    "Cross-process token consistency requires operators to supply a real secret before startup — "
-                    "no per-process random fallback is generated. "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
+        if self.email_auth_enabled:
+            for pw_field, pw_secret in (
+                ("platform_admin_password", self.platform_admin_password),
+                ("default_user_password", self.default_user_password),
+            ):
+                self._enforce_secret_strength(
+                    pw_field,
+                    pw_secret.get_secret_value(),
+                    weak_secrets,
+                    min_length=self.password_min_length_user,
+                    check_placeholder=True,
                 )
 
         if not self.client_mode:
@@ -1881,7 +1977,7 @@ class Settings(BaseSettings):
         for name, value in critical_secrets.items():
             if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
                 continue
-            is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith("__replace_me__")
+            is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith(("__replace_me__", "replaceme"))
 
             if is_sentinel:
                 error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
@@ -1995,23 +2091,71 @@ class Settings(BaseSettings):
         description="Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
-    @field_validator("allowed_origins", mode="before")
-    @classmethod
-    def _parse_allowed_origins(cls, v: Any) -> Set[str]:
-        """Parse allowed origins from environment variable or config value.
+    @staticmethod
+    def _parse_origin_set(v: Any, *, coerce_non_iterable_to_empty: bool = False) -> Set[str]:
+        """Parse an origin/host set from a JSON array, CSV string, or collection.
 
-        Handles multiple input formats for the allowed_origins field:
+        Handles multiple input formats:
         - JSON array string: '["http://localhost", "http://example.com"]'
         - Comma-separated string: "http://localhost, http://example.com"
-        - Already parsed set/list
+        - Already parsed set, frozenset, list, or tuple
 
-        Automatically strips whitespace and removes outer quotes if present.
+        Strips whitespace and removes a single outer quote pair when present.
 
         Args:
-            v: The input value to parse. Can be a string (JSON or CSV), set, list, or other iterable.
+            v: Raw value — a string (JSON or CSV), a collection, or any other type.
+            coerce_non_iterable_to_empty: When True, values that are not a string or
+                a recognised collection type (e.g. None, int) return an empty set
+                instead of being passed to set(). Used by fields that default to empty.
 
         Returns:
-            Set[str]: A set of allowed origin strings.
+            Set[str]: Parsed origin strings, or an empty set for blank/unknown input.
+
+        Examples:
+            >>> sorted(Settings._parse_origin_set('["https://a.com", "https://b.com"]'))
+            ['https://a.com', 'https://b.com']
+            >>> sorted(Settings._parse_origin_set("https://x.com , https://y.com"))
+            ['https://x.com', 'https://y.com']
+            >>> Settings._parse_origin_set('""')
+            set()
+            >>> Settings._parse_origin_set('"https://single.com"')
+            {'https://single.com'}
+            >>> sorted(Settings._parse_origin_set(['http://a.com', 'http://b.com']))
+            ['http://a.com', 'http://b.com']
+            >>> Settings._parse_origin_set({'http://existing.com'})
+            {'http://existing.com'}
+        """
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
+                v = v[1:-1]
+            if not v:
+                return set()
+            try:
+                parsed = set(orjson.loads(v))
+            except orjson.JSONDecodeError:
+                parsed = {s.strip() for s in v.split(",") if s.strip()}
+            return parsed
+        if isinstance(v, (set, frozenset, list, tuple)):
+            return set(v)
+        if coerce_non_iterable_to_empty:
+            return set()
+        return set(v)  # type: ignore[arg-type]
+
+    @field_validator("allowed_origins", "mcp_allowed_origins", "mcp_allowed_hosts", mode="before")
+    @classmethod
+    def _parse_allowed_origins(cls, v: Any) -> Set[str]:
+        """Parse origin/host allowlist fields from a JSON array, CSV string, or collection.
+
+        Handles ``allowed_origins``, ``mcp_allowed_origins``, and ``mcp_allowed_hosts``.
+        Non-string, non-collection input (e.g. ``None``) returns an empty set rather
+        than propagating a ``TypeError``.
+
+        Args:
+            v: The input value to parse.
+
+        Returns:
+            Set[str]: A set of allowed origin/host strings.
 
         Examples:
             >>> sorted(Settings._parse_allowed_origins('["https://a.com", "https://b.com"]'))
@@ -2027,16 +2171,7 @@ class Settings(BaseSettings):
             >>> Settings._parse_allowed_origins({'http://existing.com'})
             {'http://existing.com'}
         """
-        if isinstance(v, str):
-            v = v.strip()
-            if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
-                v = v[1:-1]
-            try:
-                parsed = set(orjson.loads(v))
-            except orjson.JSONDecodeError:
-                parsed = {s.strip() for s in v.split(",") if s.strip()}
-            return parsed
-        return set(v)
+        return cls._parse_origin_set(v, coerce_non_iterable_to_empty=True)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
@@ -2168,7 +2303,7 @@ class Settings(BaseSettings):
         default=32,
         ge=0,
         le=128,
-        description=("Max per-control result records exported per tool invocation. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
+        description=("Max per-control result records exported per tool invocation. Denials take priority; zero emits only the summary. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
     )
     cpex_control_telemetry_max_attributes: int = Field(
         default=256,
@@ -2185,8 +2320,9 @@ class Settings(BaseSettings):
     cpex_control_telemetry_emit_reason: bool = Field(
         default=False,
         description=(
-            "Emit cpex.control.result.reason and cpex.control.result.error_code on "
-            "per-control spans. Disabled by default because these fields may contain "
+            "Emit free-form execution reasons and error codes on per-control spans. "
+            "Validated denial outcome codes are emitted independently of this flag. "
+            "Disabled by default because free-form fields may contain "
             "PII, tool argument values, or exception content. Enable only when the "
             "observability sink is appropriately secured and a redaction boundary is "
             "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
@@ -2805,6 +2941,8 @@ class Settings(BaseSettings):
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
+    mcpgateway_affinity_forward_concurrency: int = Field(default=32, ge=1, description="Max concurrent forwarded-request dispatches per worker listener (0 would wedge all forwarding)")
+    mcpgateway_affinity_session_lock_timeout: int = 30  # Max seconds to wait for a same-session forward lock before executing without ordering
 
     # Prompts
     prompt_cache_size: int = 100
@@ -2831,6 +2969,11 @@ class Settings(BaseSettings):
     # Per-gateway refresh configuration (used when auto_refresh_servers is True)
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
+
+    # Modern (2026-07-28) change-event listeners
+    # When enabled, the gateway holds one standing subscriptions/listen stream per
+    # server to get the list changed event
+    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
@@ -3042,6 +3185,16 @@ class Settings(BaseSettings):
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
+    # MCP Origin allowlist — present-but-unlisted Origin returns HTTP 403 (MCP §transport-security).
+    # Empty (default) disables enforcement. Set via MCP_ALLOWED_ORIGINS.
+    mcp_allowed_origins: Annotated[Set[str], NoDecode] = set()
+
+    # MCP Host allowlist — present-but-unlisted Host returns HTTP 403.
+    # Empty (default) disables enforcement. Set via MCP_ALLOWED_HOSTS.
+    # Entries use exact "host:port" matching (browsers omit default ports; list
+    # both "example.com:80" and "example.com" when default port may be absent).
+    mcp_allowed_hosts: Annotated[Set[str], NoDecode] = set()
+
     # GET /mcp server-to-client stream (ADR-052)
     # When True, GET /mcp returns an SSE stream that delivers server-initiated
     # JSON-RPC messages (notifications and server-initiated requests) for the
@@ -3107,6 +3260,9 @@ class Settings(BaseSettings):
     otel_bsp_max_queue_size: int = Field(default=2048, description="Max queue size for batch span processor")
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
+    otel_httpx_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument outbound httpx clients (HTTP client spans + W3C trace header injection)")
+    otel_sqlalchemy_instrumentation_enabled: bool = Field(default=False, description="Emit OTel spans for SQLAlchemy queries (high span volume; enable for debugging)")
+    otel_redis_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument redis/redis.asyncio clients (per-command CLIENT spans)")
 
     # ===================================
     # OpenTelemetry Baggage Configuration
@@ -3675,6 +3831,7 @@ Disallow: /
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
+    strict_scheme_enforcement: bool = False
 
     # Character validation patterns
     validation_name_pattern: str = r"^[a-zA-Z0-9_.\- ]+$"  # Allow spaces for names (literal space, not \s to reject control chars)
@@ -3797,6 +3954,17 @@ Disallow: /
     max_header_total_size_bytes: int = Field(default=16384, description="Maximum total size of all headers (16KB default)")
     max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
     max_header_count: int = Field(default=100, description="Maximum number of header fields")
+    max_header_value_length: int = Field(
+        default=4096, description="Maximum length for individual header values during sanitization (4KB default). Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+)."
+    )
+
+    @field_validator("max_header_value_length")
+    @classmethod
+    def validate_max_header_value_length(cls, v: int) -> int:
+        """Validate max_header_value_length is a positive integer."""
+        if v <= 0:
+            raise ValueError("max_header_value_length must be positive")
+        return v
 
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")

@@ -142,6 +142,7 @@ The gateway performs local validation of the token's audience before forwarding 
 -   Per-user learned-audience storage: `OAuthToken.learned_aud` / `learned_iss` in `mcpgateway/db.py`; write via `TokenStorageService.store_tokens` (called from `OAuthManager.complete_authorization_code_flow`); read via `TokenStorageService.get_user_learned_audience`.
 -   Precedence + advisory / authoritative split: `_validate_audience` in `mcpgateway/services/token_validation_service.py`.
 -   Trust model for the unverified JWT decode used at learning time: `_decode_token_claims_unverified` in `mcpgateway/services/oauth_manager.py`.
+-   Team membership check for `_enforce_gateway_access`: `TeamManagementService.get_user_role_in_team()` in `mcpgateway/services/team_management_service.py` — uses `auth_cache.get_user_role` with DB fallback, avoiding the detached-object problem of `EmailAuthService.get_user_by_email()`.
 
 !!! warning "Security: unverified JWT decode trust boundary"
     Audience extraction during auto-learning uses `_decode_token_claims_unverified`, which decodes the JWT **without cryptographic verification**. The extracted audience is used only for routing and learning — it is **not a security gate**. The immediate trust boundary is the TLS connection to the admin-configured token endpoint in response to a callback the gateway itself initiated. Authorization-relevant validation remains the upstream MCP server's responsibility (or, when configured, the gateway's own authoritative audience check).

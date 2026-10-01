@@ -33,7 +33,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update
+from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -1798,7 +1798,15 @@ class A2AAgentService(BaseService):
                         await cache.invalidate_tools()
                         tool_lookup_cache = _get_tool_lookup_cache()
                         if agent.tool and agent.tool.name:
-                            await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
+                            affected_server_ids: tuple[str, ...] = ()
+                            if not agent.tool.gateway_id:
+                                server_ids = db.execute(select(server_tool_association.c.server_id).where(server_tool_association.c.tool_id == agent.tool_id)).scalars().all()
+                                affected_server_ids = tuple(str(server_id) for server_id in server_ids)
+                            await tool_lookup_cache.invalidate(
+                                agent.tool.name,
+                                gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None,
+                                affected_server_ids=affected_server_ids,
+                            )
 
                 status = "activated" if activate else "deactivated"
                 logger.info("A2A agent %s: %s (ID: %s)", status, agent.name, agent.id)
@@ -2322,6 +2330,20 @@ class A2AAgentService(BaseService):
                         # plugins from injecting sensitive headers into downstream requests
                         # (PR #5183 review fix)
                         plugin_returned = pre_result.modified_payload.headers.model_dump()
+
+                        # Defense in depth: a plugin (e.g. Vault) that determined the
+                        # destination requires managed credentials it couldn't supply signals
+                        # this by returning "authorization": "" -- read here, off the plugin's
+                        # raw returned headers, since checking only the post-_refilter_plugin_headers
+                        # `safe_headers` below would silently drop the sentinel (and thus never
+                        # strip the real header) whenever Authorization isn't in this agent's
+                        # passthrough_headers or sensitive passthrough is disabled. A real bearer
+                        # token is never empty, so this is unambiguous. The plugin never receives
+                        # the real Authorization value on this path (filtered out of
+                        # plugin_headers before this hook runs, by design, per #4925), so it can
+                        # only ever emit this sentinel, never a real value, through this channel.
+                        auth_mismatch = plugin_returned.get("authorization") == ""
+
                         safe_headers = self._refilter_plugin_headers(
                             plugin_headers=plugin_returned,
                             agent=agent,
@@ -2343,6 +2365,16 @@ class A2AAgentService(BaseService):
                                     del prepared.headers[existing_key]
 
                         prepared.headers.update(safe_headers)
+
+                        # Apply the Authorization-mismatch strip last, after the update() above,
+                        # so it can't be undone by that merge re-adding the sentinel itself -- and
+                        # so the header is actually removed rather than left present with an
+                        # empty value, which some downstream servers treat differently from an
+                        # absent header. Unconditional: applies regardless of allowlist/flag
+                        # state.
+                        if auth_mismatch:
+                            for existing_key in [hk for hk in prepared.headers if hk.lower() == "authorization"]:
+                                del prepared.headers[existing_key]
 
                         # Log security-blocked headers for forensic awareness
                         if plugin_returned.keys() - safe_headers.keys():

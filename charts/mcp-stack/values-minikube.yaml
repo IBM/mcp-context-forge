@@ -51,7 +51,7 @@ mcpContextForge:
     AUTH_REQUIRED: "true"
     MCP_REQUIRE_AUTH: "true"
     PLATFORM_ADMIN_EMAIL: admin@example.com
-    PLATFORM_ADMIN_PASSWORD: changeme  # CHANGE THIS before deploy  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     # Relax password policy for local dev bootstrap
     PASSWORD_REQUIRE_UPPERCASE: "false"
     PASSWORD_REQUIRE_LOWERCASE: "false"

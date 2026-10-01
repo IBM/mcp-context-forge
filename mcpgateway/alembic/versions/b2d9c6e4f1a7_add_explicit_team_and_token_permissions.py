@@ -107,20 +107,22 @@ def _apply_permission_updates(additions_by_role: Dict[str, List[str]]) -> None:
         return
 
     dialect_name = conn.dialect.name
-    now = datetime.now(timezone.utc)
-
     if dialect_name == "postgresql":
         update_query = text("""
             UPDATE roles
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
             """)
+        now: object = datetime.now(timezone.utc)
     else:
         update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
             """)
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
+        now = datetime.now(timezone.utc).isoformat(" ")
 
     for role_name, additions in additions_by_role.items():
         row = conn.execute(
@@ -170,20 +172,22 @@ def downgrade() -> None:
 
     removals_by_role = ROLE_PERMISSION_ADDITIONS
     dialect_name = conn.dialect.name
-    now = datetime.now(timezone.utc)
-
     if dialect_name == "postgresql":
         update_query = text("""
             UPDATE roles
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
             """)
+        now: object = datetime.now(timezone.utc)
     else:
         update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
             """)
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
+        now = datetime.now(timezone.utc).isoformat(" ")
 
     for role_name, removals in removals_by_role.items():
         row = conn.execute(

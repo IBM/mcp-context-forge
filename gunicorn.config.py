@@ -94,6 +94,21 @@ def on_starting(server):
     ssl_enabled = os.environ.get("SSL", "false").lower() == "true"
     ssl_key_password = os.environ.get("SSL_KEY_PASSWORD")
 
+    # If ssl_version is passed as a string from CLI, normalize to integer for Uvicorn
+    if ssl_enabled and hasattr(server, "cfg"):
+        try:
+            ssl_ver = server.cfg.ssl_version
+            if isinstance(ssl_ver, str):
+                import ssl as _ssl
+                if ssl_ver.isdigit():
+                    server.cfg.set("ssl_version", int(ssl_ver))
+                elif ssl_ver.startswith("PROTOCOL_") and hasattr(_ssl, ssl_ver):
+                    server.cfg.set("ssl_version", getattr(_ssl, ssl_ver))
+                else:
+                    server.log.warning("Unrecognized SSL_VERSION value %r; leaving unchanged (boot may fail downstream)", ssl_ver)
+        except Exception as e:
+            server.log.warning("Failed to normalize Gunicorn ssl_version setting: %s", e)
+
     if ssl_enabled and ssl_key_password:
         try:
             from mcpgateway.utils.ssl_key_manager import prepare_ssl_key
@@ -146,33 +161,6 @@ def post_fork(server, worker):
         _reset_client()
     except ImportError:
         pass
-
-    # Recompute the session-affinity WORKER_ID per worker, but only when the feature
-    # is enabled. Captured at import time, so under --preload every worker would
-    # otherwise inherit the master's id ({hostname}:1) and subscribe to the same Redis
-    # channel, collapsing point-to-point forwarding into a per-container broadcast that
-    # fans every request out to all workers and degrades throughput by an order of
-    # magnitude. With the affinity flag off, no request path reads WORKER_ID, so gating
-    # the rebind (and the session_affinity import at fork) keeps "flag off" a clean
-    # no-op for the affinity machinery.
-    if settings.mcpgateway_session_affinity_enabled:
-        try:
-            import socket
-
-            from mcpgateway.services import session_affinity
-
-            session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
-        except Exception as exc:  # noqa: BLE001 - fail loud, never crash the worker
-            # Silent fallback would re-introduce the per-container broadcast amplification.
-            server.log.warning(
-                "post_fork(pid=%s): failed to rebind session_affinity.WORKER_ID (%s: %s) — "
-                "workers may share the master's WORKER_ID and session-affinity forwarding "
-                "may broadcast each request to every worker in the container.",
-                worker.pid,
-                type(exc).__name__,
-                exc,
-            )
-
 
 def post_worker_init(worker):
     worker.log.info("worker initialization completed")

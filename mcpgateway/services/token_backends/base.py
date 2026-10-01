@@ -158,9 +158,51 @@ class AbstractTokenBackend(ABC):
         - status: "valid" | "expired" | "near_expiry"
         - updated_at: str (ISO-8601)
 
-        Returns None if no token found.
+        Returns None only when no token is stored for this identity.
+        An unexpected backend failure (DB error, Vault outage) must be
+        logged and re-raised, not swallowed to None - callers surfacing
+        this through a user-facing status field need to distinguish
+        "never authorized" from "lookup failed".
         Does NOT return actual token values.
         """
+
+    async def get_token_info_bulk(
+        self,
+        gateway_ids: list[str],
+        team_id: str,  # Team identifier from user context
+        app_user_email: str,
+    ) -> dict[str, dict | Exception | None]:
+        """
+        Bulk-lookup non-sensitive token metadata for multiple gateways at once.
+
+        Default implementation loops over ``gateway_ids`` calling ``get_token_info()``
+        for each, isolating one gateway's failure from the rest of the batch by
+        capturing the raised exception as that id's value instead of propagating it -
+        callers distinguish a captured exception ("lookup failed") from a plain
+        ``None`` ("never authorized") the same way they distinguish those two
+        outcomes from ``get_token_info()`` itself.
+
+        Backends that can express this as a single query (e.g. ``DatabaseTokenBackend``)
+        should override this for a true bulk fetch instead of N round trips - that is
+        the whole point of this method existing separately from a caller-side loop
+        over ``get_token_info()``.
+
+        Args:
+            gateway_ids: Gateway identifiers to look up.
+            team_id: Team identifier (semantics as in ``get_token_info()``).
+            app_user_email: ContextForge user email.
+
+        Returns:
+            Mapping of gateway_id to: the ``get_token_info()`` result dict, ``None``
+            (no token stored), or the caught ``Exception`` instance (lookup failed).
+        """
+        results: dict[str, dict | Exception | None] = {}
+        for gateway_id in gateway_ids:
+            try:
+                results[gateway_id] = await self.get_token_info(gateway_id, team_id, app_user_email)
+            except Exception as e:  # pylint: disable=broad-except
+                results[gateway_id] = e
+        return results
 
     @abstractmethod
     async def revoke_user_tokens(

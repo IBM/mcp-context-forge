@@ -180,6 +180,55 @@ volumes:
       defaultMode: 0600
 ```
 
+### Database Reset and JWT Signing Keys
+
+JWT signature validation depends on signing-key continuity, not database continuity.
+Normal gateway restarts preserve valid local JWTs when the signing key remains unchanged.
+Deleting or recreating the database also leaves those JWTs cryptographically valid when the
+same key remains configured. Database loss removes token catalog entries and revocation
+records stored only in that database; it does not revoke self-contained JWTs.
+
+If a user or platform-admin identity remains available, is recreated, or qualifies for
+configured platform-admin bootstrap, an old signed JWT can pass current authorization checks.
+Actual external IdP tokens follow the external provider's lifecycle. Local session JWTs issued
+after an SSO login follow the local signing-key lifecycle described here. Restored database state
+can restore users, grants, and revocations from the backup point. Persistent storage remains
+required for production database state.
+
+Rotate `JWT_SECRET_KEY` whenever an environment is destructively reset or rebuilt and previous
+local JWTs must become invalid. Key rotation invalidates local session, CLI, and automation JWTs.
+Issue replacement tokens after rotation. All gateway replicas must receive the same new key
+before serving traffic; mixed old-key and new-key replicas produce inconsistent authentication.
+For asymmetric signing, rotate the signing key pair and remove the retired verification key
+when immediate invalidation is required.
+
+#### Destructive Reset Procedure
+
+1. Stop gateway instances and local token issuers.
+2. Reset or recreate the database.
+3. Generate a new JWT signing key through the existing secret-management workflow.
+4. Update the Kubernetes Secret, Compose environment, or external secret manager.
+5. Restart all gateway instances with the same new key.
+6. Reissue required CLI and automation tokens.
+7. Confirm an old token returns `401`.
+8. Confirm a replacement token succeeds.
+
+Do not generate a new signing key independently inside each gateway process. That breaks
+replicas and ordinary restarts.
+
+For production deployments:
+
+- Use persistent database storage.
+- Set `REQUIRE_USER_IN_DB=true` to reject tokens for missing non-platform-admin users.
+- Do not treat `REQUIRE_USER_IN_DB=true` as global token revocation; a recreated identity can satisfy user lookup again.
+- Store `JWT_SECRET_KEY` or the signing key pair in a managed secret store.
+- Use distinct signing keys for each environment.
+- Keep session JWT lifetimes short.
+- Avoid 30-day CLI JWTs for routine automation.
+- Prefer managed catalog tokens when revocation and usage tracking are required. Their revocation
+  state depends on persistent or restored database records.
+- Treat non-expiring JWTs as high-risk credentials.
+
 #### Environment Isolation
 
 When deploying ContextForge across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.

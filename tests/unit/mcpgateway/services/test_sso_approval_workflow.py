@@ -49,10 +49,9 @@ class TestSSOApprovalWorkflow:
             # Mock database queries
             sso_service.db.execute.return_value.scalar_one_or_none.return_value = None  # No existing pending approval
 
-            # Mock get_user_by_email to return None (new user)
+            # Mock the session-attached lookup used by SSO mutations.
             with patch.object(sso_service, "auth_service") as mock_auth_service:
-                # For async methods, need to use AsyncMock
-                mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
+                mock_auth_service._fetch_user_from_db = MagicMock(return_value=None)
 
                 # Mock get_provider
                 with patch.object(sso_service, "get_provider") as mock_get_provider:
@@ -83,10 +82,9 @@ class TestSSOApprovalWorkflow:
             mock_pending.is_expired.return_value = False
             sso_service.db.execute.return_value.scalar_one_or_none.side_effect = [mock_pending, mock_pending]
 
-            # Mock get_user_by_email to return None (new user)
+            # Mock the session-attached lookup used by SSO mutations.
             with patch.object(sso_service, "auth_service") as mock_auth_service:
-                # For async methods, need to use AsyncMock
-                mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
+                mock_auth_service._fetch_user_from_db = MagicMock(return_value=None)
 
                 # Mock user creation
                 mock_user = MagicMock()
@@ -133,10 +131,9 @@ class TestSSOApprovalWorkflow:
             mock_pending.status = "rejected"
             sso_service.db.execute.return_value.scalar_one_or_none.return_value = mock_pending
 
-            # Mock get_user_by_email to return None (new user)
+            # Mock the session-attached lookup used by SSO mutations.
             with patch.object(sso_service, "auth_service") as mock_auth_service:
-                # For async methods, need to use AsyncMock
-                mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
+                mock_auth_service._fetch_user_from_db = MagicMock(return_value=None)
 
                 # Mock get_provider
                 with patch.object(sso_service, "get_provider") as mock_get_provider:

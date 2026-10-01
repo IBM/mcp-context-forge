@@ -170,6 +170,10 @@ export AZURE_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # Test Configuration
 export TEST_ENTRA_USER_PASSWORD="ContextForge2024!Test"
 export TEST_ENTRA_DOMAIN="yourcompany.onmicrosoft.com"
+
+# Real DNS passthrough for the test session (tests/conftest.py stubs all
+# non-localhost DNS by default, which blackholes Graph/Entra egress)
+export TESTS_DNS_PASSTHROUGH_HOSTS="login.microsoftonline.com,graph.microsoft.com"
 ```
 
 ### Environment Variable Reference
@@ -181,6 +185,7 @@ export TEST_ENTRA_DOMAIN="yourcompany.onmicrosoft.com"
 | `AZURE_TENANT_ID` | Yes | Azure AD tenant ID |
 | `TEST_ENTRA_USER_PASSWORD` | Yes | Password for dynamically created test users |
 | `TEST_ENTRA_DOMAIN` | Yes | Domain for test user UPNs (e.g., `company.onmicrosoft.com`) |
+| `TESTS_DNS_PASSTHROUGH_HOSTS` | Yes | Comma-separated external hosts that bypass the deterministic-DNS stub in `tests/conftest.py`. Without it, all Entra/Graph requests time out |
 
 ---
 
@@ -193,7 +198,7 @@ export TEST_ENTRA_DOMAIN="yourcompany.onmicrosoft.com"
 source .env.test
 
 # Run the tests
-uv run pytest tests/integration/test_entra_id_integration.py -v
+uv run pytest tests/integration/test_entra_id_integration.py -v --with-integration
 ```
 
 ### Run Specific Test Classes

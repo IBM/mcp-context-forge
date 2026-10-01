@@ -126,7 +126,7 @@ mcpContextForge:
             check_text_content: false
             tool_overrides: {}
         - name: "OutputLengthGuardPlugin"
-          kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
+          kind: "cpex_output_length_guard.output_length_guard.OutputLengthGuardPlugin"
           description: "Guards tool outputs by enforcing min/max length; block or truncate"
           version: "0.1.0"
           author: "ContextForge"
@@ -282,7 +282,7 @@ mcpContextForge:
     JWT_SECRET_KEY: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     AUTH_ENCRYPTION_SECRET: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     BASIC_AUTH_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
-    PLATFORM_ADMIN_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     REQUIRE_STRONG_SECRETS: "true"         # gateway refuses to start with weak/default secrets
 
 # --- Migration ---

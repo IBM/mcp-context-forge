@@ -63,7 +63,7 @@ from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import DataError, IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
@@ -96,11 +96,12 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
@@ -172,6 +173,8 @@ from mcpgateway.schemas import (
     TaggedEntity,
     TagInfo,
     ToolCreate,
+    ToolPreviewRequest,
+    ToolPreviewResponse,
     ToolRead,
     ToolUpdate,
 )
@@ -191,6 +194,7 @@ from mcpgateway.services.gateway_service import (
     GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
+    GatewayToolNameConflictError,
     test_server_handshake,
 )
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -209,17 +213,19 @@ from mcpgateway.services.mcp_apps import (
     serialize_resource_content_for_mcp,
 )
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
+from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
+from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
+    MCPOriginHostGate,
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
@@ -242,6 +248,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
@@ -1451,6 +1458,72 @@ def _restore_default_sighup_handler() -> None:
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 
+def _check_url_scheme_compliance() -> None:
+    """Check active gateway, tool, and A2A agent URLs against the configured scheme allowlist.
+
+    Logs a WARNING per non-compliant record. When ``STRICT_SCHEME_ENFORCEMENT``
+    is ``True``, raises ``SystemExit`` instead so the process refuses to start.
+    """
+    allowed = [s.lower() for s in settings.validation_allowed_url_schemes]
+    violations: list[str] = []
+    db_error = False
+
+    scans: list[tuple[str, Any]] = [
+        (
+            "gateways",
+            lambda db: [
+                f"Gateway '{gw.name}' (id={gw.id}) URL scheme not in allowlist: {sanitize_url_for_logging(gw.url)}"
+                for gw in db.query(DbGateway.id, DbGateway.name, DbGateway.url).filter(DbGateway.enabled.is_(True)).all()
+                if gw.url and not url_scheme_allowed(gw.url, allowed)
+            ],
+        ),
+        (
+            "tools",
+            lambda db: [
+                f"Tool '{tool.original_name}' (id={tool.id}) URL scheme not in allowlist: {sanitize_url_for_logging(tool.url)}"
+                for tool in db.query(DbTool.id, DbTool.original_name, DbTool.url).filter(DbTool.enabled.is_(True)).all()
+                if tool.url and not url_scheme_allowed(tool.url, allowed)
+            ],
+        ),
+        (
+            "agents",
+            lambda db: [
+                f"A2A agent '{agent.name}' (id={agent.id}) URL scheme not in allowlist: {sanitize_url_for_logging(agent.endpoint_url)}"
+                for agent in db.query(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url).filter(DbA2AAgent.enabled.is_(True)).all()
+                if agent.endpoint_url and not url_scheme_allowed(agent.endpoint_url, allowed)
+            ],
+        ),
+    ]
+
+    try:
+        with SessionLocal() as db:
+            for table_name, scan_fn in scans:
+                try:
+                    violations.extend(scan_fn(db))
+                except SQLAlchemyError:
+                    db.rollback()
+                    db_error = True
+                    logger.warning(f"URL scheme compliance check failed for {table_name} table")
+                except ValueError:
+                    db_error = True
+                    logger.warning(f"URL scheme compliance check encountered a malformed URL in {table_name} table")
+    except SQLAlchemyError:
+        db_error = True
+        logger.warning("URL scheme compliance check skipped: database unavailable")
+
+    if db_error and not violations and settings.strict_scheme_enforcement:
+        raise SystemExit("STRICT_SCHEME_ENFORCEMENT is enabled but the URL scheme compliance check could not query the database. Resolve the database connection or disable enforcement to start.")
+
+    if not violations:
+        return
+
+    for v in violations:
+        logger.warning(v)
+
+    if settings.strict_scheme_enforcement:
+        raise SystemExit(f"STRICT_SCHEME_ENFORCEMENT is enabled and {len(violations)} record(s) violate the URL scheme allowlist. Fix records or disable enforcement to start.")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1600,6 +1673,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
     logger.info("Upstream session registry initialized (notification fanout enabled)")
+
+    # Standing subscriptions/listen streams to modern (2026-07-28) servers
+    if settings.gateway_modern_listeners_enabled:
+        if settings.mcp_client_connect_mode == "legacy":
+            logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
+        else:
+            await init_modern_listener_service(_notification_svc).initialize()
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
@@ -1796,6 +1876,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
 
         refresh_slugs_on_startup()
+
+        await asyncio.to_thread(_check_url_scheme_compliance)
 
         # Initialize experimental dataplane publisher to send config data to redis
         if settings.dataplane_publisher:
@@ -2026,6 +2108,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
+
+        if settings.gateway_modern_listeners_enabled:
+            modern_listener_service = get_modern_listener_service()
+            if modern_listener_service is not None:
+                services_to_shutdown.insert(0, modern_listener_service)
 
         await shutdown_services(services_to_shutdown)
 
@@ -5893,6 +5980,64 @@ async def create_tool(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the tool")
 
 
+@tool_router.post("/preview/{name:path}", response_model=ToolPreviewResponse)
+@require_permission("tools.preview")
+async def preview_tool(
+    name: str,
+    request: Request,
+    body: Optional[ToolPreviewRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ToolPreviewResponse:
+    """Validate and resolve a tool invocation without executing it (#5629).
+
+    Dry-run counterpart to live tool invocation: no REST/MCP/A2A/gRPC call is made, and no
+    TOOL_POST_INVOKE hook runs. Shares tool resolution/RBAC with the live invocation path
+    (see ``ToolService._resolve_tool_for_invocation``), so the two can never disagree about
+    whether a tool exists or is accessible.
+
+    Args:
+        name: Name of the tool to preview.
+        request: FastAPI request object, used to resolve the caller's visibility scope.
+        body: Candidate arguments to validate against the tool's input schema.
+        db: Database session.
+        user: Authenticated user with permissions.
+
+    Returns:
+        ToolPreviewResponse: The dry-run envelope (validation result, target, annotations,
+            plugin pre-hooks that actually ran, and non-fatal warnings).
+
+    Raises:
+        HTTPException: 404 if the feature is disabled, or if the tool is not found or not
+            accessible to the caller (same visibility rules as live invocation). 400 if
+            resolution fails for a reason short of not-found -- an ambiguous tool name or a
+            deprecated tool (same as live invocation's own ``ToolInvocationError`` handling).
+    """
+    if not settings.mcpgateway_tool_preview_enabled:
+        raise HTTPException(status_code=404, detail="Tool preview is disabled")
+
+    body = body or ToolPreviewRequest()
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        return await tool_service.preview_tool_invocation(
+            db,
+            name=name,
+            arguments=body.arguments,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+            # SECURITY: strip Authorization/Cookie/etc. before these reach a preview_safe
+            # plugin's TOOL_PRE_INVOKE hook -- live invocation never hands a hook the
+            # caller's raw inbound headers either, only resolved runtime headers.
+            request_headers=_filter_sensitive_headers(dict(request.headers)),
+        )
+    except ToolNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ToolInvocationError as e:
+        # Resolution-time failures short of not-found (ambiguous name, deprecated tool) --
+        # same status live invocation uses for ToolError (main.py's create_tool handler).
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
 @require_permission("tools.read")
 async def get_tool(
@@ -6466,6 +6611,8 @@ async def test_resource_by_uri(
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ResourceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Error reading resource by URI %s: %s", resource_uri, e)
         raise
@@ -6521,9 +6668,10 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
         # Release transaction before response serialization
         db.commit()
         db.close()
-    except (ResourceNotFoundError, ResourceError) as exc:
-        # Translate to FastAPI HTTP error
+    except ResourceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ResourceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     # NOTE: Removed cache.set() - see cache removal comment above
     # Ensure a plain JSON-serializable structure
@@ -7295,6 +7443,8 @@ async def set_gateway_state(
         raise HTTPException(status_code=403, detail=str(e))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except GatewayToolNameConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -7490,6 +7640,8 @@ async def register_gateway(
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
             return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
             return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
@@ -7628,6 +7780,8 @@ async def update_gateway(
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
             return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
             return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
@@ -10354,14 +10508,14 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
         if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", get_worker_id(), session_short, method)
         try:
             # First-Party
             from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
@@ -10377,20 +10531,20 @@ async def _maybe_forward_affinitized_rpc_request(
                 encoded_auth_context,
             )
             if forwarded_response is not None:
-                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", get_worker_id(), session_short, method)
                 if "error" in forwarded_response:
                     return {"jsonrpc": "2.0", "error": forwarded_response["error"], "id": req_id}
                 return {"jsonrpc": "2.0", "result": forwarded_response.get("result", {}), "id": req_id}
         except RuntimeError:
-            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
+            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", get_worker_id(), session_short, method)
         return None
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import get_worker_id  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", get_worker_id(), session_short, method)
 
     return None
 
@@ -10458,11 +10612,11 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
             pool = get_session_affinity()
             await pool.register_session_owner(mcp_session_id)
-            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
+            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", get_worker_id(), mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
 
@@ -13383,8 +13537,13 @@ class InternalTrustedMCPTransportBridge:
 mcp_transport_app = _build_mcp_transport_app()
 internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_http_session)
 
+
 # Streamable http Mount
-app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
+# MCPOriginHostGate wraps the entire /mcp dispatch surface (Python, rust-internal,
+# rust-public). The /_internal/mcp/transport bridge is mounted separately — it
+# receives only trusted Rust-sidecar traffic and must not run the browser Origin/Host
+# gate.
+app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect

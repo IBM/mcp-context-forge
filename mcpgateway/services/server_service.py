@@ -49,6 +49,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ SERVER_ASSOCIATION_SELECTINLOADS: list[Any] = [selectinload(getattr(DbServer, at
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+_TOOL_LOOKUP_CACHE = None
 
 
 def _get_registry_cache():
@@ -104,6 +106,21 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _get_tool_lookup_cache() -> Any:
+    """Get tool lookup cache singleton lazily.
+
+    Returns:
+        ToolLookupCache instance.
+    """
+    global _TOOL_LOOKUP_CACHE  # pylint: disable=global-statement
+    if _TOOL_LOOKUP_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_LOOKUP_CACHE = tool_lookup_cache
+    return _TOOL_LOOKUP_CACHE
 
 
 def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
@@ -411,6 +428,12 @@ class ServerService(BaseService):
             "description": server.description,
             "icon": server.icon,
             "enabled": server.enabled,
+            # Same APP_DOMAIN-derived base URL OAuth's redirect_uri default and
+            # the RFC 8707/9728 resource URL already use, plus APP_ROOT_PATH so
+            # the URL is actually reachable when the gateway is mounted under a
+            # subpath — see build_server_display_url's docstring for why this
+            # must come from settings rather than the request's Host header.
+            "url": build_server_display_url(server.id) or None,
             "created_at": server.created_at,
             "updated_at": server.updated_at,
             "team_id": server.team_id,
@@ -1245,6 +1268,7 @@ class ServerService(BaseService):
             )
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
+            original_server_id = str(server.id)
 
             # Check ownership if user_email provided
             if user_email:
@@ -1355,6 +1379,11 @@ class ServerService(BaseService):
             # Invalidate cache after successful update
             cache = _get_registry_cache()
             await cache.invalidate_servers()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_server(original_server_id)
+            updated_server_id = str(server.id)
+            if updated_server_id != original_server_id:
+                await tool_lookup_cache.invalidate_server(updated_server_id)
             # Also invalidate tags cache since server tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -1543,6 +1572,7 @@ class ServerService(BaseService):
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
                 await cache.invalidate_servers()
+                await _get_tool_lookup_cache().invalidate_server(str(server.id))
 
                 if activate:
                     await self._notify_server_activated(server)
@@ -1663,6 +1693,7 @@ class ServerService(BaseService):
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_servers()
+            await _get_tool_lookup_cache().invalidate_server(str(server_info["id"]))
             # Also invalidate tags cache since server tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

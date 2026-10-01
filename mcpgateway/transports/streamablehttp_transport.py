@@ -44,17 +44,18 @@ from uuid import uuid4
 
 # Third-Party
 import anyio
+from cpex.framework import GlobalContext, PluginContextTable, PluginViolationError
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
 import jwt
-from mcp import ClientSession, types
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
-from mcp.server.lowlevel.helper_types import ReadResourceContents
+from mcp.shared.exceptions import MCPError
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
+import mcp_types as types
+from mcp_types import JSONRPCMessage
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 import orjson
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -72,7 +73,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -92,17 +93,19 @@ from mcpgateway.services.metrics import (
 )
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
-from mcpgateway.services.tool_service import ToolService
+from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
@@ -116,6 +119,144 @@ from mcpgateway.utils.verify_credentials import (
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _parse_mcp_scope_headers(scope: Scope) -> dict[str, str]:
+    """Extract and normalise HTTP headers from an ASGI scope into a lowercase str dict.
+
+    Args:
+        scope: ASGI scope dict.
+
+    Returns:
+        Dict mapping lowercase header name to decoded value.
+    """
+    result: dict[str, str] = {}
+    for item in scope.get("headers") or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        name, value = item
+        if not isinstance(name, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
+            continue
+        result[name.decode("latin-1").lower()] = value.decode("latin-1")
+    return result
+
+
+def _check_mcp_origin(origin: Optional[str]) -> bool:
+    """Return True when the Origin header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Origin (``None``) is always accepted. An empty-string Origin is treated as
+    present-and-must-match. When ``mcp_allowed_origins`` is empty, all origins are
+    accepted (opt-in enforcement). Otherwise the origin must be an exact member of the
+    configured set or the request must be rejected with HTTP 403.
+
+    Args:
+        origin: Value of the Origin header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if origin is None:
+        return True
+    if not settings.mcp_allowed_origins:
+        return True
+    return origin in settings.mcp_allowed_origins
+
+
+# Loopback hostname literals. Port is stripped before the check.
+# A DNS-rebound page cannot control the loopback address in Host; only genuine
+# same-host callers (e.g. test_server_handshake in-process self-calls) send these.
+_LOOPBACK_HOSTNAMES: frozenset[str] = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+
+def _check_mcp_host(host: Optional[str]) -> bool:
+    """Return True when the Host header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Host (``None``) is always accepted. An empty-string Host is treated as
+    present-and-must-match. Loopback literals (``127.0.0.1``, ``localhost``,
+    ``[::1]``) are always accepted regardless of the allowlist — in-process
+    self-calls (e.g. ``test_server_handshake``) send these and a DNS-rebound page
+    cannot forge a loopback hostname in ``Host``. When ``mcp_allowed_hosts`` is
+    empty all other hosts are accepted (opt-in enforcement). Otherwise the host
+    must be an exact member of the configured set or the request is rejected.
+
+    Args:
+        host: Value of the Host header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if host is None:
+        return True
+    # Strip port suffix (host:port or [::1]:port) before loopback check.
+    bare = host.rsplit(":", 1)[0] if ":" in host else host
+    # De-bracket IPv6 literals: "[::1]" → "::1"
+    if bare.startswith("[") and bare.endswith("]"):
+        bare = bare[1:-1]
+    if bare in _LOOPBACK_HOSTNAMES:
+        return True
+    if not settings.mcp_allowed_hosts:
+        return True
+    return host in settings.mcp_allowed_hosts
+
+
+class MCPOriginHostGate:
+    """ASGI gate that enforces MCP Origin/Host allowlists at the public /mcp mount.
+
+    Runs before any ingress dispatch (Python, rust-internal, rust-public) so the
+    check is not duplicated per-transport. The ``/_internal/mcp/transport`` bridge
+    is mounted separately and intentionally bypasses this gate — requests on that
+    path arrive from the trusted Rust sidecar at 127.0.0.1 only.
+
+    When session-affinity is enabled, loopback-sourced requests carrying
+    ``x-forwarded-internally: true`` are also bypassed (worker-to-worker routing).
+    The bypass is gated on affinity being enabled so a DNS-rebound page on loopback
+    cannot spoof the header when affinity is off (the default).
+    """
+
+    def __init__(self, app: Any) -> None:
+        """Wrap an ASGI application with the Origin/Host gate.
+
+        Args:
+            app: Downstream ASGI callable.
+        """
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Enforce Origin/Host allowlists before dispatching to the wrapped app.
+
+        Args:
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+
+        hdrs = _parse_mcp_scope_headers(scope)
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_loopback_forward = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and hdrs.get("x-forwarded-internally") == "true"
+
+        if not is_loopback_forward:
+            _raw_origin: Optional[str] = hdrs.get("origin")
+            _raw_host: Optional[str] = hdrs.get("host")
+            if not _check_mcp_origin(_raw_origin):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Origin: %s",
+                    sanitize_for_log(str(_raw_origin)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+            if not _check_mcp_host(_raw_host):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Host: %s",
+                    sanitize_for_log(str(_raw_host)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+
+        await self._app(scope, receive, send)
 
 
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
@@ -157,13 +298,13 @@ def _normalize_mcp_prompt_arguments(arguments: Any) -> Optional[List[types.Promp
     """Convert internal prompt-argument objects to MCP prompt arguments.
 
     The prompt service returns internal schema models, while the MCP transport
-    must emit ``mcp.types.PromptArgument`` instances. Pydantic does not treat
+            must emit ``mcp_types.PromptArgument`` instances. Pydantic does not treat
     different model classes as interchangeable, so raw pass-through raises
     validation errors during prompt listing.
 
     Args:
         arguments: Prompt arguments from internal services. Items may already be
-            ``mcp.types.PromptArgument`` instances, dicts, or other Pydantic
+            ``mcp_types.PromptArgument`` instances, dicts, or other Pydantic
             models with matching attributes.
 
     Returns:
@@ -228,28 +369,30 @@ def _to_mcp_resource(resource: Any) -> types.Resource:
     return types.Resource.model_validate({key: value for key, value in payload.items() if value is not None})
 
 
-def _blob_payload_to_bytes(blob: Any) -> bytes:
-    """Return raw bytes for an MCP blob payload."""
+def _blob_payload_to_str(blob: Any) -> str:
+    """Return a base64 string for an MCP blob payload."""
     if isinstance(blob, bytes):
-        return blob
+        return base64.b64encode(blob).decode("utf-8")
     if isinstance(blob, str):
-        try:
-            return base64.b64decode(blob, validate=True)
-        except ValueError:
-            return blob.encode("utf-8")
-    return bytes(blob)
+        # Already base64-encoded upstream; pass through unchanged.
+        return blob
+    return base64.b64encode(bytes(blob)).decode("utf-8")
 
 
-def _to_read_resource_contents(content: Any, *, fallback_uri: str) -> List[ReadResourceContents]:
-    """Convert service/proxy resource content into SDK read-resource helper contents."""
+def _to_mcp_resource_contents(content: Any, *, fallback_uri: str) -> List[Any]:
+    """Convert service/proxy resource content into MCP v2 resource contents.
+
+    Preserves the MCP Apps projection (mimeType + ``_meta``) via
+    ``serialize_resource_content_for_mcp``.
+    """
     payload = serialize_resource_content_for_mcp(content, fallback_uri=fallback_uri)
     mime_type = payload.get("mimeType")
     meta = payload.get("_meta")
     if payload.get("text") is not None:
-        return [ReadResourceContents(content=payload["text"], mime_type=mime_type, meta=meta)]
+        return [types.TextResourceContents(uri=fallback_uri, text=payload["text"], mime_type=mime_type, meta=meta)]
     if payload.get("blob") is not None:
-        return [ReadResourceContents(content=_blob_payload_to_bytes(payload["blob"]), mime_type=mime_type, meta=meta)]
-    return [ReadResourceContents(content="", mime_type=mime_type, meta=meta)]
+        return [types.BlobResourceContents(uri=fallback_uri, blob=_blob_payload_to_str(payload["blob"]), mime_type=mime_type, meta=meta)]
+    return [types.TextResourceContents(uri=fallback_uri, text="", mime_type=mime_type, meta=meta)]
 
 
 def _to_mcp_prompt(prompt: Any) -> types.Prompt:
@@ -310,20 +453,48 @@ completion_service: CompletionService = CompletionService()
 class ContextForgeMCPServer(Server[Any]):
     """MCP server with ContextForge extension capability advertising."""
 
-    def get_capabilities(self, notification_options: Any, experimental_capabilities: dict[str, dict[str, Any]]) -> types.ServerCapabilities:
+    def get_capabilities(
+        self,
+        notification_options: Any = None,
+        experimental_capabilities: Optional[Dict[str, Dict[str, Any]]] = None,
+        extensions: Optional[Dict[str, Dict[str, Any]]] = None,
+        *,
+        protocol_version: Optional[str] = None,
+    ) -> types.ServerCapabilities:
         """Return SDK capabilities plus enabled ContextForge MCP extensions."""
-        capabilities = super().get_capabilities(notification_options, experimental_capabilities)
+        capabilities = super().get_capabilities(notification_options, experimental_capabilities, extensions, protocol_version=protocol_version)
         user_context = user_context_var.get()
-        extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
-        if extensions:
+        extra_extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
+        if extra_extensions:
             current_extensions = getattr(capabilities, "extensions", None)
             merged_extensions = dict(current_extensions) if isinstance(current_extensions, dict) else {}
-            merged_extensions.update(extensions)
+            merged_extensions.update(extra_extensions)
             capabilities.extensions = merged_extensions
         return capabilities
 
 
 mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
+
+# ============================================================================
+# MCP v1 → v2 migration notes
+# ============================================================================
+# The v1 decorator-based handler registration (``@mcp_app.list_tools()`` et
+# al.) was removed in mcp 2.x. Handlers below keep their v1 shapes and are
+# bridged by the ``_adapt_*`` wrappers + ``mcp_app.add_request_handler(...)``
+# block at module bottom (see "mcp v1 → v2 handler adapters").
+#
+# Two known gaps remain from the migration:
+#   1. ``mcpgateway/services/notification_service.py``'s hold-then-respond
+#      multiplexer relies on ``responder.respond()``, which no longer exists
+#      in v2 (``RequestResponder`` is a typing-only stub). Responses to
+#      server-initiated requests are currently dropped with a warning; the
+#      mechanism needs a redesign around v2's return-based callback contract.
+#   2. MCP Apps extension support (``capabilities.extensions`` advertising via
+#      ``ContextForgeMCPServer`` and ``_meta`` projection via
+#      ``apply_tool_meta``/``apply_resource_meta``) has been restored on the
+#      v2 API; direct-proxy resource reads route through
+#      ``_to_mcp_resource_contents`` for mimeType + ``_meta`` preservation.
+# ============================================================================
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 # First-Party
@@ -398,8 +569,8 @@ class EventEntry:
 
     Examples:
         >>> # Create an event entry
-        >>> from mcp.types import JSONRPCMessage
-        >>> message = JSONRPCMessage(jsonrpc="2.0", method="test", id=1)
+        >>> from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
+        >>> message = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test", "id": 1})
         >>> entry = EventEntry(event_id="test-123", stream_id="stream-456", message=message, seq_num=0)
         >>> entry.event_id
         'test-123'
@@ -541,9 +712,9 @@ class InMemoryEventStore(EventStore):
         Examples:
             >>> # Test storing an event
             >>> import asyncio
-            >>> from mcp.types import JSONRPCMessage
+            >>> from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
             >>> store = InMemoryEventStore(max_events_per_stream=5)
-            >>> message = JSONRPCMessage(jsonrpc="2.0", method="test", id=1)
+            >>> message = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test", "id": 1})
             >>> event_id = asyncio.run(store.store_event("stream-1", message))
             >>> isinstance(event_id, str)
             True
@@ -559,7 +730,7 @@ class InMemoryEventStore(EventStore):
             True
 
             >>> # Test storing multiple events in same stream
-            >>> message2 = JSONRPCMessage(jsonrpc="2.0", method="test2", id=2)
+            >>> message2 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test2", "id": 2})
             >>> event_id2 = asyncio.run(store.store_event("stream-1", message2))
             >>> len(store.streams["stream-1"])
             2
@@ -568,9 +739,9 @@ class InMemoryEventStore(EventStore):
 
             >>> # Test ring buffer overflow
             >>> store2 = InMemoryEventStore(max_events_per_stream=2)
-            >>> msg1 = JSONRPCMessage(jsonrpc="2.0", method="m1", id=1)
-            >>> msg2 = JSONRPCMessage(jsonrpc="2.0", method="m2", id=2)
-            >>> msg3 = JSONRPCMessage(jsonrpc="2.0", method="m3", id=3)
+            >>> msg1 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "m1", "id": 1})
+            >>> msg2 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "m2", "id": 2})
+            >>> msg3 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "m3", "id": 3})
             >>> id1 = asyncio.run(store2.store_event("stream-2", msg1))
             >>> id2 = asyncio.run(store2.store_event("stream-2", msg2))
             >>> # Now buffer is full, adding third will remove first
@@ -633,11 +804,11 @@ class InMemoryEventStore(EventStore):
         Examples:
             >>> # Test replaying events
             >>> import asyncio
-            >>> from mcp.types import JSONRPCMessage
+            >>> from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
             >>> store = InMemoryEventStore()
-            >>> message1 = JSONRPCMessage(jsonrpc="2.0", method="test1", id=1)
-            >>> message2 = JSONRPCMessage(jsonrpc="2.0", method="test2", id=2)
-            >>> message3 = JSONRPCMessage(jsonrpc="2.0", method="test3", id=3)
+            >>> message1 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test1", "id": 1})
+            >>> message2 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test2", "id": 2})
+            >>> message3 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test3", "id": 3})
             >>>
             >>> # Store events
             >>> event_id1 = asyncio.run(store.store_event("stream-1", message1))
@@ -986,14 +1157,7 @@ def _build_server_resource_url(scope: Scope, server_id: str) -> str:
         Fully-qualified resource URL string, or ``""`` if construction fails.
     """
     del scope  # intentionally ignored — see docstring
-    try:
-        raw = str(settings.app_domain).rstrip("/")
-    except (AttributeError, ValueError) as exc:
-        logger.warning("settings.app_domain is not a usable URL: %s: %s", type(exc).__name__, exc)
-        return ""
-    if not raw:
-        return ""
-    return f"{raw}/servers/{server_id}/mcp"
+    return build_server_mcp_url(server_id)
 
 
 def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
@@ -1364,22 +1528,6 @@ async def _validate_streamable_session_access(
     return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
 
 
-def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestParams]:
-    """Build a ``PaginatedRequestParams`` carrying ``_meta`` when provided.
-
-    Args:
-        meta: Request metadata (_meta) from the original MCP request, or ``None``.
-
-    Returns:
-        A ``PaginatedRequestParams`` instance with ``_meta`` set, or ``None`` when *meta* is falsy.
-    """
-    if not meta:
-        return None
-    # CWE-532: log only key names, never values which may carry PII/tokens
-    logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
-    return PaginatedRequestParams(_meta=meta)
-
-
 async def _send_streamable_http_json_response(send: Send, *, status_code: int, payload: dict[str, Any]) -> None:
     """Send a JSON response for Streamable HTTP request handling paths.
 
@@ -1451,18 +1599,13 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
-async def _proxy_list_tools_to_gateway(
-    gateway: Any,
-    request_headers: dict,
-    _user_context: dict,
-    meta: Optional[Any] = None,
-) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        _user_context: User context (not used - _meta comes from MCP SDK)
+        user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
 
     Returns:
@@ -1493,14 +1636,19 @@ async def _proxy_list_tools_to_gateway(
         if identity:
             headers.update(build_identity_headers(identity, gateway))
 
-        # Use MCP SDK to connect and list tools
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-
-                # List tools with _meta forwarded
-                result = await session.list_tools(params=_build_paginated_params(meta))
-                return filter_model_visible_tools(result.tools)
+        # Use MCP v2 Client to connect and list tools
+        async with mcp_proxy_client(
+            url=gateway.url,
+            headers=headers,
+            timeout=settings.mcpgateway_direct_proxy_timeout,
+        ) as client:
+            # List tools with _meta forwarded
+            if meta:
+                logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+                tools_result = await client.list_tools(meta=meta)
+            else:
+                tools_result = await client.list_tools()
+            return filter_model_visible_tools(tools_result.tools)
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
@@ -1549,16 +1697,22 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
-        # Use MCP SDK to connect and list resources
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        # Use MCP v2 Client to connect and list resources
+        async with mcp_proxy_client(
+            url=gateway.url,
+            headers=headers,
+            timeout=settings.mcpgateway_direct_proxy_timeout,
+        ) as client:
+            # List resources with _meta forwarded (auto-initializes on first call)
+            if meta:
+                logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+                resources_result = await client.list_resources(meta=meta)
+            else:
+                resources_result = await client.list_resources()
 
-                # List resources with _meta forwarded
-                result = await session.list_resources(params=_build_paginated_params(meta))
-
-                logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
-                return result.resources
+            resource_list = resources_result.resources
+            logger.info("Received %s resources from gateway %s", len(resource_list), gateway.id)
+            return resource_list
 
     except Exception as e:
         logger.exception("Error proxying resources/list to gateway %s: %s", gateway.id, e)
@@ -1615,31 +1769,21 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
-        # Use MCP SDK to connect and read resource
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        # Use MCP v2 Client to connect and read resource (auto-initializes on first call)
+        async with mcp_proxy_client(
+            url=gateway.url,
+            headers=headers,
+            timeout=settings.mcpgateway_direct_proxy_timeout,
+        ) as client:
+            # read_resource with _meta forwarded (auto-initializes on first call)
+            if meta:
+                logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+                content_result = await client.read_resource(resource_uri, meta=meta)
+            else:
+                content_result = await client.read_resource(resource_uri)
 
-                # Prepare request params with _meta if provided
-                if meta:
-                    # Create params and inject _meta
-                    # by_alias=True ensures the alias "_meta" key is written so
-                    # model_validate resolves it correctly (fixes CWE-20 silent drop)
-                    request_params = ReadResourceRequestParams(uri=resource_uri)
-                    request_params_dict = request_params.model_dump(by_alias=True)
-                    request_params_dict["_meta"] = meta
-
-                    # Send request with _meta
-                    result = await session.send_request(
-                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
-                        types.ReadResourceResult,
-                    )
-                else:
-                    # No _meta, use simple read_resource
-                    result = await session.read_resource(uri=resource_uri)
-
-                logger.info("Received %s content items from gateway %s for resource %s", len(result.contents), gateway.id, resource_uri)
-                return result.contents
+            logger.info("Received %s content items from gateway %s for resource %s", len(content_result.contents), gateway.id, resource_uri)
+            return content_result.contents
 
     except Exception as e:
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
@@ -1682,7 +1826,62 @@ def _truthy_is_error(result: Any) -> bool:
     return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
-@mcp_app.call_tool(validate_input=False)
+def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
+    """Retrieves the plugin contexts recorded by the HTTP_PRE_REQUEST hooks.
+
+    ``HttpAuthMiddleware`` stores the ``GlobalContext`` and the
+    ``PluginContextTable`` produced by ``HTTP_PRE_REQUEST`` on ``request.state``
+    (backed by the ASGI ``scope["state"]`` dictionary) so that later hooks can
+    read state written by earlier ones. The REST handlers in
+    ``mcpgateway/main.py`` forward both into the service layer; without the same
+    hand-off here, ``TOOL_PRE_INVOKE``, ``PROMPT_PRE_FETCH`` and
+    ``RESOURCE_PRE_FETCH`` hooks reached through ``/mcp`` always see an empty
+    context.
+
+    Reading from the ASGI scope rather than from a ``ContextVar`` mirrors path 2
+    of :func:`_get_request_context_or_default` and survives the task-group
+    boundaries introduced by the MCP SDK.
+
+    Returns:
+        Tuple[Optional[GlobalContext], Optional[PluginContextTable]]: The global
+        context and context table left behind by the pre-request hooks, or
+        ``(None, None)`` when no request context is active, the transport is not
+        driven by an ASGI scope, or the plugin manager recorded nothing.
+
+    Examples:
+        >>> _get_plugin_contexts_or_none()
+        (None, None)
+    """
+    try:
+        request = mcp_app.request_context.request  # pylint: disable=no-member
+    except LookupError:
+        return None, None
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("Failed to resolve request context for plugin contexts: %s", exc)
+        return None, None
+
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        return None, None
+
+    state = scope.get("state")
+    if not isinstance(state, dict):
+        return None, None
+
+    global_context = state.get("plugin_global_context")
+    context_table = state.get("plugin_context_table")
+    # ``PluginContextTable`` is an alias for ``dict[str, PluginContext]``, so the
+    # runtime check is against ``dict``.
+    return (
+        global_context if isinstance(global_context, GlobalContext) else None,
+        context_table if isinstance(context_table, dict) else None,
+    )
+
+
+# Note: @mcp_app.call_tool() decorator removed in mcp v2 — handler is registered
+# via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
+# argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
+# so the gateway's existing tool_service.py schema validation is the only path.
 async def call_tool(
     name: str, arguments: dict
 ) -> Union[
@@ -1702,6 +1901,10 @@ async def call_tool(
     This function supports the MCP protocol's tool calling with structured content validation.
     In direct_proxy mode, returns the raw CallToolResult from the remote server.
     In normal mode, converts ToolResult to CallToolResult with content normalization.
+
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``invoke_tool`` so that
+    ``TOOL_PRE_INVOKE`` hooks share state with earlier hooks.
 
     Args:
         name (str): The name of the tool to invoke.
@@ -1726,15 +1929,55 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
     meta_data = None
+    downstream_session = None
+    mrtr_allowed = False
+    inbound_input_responses = None
+    inbound_request_state = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
+        if ctx:
+            downstream_session = getattr(ctx, "session", None)
+            # MRTR elicitation pass-through is modern-era only (scoping decision:
+            # legacy clients keep today's no-elicitation behavior).
+            protocol_version = getattr(ctx, "protocol_version", None)
+            mrtr_allowed = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+            raw_params = getattr(ctx, "params", None) or {}
+            raw_responses = raw_params.get("inputResponses") or raw_params.get("input_responses")
+            inbound_request_state = raw_params.get("requestState") or raw_params.get("request_state")
+            if raw_responses:
+                inbound_input_responses = {}
+                for key, value in raw_responses.items():
+                    if isinstance(value, dict):
+                        try:
+                            value = types.ElicitResult.model_validate(value)
+                        except Exception:  # noqa: BLE001 - non-elicitation responses pass through raw
+                            pass
+                    inbound_input_responses[key] = value
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
+
+    async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
+        """Forward an upstream progress update to the downstream caller.
+
+        Args:
+            progress: Current progress value.
+            total: Optional total value.
+            message: Optional human-readable status message.
+        """
+        if downstream_session is None:
+            return
+        try:
+            await downstream_session.report_progress(progress, total, message)
+        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
+            logger.debug("Progress relay failed: %s", exc)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -1778,7 +2021,7 @@ async def call_tool(
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(check_db, gateway, user_email, token_teams):
                         logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id_from_header, user_email)
-                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], isError=True)
+                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], is_error=True)
 
                     logger.info("Using direct_proxy mode for tool '%s' via gateway %s", name, gateway_id_from_header)
 
@@ -1796,7 +2039,7 @@ async def call_tool(
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
-            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
+            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], is_error=True)
 
     # Normal mode: use standard tool invocation with normalization
     # Use the already-recovered user_context (works for both ContextVar and stateful session paths)
@@ -1824,7 +2067,7 @@ async def call_tool(
             # Register session mapping BEFORE checking forwarding (same pattern as SSE)
             # This ensures ownership is registered atomically so forward_request_to_owner() works
             try:
-                cached = await tool_lookup_cache.get(name)
+                cached = await tool_lookup_cache.get(name, server_id=server_id)
                 if cached and cached.get("status") == "active":
                     gateway_info = cached.get("gateway")
                     if gateway_info:
@@ -1842,11 +2085,12 @@ async def call_tool(
             # Carry the verified edge identity so the owner dispatches to the trusted internal
             # endpoint without re-authenticating (OAuth / public-only survive the rpc forward).
             encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
-            forwarded_response = await pool.forward_request_to_owner(
-                mcp_session_id,
-                {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
-                encoded_auth_context,
-            )
+            with create_span("mcp.affinity.forward_rpc", {"mcp.session_id": mcp_session_id[:8], "mcp.tool.name": name}):
+                forwarded_response = await pool.forward_request_to_owner(
+                    mcp_session_id,
+                    {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+                    encoded_auth_context,
+                )
             if forwarded_response is not None:
                 # Request was handled by another worker - convert response to expected format
                 if "error" in forwarded_response:
@@ -1887,7 +2131,10 @@ async def call_tool(
                     return converted
 
                 unstructured = _rehydrate_content_items(result_data.get("content", []))
-                structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                # Use explicit None check to preserve empty dicts (valid MCP responses)
+                structured = result_data.get("structuredContent")
+                if structured is None:
+                    structured = result_data.get("structured_content")
                 if not isinstance(structured, dict):
                     structured = None
                 is_error = bool(result_data.get("isError") or result_data.get("is_error"))
@@ -1901,18 +2148,21 @@ async def call_tool(
                     # returned".
                     return types.CallToolResult(
                         content=unstructured,
-                        structuredContent=structured,
-                        isError=True,
+                        structured_content=structured,
+                        is_error=True,
                     )
                 # Success path: return the list/tuple shape so the MCP SDK's
                 # server-side validator runs and enforces the tool's
                 # outputSchema against the structured payload.
-                if structured:
+                if structured is not None:
                     return (unstructured, structured)
                 return unstructured
         except RuntimeError:
             # Pool not initialized - execute locally
             pass
+
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
 
     try:
         async with get_db() as db:
@@ -1928,6 +2178,12 @@ async def call_tool(
                 server_id=server_id,
                 meta_data=meta_data,
                 require_model_visible=True,
+                progress_callback=_relay_progress,
+                allow_input_required=mrtr_allowed,
+                input_responses=inbound_input_responses,
+                request_state=inbound_request_state,
+                plugin_global_context=plugin_global_context,
+                plugin_context_table=plugin_context_table,
             )
             if not result or (not result.content and not getattr(result, "structured_content", None)):
                 logger.warning("No content returned by tool: %s", name)
@@ -1935,7 +2191,7 @@ async def call_tool(
 
             # Normalize unstructured content to MCP SDK types, preserving metadata (annotations, _meta, size)
             # Helper to convert gateway Annotations to dict for MCP SDK compatibility
-            # (mcpgateway.common.models.Annotations != mcp.types.Annotations)
+            # (mcpgateway.common.models.Annotations != mcp_types.Annotations)
             def _convert_annotations(ann: Any) -> dict[str, Any] | None:
                 """Convert gateway Annotations to dict for MCP SDK compatibility.
 
@@ -1986,7 +2242,7 @@ async def call_tool(
                         types.ImageContent(
                             type="image",
                             data=content.data,
-                            mimeType=content.mime_type,
+                            mime_type=content.mime_type,
                             annotations=_convert_annotations(getattr(content, "annotations", None)),
                             _meta=_convert_meta(getattr(content, "meta", None)),
                         )
@@ -1996,7 +2252,7 @@ async def call_tool(
                         types.AudioContent(
                             type="audio",
                             data=content.data,
-                            mimeType=content.mime_type,
+                            mime_type=content.mime_type,
                             annotations=_convert_annotations(getattr(content, "annotations", None)),
                             _meta=_convert_meta(getattr(content, "meta", None)),
                         )
@@ -2008,7 +2264,7 @@ async def call_tool(
                             uri=content.uri,
                             name=content.name,
                             description=getattr(content, "description", None),
-                            mimeType=getattr(content, "mime_type", None),
+                            mime_type=getattr(content, "mime_type", None),
                             size=getattr(content, "size", None),
                             _meta=_convert_meta(getattr(content, "meta", None)),
                         )
@@ -2056,16 +2312,31 @@ async def call_tool(
                 # returned".
                 return types.CallToolResult(
                     content=unstructured,
-                    structuredContent=structured,
-                    isError=True,
+                    structured_content=structured,
+                    is_error=True,
                 )
 
             # Success path: return the list/tuple shape so the MCP SDK's
             # server-side validator runs and enforces the tool's
             # outputSchema against the structured payload.
-            if structured:
+            if structured is not None:
                 return (unstructured, structured)
             return unstructured
+    except ToolInputRequired as e:
+        # 2026 MRTR: return the upstream question to the modern client, which
+        # answers and retries the call with input_responses + request_state.
+        logger.info("Input required for tool '%s'; relaying to client", name)
+        return e.result
+    except ToolNotFoundError:
+        logger.info("Unknown tool requested: %s", name)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
+    except ToolInvocationError as e:
+        # covers tool timeouts
+        logger.warning("Tool invocation failed for '%s': %s", name, e)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=str(e))], is_error=True)
+    except PluginViolationError as e:
+        logger.info("Tool invocation blocked by plugin for '%s': %s", name, e)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=str(e))], is_error=True)
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
         # Re-raise the exception so the MCP SDK can properly convert it to an error response
@@ -2127,7 +2398,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         request = ctx.request
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
@@ -2155,7 +2426,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         # Reuse ctx from the scope-reading block above (step 2) to avoid
         # a redundant mcp_app.request_context lookup.
         if ctx is None:
-            ctx = mcp_app.request_context
+            ctx = mcp_app.request_context  # pylint: disable=no-member
         request = ctx.request
         if not request:
             logger.warning("No request object found in MCP context")
@@ -2189,6 +2460,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
                 user_ctx = await _normalize_jwt_payload(raw_payload)
             else:
                 user_ctx = {}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning("Failed to recover user context in stateful session: %s", e)
             user_ctx = {}
@@ -2198,6 +2471,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     except LookupError:
         # Not in a request context
         return s_id, request_headers_var.get(), user_context_var.get()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error recovering context in stateful session: %s", e)
         return s_id, request_headers_var.get(), user_context_var.get()
@@ -2241,12 +2516,131 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # This ensures SSO-provisioned platform_admins get admin bypass on the fallback
     # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
     db_user_is_admin = False
+    auth_cache = None
+    auth_context_resolved = False
+    platform_admin_email = getattr(settings, "platform_admin_email", "")
     if email:
-        # First-Party
-        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+        jti = payload.get("jti")
+        if settings.auth_cache_enabled:
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
-        with SessionLocal() as db:
-            db_user_is_admin = is_user_admin(db, email)
+                auth_cache = get_auth_cache()
+                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                if cached_ctx is not None:
+                    if cached_ctx.is_token_revoked:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+                    cached_user = cached_ctx.user
+                    if cached_user and not cached_user.get("is_active", True):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                    if cached_user is None and settings.require_user_in_db and email != platform_admin_email:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    if cached_user and settings.require_user_in_db:
+                        # Match the primary auth path: a cached user is not proof
+                        # that the database record still exists in strict mode.
+                        # First-Party
+                        from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                        db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
+                        if db_user is None:
+                            raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    db_user_is_admin = bool(cached_user and cached_user.get("is_admin", False))
+                    auth_context_resolved = True
+                elif settings.auth_cache_batch_queries:
+                    # First-Party
+                    from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
+                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                    if batched_ctx.get("is_token_revoked", False):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+                    batched_user = batched_ctx.get("user")
+                    if batched_user and not batched_user.get("is_active", True):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                    if batched_user is None and settings.require_user_in_db and email != platform_admin_email:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    db_user_is_admin = bool(batched_user and batched_user.get("is_admin", False))
+                    auth_context_resolved = True
+                    try:
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=batched_user,
+                                personal_team_id=batched_ctx.get("personal_team_id"),
+                                is_token_revoked=bool(batched_ctx.get("is_token_revoked", False)),
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
+            except HTTPException:
+                raise
+            except Exception as cache_error:
+                logger.debug("Stateful-session auth cache lookup failed for %s: %s", email, cache_error)
+
+        if not auth_context_resolved:
+            # First-Party
+            from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+            if jti and await asyncio.to_thread(_check_token_revoked_sync, jti):
+                raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
+            try:
+                user_record = await asyncio.to_thread(_get_user_by_email_sync, email)
+            except Exception as user_lookup_error:
+                # Preserve the primary auth path's fail-open behavior when the
+                # user status lookup is unavailable; JWT signature validation
+                # has already succeeded.  Keep the legacy admin helper as a
+                # compatibility fallback for deployments that provide it.
+                logger.warning("Stateful-session user lookup failed for %s: %s", email, user_lookup_error)
+                # First-Party
+                from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+                with SessionLocal() as db:
+                    db_user_is_admin = is_user_admin(db, email)
+                user_record = None
+            else:
+                if user_record and not getattr(user_record, "is_active", True):
+                    raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                if user_record is None and settings.require_user_in_db and email != platform_admin_email:
+                    raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                db_user_is_admin = bool(user_record and getattr(user_record, "is_admin", False))
+                # Warm the auth cache so subsequent requests on this stateful
+                # session avoid the DB round-trip (mirrors primary path at 5328+).
+                if auth_cache is not None:
+                    try:
+                        # First-Party
+                        from mcpgateway.cache.auth_cache import CachedAuthContext  # pylint: disable=import-outside-toplevel
+
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=(
+                                    {
+                                        "email": getattr(user_record, "email", email),
+                                        "password_hash": getattr(user_record, "password_hash", ""),
+                                        "full_name": getattr(user_record, "full_name", None),
+                                        "is_admin": bool(getattr(user_record, "is_admin", False)),
+                                        "is_active": bool(getattr(user_record, "is_active", True)),
+                                        "auth_provider": getattr(user_record, "auth_provider", "local"),
+                                        "password_hash_type": getattr(user_record, "password_hash_type", "argon2id"),
+                                        "password_change_required": bool(getattr(user_record, "password_change_required", False)),
+                                        "email_verified_at": getattr(user_record, "email_verified_at", None),
+                                        "created_at": getattr(user_record, "created_at", None),
+                                        "updated_at": getattr(user_record, "updated_at", None),
+                                    }
+                                    if user_record is not None
+                                    else None
+                                ),
+                                personal_team_id=None,
+                                is_token_revoked=False,
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
+    if email == platform_admin_email:
+        db_user_is_admin = True
 
     effective_is_admin = db_user_is_admin or jwt_is_admin
 
@@ -2263,6 +2657,14 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
 
         final_teams = normalize_token_teams(payload)
+
+    # SECURITY: API/legacy team claims must still match current active memberships.
+    if token_use != "session" and final_teams and email:
+        # First-Party
+        from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
+
+        if not validate_token_team_membership(email, final_teams):
+            raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Token invalid: User is no longer a member of the associated team")
 
     user_ctx: dict[str, Any] = {
         "email": email,
@@ -2281,7 +2683,6 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return user_ctx
 
 
-@mcp_app.list_tools()
 async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
@@ -2304,7 +2705,7 @@ async def list_tools() -> List[types.Tool]:
         >>> list(sig.parameters.keys())
         []
         >>> sig.return_annotation
-        typing.List[mcp.types.Tool]
+        typing.List[mcp_types._types.Tool]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2387,7 +2788,6 @@ async def list_tools() -> List[types.Tool]:
             return []
 
 
-@mcp_app.list_prompts()
 async def list_prompts() -> List[types.Prompt]:
     """
     Lists all prompts available to the MCP Server.
@@ -2405,7 +2805,7 @@ async def list_prompts() -> List[types.Prompt]:
         >>> list(sig.parameters.keys())
         []
         >>> sig.return_annotation
-        typing.List[mcp.types.Prompt]
+        typing.List[mcp_types._types.Prompt]
     """
     server_id, _, user_context = await _get_request_context_or_default()
 
@@ -2447,20 +2847,24 @@ async def list_prompts() -> List[types.Prompt]:
             return []
 
 
-@mcp_app.get_prompt()
 async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) -> types.GetPromptResult:
     """
     Retrieves a prompt by ID, optionally substituting arguments.
+
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``get_prompt`` so that
+    ``PROMPT_PRE_FETCH`` hooks share state with earlier hooks.
 
     Args:
         prompt_id (str): The ID of the prompt to retrieve.
         arguments (Optional[dict[str, str]]): Optional dictionary of arguments to substitute into the prompt.
 
     Returns:
-        GetPromptResult: Object containing the prompt messages and description.
-        Returns an empty list on failure or if no prompt content is found.
+        GetPromptResult: Object containing the prompt messages and description
+        (empty messages if the prompt rendered no content).
 
     Raises:
+        MCPError: INVALID_PARAMS ("Unknown prompt: ...") if the prompt does not exist.
         PermissionError: If the user context indicates insufficient permissions (e.g., missing "prompts.read" scope).
 
     Logs exceptions if any errors occur during retrieval.
@@ -2498,12 +2902,17 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
+
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
 
     try:
         async with get_db() as db:
@@ -2516,21 +2925,25 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     server_id=server_id,
                     token_teams=token_teams,
                     _meta_data=meta_data,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
                 )
-            except Exception as e:
-                logger.exception("Error getting prompt '%s': %s", prompt_id, e)
-                return []
+            except PromptNotFoundError as e:
+                logger.info("Unknown prompt requested: %s", prompt_id)
+                raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown prompt: {prompt_id}") from e
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
-                return []
+                return types.GetPromptResult(messages=[])
             message_dicts = [message.model_dump() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
+    except MCPError:
+        raise
     except Exception as e:
         logger.exception("Error getting prompt '%s': %s", prompt_id, e)
-        return []
+        # Re-raise so the SDK converts it to a proper error response.
+        raise
 
 
-@mcp_app.list_resources()
 async def list_resources() -> List[types.Resource]:
     """
     Lists all resources available to the MCP Server.
@@ -2548,7 +2961,7 @@ async def list_resources() -> List[types.Resource]:
         >>> list(sig.parameters.keys())
         []
         >>> sig.return_annotation
-        typing.List[mcp.types.Resource]
+        typing.List[mcp_types._types.Resource]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2625,19 +3038,26 @@ async def list_resources() -> List[types.Resource]:
             return []
 
 
-@mcp_app.read_resource()
-async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadResourceContents]]:
+async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     """
     Reads the content of a resource specified by its URI.
+
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``read_resource`` so that
+    ``RESOURCE_PRE_FETCH`` hooks share state with earlier hooks. The direct-proxy
+    branch bypasses the gateway-side resource hooks and is unaffected.
 
     Args:
         resource_uri (str): The URI of the resource to read.
 
     Returns:
-        Union[str, bytes, Iterable[ReadResourceContents]]: The resource content.
-        Returns empty string on failure or if no content is found.
+        Union[str, bytes, List[Any]]: The resource content — bare text/bytes,
+        or a list of MCP resource-contents models (with mimeType and MCP Apps
+        ``_meta`` projection) for rich results.
+        Returns empty string only for an existing resource with no content.
 
     Raises:
+        MCPError: INVALID_PARAMS ("Unknown resource: ...") if the resource does not exist.
         PermissionError: If the user does not have the required permissions to read resources.
 
     Logs exceptions if any errors occur during reading.
@@ -2648,7 +3068,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
         >>> list(sig.parameters.keys())
         ['resource_uri']
         >>> sig.return_annotation
-        typing.Union[str, bytes, typing.Iterable[mcp.server.lowlevel.helper_types.ReadResourceContents]]
+        typing.Union[str, bytes, typing.List[typing.Any]]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2675,12 +3095,17 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
+
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
 
     try:
         async with get_db() as db:
@@ -2713,7 +3138,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
-                        return _to_read_resource_contents(contents[0], fallback_uri=str(resource_uri))
+                        return _to_mcp_resource_contents(contents[0], fallback_uri=str(resource_uri))
                     return ""
                 if gateway:
                     logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
@@ -2730,32 +3155,38 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
                     token_teams=token_teams,
                     meta_data=meta_data,
                     request_headers=request_headers,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
                 )
-            except (ResourceError, ResourceNotFoundError):
-                raise
-            except Exception as e:
-                logger.exception("Error reading resource '%s': %s", resource_uri, e)
+            except ResourceNotFoundError as e:
+                logger.info("Unknown resource requested: %s", resource_uri)
+                raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown resource: {resource_uri}") from e
+            except ValueError as e:
+                if str(e) != "Resource has no content":
+                    raise
+                # The resource cache content is empty
+                logger.warning("Resource %s has no cached content; returning empty", resource_uri)
                 return ""
 
             # Return blob content if available (binary resources)
             if result and getattr(result, "blob", None):
-                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
+                return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
             # Return text content if available (text resources)
             if result and getattr(result, "text", None):
-                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
+                return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
-            # No content found
+            # No content found: an existing resource with genuinely empty
             logger.warning("No content returned by resource: %s", resource_uri)
             return ""
-    except (ResourceError, ResourceNotFoundError):
+    except MCPError:
         raise
     except Exception as e:
         logger.exception("Error reading resource '%s': %s", resource_uri, e)
-        return ""
+        # Re-raise so the SDK converts it to a proper error response.
+        raise
 
 
-@mcp_app.list_resource_templates()
 async def list_resource_templates() -> List[Dict[str, Any]]:
     """
     Lists all resource templates available to the MCP Server.
@@ -2815,13 +3246,16 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         return []
 
 
-@mcp_app.set_logging_level()
-async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
+async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") -> types.EmptyResult:
     """
     Sets the logging level for the MCP Server.
 
     Args:
-        level (types.LoggingLevel): The desired logging level (debug, info, notice, warning, error, critical, alert, emergency).
+        _ctx: ServerRequestContext supplied by the mcp 2.x runner. Unused here —
+            the gateway's request context is resolved via
+            ``_get_request_context_or_default()`` from ContextVars / ASGI scope.
+        params (types.SetLevelRequestParams): Wraps the desired logging level
+            (debug, info, notice, warning, error, critical, alert, emergency).
 
     Returns:
         types.EmptyResult: An empty result indicating success.
@@ -2830,11 +3264,12 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         >>> import inspect
         >>> sig = inspect.signature(set_logging_level)
         >>> list(sig.parameters.keys())
-        ['level']
+        ['_ctx', 'params']
 
     Raises:
         PermissionError: If the user does not have permission to set the logging level.
     """
+    level = params.level
     server_id, _, user_context = await _get_request_context_or_default()
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
@@ -2881,7 +3316,6 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         return types.EmptyResult()
 
 
-@mcp_app.completion()
 async def complete(
     ref: Union[types.PromptReference, types.ResourceTemplateReference],
     argument: types.CompleteRequest,
@@ -2949,38 +3383,204 @@ async def complete(
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
                 completion_data = result.get("completion", result)
-                return types.Completion(**completion_data)
+                return types.CompleteResult(completion=types.Completion(**completion_data))
 
             if hasattr(result, "completion"):
                 completion_obj = result.completion
 
                 # If completion itself is a dict
                 if isinstance(completion_obj, dict):
-                    return types.Completion(**completion_obj)
+                    return types.CompleteResult(completion=types.Completion(**completion_obj))
 
                 # If completion is another CompleteResult (nested)
                 if hasattr(completion_obj, "completion"):
                     inner_completion = completion_obj.completion.model_dump() if hasattr(completion_obj.completion, "model_dump") else completion_obj.completion
-                    return types.Completion(**inner_completion)
+                    return types.CompleteResult(completion=types.Completion(**inner_completion))
 
                 # If completion is already a Completion model
                 if isinstance(completion_obj, types.Completion):
-                    return completion_obj
+                    return types.CompleteResult(completion=completion_obj)
 
                 # If it's another Pydantic model (e.g., mcpgateway.models.Completion)
                 if hasattr(completion_obj, "model_dump"):
-                    return types.Completion(**completion_obj.model_dump())
+                    return types.CompleteResult(completion=types.Completion(**completion_obj.model_dump()))
 
             # If result itself is already a types.Completion
             if isinstance(result, types.Completion):
-                return result
+                return types.CompleteResult(completion=result)
 
             # Fallback: return empty completion
-            return types.Completion(values=[], total=0, hasMore=False)
+            return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
     except Exception as e:
         logger.exception("Error handling completion: %s", e)
-        return types.Completion(values=[], total=0, hasMore=False)
+        return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
+
+
+# ============================================================================
+# mcp v1 → v2 handler adapters (thin compatibility layer)
+# ============================================================================
+# The handler functions above are kept in their v1 shape: bare returns
+# (``List[Tool]``, ``Union[str, bytes]``, etc.) and internal ``mcp_app
+# .request_context`` access. The adapters below wrap each into the v2
+# ``(ctx, params)`` shape required by ``Server.add_request_handler``:
+#
+#   1. The v2 ``ctx`` is stashed on a ContextVar before the v1 handler runs,
+#      and a property shim on the ``Server`` class makes ``mcp_app
+#      .request_context`` keep returning the live ctx so existing handler
+#      bodies (and helpers like ``_get_request_context_or_default``) work
+#      unchanged.
+#   2. v1 return values are wrapped in the matching v2 result types
+#      (``ListToolsResult``, ``CallToolResult``, ``ReadResourceResult``,
+#      ...).
+#
+# This is intentionally less invasive than rewriting each handler body.
+# Future work: inline the v2 ``(ctx, params)`` signatures into the handlers
+# themselves and delete these adapters + the property shim.
+# ============================================================================
+
+_v2_request_ctx: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
+    "_mcpgateway_v2_request_ctx",
+    default=None,
+)
+
+
+def _get_v2_ctx() -> Any:
+    """Return the ServerRequestContext set by the active adapter (or None)."""
+    return _v2_request_ctx.get()
+
+
+# Inject ``request_context`` property on the v2 Server class so v1 handler
+# bodies' ``mcp_app.request_context`` access continues to work. v2 ``Server``
+# does not define this property natively.
+if not hasattr(type(mcp_app), "request_context"):
+    type(mcp_app).request_context = property(lambda _self: _get_v2_ctx())  # type: ignore[attr-defined]
+
+
+async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsResult":
+    """v2 (ctx, params) -> v1 list_tools() -> ListToolsResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        tools = await list_tools()
+        return types.ListToolsResult(tools=tools)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
+    """v2 (ctx, params) -> v1 call_tool(name, arguments) -> CallToolResult.
+
+    v1 call_tool may return ``CallToolResult`` directly, a ``(content, structured)``
+    tuple, or a bare content list — handle each shape.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        result = await call_tool(params.name, params.arguments or {})
+        if isinstance(result, types.InputRequiredResult):
+            return result
+        if isinstance(result, types.CallToolResult):
+            return result
+        if isinstance(result, tuple) and len(result) == 2:
+            content, structured = result
+            return types.CallToolResult(content=list(content), structured_content=structured)
+        if isinstance(result, list):
+            return types.CallToolResult(content=result)
+        return types.CallToolResult(content=[result] if result is not None else [])
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_list_prompts(ctx: Any, _params: Any = None) -> "types.ListPromptsResult":
+    """v2 (ctx, params) -> v1 list_prompts() -> ListPromptsResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        prompts = await list_prompts()
+        return types.ListPromptsResult(prompts=prompts)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_get_prompt(ctx: Any, params: Any) -> "types.GetPromptResult":
+    """v2 (ctx, params) -> v1 get_prompt(prompt_id, arguments) -> GetPromptResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        return await get_prompt(params.name, params.arguments)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_list_resources(ctx: Any, _params: Any = None) -> "types.ListResourcesResult":
+    """v2 (ctx, params) -> v1 list_resources() -> ListResourcesResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        resources = await list_resources()
+        return types.ListResourcesResult(resources=resources)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_read_resource(ctx: Any, params: Any) -> "types.ReadResourceResult":
+    """v2 (ctx, params) -> v1 read_resource(uri) -> ReadResourceResult.
+
+    v1 returns ``Union[str, bytes, List[contents]]``; a contents list (from
+    ``_to_mcp_resource_contents``) passes through unchanged, while bare
+    str/bytes are wrapped into TextResourceContents or BlobResourceContents.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        uri = str(params.uri)
+        result = await read_resource(uri)
+        if isinstance(result, list):
+            return types.ReadResourceResult(contents=result)
+        if isinstance(result, bytes):
+            return types.ReadResourceResult(
+                contents=[
+                    types.BlobResourceContents(
+                        uri=uri,
+                        blob=base64.b64encode(result).decode("utf-8"),
+                    )
+                ]
+            )
+        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, text=str(result))])
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_list_resource_templates(ctx: Any, _params: Any = None) -> "types.ListResourceTemplatesResult":
+    """v2 (ctx, params) -> v1 list_resource_templates() -> ListResourceTemplatesResult.
+
+    v1 returns ``List[Dict[str, Any]]``; coerce to ``ResourceTemplate`` models.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        raw_templates = await list_resource_templates()
+        templates = [types.ResourceTemplate.model_validate(t) if isinstance(t, dict) else t for t in raw_templates]
+        return types.ListResourceTemplatesResult(resourceTemplates=templates)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
+    """v2 (ctx, params) -> v1 complete(ref, argument, context) -> CompleteResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        completion_context = getattr(params, "context", None)
+        return await complete(params.ref, params.argument, completion_context)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+# Register all handlers via the v2 add_request_handler API. set_logging_level
+# was already migrated to (_ctx, params) form so it registers directly.
+mcp_app.add_request_handler("tools/list", types.PaginatedRequestParams, _adapt_list_tools)
+mcp_app.add_request_handler("tools/call", types.CallToolRequestParams, _adapt_call_tool)
+mcp_app.add_request_handler("prompts/list", types.PaginatedRequestParams, _adapt_list_prompts)
+mcp_app.add_request_handler("prompts/get", types.GetPromptRequestParams, _adapt_get_prompt)
+mcp_app.add_request_handler("resources/list", types.PaginatedRequestParams, _adapt_list_resources)
+mcp_app.add_request_handler("resources/read", types.ReadResourceRequestParams, _adapt_read_resource)
+mcp_app.add_request_handler("resources/templates/list", types.PaginatedRequestParams, _adapt_list_resource_templates)
+mcp_app.add_request_handler("completion/complete", types.CompleteRequestParams, _adapt_complete)
+mcp_app.add_request_handler("logging/setLevel", types.SetLevelRequestParams, set_logging_level)
 
 
 # ----------------------------- POST response interception (ADR-052) ----------------------------
@@ -3198,6 +3798,7 @@ async def _maybe_short_circuit_notification(receive: Receive) -> _BodyPeekResult
 _MCP_KNOWN_REQUEST_METHODS = frozenset(
     {
         "initialize",
+        "server/discover",
         "tools/list",
         "list_tools",
         "list_gateways",
@@ -3998,22 +4599,27 @@ class SessionManagerWrapper:
             >>> list(sig.parameters.keys())
             ['scope', 'receive', 'send']
         """
+        # Entry marker: zero-duration span so traces reveal how much time passed
+        # between the request root span and the transport handler actually
+        # beginning execution (event-loop / middleware scheduling delay).
+        with create_span("mcp.transport.enter", {"http.route": scope.get("path", "")}):
+            pass
 
         path = scope["modified_path"]
         # Uses precompiled regex for server ID extraction
         match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
-        raw_headers = scope.get("headers") or []
-        headers: dict[str, str] = {}
-        for item in raw_headers:
-            if not isinstance(item, (tuple, list)) or len(item) != 2:
-                continue
-            k, v = item
-            if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
-                continue
-            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
-            headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+        headers = _parse_mcp_scope_headers(scope)
+
+        # Internal-forward bypass: only valid when session-affinity is enabled (the sole code path
+        # that sets x-forwarded-internally). Gate on loopback source to prevent external spoofing.
+        # Origin/Host checks are enforced at the /mcp mount level (main.py MCPOriginHostGate) so
+        # that all ingress shapes — Python, rust-internal, and rust-public — are covered by a single
+        # gate without duplicating the logic here.
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
@@ -4029,11 +4635,6 @@ class SessionManagerWrapper:
 
         # Multi-worker session affinity: check if we should forward to another worker
         # This must happen BEFORE the SDK's session manager handles the request
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _client = scope.get("client")
-        _client_host = _client[0] if _client else None
-        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
-        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
@@ -4298,15 +4899,21 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
-                owner = await pool.get_session_owner(mcp_session_id)
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": get_worker_id()}) as affinity_span:
+                    # The span wraps the Redis owner lookup itself — that round-trip
+                    # is the latency this instrumentation exists to measure.
+                    owner = await pool.get_session_owner(mcp_session_id)
+                    if affinity_span is not None:
+                        set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
+                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != get_worker_id()) else "local")
+                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", get_worker_id(), mcp_session_id[:8], owner)
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", get_worker_id(), mcp_session_id[:8], owner)
 
                     # Package the edge-validated identity so the owner can dispatch via
                     # the trusted internal /_internal/mcp/rpc endpoint without
@@ -4329,16 +4936,17 @@ class SessionManagerWrapper:
                     body = b"".join(body_parts)
 
                     # Forward to owner worker
-                    response = await pool.forward_to_owner(
-                        owner_worker_id=owner,
-                        mcp_session_id=mcp_session_id,
-                        method=method,
-                        path=path,
-                        headers=headers,
-                        body=body,
-                        query_string=query_string,
-                        auth_context=encoded_auth_context,
-                    )
+                    with create_span("mcp.affinity.forward_http", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.owner": owner}):
+                        response = await pool.forward_to_owner(
+                            owner_worker_id=owner,
+                            mcp_session_id=mcp_session_id,
+                            method=method,
+                            path=path,
+                            headers=inject_trace_context_headers(headers),
+                            body=body,
+                            query_string=query_string,
+                            auth_context=encoded_auth_context,
+                        )
 
                     if response:
                         # Send forwarded response back to client
@@ -4361,17 +4969,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", get_worker_id(), mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", get_worker_id(), mcp_session_id[:8])
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", get_worker_id(), mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -4425,21 +5033,17 @@ class SessionManagerWrapper:
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
                         # Owner-direct path: dispatch to the trusted internal
-                        # /_internal/mcp/rpc endpoint carrying the edge-validated auth
-                        # context, so OAuth and public-only sessions are honored without
+                        # /_internal/mcp/rpc endpoint via the shared helper (carries trust
+                        # headers, edge auth context, and the active W3C trace context),
+                        # so OAuth and public-only sessions are honored without
                         # re-authenticating against public /rpc (JWTs/cookies only).
                         # First-Party
-                        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
-                        from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
-                        from mcpgateway.utils.internal_http import internal_loopback_base_url  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
                         from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
                         rpc_headers = {
                             "content-type": "application/json",
                             "x-mcp-session-id": mcp_session_id,
-                            "x-contextforge-mcp-runtime": "affinity",
-                            "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
-                            "x-contextforge-auth-context": encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
                         }
                         # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
                         # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
@@ -4455,14 +5059,12 @@ class SessionManagerWrapper:
                         # Dispatch in-process so the request runs on this worker, the
                         # session owner that holds the bound upstream session, instead of
                         # looping back over the shared socket to a random worker.
-                        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
-                        async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
-                            response = await client.post(
-                                "/_internal/mcp/rpc",
-                                content=body,
-                                headers=rpc_headers,
-                                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                            )
+                        response = await post_rpc_in_process(
+                            content=body,
+                            headers=rpc_headers,
+                            timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                            auth_context=encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
+                        )
 
                         # Note: Content-Length is NOT manually set to allow compression
                         # middleware to set it correctly after compression (issue #5457)
@@ -4500,12 +5102,20 @@ class SessionManagerWrapper:
         # Enrich with session ID BEFORE SDK handling so tool invocations can access it
         # Set request_headers_var BEFORE server_id_var to ensure ContextVars are captured together
         enriched_headers = dict(headers)
+
+        # Carry the active W3C trace context across the SDK task boundary: the
+        # session task group was created at startup, so handler tasks never see
+        # this request's contextvars. Everything downstream (tool handler,
+        # affinity forward envelope, trusted-internal dispatch) reads these headers.
+        enriched_headers = inject_trace_context_headers(enriched_headers)
         request_headers_var.set(enriched_headers)
 
         server_id_var.set(validated)
 
-        # For session affinity: wrap send to capture session ID from response headers
-        # This allows us to register ownership for new sessions created by the SDK
+        # For session ownership: wrap send to capture session ID from response headers
+        # This allows us to register ownership for new sessions created by the SDK.
+        # Capture is gated on stateful sessions (not multi-worker affinity): the
+        # logical-owner claim below must fire on single-node deployments too.
         captured_session_id: Optional[str] = None
 
         async def send_with_capture(message: Dict[str, Any]) -> None:
@@ -4576,6 +5186,9 @@ class SessionManagerWrapper:
         # common case (zero pending) takes the streaming-receive fast path.
         _notif_svc = _resolve_intercept_target(method, mcp_session_id)
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
+        # check if modern era request
+        _pv_header = headers.get("mcp-protocol-version")
+        is_modern_era_request = _pv_header is not None and _pv_header not in HANDSHAKE_PROTOCOL_VERSIONS
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
@@ -4621,7 +5234,7 @@ class SessionManagerWrapper:
         # collapse this case to -32600 "Missing session ID". Peek only small,
         # single-message JSON-RPC requests; known methods and malformed/large
         # bodies fall through to the SDK's normal transport/session checks.
-        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded and not is_modern_era_request:
             peek = await _drain_request_body(receive)
             if peek.disconnected:
                 logger.debug("POST %s aborted by client mid-body (unknown-method peek); not replaying", path)
@@ -4674,7 +5287,7 @@ class SessionManagerWrapper:
         # depends on. Forwarded requests already carry an Mcp-Session-Id
         # in production, but tests exercise the no-session forwarded path
         # so the gate is needed.
-        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded and not is_modern_era_request:
             peek = await _maybe_short_circuit_notification(receive)
             outcome, receive = await _dispatch_peek_outcome(
                 peek,
@@ -4751,13 +5364,13 @@ class SessionManagerWrapper:
                 try:
                     # First-Party - lazy import to avoid circular dependencies
                     # First-Party
-                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                     pool = get_session_affinity()
                     await pool.register_session_owner(session_to_register)
                     logger.debug(
                         "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
+                        get_worker_id(),
                         session_to_register[:8],
                     )
                 except Exception as e:
@@ -5242,6 +5855,7 @@ class _StreamableHttpAuthHandler:
                                             "is_admin": bool(user_record.is_admin),
                                             "is_active": bool(user_record.is_active),
                                             "auth_provider": user_record.auth_provider,
+                                            "password_hash_type": user_record.password_hash_type,
                                             "password_change_required": bool(user_record.password_change_required),
                                             "email_verified_at": user_record.email_verified_at,
                                             "created_at": user_record.created_at,
@@ -5292,48 +5906,17 @@ class _StreamableHttpAuthHandler:
             # are skipped: resolve_session_teams() already resolved teams from
             # DB/cache, so a second membership query would be redundant.
             if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
-                # Import lazily to avoid circular imports
                 # First-Party
-                from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-                from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 
-                auth_cache = get_auth_cache()
-
-                # Check cache first (60s TTL)
-                cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
-                if cached_result is False:
-                    _record_mcp_auth_cache_event("team_membership_cache_reject")
-                    logger.warning("MCP auth rejected: User %s no longer member of teams (cached)", user_email)
+                valid_membership = validate_token_team_membership(
+                    user_email,
+                    final_teams,
+                    on_cache_event=lambda outcome: _record_mcp_auth_cache_event(f"team_membership_cache_{outcome}"),
+                )
+                if not valid_membership:
+                    logger.warning("MCP auth rejected: User %s no longer member of teams", user_email)
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
-
-                if cached_result is None:
-                    _record_mcp_auth_cache_event("team_membership_cache_miss")
-                    # Cache miss - query database
-                    with SessionLocal() as db:
-                        memberships = (
-                            db.execute(
-                                select(EmailTeamMember.team_id).where(
-                                    EmailTeamMember.team_id.in_(final_teams),
-                                    EmailTeamMember.user_email == user_email,
-                                    EmailTeamMember.is_active.is_(True),
-                                )
-                            )
-                            .scalars()
-                            .all()
-                        )
-
-                        valid_team_ids = set(memberships)
-                        missing_teams = set(final_teams) - valid_team_ids
-
-                        if missing_teams:
-                            logger.warning("MCP auth rejected: User %s no longer member of teams: %s", user_email, missing_teams)
-                            auth_cache.set_team_membership_valid_sync(user_email, final_teams, False)
-                            return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
-
-                        # Cache positive result
-                        auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
-                else:
-                    _record_mcp_auth_cache_event("team_membership_cache_hit")
 
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,

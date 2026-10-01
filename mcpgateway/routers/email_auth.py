@@ -18,7 +18,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import List, Optional, Union
+from typing import cast, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.auth_context import get_user_email
+from mcpgateway.auth_user_helpers import is_passwordless_user
 from mcpgateway.common.query_params import QueryPaginationCursorResults
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -240,11 +241,13 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         # Password change enforcement respects master switch and individual toggles
         needs_password_change = False
+        _change_cause: Optional[str] = None  # tracks why the change is required for hint text
 
         if settings.password_change_enforcement_enabled:
             # If flag is set on the user, always honor it (flag is cleared when password is changed)
             if getattr(user, "password_change_required", False):
                 needs_password_change = True
+                _change_cause = "flag"
                 logger.debug("User %s has password_change_required flag set", login_request.email)
 
             # Enforce expiry-based password change if configured and not already required
@@ -256,22 +259,26 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         max_age = getattr(settings, "password_max_age_days", 90)
                         if age_days >= max_age:
                             needs_password_change = True
+                            _change_cause = "expiry"
                             logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
                 except Exception as exc:
                     logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
 
             # Detect default password on login if enabled
-            if getattr(settings, "detect_default_password_on_login", True):
+            if getattr(settings, "detect_default_password_on_login", True) and not is_passwordless_user(user):
                 # First-Party
                 from mcpgateway.services.argon2_service import Argon2PasswordService
 
+                current_password_hash = cast(str, user.password_hash)
+
                 password_service = Argon2PasswordService()
-                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), current_password_hash)  # nosec B105
                 if is_using_default_password:
                     # Mark user for password change depending on configuration
                     if getattr(settings, "require_password_change_for_default_password", True):
                         user.password_change_required = True
                         needs_password_change = True
+                        _change_cause = "default_password"
                         try:
                             db.commit()
                         except Exception as exc:  # log commit failures
@@ -281,9 +288,15 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         if needs_password_change:
             logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")
+            _hint = "Use the Admin UI at /admin/change-password-required to set a new password."
+            if _change_cause == "flag":
+                _hint += " If this is a headless deployment locked out at bootstrap, set ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false and restart."
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Password change required. Please change your password before continuing."},
+                content={
+                    "detail": "Password change required. Please change your password before continuing.",
+                    "hint": _hint,
+                },
                 headers={"X-Password-Change-Required": "true"},
             )
 

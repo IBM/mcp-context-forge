@@ -25,19 +25,21 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import re
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
 
 # Third-Party
 import jsonschema
+import sqlalchemy as sa
 from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, Mapper, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.types import TypeDecorator
@@ -245,6 +247,19 @@ if settings.observability_enabled:
         logger.info("SQLAlchemy instrumentation enabled for observability")
     except ImportError:
         logger.warning("Failed to import SQLAlchemy instrumentation")
+
+# Emit OTel spans for SQL queries when OTLP tracing is enabled. This is separate
+# from the instrumentation above (which writes DB observability records): these
+# spans parent to the active request trace and are exported to the OTLP backend.
+if settings.otel_enable_observability and settings.otel_sqlalchemy_instrumentation_enabled:
+    try:
+        # Third-Party
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+        SQLAlchemyInstrumentor().instrument(engine=engine)
+        logger.info("SQLAlchemy OTel instrumentation enabled")
+    except ImportError:
+        logger.warning("SQLAlchemy instrumentation enabled but package unavailable (install opentelemetry-instrumentation-sqlalchemy); SQL OTel spans disabled")
 
 
 # ---------------------------------------------------------------------------
@@ -1472,7 +1487,7 @@ class EmailUser(Base):
     Attributes:
         id (str): Primary key, UUID string
         email (str): Unique email identifier
-        password_hash (str): Argon2id hashed password
+        password_hash (str): Argon2id hashed password, or None for passwordless SSO-only users
         full_name (str): Optional display name for professional appearance
         is_admin (bool): Admin privileges flag
         is_active (bool): Account status flag
@@ -1505,7 +1520,7 @@ class EmailUser(Base):
     # Core identity fields
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Track how admin status was granted: "sso" (synced from IdP), "manual" (Admin UI), "api" (API grant), or None (legacy)
@@ -3679,6 +3694,8 @@ class Resource(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    custom_name_slug: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -4896,6 +4913,37 @@ def update_prompt_names_on_gateway_update(_mapper, connection, target):
     )
 
     connection.execute(stmt)
+
+
+@event.listens_for(Gateway, "after_update")
+def update_resource_names_on_gateway_update(_mapper: Mapper[Any], connection: Connection, target: Gateway) -> None:
+    """Recompose resource names after a gateway rename without truncating their bases.
+
+    Args:
+        _mapper: Gateway mapper.
+        connection: Connection for the current transaction.
+        target: Updated gateway.
+    """
+    if not get_history(target, "name").has_changes():
+        return
+    gateway_slug = slugify(target.name)
+    if not gateway_slug:
+        return
+    resources = cast(Table, Resource.__table__)
+    connection.execute(
+        resources.update()
+        .where(resources.c.gateway_id == target.id)
+        .values(
+            name=func.substr(
+                sa.case(
+                    (func.coalesce(resources.c.custom_name_slug, "") == "", gateway_slug),
+                    else_=gateway_slug + settings.gateway_tool_name_separator + resources.c.custom_name_slug,
+                ),
+                1,
+                255,
+            )
+        )
+    )
 
 
 class A2AAgent(Base):
@@ -6866,6 +6914,81 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
     else:
         target.name = target.custom_name_slug
+
+
+def compose_resource_name(gateway_slug: str, base: str) -> str:
+    """Compose a resource name within its database column bound.
+
+    Args:
+        gateway_slug: Non-empty gateway slug.
+        base: Full, possibly empty resource base slug.
+
+    Returns:
+        Namespaced name containing at most 255 characters.
+    """
+    return (f"{gateway_slug}{settings.gateway_tool_name_separator}{base}" if base else gateway_slug)[:255]
+
+
+def resource_has_name_override(resource: Resource) -> bool:
+    """Compare a resource base with upstream identity independently of separators.
+
+    Args:
+        resource: Resource whose upstream name has not yet been changed.
+
+    Returns:
+        Whether the stored base represents a manual override.
+    """
+    base = resource.custom_name_slug
+    if base is None:
+        return False
+    return re.sub(r"[-_.]+", "-", base) != re.sub(r"[-_.]+", "-", slugify(resource.original_name or ""))
+
+
+def _resolve_resource_gateway_slug(connection: Connection, target: Resource) -> str:
+    """Resolve the gateway slug for a resource, including pending registrations.
+
+    Args:
+        connection: Connection for the current flush.
+        target: Resource being persisted.
+
+    Returns:
+        Gateway slug, or an empty string when it cannot be resolved.
+    """
+    gateway = sa_inspect(target).dict.get("gateway")
+    if gateway is not None:
+        return slugify(gateway.name)
+    if not target.gateway_id:
+        return ""
+    cached_name = getattr(target, "gateway_name_cache", None)
+    if cached_name:
+        return slugify(cached_name)
+    try:
+        name = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id}).scalar_one_or_none()
+        return slugify(name) if name else ""
+    except SQLAlchemyError:
+        logger.warning("Unable to resolve gateway name for resource %s", target.id)
+        return ""
+
+
+@event.listens_for(Resource, "before_insert")
+@event.listens_for(Resource, "before_update")
+def set_resource_name_and_slug(_mapper: Mapper[Any], connection: Connection, target: Resource) -> None:
+    """Maintain federated resource naming while preserving local names verbatim.
+
+    Args:
+        _mapper: Resource mapper.
+        connection: Connection for the current flush.
+        target: Resource being persisted.
+    """
+    if target.original_name is None:
+        target.original_name = target.name
+    base = target.custom_name_slug
+    if base is None:
+        base = slugify(target.original_name or "")
+        target.custom_name_slug = base
+    gateway_slug = _resolve_resource_gateway_slug(connection, target)
+    if gateway_slug:
+        target.name = compose_resource_name(gateway_slug, base)
 
 
 # ---------------------------------------------------------------------------

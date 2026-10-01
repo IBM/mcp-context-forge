@@ -84,3 +84,32 @@ def test_extract_env_vars_handles_sanitize_exception(monkeypatch):
     env_vars = extract_env_vars_from_headers({"Authorization": "Bearer token"}, nm)
 
     assert env_vars == {}
+
+
+def test_config_validation():
+    """Test that max_header_value_length is validated in config.py."""
+    # This test verifies that the field validation in config.py catches invalid values
+    from mcpgateway.config import Settings
+
+    # Valid: default 4KB
+    s1 = Settings(max_header_value_length=4096)
+    assert s1.max_header_value_length == 4096
+
+    s_min = Settings(max_header_value_length=1)
+    assert s_min.max_header_value_length == 1
+
+    # Valid: 16KB (Atlassian Rovo recommended value — must not raise)
+    s2 = Settings(max_header_value_length=16384)
+    assert s2.max_header_value_length == 16384
+
+    # Valid: max_header_value_length is independent of max_header_field_size_bytes
+    s3 = Settings(max_header_value_length=4096, max_header_field_size_bytes=2048)
+    assert s3.max_header_value_length == 4096
+    assert s3.max_header_field_size_bytes == 2048
+
+    # Invalid: non-positive
+    with pytest.raises(ValueError, match="must be positive"):
+        Settings(max_header_value_length=0)
+
+    with pytest.raises(ValueError, match="must be positive"):
+        Settings(max_header_value_length=-1)

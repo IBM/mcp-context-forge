@@ -1,6 +1,6 @@
 # 🔐 Security Policy
 
-**Current Version: 1.0.8**
+**Current Version: 1.0.11**
 
 
 ### Admin UI is Development-Only

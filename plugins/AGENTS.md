@@ -144,6 +144,31 @@ so the caller knows live invocation may still run logic preview didn't exercise.
 plugin ships with this tag by default — mark a hook `preview_safe` only if it has no
 side effects and doesn't need to reach an external system to do its job.
 
+### Signaling elicitation intent from a `preview_safe` hook
+
+A future cpex release (not yet available; see [the `elicit` hook docs](https://contextforge-org.github.io/cpex/docs/apl/elicitation/))
+adds an `elicit` hook type through which a plugin drives a Dispatch/Check/Validate
+human-in-the-loop approval flow:
+
+```yaml
+plugins:
+  - name: manager-approver
+    kind: elicitation/ciba
+    hooks: [elicit]
+```
+
+If a `preview_safe` plugin also registers `elicit`, its `tool_pre_invoke` hook is not
+run at all during preview and is reported instead in `warnings[]` with code
+`elicitation_skipped` — it may need to gather user input live, so it should not run
+to completion in a dry-run. This is checked by the literal hook-type name
+(`"elicit"`) that future cpex release uses, not a name this project invented, so it
+keeps working unchanged once that release ships. The installed cpex here (0.1.x) has
+no `elicit` hook type, so no plugin can trigger this today — expected, not a bug. A
+plugin author preparing for that future release can add `elicit` to a `preview_safe`
+hook's `hooks` list now (this requires implementing an `elicit` method on the plugin
+class — cpex raises `PluginError` at registration time for a hook name with no
+matching method) and get this behavior for free once that release lands.
+
 ## External Plugins (MCP)
 
 External plugins run as separate MCP servers.

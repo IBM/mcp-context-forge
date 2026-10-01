@@ -170,92 +170,110 @@ class TestPostForkHook:
         mock_server.log.info.assert_any_call("SQLAlchemy engine pool reset for worker %s", 12345)
 
 
-def test_post_fork_rebinds_worker_id_per_worker(fake_worker, monkeypatch):
-    """Happy path: with the affinity flag on, ``post_fork`` overrides the master-frozen ``WORKER_ID`` with ``{hostname}:{worker.pid}``.
+def test_get_worker_id_reads_live_pid(monkeypatch):
+    """``get_worker_id()`` derives the id from the live PID at call time."""
+    # First-Party
+    from mcpgateway.services import session_affinity
 
-    Without this, every forked gunicorn worker carries the master's
-    ``{hostname}:1``, so a forwarded request published to the owner's
-    pub/sub channel reaches every worker in the container.
-    """
+    monkeypatch.setattr(session_affinity.os, "getpid", lambda: 4242)
+    assert session_affinity.get_worker_id() == f"{socket.gethostname()}:4242"
+
+
+def test_post_fork_does_not_rebind_worker_id_constant_enabled(fake_worker, monkeypatch):
+    """With the affinity flag on, ``post_fork`` must not set a module-level ``WORKER_ID``."""
     # First-Party
     from mcpgateway.config import settings
     from mcpgateway.services import session_affinity
 
     monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
     cfg = _load_gunicorn_config()
-    original = session_affinity.WORKER_ID
-    try:
-        cfg.post_fork(_make_fake_server(), fake_worker)
-        assert session_affinity.WORKER_ID == f"{socket.gethostname()}:{fake_worker.pid}"
-    finally:
-        # Restore the module-level constant so other tests aren't affected.
-        session_affinity.WORKER_ID = original
+    cfg.post_fork(_make_fake_server(), fake_worker)
+    assert not hasattr(session_affinity, "WORKER_ID")
 
 
-def test_post_fork_skips_worker_id_rebind_when_affinity_disabled(fake_worker, monkeypatch):
-    """With the affinity flag off, ``post_fork`` must NOT touch ``WORKER_ID``.
-
-    The kill-switch contract: flag off means the affinity machinery is a clean
-    no-op, so the per-worker rebind (and the ``session_affinity`` import at fork)
-    is skipped and ``WORKER_ID`` keeps whatever value it already had.
-    """
+def test_post_fork_does_not_rebind_worker_id_constant_disabled(fake_worker, monkeypatch):
+    """With the affinity flag off, ``post_fork`` likewise sets no ``WORKER_ID``."""
     # First-Party
     from mcpgateway.config import settings
     from mcpgateway.services import session_affinity
 
     monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", False)
     cfg = _load_gunicorn_config()
-    sentinel = "sentinel-host:0"
-    original = session_affinity.WORKER_ID
-    session_affinity.WORKER_ID = sentinel
-    try:
-        cfg.post_fork(_make_fake_server(), fake_worker)
-        # Unchanged: the rebind block was gated out by the disabled flag.
-        assert session_affinity.WORKER_ID == sentinel
-    finally:
-        session_affinity.WORKER_ID = original
+    cfg.post_fork(_make_fake_server(), fake_worker)
+    assert not hasattr(session_affinity, "WORKER_ID")
 
 
-def test_post_fork_logs_warning_when_rebind_fails(fake_worker, monkeypatch):
-    """If the rebind raises, the hook must log a ``warning`` referencing #4557 and NOT crash the worker.
+class TestOnStartingHook:
+    """Test the on_starting() hook in gunicorn.config.py."""
 
-    Regression test for the F2 follow-up: the original ``except ImportError: pass``
-    silently fell back to the master's frozen ``WORKER_ID``, so #4557's broadcast
-    amplification could return into production unnoticed. The fix broadens the
-    catch and surfaces the failure via ``server.log.warning(...)``.
+    def test_on_starting_normalizes_digit_ssl_version(self, monkeypatch):
+        """Test that string digit ssl_version (e.g. '5') is converted to int."""
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
 
-    To reproduce a rebind failure deterministically without depending on the
-    real module's internals, monkeypatch ``socket.gethostname`` (called inside
-    the try block) to raise.
-    """
-    # First-Party
-    from mcpgateway.config import settings
-    from mcpgateway.services import session_affinity
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "5"
+        mock_server.cfg = mock_cfg
 
-    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_called_once_with("ssl_version", 5)
 
-    original_worker_id = session_affinity.WORKER_ID
+    def test_on_starting_normalizes_protocol_constant_name(self, monkeypatch):
+        """Test that PROTOCOL_* name is resolved to ssl constant."""
+        import ssl
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
 
-    def _boom() -> str:
-        raise RuntimeError("simulated rebind failure")
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "PROTOCOL_TLSv1_2"
+        mock_server.cfg = mock_cfg
 
-    monkeypatch.setattr(socket, "gethostname", _boom)
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_called_once_with("ssl_version", ssl.PROTOCOL_TLSv1_2)
 
-    cfg = _load_gunicorn_config()
-    server = _make_fake_server()
-    try:
-        # Must not raise — the hook is expected to swallow + log, never propagate.
-        cfg.post_fork(server, fake_worker)
-    finally:
-        session_affinity.WORKER_ID = original_worker_id
+    def test_on_starting_unrecognized_ssl_version_logs_warning_and_does_not_crash(self, monkeypatch):
+        """Test that unrecognized string ssl_version logs a warning, does not set, and does not crash."""
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
 
-    # WORKER_ID was NOT silently rebound (the failure was real, not papered over).
-    assert session_affinity.WORKER_ID == original_worker_id
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "NOT_A_VALID_SSL_VERSION"
+        mock_server.cfg = mock_cfg
 
-    # A warning was emitted, mentioning the failing operation (rebind) and the consequence.
-    assert server.log.warning.called, "expected post_fork to log a warning on rebind failure"
-    call_args = server.log.warning.call_args
-    # First arg is the format string; subsequent args are the format params.
-    fmt = call_args.args[0] if call_args.args else ""
-    assert "WORKER_ID" in fmt
-    assert "broadcast" in fmt, "warning should describe the consequence (per-container broadcast) so operators can act on it"
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_not_called()
+        assert mock_server.log.warning.called
+        warning_call_args = mock_server.log.warning.call_args
+        assert "Unrecognized SSL_VERSION value" in str(warning_call_args)
+
+    def test_on_starting_exception_in_normalization_logs_warning(self, monkeypatch):
+        """Test that exceptions during normalization log a warning and don't crash."""
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "5"
+        mock_cfg.set.side_effect = RuntimeError("failed to set")
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        assert mock_server.log.warning.called
+        warning_msg = str(mock_server.log.warning.call_args)
+        assert "Failed to normalize Gunicorn ssl_version setting" in warning_msg
+
+    def test_on_starting_ssl_disabled_skips_normalization(self, monkeypatch):
+        """Test that when SSL is false/unset, normalization is skipped."""
+        monkeypatch.setenv("SSL", "false")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "5"
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_not_called()

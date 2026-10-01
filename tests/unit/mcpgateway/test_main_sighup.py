@@ -20,23 +20,30 @@ from mcpgateway.handlers.signal_handlers import sighup_handler, sighup_reload
 
 @pytest.mark.asyncio
 async def test_sighup_reload_clears_ssl_cache_and_drains_upstream_registry_and_affinity():
-    """sighup_reload() clears SSL cache + drains upstream registry + drains affinity mapping (#4205)."""
+    """sighup_reload() clears SSL cache + drains upstream registry + drains affinity + reloads settings (#4205)."""
     mock_registry = MagicMock()
     mock_registry.close_all = AsyncMock()
+    mock_trial = MagicMock()
+    mock_trial.get_security_status.return_value = {"status": "OK"}
+    mock_get_settings = MagicMock()
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache") as mock_clear,
         patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
         patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock) as mock_drain_affinity,
+        patch("mcpgateway.config.Settings", return_value=mock_trial),
+        patch("mcpgateway.config.get_settings", mock_get_settings),
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
     mock_clear.assert_called_once()
     mock_registry.close_all.assert_awaited_once()
     mock_drain_affinity.assert_awaited_once()
+    mock_get_settings.cache_clear.assert_called_once()
     info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
     assert any("SSL context cache cleared" in m for m in info_messages)
     assert any("upstream session registry drained" in m for m in info_messages)
     assert any("session-affinity mapping drained" in m for m in info_messages)
+    assert any("settings reloaded" in m for m in info_messages)
 
 
 @pytest.mark.asyncio
@@ -194,3 +201,42 @@ def test_restore_default_sighup_handler_skips_outside_main_thread(monkeypatch):
 
     main_mod._restore_default_sighup_handler()  # pylint: disable=protected-access
     mock_signal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sighup_reload_logs_error_on_settings_rebuild_failure():
+    """sighup_reload() logs an error and keeps previous settings when rebuild fails."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache", new_callable=AsyncMock),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
+        patch("mcpgateway.config.Settings", side_effect=RuntimeError("bad env")),
+        patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
+    ):
+        await sighup_reload()
+    error_messages = [call.args[0] for call in mock_logger.error.call_args_list]
+    assert any("settings reload failed" in m and "bad env" in m for m in error_messages)
+
+
+@pytest.mark.asyncio
+async def test_sighup_reload_rejects_settings_with_failed_security_status():
+    """sighup_reload() keeps previous settings when get_security_status() returns FAIL."""
+    mock_registry = MagicMock()
+    mock_registry.close_all = AsyncMock()
+    mock_trial = MagicMock()
+    mock_trial.get_security_status.return_value = {"status": "FAIL", "message": "weak secret"}
+    mock_get_settings = MagicMock()
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache"),
+        patch("mcpgateway.services.upstream_session_registry.get_upstream_session_registry", return_value=mock_registry),
+        patch("mcpgateway.services.session_affinity.drain_session_affinity", new_callable=AsyncMock),
+        patch("mcpgateway.config.Settings", return_value=mock_trial),
+        patch("mcpgateway.config.get_settings", mock_get_settings),
+        patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
+    ):
+        await sighup_reload()
+    mock_get_settings.cache_clear.assert_not_called()
+    error_messages = [call.args[0] for call in mock_logger.error.call_args_list]
+    assert any("settings reload failed" in m and "weak secret" in m for m in error_messages)

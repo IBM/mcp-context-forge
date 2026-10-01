@@ -20,6 +20,10 @@ from unittest.mock import MagicMock, patch
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
+# The middleware under test is deprecated; constructing it below emits its
+# deprecation warning by design.
+pytestmark = pytest.mark.filterwarnings("ignore:ValidationMiddleware is deprecated:DeprecationWarning")
+
 
 class TestSecurityValidator:
     """Test security validation functions."""

@@ -145,9 +145,6 @@ SSO_PRESERVE_ADMIN_AUTH=true
 # Custom OAuth scopes for enterprise features
 SSO_IBM_VERIFY_SCOPE="openid profile email groups"
 
-# Custom user attribute mappings (if needed)
-IBM_VERIFY_USER_MAPPING={"preferred_username": "username", "family_name": "last_name"}
-
 # Group/role mapping for automatic team assignment
 IBM_VERIFY_GROUP_MAPPING={"CN=Developers,OU=Groups": "dev-team-uuid", "CN=Administrators,OU=Groups": "admin-team-uuid"}
 ```

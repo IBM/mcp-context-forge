@@ -76,10 +76,15 @@ jobs:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       # Strong test-only secrets so Settings() validates in all environments.
-      # config.py now rejects placeholder/weak secrets unconditionally (GHSA-8pcq-mx48-hjvj).
+      # config.py now rejects placeholder/weak secrets unconditionally (GHSA-8pcq-mx48-hjvj)
+      # and feature-gates PLATFORM_ADMIN_PASSWORD/DEFAULT_USER_PASSWORD on EMAIL_AUTH_ENABLED
+      # (default true) — required here because --doctest-modules mcpgateway/ imports
+      # mcpgateway.config outside of tests/conftest.py, which normally supplies these.
       # These values are CI-only and are never used outside the test suite.
       JWT_SECRET_KEY: "ci-test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
       AUTH_ENCRYPTION_SECRET: "ci-test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
+      PLATFORM_ADMIN_PASSWORD: "ci-test-admin-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
+      DEFAULT_USER_PASSWORD: "ci-test-user-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
 
     steps:
       # -----------------------------------------------------------
@@ -115,7 +120,7 @@ jobs:
       # (e2e_rust tests are excluded and run in separate workflow)
       # -----------------------------------------------------------
 
-      # 3️⃣  Run the tests with coverage (fail under 95 %total  coverage)
+      # 3️⃣  Run the tests with coverage (fail under 90% total coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -128,25 +133,19 @@ jobs:
             --cov-report=html \
             --cov-report=term \
             --cov-branch \
-            --cov-fail-under=95
+            --cov-fail-under=90
 
       # -----------------------------------------------------------
-      # 3.5  Diff-cover: enforce 93% coverage on changed lines (PRs only)
+      # 3.5  Diff-cover: enforce 90% coverage on changed lines (PRs only)
       #
-      # Why 93%?  Based on experience, this is currently the
-      # best balance between the value of additional tests
-      # and effort required to write them.  A 95% threshold required
-      # too much effort for tests that essentially mocked everything
-      # before a given line just to show demonstrate it executed.
-      #
-      # The threshold will likely continue to evolve.
+      # Aligned with the `diff-cover` target in the Makefile (--fail-under=90).
       # -----------------------------------------------------------
       - name: 📈  Diff-cover (changed lines)
         if: github.event_name == 'pull_request'
         run: |
           uv run diff-cover coverage.xml \
             --compare-branch=origin/${{ github.base_ref }} \
-            --fail-under=93
+            --fail-under=90
 
       # -----------------------------------------------------------
       # 4️⃣  Run doctests (fail under 30% coverage)

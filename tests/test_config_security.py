@@ -72,6 +72,75 @@ def test_fail_closed_basic_auth_password_when_api_basic_auth_enabled():
         )
 
 
+def test_fail_closed_platform_admin_password_when_email_auth_enabled():
+    """Verify that default platform admin password fails closed when email auth is enabled."""
+    with pytest.raises(SecurityConfigurationError):
+        get_settings(
+            environment="production",
+            jwt_secret_key="secure-test-secret-32-characters-min",
+            auth_encryption_secret="another-secure-test-secret-32-chars",  # pragma: allowlist secret
+            email_auth_enabled=True,
+            platform_admin_password="changeme",  # pragma: allowlist secret
+            default_user_password="StrongUs3rP@ss!Xz9k",  # pragma: allowlist secret
+        )
+
+
+def test_fail_closed_default_user_password_when_email_auth_enabled():
+    """Verify that default user password fails closed when email auth is enabled."""
+    with pytest.raises(SecurityConfigurationError):
+        get_settings(
+            environment="production",
+            jwt_secret_key="secure-test-secret-32-characters-min",
+            auth_encryption_secret="another-secure-test-secret-32-chars",  # pragma: allowlist secret
+            email_auth_enabled=True,
+            platform_admin_password="StrongAdm!nP@ss#9kXz",  # pragma: allowlist secret
+            default_user_password="changeme",  # pragma: allowlist secret
+        )
+
+
+@pytest.mark.parametrize(
+    ("password_field", "feature_settings"),
+    [
+        ("basic_auth_password", {"api_allow_basic_auth": True, "email_auth_enabled": False}),
+        ("basic_auth_password", {"docs_allow_basic_auth": True, "email_auth_enabled": False}),
+        ("platform_admin_password", {"email_auth_enabled": True}),
+        ("default_user_password", {"email_auth_enabled": True}),
+    ],
+)
+@pytest.mark.parametrize("password", ["", "__REPLACE_ME__run_init-secrets_before_starting", "ReplaceMe_RunMakeSetup!"])
+def test_enabled_auth_rejects_empty_and_placeholder_passwords(password_field, feature_settings, password):  # noqa: ANN001
+    """Enabled authentication must reject empty and placeholder password values."""
+    passwords = {
+        "basic_auth_password": "StrongBasic!P@ss9Xz",
+        "platform_admin_password": "StrongAdm!nP@ss#9kXz",
+        "default_user_password": "StrongUs3rP@ss!Xz9k",
+    }
+    passwords[password_field] = password
+
+    with pytest.raises(SecurityConfigurationError):
+        get_settings(
+            jwt_secret_key="test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-pytest-runs",  # pragma: allowlist secret
+            auth_encryption_secret="test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-pytest-runs",  # pragma: allowlist secret
+            **feature_settings,
+            **passwords,
+        )
+
+
+def test_weak_passwords_allowed_when_consuming_features_disabled():
+    """Weak passwords are allowed when their consuming features are off."""
+    cfg = get_settings(
+        environment="production",
+        jwt_secret_key="s3cure-T3st!Secr3t#32charsMin-Xz9",
+        auth_encryption_secret="an0ther-S3cure!T3st#Secret-32chX",  # pragma: allowlist secret
+        email_auth_enabled=False,
+        api_allow_basic_auth=False,
+        basic_auth_password="changeme",  # pragma: allowlist secret
+        platform_admin_password="changeme",  # pragma: allowlist secret
+        default_user_password="changeme",  # pragma: allowlist secret
+    )
+    assert cfg.basic_auth_password.get_secret_value() == "changeme"
+
+
 def test_proceed_development_mode():
     """Development environment now rejects weak secrets unconditionally (GHSA-8pcq-mx48-hjvj).
 

@@ -527,7 +527,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     response = await admin.admin_login_handler(request, mock_db)
     assert "invalid_credentials" in response.headers["location"]
 
-    user = SimpleNamespace(email="admin@example.com", password_change_required=True, password_changed_at=None, password_hash="hash")
+    user = SimpleNamespace(email="admin@example.com", password_change_required=True, password_changed_at=None, password_hash="hash", password_hash_type="argon2id")
     auth_service.authenticate_user = AsyncMock(return_value=user)
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", True)
     monkeypatch.setattr(admin, "create_access_token", AsyncMock(return_value=("token", None)))
@@ -557,7 +557,7 @@ async def test_admin_login_handler_default_password(monkeypatch):
 
     request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})  # pragma: allowlist secret
 
-    user = SimpleNamespace(email="admin@example.com", password_change_required=False, password_changed_at=None, password_hash="hash")
+    user = SimpleNamespace(email="admin@example.com", password_change_required=False, password_changed_at=None, password_hash="hash", password_hash_type="argon2id")
     auth_service = MagicMock()
     auth_service.authenticate_user = AsyncMock(return_value=user)
     monkeypatch.setattr(admin, "EmailAuthService", lambda db: auth_service)

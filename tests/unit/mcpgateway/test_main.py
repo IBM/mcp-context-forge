@@ -1450,6 +1450,46 @@ class TestToolEndpoints:
         response = test_client.post("/tools/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 404
 
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_preview_tool_endpoint(self, mock_preview, test_client, auth_headers):
+        """POST /tools/preview/{name} returns 200 wrapping the service's dry-run envelope (#5629)."""
+        # First-Party
+        from mcpgateway.schemas import ToolAnnotations, ToolPreviewResponse, ToolPreviewTarget
+
+        mock_preview.return_value = ToolPreviewResponse(
+            validated=True,
+            resolved_arguments={"city": "London"},
+            target=ToolPreviewTarget(kind="local"),
+            annotations=ToolAnnotations(),
+            pre_hooks_run=[],
+            warnings=[],
+        )
+        response = test_client.post("/tools/preview/get_weather", json={"arguments": {"city": "London"}}, headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["validated"] is True
+        assert body["target"]["kind"] == "local"
+        mock_preview.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation")
+    def test_preview_tool_not_found(self, mock_preview, test_client, auth_headers):
+        """POST /tools/preview/{name} returns 404 when the tool doesn't exist or isn't visible."""
+        # First-Party
+        from mcpgateway.services.tool_service import ToolNotFoundError
+
+        mock_preview.side_effect = ToolNotFoundError("Tool not found: missing_tool")
+        response = test_client.post("/tools/preview/missing_tool", json={"arguments": {}}, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation")
+    def test_preview_tool_feature_disabled(self, mock_preview, test_client, auth_headers):
+        """POST /tools/preview/{name} returns 404 without calling the service when the feature flag is off."""
+        with patch.object(settings, "mcpgateway_tool_preview_enabled", False):
+            response = test_client.post("/tools/preview/get_weather", json={"arguments": {}}, headers=auth_headers)
+        assert response.status_code == 404
+        assert "disabled" in response.json()["detail"].lower()
+        mock_preview.assert_not_called()
+
     @patch("mcpgateway.main.tool_service.delete_tool")
     def test_delete_tool_endpoint(self, mock_delete, test_client, auth_headers):
         """Test permanently deleting a tool."""
@@ -1677,6 +1717,18 @@ class TestResourceEndpoints:
         body = response.json()
         assert body["uri"] == "test/resource" and body["text"] == "This is test content"
         mock_read_resource.assert_called_once()
+
+    @patch("mcpgateway.main.resource_service.read_resource")
+    def test_read_resource_endpoint_fetch_error_returns_bad_request(self, mock_read_resource, test_client, auth_headers):
+        """Upstream resource failures are not reported as missing resources."""
+        from mcpgateway.services.resource_service import ResourceError
+
+        mock_read_resource.side_effect = ResourceError("Gateway resource content could not be resolved")
+
+        response = test_client.get("/resources/1", headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Gateway resource content could not be resolved"
 
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_endpoint(self, mock_update, test_client, auth_headers):

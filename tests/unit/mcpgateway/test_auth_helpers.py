@@ -309,6 +309,7 @@ def test_get_user_by_email_sync(monkeypatch):
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         auth_provider="local",
+        password_hash_type="argon2id",
         password_change_required=False,
     )
     session = DummySession(results=[user])
@@ -316,6 +317,8 @@ def test_get_user_by_email_sync(monkeypatch):
     result = auth._get_user_by_email_sync("user@example.com")
     assert isinstance(result, EmailUser)
     assert result.email == "user@example.com"
+    assert result.password_hash == "hash"
+    assert result.password_hash_type == "argon2id"
 
 
 def test_get_auth_context_batched_sync(monkeypatch):
@@ -329,6 +332,7 @@ def test_get_auth_context_batched_sync(monkeypatch):
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         auth_provider="local",
+        password_hash_type="argon2id",
         password_change_required=False,
     )
     team = SimpleNamespace(id="team-1")
@@ -337,6 +341,8 @@ def test_get_auth_context_batched_sync(monkeypatch):
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     result = auth._get_auth_context_batched_sync("user@example.com", "jti-1")
     assert result["user"]["email"] == "user@example.com"
+    assert result["user"]["password_hash"] == "hash"
+    assert result["user"]["password_hash_type"] == "argon2id"
     assert result["personal_team_id"] == "team-1"
     assert result["team_ids"] == ["team-1"]
     assert result["is_token_revoked"] is True

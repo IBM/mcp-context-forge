@@ -8,6 +8,7 @@ Unit tests for Vault Plugin functionality.
 
 # Standard
 import json
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -24,6 +25,7 @@ from cpex.framework import (
     ToolHookType,
     ToolPreInvokePayload,
 )
+from mcpgateway.utils.passthrough_headers import sanitize_header_value
 
 # Import the Vault plugin
 from plugins.vault.vault_plugin import Vault
@@ -279,8 +281,12 @@ class TestVaultPluginFunctionality:
         # SECURITY: Vault header must be removed even when no token match is found
         assert result.modified_payload is not None
         assert "x-vault-tokens" not in result.modified_payload.headers.root
-        # No Authorization header should be added since there's no match
-        assert "authorization" not in result.modified_payload.headers.root
+        # No new Authorization header should be injected since there's no match. The plugin
+        # never receives a real Authorization value on this path (tool_service.py filters it
+        # out before this hook runs), so it can't `del` one -- instead it signals "strip the
+        # real Authorization header" to the caller via the empty-string sentinel. See the
+        # tool_service.py-level test for the actual end-to-end deletion.
+        assert result.modified_payload.headers.root["authorization"] == ""
         assert result.continue_processing
 
     @pytest.mark.asyncio
@@ -504,6 +510,114 @@ class TestVaultPluginFunctionality:
         assert "x-vault-tokens" not in result.modified_payload.headers.root
 
 
+class TestVaultPluginLargeToken:
+    """Regression tests for issue #6653.
+
+    Reproduces the production failure where an ~8KB Atlassian Rovo OAuth token stored in
+    ``X-Vault-Tokens`` was truncated to 4KB by ``sanitize_header_value``, causing
+    ``orjson.loads`` to fail with ``unexpected end of data: line 1 column 4097 (char 4096)``.
+
+    Fix: raise ``MAX_HEADER_VALUE_LENGTH`` (and ``MAX_HEADER_FIELD_SIZE_BYTES`` /
+    ``MAX_HEADER_TOTAL_SIZE_BYTES``) past the token payload size.
+    """
+
+    @pytest.fixture
+    def plugin_config(self) -> PluginConfig:
+        """Create a test plugin configuration."""
+        return PluginConfig(
+            name="TestVault",
+            description="Test Vault Plugin",
+            author="Test",
+            kind="plugins.vault.vault_plugin.Vault",
+            version="1.0",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            tags=["test", "vault"],
+            mode=PluginMode.SEQUENTIAL,
+            priority=10,
+            config={
+                "system_tag_prefix": "system",
+                "vault_header_name": "X-Vault-Tokens",
+                "vault_handling": "raw",
+                "system_handling": "tag",
+                "auth_header_tag_prefix": "AUTH_HEADER",
+            },
+        )
+
+    @pytest.fixture
+    def plugin_context(self) -> PluginContext:
+        """Create a test plugin context with an atlassian.net gateway tag."""
+        gateway_metadata = type("obj", (object,), {"tags": [{"id": "1", "label": "system:atlassian.net"}]})()
+        global_context = GlobalContext(request_id="test-large-token", metadata={"gateway": gateway_metadata})
+        return PluginContext(global_context=global_context)
+
+    @staticmethod
+    def _make_atlassian_token(size_bytes: int) -> str:
+        """Build a realistic-looking JWT-ish bearer token of approximately *size_bytes* bytes."""
+        # Use URL-safe base64 alphabet to simulate a real OAuth bearer token.
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."
+        cycle = len(alphabet)
+        return "".join(alphabet[i % cycle] for i in range(size_bytes))
+
+    def test_sanitize_header_value_truncates_at_default_limit(self):
+        """Confirm the root cause: default 4KB limit truncates an 8KB token header.
+
+        This is the exact failure reproduced in issue #6653.  When the X-Vault-Tokens
+        JSON is truncated mid-string the orjson.loads call inside the Vault plugin raises
+        ``unexpected end of data``.
+        """
+        token = self._make_atlassian_token(8000)
+        raw_header = json.dumps({"atlassian.net": token})
+        # Default limit is 4096 — the serialised JSON exceeds it.
+        assert len(raw_header) > 4096
+
+        with patch("mcpgateway.utils.passthrough_headers.settings.max_header_value_length", 4096):
+            truncated = sanitize_header_value(raw_header)
+        assert len(truncated) == 4096
+        # The truncated value is no longer valid JSON.
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            json.loads(truncated)
+
+    def test_sanitize_header_value_intact_with_raised_limit(self):
+        """Confirm that raising max_length past the payload size preserves valid JSON."""
+        token = self._make_atlassian_token(8000)
+        raw_header = json.dumps({"atlassian.net": token})
+
+        with patch("mcpgateway.utils.passthrough_headers.settings.max_header_value_length", 16384):
+            sanitized = sanitize_header_value(raw_header)
+        assert sanitized == raw_header
+        # Still valid JSON after sanitization.
+        parsed = json.loads(sanitized)
+        assert parsed["atlassian.net"] == token
+
+    @pytest.mark.asyncio
+    async def test_large_atlassian_token_parsed_correctly_with_raised_limit(self, plugin_config, plugin_context):
+        """End-to-end: an ~8KB Atlassian Rovo token injects a Bearer header when max_header_value_length=16384.
+
+        Mirrors the production fix: operator raises MAX_HEADER_VALUE_LENGTH (and
+        MAX_HEADER_FIELD_SIZE_BYTES / MAX_HEADER_TOTAL_SIZE_BYTES) to accommodate the token.
+        The vault header must be stripped and the Authorization header must be injected.
+        """
+        token = self._make_atlassian_token(8000)
+        raw_header = json.dumps({"atlassian.net": token})
+        with patch("mcpgateway.utils.passthrough_headers.settings.max_header_value_length", 16384):
+            sanitized = sanitize_header_value(raw_header)
+        assert sanitized == raw_header, "token must not be truncated before reaching the plugin"
+
+        plugin = Vault(plugin_config)
+        payload = ToolPreInvokePayload(
+            name="test_tool",
+            arguments={},
+            headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": sanitized}),
+        )
+
+        result = await plugin.tool_pre_invoke(payload, plugin_context)
+
+        assert result.modified_payload is not None
+        assert "authorization" in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == f"Bearer {token}"
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+
+
 class TestVaultPluginA2AAgent:
     """Unit tests for the Vault plugin ``agent_pre_invoke`` (A2A) path.
 
@@ -611,7 +725,13 @@ class TestVaultPluginA2AAgent:
 
     @pytest.mark.asyncio
     async def test_no_token_match_strips_vault_header(self, plugin_config, agent_context):
-        """A vault header with no matching system still gets stripped, no auth injected."""
+        """A vault header with no matching system still gets stripped, no auth injected.
+
+        The system tag IS resolved here (agent_context tags include "system:github.com"), so
+        this hits the mismatch branch and returns the "authorization": "" strip sentinel -- see
+        module docstring / vault_plugin.py::_apply_vault_token for why the plugin can't `del` a
+        header it never received.
+        """
         plugin = Vault(plugin_config)
         vault_tokens = {"gitlab.com": "glpat_other_system"}
         payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}))
@@ -620,7 +740,7 @@ class TestVaultPluginA2AAgent:
 
         assert result.modified_payload is not None
         assert "x-vault-tokens" not in result.modified_payload.headers.root
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_oauth2_config_mode_unsupported_strips_header(self, agent_context):
@@ -769,10 +889,11 @@ class TestVaultPluginMcpServerBinding:
 
         result = await plugin.tool_pre_invoke(payload, context)
 
-        # SECURITY: header stripped, but no auth injected since the binding doesn't match
+        # SECURITY: header stripped, no auth injected since the binding doesn't match, and the
+        # strip sentinel is returned since system_key ("github.com") did resolve
         assert result.modified_payload is not None
         assert "x-vault-tokens" not in result.modified_payload.headers.root
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_null_mcp_server_falls_back_to_unbound_trust(self, plugin_config):
@@ -798,7 +919,7 @@ class TestVaultPluginMcpServerBinding:
         result = await plugin.tool_pre_invoke(payload, context)
 
         assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_matching_mcp_server_ignores_trailing_slash_and_case(self, plugin_config):
@@ -824,7 +945,7 @@ class TestVaultPluginMcpServerBinding:
         result = await plugin.tool_pre_invoke(payload, context)
 
         assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_a2a_agent_matching_endpoint_url_injects_token(self):
@@ -888,7 +1009,7 @@ class TestVaultPluginMcpServerBinding:
         result = await plugin.agent_pre_invoke(payload, context)
 
         assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
 
 if __name__ == "__main__":

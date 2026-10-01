@@ -10,6 +10,9 @@ Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 """
 
+# Standard
+import os
+
 # Third-Party
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_headers
@@ -98,4 +101,5 @@ def get_version(ctx: Context):
 
 
 if __name__ == "__main__":
-    mcp.run(transport="sse", port=8001)
+    port = int(os.environ.get("MCP_ECHO_PORT", "8001"))
+    mcp.run(transport="sse", port=port)

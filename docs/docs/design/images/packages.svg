@@ -4880,17 +4880,5 @@
 <path fill="none" stroke="gray" d="M5725.17,-888.85C5772.09,-892.57 5835.2,-897.19 5891,-900 6585.22,-934.97 7427.87,-948.76 7666.94,-952.13"/>
 <polygon fill="gray" stroke="gray" points="7677.2,-952.27 7667.14,-956.63 7672.2,-952.2 7667.21,-952.13 7667.21,-952.13 7667.21,-952.13 7672.2,-952.2 7667.27,-947.63 7677.2,-952.27 7677.2,-952.27"/>
 </g>
-<!-- mcpgateway.wrapper -->
-<g id="node167" class="node">
-<title>mcpgateway.wrapper</title>
-<polygon fill="white" stroke="#77aadd" points="15267.5,-1332 15122.5,-1332 15122.5,-1296 15267.5,-1296 15267.5,-1332"/>
-<text text-anchor="middle" x="15195" y="-1310.3" font-family="Arial" font-size="14.00">mcpgateway.wrapper</text>
-</g>
-<!-- mcpgateway.wrapper&#45;&gt;mcpgateway.config -->
-<g id="edge646" class="edge">
-<title>mcpgateway.wrapper&#45;&gt;mcpgateway.config</title>
-<path fill="none" stroke="gray" d="M15122.05,-1330.28C15117.31,-1330.95 15112.59,-1331.54 15108,-1332 14692.04,-1373.65 7979.77,-1383.84 7186.41,-1384.9"/>
-<polygon fill="gray" stroke="gray" points="7176.26,-1384.92 7186.25,-1380.4 7181.26,-1384.91 7186.26,-1384.9 7186.26,-1384.9 7186.26,-1384.9 7181.26,-1384.91 7186.26,-1389.4 7176.26,-1384.92 7176.26,-1384.92"/>
-</g>
 </g>
 </svg>

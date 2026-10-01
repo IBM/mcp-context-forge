@@ -12,13 +12,36 @@ from __future__ import annotations
 # Standard
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.sso_service import ADFS_PROVIDER_ID
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_group_mapping(raw: Optional[str], env_var_name: str) -> Dict[str, Any]:
+    """Parse a JSON group-to-team mapping env var, returning {} on any failure.
+
+    Args:
+        raw: Raw JSON string from the environment (may be ``None``/empty).
+        env_var_name: Name of the source env var, used in warning messages.
+
+    Returns:
+        Parsed mapping dict, or ``{}`` if unset, invalid JSON, or not a JSON object.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Failed to parse %s as JSON; using empty team mapping", env_var_name)
+        return {}
+    if not isinstance(parsed, dict):
+        logger.warning("%s must be a JSON object (got %s); using empty team mapping", env_var_name, type(parsed).__name__)
+        return {}
+    return parsed
 
 
 def get_predefined_sso_providers() -> List[Dict]:
@@ -154,6 +177,7 @@ def get_predefined_sso_providers() -> List[Dict]:
     # IBM Security Verify Provider
     if settings.sso_ibm_verify_enabled and settings.sso_ibm_verify_client_id:
         base_url = settings.sso_ibm_verify_issuer or "https://tenant.verify.ibm.com"
+        ibm_verify_team_mapping = _parse_group_mapping(settings.ibm_verify_group_mapping, "IBM_VERIFY_GROUP_MAPPING")
         providers.append(
             {
                 "id": "ibm_verify",
@@ -169,23 +193,14 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "scope": "openid profile email",
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
-                "team_mapping": {},
+                "team_mapping": ibm_verify_team_mapping,
             }
         )
 
     # Okta Provider
     if settings.sso_okta_enabled and settings.sso_okta_client_id:
         base_url = settings.sso_okta_issuer or "https://company.okta.com"
-        okta_team_mapping: Dict[str, Any] = {}
-        if settings.okta_group_mapping:
-            try:
-                parsed = json.loads(settings.okta_group_mapping)
-                if isinstance(parsed, dict):
-                    okta_team_mapping = parsed
-                else:
-                    logger.warning("OKTA_GROUP_MAPPING must be a JSON object (got %s); using empty team mapping", type(parsed).__name__)
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("Failed to parse OKTA_GROUP_MAPPING as JSON; using empty team mapping")
+        okta_team_mapping = _parse_group_mapping(settings.okta_group_mapping, "OKTA_GROUP_MAPPING")
         providers.append(
             {
                 "id": "okta",

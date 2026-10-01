@@ -6,22 +6,33 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ## 🔐 Required: Change Before Use
 
-These variables have insecure defaults and **must be changed** before production deployment:
+These variables have insecure built-in placeholders. Set each credential before enabling its consuming authentication feature; the gateway rejects empty, placeholder, and known-weak password values at startup.
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
 | `JWT_SECRET_KEY` | Secret key for signing JWT tokens | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
-| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
+| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` (rejected when Basic Auth is enabled) | Set a strong password |
 | `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |
-| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` | Set a strong password |
-| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` | Set a strong password |
+| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` (rejected when email auth is enabled) | Set a strong password |
+| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` (rejected when email auth is enabled) | Set a strong password |
 
-Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update these values.
+Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env`, then run `make setup` or `make init-secrets-patch-env`.
 
 !!! warning "Startup Validation"
-    If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
+    If an enabled authentication feature has a missing, placeholder, or known-weak password, the gateway fails fast at startup with a Pydantic validation error.
+
+### Migrating Existing Deployments
+
+Before upgrading, set strong values for every enabled authentication path:
+
+1. Run `make init-secrets-patch-env` against the existing `.env`, or set the values manually.
+2. Set `BASIC_AUTH_PASSWORD` when `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`.
+3. Set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` when `EMAIL_AUTH_ENABLED=true`.
+4. For Helm or Kubernetes, update the corresponding Secret values before restarting the gateway.
+
+Deployments that previously relied on `changeme`, an empty value, or a `__REPLACE_ME__` placeholder will not start until the affected credential is replaced. See the [full migration guide](../operations/default-password-fail-closed-migration.md) for verification steps and rollback notes.
 
 ### 🔒 Security Defaults (Secure by Default)
 
@@ -137,7 +148,7 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 | Setting                     | Description                                                                  | Default             | Options     |
 |-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
 | `BASIC_AUTH_USER`           | Username for HTTP Basic authentication (when enabled)                        | `admin`             | string      |
-| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme` (rejected when enabled) | string      |
 | `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
 | `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
 | `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges). Also used as the default identity for OAuth health-check token lookups on `authorization_code` gateways — if this user has not completed consent for a gateway, health checks proceed unauthenticated (expected behaviour). | `admin@example.com` | string      |
@@ -408,9 +419,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `EMAIL_AUTH_ENABLED`          | Enable email-based authentication system         | `true`                | bool    |
 | `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
-| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
+| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme` (rejected when email auth is enabled) | string  |
 | `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
-| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme`            | string  |
+| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme` (rejected when email auth is enabled) | string  |
 | `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
 | `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
 | `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |
@@ -446,17 +457,88 @@ Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An ad
 When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
 When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
 
-### MCP Client Authentication
+### MCP Protocol & Authentication
+
+ContextForge sits between MCP clients and MCP servers, acting as both a **server** (to inbound clients) and a **client** (to upstream servers):
+
+```
+┌────────────┐         ┌──────────────────────────────────────┐         ┌────────────┐
+│            │         │           ContextForge               │         │            │
+│ MCP Client │ ──────▶ │  (inbound)  Gateway  (outbound)  │ ──────▶ │ MCP Server │
+│ (e.g. IDE, │ ◀────── │   /mcp endpoints   MCP client    │ ◀────── │ (upstream)  │
+│  Claude)   │         │                                      │         │            │
+└────────────┘         └──────────────────────────────────────┘         └────────────┘
+     INBOUND side:                                              OUTBOUND side:
+     Gateway acts as                                            Gateway acts as
+     an MCP server                                              an MCP client
+```
+
+- **Inbound** = MCP clients (IDEs, Claude Desktop, agents) connecting **to** the gateway's `/mcp` endpoints. The gateway is the **server**.
+- **Outbound** = The gateway connecting **to** upstream MCP servers (registered via `/gateways`). The gateway is the **client**.
+
+#### Inbound Authentication (MCP Clients → Gateway)
+
+These settings control how the gateway authenticates inbound MCP client connections:
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
-| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
+| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
+| `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
+| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
 !!! warning "MCP Access Control Dependencies"
     Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
+
+#### Inbound MCP Protocol Mode (MCP Clients → Gateway)
+
+`MCP_INBOUND_PROTOCOL_MODE` controls which protocol versions the gateway accepts from **inbound** MCP clients connecting to its `/mcp` server endpoints.
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_INBOUND_PROTOCOL_MODE`   | Protocol versions accepted from inbound MCP clients | `auto`                | `auto`, `legacy` |
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` (default) | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
+| `legacy` | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
+
+#### Outbound MCP Connect Mode (Gateway → MCP Servers)
+
+`MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens **outbound** connections to upstream MCP servers. It applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_CLIENT_CONNECT_MODE`     | Protocol negotiation for outbound connections to upstream MCP servers | `auto`                | `auto`, `legacy` |
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` (default) | Outbound connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
+| `legacy` | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
+
+!!! note "Upgrading the MCP SDK"
+    The upstream transport health check reads SDK-internal dispatcher flags. The compatibility spike tests in `tests/unit/mcpgateway/utils/test_sdk_client_compat.py` fail loudly if a future SDK release changes those internals, so run them before adopting a new SDK pin.
+
+#### Full Legacy Mode (Both Sides)
+
+To force legacy-only protocol on both the inbound and outbound sides:
+
+```bash
+MCP_INBOUND_PROTOCOL_MODE=legacy      # inbound: clients must use initialize handshake
+MCP_CLIENT_CONNECT_MODE=legacy        # outbound: gateway uses initialize only
+```
+
+#### Compatibility Guidance
+
+Choose each mode independently for its direction: `MCP_INBOUND_PROTOCOL_MODE` applies to MCP clients connecting to the gateway, while `MCP_CLIENT_CONNECT_MODE` applies to upstream MCP servers.
+
+| Peer capability | `MCP_INBOUND_PROTOCOL_MODE` | `MCP_CLIENT_CONNECT_MODE` | Guidance |
+| ---------------- | --------------------------- | ------------------------- | -------- |
+| Legacy-only | `legacy` | `legacy` | Use the pre-2026 `initialize` handshake only. |
+| Dual-era | `legacy` | `legacy` | Sufficient for compatibility; dual-era clients should retry with legacy after the gateway returns `400` for a modern handshake. |
+| Modern-only | `auto` | `auto` | Required because there is no strict `modern` mode; `auto` negotiates modern protocol revisions and retains legacy fallback. |
+
+For dual-era peers, use `auto` instead of `legacy` only when modern protocol negotiation or modern-only features are required. `auto` is not modern-only.
 
 ### SSO (Single Sign-On) Configuration
 
@@ -466,6 +548,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_AUTO_CREATE_USERS`       | Automatically create users from SSO providers    | `true`                | bool    |
 | `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
 | `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
+| `SSO_ALLOW_PROVIDER_LINKING`  | Let a verified email sign in via a different trusted provider (rebinds). Global switch across all providers, not scoped to a pair; admin status is re-vetted against the new provider on relink. | `false`     | bool    |
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
 | `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
@@ -625,6 +708,8 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 !!! info "CORS Configuration"
     When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
+
+    In every environment, the gateway allows only origins listed in `ALLOWED_ORIGINS`. An empty `ALLOWED_ORIGINS` blocks all cross-origin requests. Earlier releases allowed any origin in non-production environments when the list was empty.
 
 !!! info "iframe Embedding"
     The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive:
@@ -828,6 +913,17 @@ mcpContextForge:
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
     Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
+### URL Scheme Allowlist
+
+Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation; restart required to re-run the startup database scan.
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `VALIDATION_ALLOWED_URL_SCHEMES` | Permitted URL scheme prefixes | `["http://", "https://", "ws://", "wss://"]` | JSON array |
+| `STRICT_SCHEME_ENFORCEMENT` | Fail startup when existing records violate the allowlist | `false` | bool |
+
+When `STRICT_SCHEME_ENFORCEMENT` is `false` (default), the startup check logs a warning per non-compliant record. Set to `true` to prevent the gateway from starting until all records use allowed schemes.
+
 ### Content Security - Size Limits
 
 Content size limits prevent DoS attacks and resource exhaustion from oversized content submissions. Validation occurs at the service layer before database writes and returns **HTTP 413 Payload Too Large** with structured error details.
@@ -1005,6 +1101,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
 
+Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#upstream-mcp-connect-mode).
+
 ### Resources
 
 | Setting               | Description           | Default    | Options    |
@@ -1023,6 +1121,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `TOOL_RATE_LIMIT`       | Tool calls per minute          | `100`   | int > 0 |
 | `TOOL_CONCURRENT_LIMIT` | Concurrent tool invocations    | `10`    | int > 0 |
 | `GATEWAY_TOOL_NAME_SEPARATOR` | Tool name separator for gateway routing | `-`     | `-`, `--`, `_`, `.` |
+| `MCPGATEWAY_TOOL_PREVIEW_ENABLED` | Enable the tool preview (dry-run) endpoint at `POST /tools/preview/{name}` | `true` | bool |
 
 ### Prompts
 
@@ -1361,9 +1460,11 @@ HOST=0.0.0.0
 PORT=4444
 DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
-JWT_SECRET_KEY=my-secret-key
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASSWORD=changeme
+JWT_SECRET_KEY=$(openssl rand -hex 32)
+AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
+BASIC_AUTH_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+DEFAULT_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 # Embedded UI mode (hides logout + team selector by default)
@@ -1386,7 +1487,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=my-secret-key
+      - JWT_SECRET_KEY=$(openssl rand -hex 32)
     depends_on:
       postgres:
         condition: service_healthy
@@ -1433,11 +1534,13 @@ data:
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
-  BASIC_AUTH_PASSWORD: "changeme"
+  BASIC_AUTH_PASSWORD: "__REPLACE_ME__run_make_init-secrets-patch-env"
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
 ```
+
+`BASIC_AUTH_PASSWORD` is only enforced when `API_ALLOW_BASIC_AUTH` or `DOCS_ALLOW_BASIC_AUTH` is `true`. Replace the `__REPLACE_ME__...` placeholder with a strong value (e.g. `openssl rand -hex 32`) before enabling either — the gateway refuses to start with a placeholder, empty, or known-weak secret.
 
 ---
 

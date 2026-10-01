@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.8"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    tag: "v1.0.11"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
     pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
@@ -409,6 +409,8 @@ mcpContextForge:
     CORS_ENABLED: "true"             # enable CORS processing in gateway
     CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
     ALLOWED_ORIGINS: '["https://gateway.local"]' # JSON list of allowed CORS origins (CHANGE to match APP_DOMAIN)
+    # MCP_ALLOWED_ORIGINS: ""        # opt-in MCP Origin allowlist (DNS-rebinding guard); comma-separated list
+    # MCP_ALLOWED_HOSTS: ""          # opt-in MCP Host allowlist; exact "host:port" entries
     SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
 
     # ─ Security Headers ─
@@ -843,7 +845,7 @@ mcpContextForge:
   secret:
     # ─ Admin & auth ─
     BASIC_AUTH_USER: admin                 # username for basic-auth (when enabled)
-    BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
+    BASIC_AUTH_PASSWORD: ""                # REQUIRED when API_ALLOW_BASIC_AUTH or DOCS_ALLOW_BASIC_AUTH is true — generate with: make init-secrets
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
@@ -865,9 +867,9 @@ mcpContextForge:
     EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
     PROTECT_ALL_ADMINS: "true"             # allow active admin accounts to bypass login lockout
     PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
-    PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
+    PLATFORM_ADMIN_PASSWORD: ""           # REQUIRED — set a strong value; generate with: make init-secrets
     PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
-    DEFAULT_USER_PASSWORD: changeme       # default password for new users (bootstrap)
+    DEFAULT_USER_PASSWORD: ""             # REQUIRED — set a strong value; generate with: make init-secrets
 
     # ─ Password Hashing & Security ─
     ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)
@@ -879,7 +881,7 @@ mcpContextForge:
     PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
     PASSWORD_REQUIRE_SPECIAL: "true"       # require special characters in passwords
     PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
-    ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
+    ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap (only applies when PLATFORM_ADMIN_PASSWORD equals DEFAULT_USER_PASSWORD)
     DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
     REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD: "true" # require change for default password
     PASSWORD_POLICY_ENABLED: "true"         # enable password policy enforcement
@@ -1062,7 +1064,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.8"                            # Should match mcpContextForge.image.tag
+    tag: "v1.0.11"                            # Should match mcpContextForge.image.tag
     pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job

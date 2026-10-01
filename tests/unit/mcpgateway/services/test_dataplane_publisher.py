@@ -195,6 +195,7 @@ async def test_full_payload_generation_with_mock_db():
     prompt1 = Mock()
     prompt1.id = "p1"
     prompt1.name = "Prompt 1"
+    prompt1.original_name = "upstream_prompt"
     prompt1.owner_email = "user1@example.com"
     prompt1.team_id = "team1"
     prompt1.visibility = "public"
@@ -293,27 +294,34 @@ async def test_full_payload_generation_with_mock_db():
         # Verify backend configuration
         server1 = user1_config["virtual_hosts"]["s1"]
         assert "backends" in server1
-        assert "g1" in server1["backends"]
+        assert set(server1["backends"]) == {"g1"}
 
         backend = server1["backends"]["g1"]
         assert backend == {
             "name": "Gateway 1",
             "url": "http://localhost:9000",
+            "mcp_protocol_version": "",
             "passthrough_headers": ["Authorization"],
             "add_headers": {"X-Tenant": "acme"},
             "remove_headers": ["Cookie"],
-            "capabilities": {"resources": {"subscribe": True}},
-            "allowed_tool_names": ["public_tool", "private_tool"],
+            "completion": {},
             "tool_schemas": {
                 "public_tool": tool1.input_schema,
                 "private_tool": {},
             },
-            "allowed_resource_names": ["Resource 1"],
-            "allowed_resource_uris": ["resource://one"],
-            "allowed_prompt_names": ["Prompt 1"],
         }
-        assert "bad_tool" not in backend["allowed_tool_names"]
+        assert server1["tools"] == {
+            "gw1-public_tool": {"backend_name": "g1", "upstream_name": "public_tool"},
+            "gw1-private_tool": {"backend_name": "g1", "upstream_name": "private_tool"},
+        }
+        assert server1["prompts"] == {"Prompt 1": {"backend_name": "g1", "upstream_name": "upstream_prompt"}}
+        assert server1["resources"] == {"resource://one": {"backend_name": "g1", "upstream_name": "resource://one"}}
+        assert server1["resource_templates"] == {}
+        assert set(server1) == {"backends", "tools", "prompts", "resources", "resource_templates"}
         assert "bad_tool" not in backend["tool_schemas"]
+        import msgpack
+
+        assert msgpack.unpackb(msgpack.packb(payload, use_bin_type=True), raw=False) == payload
 
         # Verify the gateway SELECT projection actually includes the new columns
         # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
@@ -327,6 +335,8 @@ async def test_full_payload_generation_with_mock_db():
         tool_stmt = tool_execute_call[0][0]
         selected_tool_keys = {col.key for col in tool_stmt.selected_columns}
         assert "input_schema" in selected_tool_keys, "Tool SELECT must include input_schema"
+        assert {"name", "original_name"} <= selected_tool_keys
+        assert {"name", "original_name"} <= {col.key for col in mock_db.execute.call_args_list[4].args[0].selected_columns}
 
         # Verify user2 sees public server but not private server from user1
         user2_config = payload[USER2_ID]
@@ -335,7 +345,10 @@ async def test_full_payload_generation_with_mock_db():
         # is omitted from the payload (no publishable backends).
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
-        assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
+        assert user2_config["virtual_hosts"]["s1"]["tools"] == {
+            "gw1-public_tool": {"backend_name": "g1", "upstream_name": "public_tool"},
+            "gw1-team2_tool": {"backend_name": "g1", "upstream_name": "team2_tool"},
+        }
         assert user2_backend["tool_schemas"] == {
             "public_tool": tool1.input_schema,
             "team2_tool": tool3.input_schema,
@@ -346,7 +359,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s1" in user3_config["virtual_hosts"]
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
-        assert user3_backend["allowed_tool_names"] == ["public_tool"]
+        assert user3_config["virtual_hosts"]["s1"]["tools"] == {"gw1-public_tool": {"backend_name": "g1", "upstream_name": "public_tool"}}
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
 
 
@@ -358,6 +371,7 @@ def test_build_user_data_excludes_non_object_tool_schema(caplog):
 
     bad_tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
     good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public")
+    good_tool.name = "gw-good"
     server = Mock(id="server", visibility="public")
     backend_items_by_server: BackendItemsByServer = {
         "server": {
@@ -372,9 +386,53 @@ def test_build_user_data_excludes_non_object_tool_schema(caplog):
     result = DataplanePublisherService()._build_user_data("user@example.com", set(), False, [server], [], [], [], [bad_tool, good_tool], backend_items_by_server)
 
     backend_items = result["servers"][0]["backend_items"]["gateway"]
-    assert backend_items["tools"] == ["good"]
+    assert backend_items["tools"] == {"gw-good": "good"}
     assert backend_items["tool_schemas"] == {"good": {"type": "object"}}
     assert "Excluding tool bad-tool" in caplog.text
+
+
+@pytest.mark.parametrize("teams", [set(), {"team1"}])
+@pytest.mark.parametrize("duplicate_names", [False, True])
+def test_named_routes_preserve_backend_identity_and_visibility(teams, duplicate_names):
+    """Gateway IDs preserve distinct backends even when names match, respecting visibility."""
+    from types import SimpleNamespace
+
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    server = SimpleNamespace(id="s1", visibility="public")
+    gateways = [
+        SimpleNamespace(
+            id=gateway_id,
+            name="shared-backend" if duplicate_names else f"backend-{gateway_id}",
+            url=f"http://{gateway_id}:9000/mcp",
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+            add_headers={},
+            remove_headers=[],
+            visibility="public",
+        )
+        for gateway_id in ("g1", "g2")
+    ]
+    tools = [SimpleNamespace(id=gateway.id, name=f"{gateway.id}-search", original_name="search", input_schema={"type": "object"}, visibility="public") for gateway in gateways]
+    scope = {"visibility": "team", "team_id": "team1", "owner_email": "owner@example.com"}
+    prompt = SimpleNamespace(id="p1", name="gw-prompt", original_name="prompt", **scope)
+    resource = SimpleNamespace(id="r1", name="Resource", uri="resource://one", **scope)
+    associations = {"s1": {gateway.id: {"tools": [gateway.id], "resources": [], "prompts": []} for gateway in gateways}}
+    associations["s1"]["g1"].update(resources=["r1", "missing"], prompts=["p1", "missing"])
+    data = service._build_user_data("reader@example.com", teams, False, [server], gateways, [prompt], [resource], tools, associations)
+    host = service.create_payload({USER1_ID: data})[USER1_ID]["virtual_hosts"]["s1"]
+
+    assert set(host["backends"]) == {"g1", "g2"}
+    assert host["tools"] == {f"{gateway.id}-search": {"backend_name": gateway.id, "upstream_name": "search"} for gateway in gateways}
+    for gateway in gateways:
+        backend = host["backends"][gateway.id]
+        assert backend["name"] == gateway.name
+        assert backend["url"] == gateway.url
+        assert backend["tool_schemas"] == {"search": {"type": "object"}}
+        assert backend["mcp_protocol_version"] == ""
+    assert host["prompts"] == ({"gw-prompt": {"backend_name": "g1", "upstream_name": "prompt"}} if teams else {})
+    assert host["resources"] == ({"resource://one": {"backend_name": "g1", "upstream_name": "resource://one"}} if teams else {})
 
 
 # ============================================================================
@@ -452,7 +510,7 @@ def test_create_payload_filters_empty_backends():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": [], "tool_schemas": {}, "resources": [], "prompts": []},
+                        "gateway1": {"tools": {}, "tool_schemas": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -482,7 +540,7 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
                     "id": "server1",
                     "backend_items": {
                         "gateway_non_streamable": {
-                            "tools": ["tool1"],
+                            "tools": {"gw-tool1": "tool1"},
                             "tool_schemas": {},
                             "resources": [],
                             "prompts": [],
@@ -513,7 +571,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": ["tool1"], "tool_schemas": {}, "resources": [], "prompts": []},
+                        "gateway1": {"tools": {"gw-tool1": "tool1"}, "tool_schemas": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -529,7 +587,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
     assert backend["passthrough_headers"] == []
     assert backend["add_headers"] == {}
     assert backend["remove_headers"] == []
-    assert backend["capabilities"] == {}
+    assert backend["completion"] == {}
 
 
 def test_create_payload_handles_missing_references():
@@ -544,7 +602,7 @@ def test_create_payload_handles_missing_references():
                     "id": "server1",
                     "backend_items": {
                         "missing_gateway": {
-                            "tools": ["tool1"],
+                            "tools": {"gw-tool1": "tool1"},
                             "tool_schemas": {},
                             "resources": ["missing_res"],
                             "prompts": ["missing_prompt"],
@@ -871,3 +929,41 @@ def test_backend_item_helpers_add_items_and_skip_missing_gateway():
             }
         }
     }
+
+
+# ============================================================================
+# _add_unique_route Tests
+# ============================================================================
+
+
+def test_add_unique_route_skips_already_ambiguous_name():
+    """_add_unique_route() returns early without modifying routes when name is already ambiguous."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    routes: dict = {}
+    ambiguous: set = {"my_tool"}
+
+    DataplanePublisherService._add_unique_route(routes, ambiguous, "my_tool", "g1", "upstream_tool", "s1", "tool")
+
+    assert routes == {}
+    assert ambiguous == {"my_tool"}
+
+
+def test_add_unique_route_detects_conflict_and_marks_ambiguous(caplog):
+    """_add_unique_route() removes a route and marks it ambiguous when two different backends claim the same name."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    routes: dict = {}
+    ambiguous: set = set()
+
+    # First call: registers the route normally.
+    DataplanePublisherService._add_unique_route(routes, ambiguous, "my_tool", "g1", "upstream_tool", "s1", "tool")
+    assert routes == {"my_tool": {"backend_name": "g1", "upstream_name": "upstream_tool"}}
+    assert ambiguous == set()
+
+    # Second call: different backend — triggers conflict resolution.
+    DataplanePublisherService._add_unique_route(routes, ambiguous, "my_tool", "g2", "upstream_tool", "s1", "tool")
+
+    assert "my_tool" not in routes
+    assert "my_tool" in ambiguous
+    assert "my_tool" in caplog.text

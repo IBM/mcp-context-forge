@@ -21,7 +21,7 @@ from urllib.parse import quote, unquote
 
 # First-Party
 from mcpgateway.config import get_settings
-from mcpgateway.translate_header_utils import ALLOWED_HEADERS_REGEX, MAX_HEADER_VALUE_LENGTH, sanitize_header_value
+from mcpgateway.translate_header_utils import ALLOWED_HEADERS_REGEX, sanitize_header_value
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +295,7 @@ def extract_baggage_from_headers(
 
         # Sanitize value (reuse existing security function)
         try:
-            sanitized_value = sanitize_header_value(header_value, max_length=MAX_HEADER_VALUE_LENGTH)
+            sanitized_value = sanitize_header_value(header_value)
 
             if not sanitized_value:
                 if config.log_sanitization:
@@ -427,7 +427,7 @@ def filter_incoming_baggage(
             break
 
         try:
-            sanitized_value = sanitize_header_value(value, max_length=MAX_HEADER_VALUE_LENGTH)
+            sanitized_value = sanitize_header_value(value)
             if not sanitized_value:
                 if config.log_sanitization:
                     logger.warning(f"Inbound baggage key '{key}' value became empty after sanitization, skipping")
@@ -531,7 +531,7 @@ def sanitize_baggage_for_propagation(baggage: Dict[str, str]) -> Dict[str, str]:
     for key, value in baggage.items():
         try:
             # Sanitize value (remove control characters, etc.)
-            sanitized_value = sanitize_header_value(value, max_length=MAX_HEADER_VALUE_LENGTH)
+            sanitized_value = sanitize_header_value(value)
             if sanitized_value:
                 sanitized[key] = sanitized_value
         except Exception as e:

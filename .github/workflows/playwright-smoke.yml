@@ -50,6 +50,12 @@ jobs:
       # Override .env.example placeholders — env vars take precedence over .env in pydantic-settings
       JWT_SECRET_KEY: "ci-playwright-smoke-jwt-secret-not-for-production-use"  # pragma: allowlist secret
       AUTH_ENCRYPTION_SECRET: "ci-playwright-smoke-auth-enc-secret-not-for-production"  # pragma: allowlist secret
+      # email_auth_enabled defaults true, so Settings() fails closed on the
+      # .env.example placeholder for these unless overridden. Value matches
+      # tests/playwright/conftest.py's ADMIN_PASSWORD default so the UI login
+      # tests authenticate without extra configuration.
+      PLATFORM_ADMIN_PASSWORD: "5S1Nd8z$Ivb6N%Lsj^okvVF6"  # pragma: allowlist secret
+      DEFAULT_USER_PASSWORD: "ci-playwright-smoke-default-user-password-not-for-production"  # pragma: allowlist secret
 
     steps:
       - name: ⬇️ Checkout source

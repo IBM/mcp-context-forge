@@ -280,7 +280,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService, GatewayToolNameConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
@@ -2915,6 +2915,21 @@ class TestAdminResourceUriConflictMessage:
         assert first.status_code == 200
         assert second.status_code == 200
 
+    @pytest.mark.parametrize("custom_name", [None, "Weekly Report", "gateway-report"])
+    @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_explicit_base(self, mock_update_resource, mock_request, mock_db, custom_name):
+        """Admin accepts federated forms that omit the legacy derived name."""
+        form = dict(await mock_request.form())
+        form.pop("name", None)
+        if custom_name is not None:
+            form["customName"] = custom_name
+        mock_request.form.return_value = form
+        result = await admin_edit_resource("resource-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        update = mock_update_resource.call_args.args[2]
+        assert update.name is None
+        assert update.custom_name == custom_name
+
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_special_uri_characters(self, mock_update_resource, mock_request, mock_db):
         """Test editing resource with special characters in URI."""
@@ -3662,6 +3677,19 @@ class TestAdminGatewayRoutes:
         response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_admin_set_gateway_state_tool_name_collision(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Admin activation redirects with generic collision text."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
+        conflict = GatewayToolNameConflictError("prod-api-search")
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.set_gateway_state", AsyncMock(side_effect=conflict))
+
+        response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 303
+        assert "error=Gateway%20tool%20name%20conflicts%20with%20an%20existing%20tool" in response.headers["location"]
+        assert "prod-api-search" not in response.headers["location"]
 
     @pytest.mark.asyncio
     async def test_admin_discover_oauth_missing_issuer(self, mock_request):
@@ -7477,6 +7505,7 @@ class TestOAuthFunctionality:
         cases = [
             (GatewayDuplicateConflictError(duplicate_gateway), 409),
             (GatewayNameConflictError("name"), 409),
+            (GatewayToolNameConflictError("prod-api-search"), 409),
             (GatewayCredentialError("Stored credential contains invalid characters"), 422),
             (ValueError("bad"), 400),
             (ValidationError.from_exception_data("test", error_details), 422),
@@ -7518,6 +7547,24 @@ class TestOAuthFunctionality:
             mock_update_gateway.side_effect = exc
             response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert response.status_code == expected
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_tool_name_collision(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
+        """Admin form update returns exact generic collision response."""
+        mock_request.form = AsyncMock(return_value=FakeForm({"name": "Gateway", "url": "https://example.com", "oauth_config": "None"}))
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.side_effect = GatewayToolNameConflictError("prod-api-search")
+
+        response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 409
+        assert json.loads(response.body) == {"message": "Gateway tool name conflicts with an existing tool", "success": False}
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_invalid_json_body(self, mock_register_gateway, mock_request, mock_db):
@@ -7937,6 +7984,27 @@ class TestErrorHandlingPaths:
         mock_update_gateway.assert_called_once()
         gateway_update = mock_update_gateway.call_args[0][2]
         assert gateway_update.auth_type == "oauth"
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_tool_name_collision(self, mock_update_gateway, mock_request, mock_db):
+        """Admin REST update returns exact generic collision response."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
+        mock_request.headers = {"content-type": "application/json"}
+        mock_update_gateway.side_effect = GatewayToolNameConflictError("prod-api-search")
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            response = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert response.status_code == 409
+        assert json.loads(response.body) == {"message": "Gateway tool name conflicts with an existing tool", "success": False}
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_update_gateway_rest_permission_error(self, mock_update_gateway, mock_request, mock_db):
@@ -11191,6 +11259,29 @@ async def test_admin_update_user_password_invalid(monkeypatch, mock_db, allow_pe
 
 
 @pytest.mark.asyncio
+async def test_admin_update_user_passwordless_validation_error(monkeypatch, mock_db, allow_permission):
+    from mcpgateway.services.email_auth_service import PasswordValidationError
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "A", "password": "NewSecurePass4$x", "confirm_password": "NewSecurePass4$x"}))  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda _pw, email="", is_admin=False: (True, ""))
+
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=False))
+    auth_service.update_user = AsyncMock(side_effect=PasswordValidationError("Local password updates are not allowed for passwordless users"))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+
+    assert response.status_code == 400
+    assert response.headers.get("HX-Retarget") == "#edit-user-error"
+    body = response.body.decode()
+    assert "Password validation failed" in body
+    assert "Local password updates are not allowed for passwordless users" in body
+
+
+@pytest.mark.asyncio
 async def test_admin_update_user_exception(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
@@ -11493,14 +11584,33 @@ async def test_admin_delete_user_exception(monkeypatch, mock_request, mock_db, a
 async def test_admin_force_password_change_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(
-        return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)
+    auth_service.update_user = AsyncMock(
+        return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=True)
     )
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
+    auth_service.update_user.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_force_password_change_rejects_passwordless_user(monkeypatch, mock_request, mock_db, allow_permission):
+    # First-Party
+    from mcpgateway.services.email_auth_service import PasswordValidationError
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.update_user = AsyncMock(side_effect=PasswordValidationError("Password change cannot be required for passwordless users"))
+    auth_service.count_active_admin_users = AsyncMock(return_value=1)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+    assert response.status_code == 400
+    assert "passwordless" in response.body.decode().lower()
+    mock_db.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -11514,7 +11624,7 @@ async def test_admin_force_password_change_email_auth_disabled(monkeypatch, mock
 async def test_admin_force_password_change_user_not_found(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=None)
+    auth_service.update_user = AsyncMock(side_effect=ValueError("User a@example.com not found"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
@@ -11525,7 +11635,7 @@ async def test_admin_force_password_change_user_not_found(monkeypatch, mock_requ
 async def test_admin_force_password_change_exception(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("boom"))
+    auth_service.update_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
@@ -17109,6 +17219,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
         ssrf_blocked_networks = ["169.254.169.254/32"]
         ssrf_blocked_hosts = []
         ssrf_dns_fail_closed = False
+        validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     class ShouldNotBeCalled:
         async def __aenter__(self):
@@ -20170,6 +20281,7 @@ class TestAuthLogin:
         mock_user.password_change_required = False
         mock_user.password_changed_at = None
         mock_user.password_hash = "hash"
+        mock_user.password_hash_type = "argon2id"
 
         mock_auth_service = MagicMock()
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
@@ -20188,6 +20300,43 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+
+    @pytest.mark.asyncio
+    async def test_admin_login_handler_skips_default_password_detection_for_passwordless_user(self, monkeypatch, mock_db):
+        """Passwordless users do not reach Admin UI default-password hash verification."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_change_enforcement_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.detect_default_password_on_login", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.environment", "development", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_preserve_admin_auth", True, raising=False)
+
+        mock_user = MagicMock()
+        mock_user.password_change_required = False
+        mock_user.password_changed_at = None
+        mock_user.password_hash = None
+        mock_user.password_hash_type = "none"
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
+        monkeypatch.setattr("mcpgateway.admin.create_access_token", AsyncMock(return_value=("fake-token", None)))
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token, remember_me=False: None)
+
+        password_service = MagicMock()
+        password_service.verify_password_async = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.admin.Argon2PasswordService", lambda: password_service)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value={"email": "admin@test.com", "password": "secret123"})  # pragma: allowlist secret
+
+        result = await admin_login_handler(request, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        password_service.verify_password_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_secure_cookies_dev_warning(self, monkeypatch, mock_db):
@@ -21107,6 +21256,23 @@ class TestCatalogEndpoints:
         result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
         assert isinstance(result, HTMLResponse)
         assert "Registered Successfully" in result.body.decode()
+
+    @pytest.mark.asyncio
+    async def test_register_catalog_server_htmx_tool_name_collision(self, monkeypatch, allow_permission, mock_db):
+        """Admin catalog HTMX response renders only generic collision text."""
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        reg_result = SimpleNamespace(success=False, message="Gateway tool name conflicts with an existing tool", oauth_required=False, error=None)
+        monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
+        request = MagicMock(spec=Request)
+        request.headers = {"HX-Request": "true"}
+
+        result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+
+        body = result.body.decode()
+        assert result.status_code == 200
+        assert "Gateway tool name conflicts with an existing tool" in body
+        assert "prod-api-search" not in body
 
     @pytest.mark.asyncio
     async def test_check_catalog_server_status_disabled(self, monkeypatch, mock_db):
@@ -24812,7 +24978,7 @@ class TestAdminCsrfProtection:
         # function falls through to return False and CSRF validation fails.
         monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"will-explode://bad"})
 
-        real_normalize = admin_mod._normalize_origin_parts
+        real_normalize = admin_mod.normalize_origin_parts
 
         def _boom_on_bad(scheme, netloc):
             if netloc == "bad":
@@ -24829,7 +24995,7 @@ class TestAdminCsrfProtection:
             cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
             form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
         )
-        with patch.object(admin_mod, "_normalize_origin_parts", side_effect=_boom_on_bad):
+        with patch.object(admin_mod, "normalize_origin_parts", side_effect=_boom_on_bad):
             with pytest.raises(HTTPException, match="CSRF origin validation failed"):
                 await admin_mod.enforce_admin_csrf(request)
 

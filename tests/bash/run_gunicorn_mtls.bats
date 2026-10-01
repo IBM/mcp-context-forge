@@ -201,3 +201,28 @@ tls_args() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"Loopback client credential not found"* ]]
 }
+
+# --- TLS Cipher Suites and Protocol Version ----------------------------------
+
+@test "SSL_CIPHERS passes --ciphers flag to gunicorn when SSL=true" {
+    run_launcher SSL=true CERT_FILE="${TMP_DIR}/cert.pem" KEY_FILE="${TMP_DIR}/key.pem" \
+        SSL_CIPHERS="ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256"* ]]
+}
+
+@test "SSL_VERSION passes --ssl-version flag to gunicorn when SSL=true" {
+    run_launcher SSL=true CERT_FILE="${TMP_DIR}/cert.pem" KEY_FILE="${TMP_DIR}/key.pem" \
+        SSL_VERSION="5"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--ssl-version 5"* ]]
+}
+
+@test "SSL_CIPHERS and SSL_VERSION are ignored when SSL=false" {
+    run_launcher SSL=false \
+        SSL_CIPHERS="ECDHE-RSA-AES256-GCM-SHA384" \
+        SSL_VERSION="5"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"--ciphers"* ]]
+    [[ "$output" != *"--ssl-version"* ]]
+}

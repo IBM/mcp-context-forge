@@ -220,10 +220,12 @@ class TestAcceptInvitationCoverage:
 
 class TestDeclineInvitationCoverage:
     @pytest.mark.asyncio
-    async def test_exception_returns_false(self, svc, db):
-        with patch.object(svc, "get_invitation_by_token", AsyncMock(side_effect=RuntimeError("crash"))):
-            result = await svc.decline_invitation("tok")
-        assert result is False
+    async def test_exception_is_raised(self, svc, db):
+        db.query = MagicMock(side_effect=RuntimeError("crash"))
+
+        with pytest.raises(RuntimeError, match="crash"):
+            await svc.decline_invitation("tok", "u@t.com")
+
         db.rollback.assert_called_once()
 
 
@@ -234,11 +236,11 @@ class TestDeclineInvitationCoverage:
 
 class TestRevokeInvitationCoverage:
     @pytest.mark.asyncio
-    async def test_exception_returns_false(self, svc, db):
+    async def test_exception_is_propagated(self, svc, db):
         db.query = MagicMock(side_effect=RuntimeError("crash"))
 
-        result = await svc.revoke_invitation("inv1", "owner@t.com")
-        assert result is False
+        with pytest.raises(RuntimeError, match="crash"):
+            await svc.revoke_invitation("inv1", "owner@t.com")
         db.rollback.assert_called_once()
 
 
@@ -252,17 +254,19 @@ class TestGetUserInvitationsCoverage:
     async def test_active_only_false(self, svc, db):
         """When active_only=False, no is_active filter is applied."""
         mock_query = MagicMock()
+        mock_options = MagicMock()
         mock_filter = MagicMock()
         mock_order = MagicMock()
         mock_order.all = MagicMock(return_value=[])
         mock_filter.order_by = MagicMock(return_value=mock_order)
-        mock_query.filter = MagicMock(return_value=mock_filter)
+        mock_options.filter = MagicMock(return_value=mock_filter)
+        mock_query.options = MagicMock(return_value=mock_options)
         db.query = MagicMock(return_value=mock_query)
 
         result = await svc.get_user_invitations("u@t.com", active_only=False)
         assert result == []
         # Verify that filter was called only once (no is_active filter added)
-        mock_query.filter.assert_called_once()
+        mock_options.filter.assert_called_once()
 
 
 # ===========================================================================
