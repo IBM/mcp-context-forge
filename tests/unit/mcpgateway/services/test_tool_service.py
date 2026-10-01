@@ -2391,6 +2391,10 @@ class TestToolService:
             shutdown_validation_pool()
 
         assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+        max_supported_regex_timeout_seconds = 1.0
+        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
+            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
+        )
         budget = 0.5 * settings.regex_timeout_seconds
         assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
         assert result.is_error, "the hostile output must fail validation, not pass"

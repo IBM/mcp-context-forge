@@ -80,6 +80,7 @@ class HarmfulContentConfig(BaseModel):
                         warn_unprovable_pattern_source(p, source="plugin:harmful_content_detector")
                         compiled_patterns.append(re.compile(p, re.IGNORECASE))
                     else:
+                        warn_unprovable_pattern_source(p.pattern, source="plugin:harmful_content_detector")
                         compiled_patterns.append(p)
                 compiled_cats[cat] = compiled_patterns
             data["categories"] = compiled_cats

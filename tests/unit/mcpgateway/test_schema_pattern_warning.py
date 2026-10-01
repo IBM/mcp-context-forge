@@ -8,6 +8,10 @@ Registration warns about regex-bearing schemas. It never rejects them.
 
 # Standard
 import logging
+import re
+
+# Third-Party
+import pytest
 
 # First-Party
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
@@ -43,6 +47,28 @@ def test_warning_never_raises():
     warn_unprovable_patterns(None, source="tool:none")
     warn_unprovable_patterns({"pattern": "("}, source="tool:broken")
     warn_unprovable_patterns([1, 2, 3], source="tool:list")
+
+
+@pytest.mark.parametrize("pattern", ["^a$", re.compile("^a$", re.IGNORECASE)], ids=["string", "compiled"])
+def test_harmful_content_pattern_warns(pattern, caplog):
+    """Operator patterns produce a warning in both supported forms.
+
+    Args:
+        pattern: An operator-supplied string or compiled pattern.
+        caplog: Pytest fixture that captures log records.
+    """
+    # First-Party
+    from plugins.harmful_content_detector.harmful_content_detector import HarmfulContentConfig
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.safe_jsonschema"):
+        config = HarmfulContentConfig(categories={"custom": [pattern]})
+
+    records = [record for record in caplog.records if getattr(record, "source", None) == "plugin:harmful_content_detector"]
+    assert len(records) == 1
+    assert records[0].pattern_length == len("^a$")
+    assert config.categories["custom"][0].search("A") is not None
+    if isinstance(pattern, re.Pattern):
+        assert config.categories["custom"][0] is pattern
 
 
 def test_tool_insert_listener_warns(caplog):

@@ -229,7 +229,12 @@ def test_start_failure_names_its_cause(caplog):
 
     assert sandbox_unavailable() is True
     assert "RuntimeError: settings rejected a placeholder" in caplog.text
+    shutdown_validation_pool()
+    assert sandbox_unavailable() is True
+    with pytest.raises(jsonschema.exceptions.ValidationError, match="no validation sandbox"):
+        validate_safely("a", {"pattern": "^a$"}, DRAFT)
     start_validation_pool()
+    assert sandbox_unavailable() is False
 
 
 def test_no_sandbox_still_validates_schema_without_regex():
