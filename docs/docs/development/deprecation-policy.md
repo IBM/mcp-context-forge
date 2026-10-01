@@ -73,6 +73,24 @@ the removal window from that release, not from the merge date.
 Shared dates and header values live in `mcpgateway/deprecations.py`. The
 middleware logs an overdue warning at startup once the sunset date passes.
 
+## Annotating a deprecated interface
+
+Apply every signal that matches the surface. The registry row and the
+CHANGELOG entry under `Deprecated` are always required.
+
+| Surface | Required annotations |
+|---|---|
+| HTTP route group | `Deprecation`, `Sunset`, `Link` headers through `DeprecationHeadersMiddleware`; exclude the legacy mount from the OpenAPI schema |
+| HTTP endpoint in a dual-mounted router | `deprecated=True` on the route decorator; `DeprecationWarning` in the handler |
+| Environment variable or feature flag | Deprecation note in the config field description; startup log warning when enabled; documentation admonition with both dates |
+| Python function or class | `warnings.warn(..., DeprecationWarning, stacklevel=2)`; `.. deprecated::` docstring directive |
+| Makefile target | `deprecated_target` macro with the deprecation and sunset dates |
+| Registration-time value, such as a transport or URL scheme | Log warning at create or update; warning field in the response |
+| MCP or A2A wire behavior | ADR, plus the matching signals above |
+
+The [API deprecation detail](../deprecations.md#api-deprecation-detail)
+table tracks which annotations each deprecated API still lacks.
+
 ## Removing an interface
 
 - Remove the interface by pull request after its earliest removal date or
