@@ -25,8 +25,13 @@ EOF
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369
 FROM ${UBI_MINIMAL}
 EOF
+    cat > "$TEST_DIR/nginx.Containerfile" <<'EOF'
+ARG NGINX_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369
+FROM ${NGINX_IMAGE}
+EOF
     cp "$TEST_DIR/Containerfile" "$TEST_DIR/Containerfile.orig"
     cp "$TEST_DIR/wheels.Containerfile" "$TEST_DIR/wheels.Containerfile.orig"
+    cp "$TEST_DIR/nginx.Containerfile" "$TEST_DIR/nginx.Containerfile.orig"
 
     # curl stub: dispatch on the repository path embedded in the Pyxis URL.
     # More specific paths first; unknown URLs fail like a 404 (curl -f style).
@@ -51,6 +56,7 @@ EOF
     export FIXTURE_DIR
     export CONTAINERFILE_PATH="$TEST_DIR/Containerfile"
     export WHEELS_CONTAINERFILE_PATH="$TEST_DIR/wheels.Containerfile"
+    export NGINX_DOCKERFILE_PATH="$TEST_DIR/nginx.Containerfile"
 }
 
 teardown() {
@@ -103,6 +109,18 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$output" = "ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1784669001" ]
     run grep '^ARG UBI_MINIMAL=' "$CONTAINERFILE_PATH"
     [ "$output" = "ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784669047" ]
+}
+
+@test "updates NGINX_IMAGE pin in infra/nginx/Dockerfile when a newer tag exists" {
+    write_tags ubi10.json        "10.2-1784581466"
+    write_tags nodejs.json       "10.2-1784624696"
+    write_tags ubi-minimal.json  "10.2-1784669047" "10.2-1784581369"
+
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+
+    run grep '^ARG NGINX_IMAGE=' "$NGINX_DOCKERFILE_PATH"
+    [ "$output" = "ARG NGINX_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784669047" ]
 }
 
 @test "updates UBI_MINIMAL pin in the wheels Containerfile too" {
@@ -158,6 +176,21 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
 }
 
+@test "dies when the nginx Dockerfile lacks the NGINX_IMAGE pin" {
+    sed -i.bak 's|^ARG NGINX_IMAGE=.*|ARG BASE_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369|' "$NGINX_DOCKERFILE_PATH"
+    rm -f "${NGINX_DOCKERFILE_PATH}.bak"
+    cp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
+    write_tags ubi10.json        "10.2-1784669000"
+    write_tags nodejs.json       "10.2-1784669001"
+    write_tags ubi-minimal.json  "10.2-1784669047"
+
+    run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no '^ARG NGINX_IMAGE=' line in"* ]]
+    cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
+    cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+}
+
 @test "no-op when every pin is already the latest in its minor line" {
     write_tags ubi10.json        "10.2-1784581466" "10.2-1000"
     write_tags nodejs.json       "10.2-1784624696" "10.2"
@@ -168,6 +201,7 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [[ "$output" == *"up to date"* ]]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+    cmp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
 }
 
 @test "stays within the current minor line even when a newer minor exists" {
@@ -179,6 +213,7 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$status" -eq 0 ]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+    cmp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
 }
 
 @test "writes nothing when any repository lookup fails" {
@@ -190,6 +225,7 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$status" -eq 1 ]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+    cmp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
 }
 
 @test "writes nothing when the API returns malformed JSON" {
@@ -201,6 +237,7 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$status" -eq 1 ]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+    cmp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
 }
 
 @test "leaves no sed backup files behind after an update" {
@@ -212,6 +249,7 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$status" -eq 0 ]
     [ ! -e "${CONTAINERFILE_PATH}.bak" ]
     [ ! -e "${WHEELS_CONTAINERFILE_PATH}.bak" ]
+    [ ! -e "${NGINX_DOCKERFILE_PATH}.bak" ]
 }
 
 @test "refuses to manage a pin that is not a full build tag" {
@@ -226,6 +264,7 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [ "$status" -eq 1 ]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+    cmp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
 }
 
 @test "queries the Pyxis repository derived from the pinned image path" {
@@ -257,4 +296,5 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     [[ "$output" == *"not on registry.access.redhat.com"* ]]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+    cmp "$NGINX_DOCKERFILE_PATH" "$TEST_DIR/nginx.Containerfile.orig"
 }

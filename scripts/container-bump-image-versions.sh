@@ -5,12 +5,13 @@
 # Managed pins (full build tags only, e.g. 10.2-1784669047):
 #   Containerfile:               ARG UBI_BASE / NODEJS_IMAGE / UBI_MINIMAL
 #   infra/wheels/Containerfile:  ARG UBI_MINIMAL (must stay identical to root)
+#   infra/nginx/Dockerfile:      ARG NGINX_IMAGE
 #
 # Tags are discovered via the Red Hat Catalog (Pyxis) API, which allows
 # anonymous access:
 #   GET https://catalog.redhat.com/api/containers/v1/repositories/registry/
 #       registry.access.redhat.com/repository/<repo>/images
-#       ?page_size=100&sort_by=last_update_date[desc]
+#       ?page_size=500&sort_by=last_update_date[desc]
 #
 # Policy:
 #   - Stay within each pin's current minor line (10.2); minor bumps are a
@@ -26,9 +27,10 @@
 #     root pin) before any write; a missing or divergent pin aborts the run.
 #   - Both UBI_MINIMAL pins are always updated together.
 #
-# Requires: curl, jq.
-# Test hooks: CONTAINERFILE_PATH / WHEELS_CONTAINERFILE_PATH override the
-# file locations (used by tests/scripts/container-bump-image-versions.bats).
+# Requires: bash 3.2+, curl, jq.
+# Test hooks: CONTAINERFILE_PATH / WHEELS_CONTAINERFILE_PATH /
+#             NGINX_DOCKERFILE_PATH override the file locations
+#             (used by tests/scripts/container-bump-image-versions.bats).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,13 +38,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CONTAINERFILE_PATH="${CONTAINERFILE_PATH:-$REPO_ROOT/Containerfile}"
 WHEELS_CONTAINERFILE_PATH="${WHEELS_CONTAINERFILE_PATH:-$REPO_ROOT/infra/wheels/Containerfile}"
+NGINX_DOCKERFILE_PATH="${NGINX_DOCKERFILE_PATH:-$REPO_ROOT/infra/nginx/Dockerfile}"
 
 PYXIS_BASE="https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository"
 
-# The Pyxis repository path is derived from each pin's image reference
-# (${value%:*} minus the registry prefix), so a deliberate image-path change
-# in a Containerfile cannot drift from the queried endpoint.
-MANAGED_ARGS=(UBI_BASE NODEJS_IMAGE UBI_MINIMAL)
+# Managed ARG names, in order.  Each entry has a corresponding entry at the
+# same index in MANAGED_FILES (the file that owns the ARG).
+MANAGED_ARGS=(UBI_BASE NODEJS_IMAGE UBI_MINIMAL NGINX_IMAGE)
+MANAGED_FILES=("$CONTAINERFILE_PATH" "$CONTAINERFILE_PATH" "$CONTAINERFILE_PATH" "$NGINX_DOCKERFILE_PATH")
 
 # latest_tag_in_minor <minor> — read candidate tags (one per line) on stdin,
 # print the tag matching ^<minor>-<epoch>$ with the numerically highest epoch.
@@ -59,7 +62,7 @@ latest_tag_in_minor() {
 fetch_tags() {
     local repo="$1"
     curl -fsSL -g --retry 3 --retry-delay 2 \
-        "${PYXIS_BASE}/${repo}/images?page_size=100&sort_by=last_update_date[desc]" \
+        "${PYXIS_BASE}/${repo}/images?page_size=500&sort_by=last_update_date[desc]" \
         | jq -r '[.data[]?.repositories[]?.tags[]?.name] | unique | .[]'
 }
 
@@ -70,16 +73,21 @@ main() {
     command -v jq   >/dev/null || die "jq is required"
     [ -f "$CONTAINERFILE_PATH" ]        || die "not found: $CONTAINERFILE_PATH"
     [ -f "$WHEELS_CONTAINERFILE_PATH" ] || die "not found: $WHEELS_CONTAINERFILE_PATH"
+    [ -f "$NGINX_DOCKERFILE_PATH" ]     || die "not found: $NGINX_DOCKERFILE_PATH"
+
+    # Parallel arrays used in place of associative arrays (bash 3.2 compat).
+    # Indices align with MANAGED_ARGS.
+    local cur_tags=()   # current tag for each ARG
+    local new_tags=()   # new tag (empty string = up to date)
+    local image_refs=() # image ref (without tag) for each ARG
 
     # ---- Plan phase: validate pins and resolve latest tags; no writes ----
-    local arg line value tag minor image repo tags latest
-    declare -A new_tag=()
-    declare -A cur_tag=()
-    declare -A image_of=()
-
-    for arg in "${MANAGED_ARGS[@]}"; do
-        line=$(grep -E "^ARG ${arg}=" "$CONTAINERFILE_PATH") \
-            || die "no '^ARG ${arg}=' line in $CONTAINERFILE_PATH"
+    local arg src_file line value tag minor image repo tags latest i
+    for i in "${!MANAGED_ARGS[@]}"; do
+        arg="${MANAGED_ARGS[$i]}"
+        src_file="${MANAGED_FILES[$i]}"
+        line=$(grep -E "^ARG ${arg}=" "$src_file") \
+            || die "no '^ARG ${arg}=' line in $src_file"
         value="${line#ARG "${arg}"=}"
         tag="${value##*:}"
         [[ "$tag" =~ ^[0-9]+\.[0-9]+-[0-9]+$ ]] \
@@ -102,28 +110,34 @@ main() {
             [ "$wheels_value" = "$value" ] \
                 || die "UBI_MINIMAL pins differ between the Containerfiles ('${value}' vs '${wheels_value}'); reconcile them before bumping"
         fi
+
         tags=$(fetch_tags "$repo") \
             || die "tag lookup failed for ${arg} (${repo}); no files modified"
         latest=$(printf '%s\n' "$tags" | latest_tag_in_minor "$minor") \
             || die "no pinned tag in minor line ${minor} found for ${arg}; no files modified"
 
-        cur_tag[$arg]="$tag"
-        image_of[$arg]="$image"
+        cur_tags[$i]="$tag"
+        image_refs[$i]="$image"
         if [ "$latest" != "$tag" ]; then
-            new_tag[$arg]="$latest"
+            new_tags[$i]="$latest"
+        else
+            new_tags[$i]=""
         fi
     done
 
     # ---- Report ----
-    for arg in "${MANAGED_ARGS[@]}"; do
-        if [ -n "${new_tag[$arg]:-}" ]; then
-            echo "${arg}: ${cur_tag[$arg]} -> ${new_tag[$arg]}"
+    local any_update=0
+    for i in "${!MANAGED_ARGS[@]}"; do
+        arg="${MANAGED_ARGS[$i]}"
+        if [ -n "${new_tags[$i]}" ]; then
+            echo "${arg}: ${cur_tags[$i]} -> ${new_tags[$i]}"
+            any_update=1
         else
-            echo "${arg}: ${cur_tag[$arg]} (up to date)"
+            echo "${arg}: ${cur_tags[$i]} (up to date)"
         fi
     done
 
-    if [ "${#new_tag[@]}" -eq 0 ]; then
+    if [ "$any_update" -eq 0 ]; then
         echo "All image pins are up to date."
         return 0
     fi
@@ -131,17 +145,18 @@ main() {
     # ---- Apply phase ----
     # sed -i.bak leaves the backup behind if it fails mid-write; remove any
     # stray backups on exit, including the die path, so nothing leaks.
-    trap 'rm -f "${CONTAINERFILE_PATH}.bak" "${WHEELS_CONTAINERFILE_PATH}.bak"' EXIT
-    for arg in "${MANAGED_ARGS[@]}"; do
-        [ -n "${new_tag[$arg]:-}" ] || continue
-        local files=("$CONTAINERFILE_PATH")
+    trap 'rm -f "${CONTAINERFILE_PATH}.bak" "${WHEELS_CONTAINERFILE_PATH}.bak" "${NGINX_DOCKERFILE_PATH}.bak"' EXIT
+    for i in "${!MANAGED_ARGS[@]}"; do
+        [ -n "${new_tags[$i]}" ] || continue
+        arg="${MANAGED_ARGS[$i]}"
+        local files=("${MANAGED_FILES[$i]}")
         # UBI_MINIMAL is pinned in both Containerfiles; keep them identical.
         if [ "$arg" = "UBI_MINIMAL" ]; then
             files+=("$WHEELS_CONTAINERFILE_PATH")
         fi
         local f
         for f in "${files[@]}"; do
-            sed -i.bak "s|^ARG ${arg}=.*|ARG ${arg}=${image_of[$arg]}:${new_tag[$arg]}|" "$f" \
+            sed -i.bak "s|^ARG ${arg}=.*|ARG ${arg}=${image_refs[$i]}:${new_tags[$i]}|" "$f" \
                 || die "failed to update ${arg} in $f"
             echo "  updated $f"
         done
