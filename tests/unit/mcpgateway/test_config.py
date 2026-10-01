@@ -2500,10 +2500,10 @@ def test_min_secret_length_below_floor_raises_validation_error():
 # --------------------------------------------------------------------------- #
 #                    mcp_client_connect_mode                                     #
 # --------------------------------------------------------------------------- #
-def test_mcp_client_connect_mode_defaults_to_legacy():
-    """Library default is 'legacy'."""
+def test_mcp_client_connect_mode_defaults_to_auto():
+    """Library default is 'auto'."""
     s = Settings(_env_file=None)
-    assert s.mcp_client_connect_mode == "legacy"
+    assert s.mcp_client_connect_mode == "auto"
 
 
 @pytest.mark.parametrize("valid_value", ["auto", "legacy"])
@@ -2537,10 +2537,10 @@ def test_mcp_client_connect_mode_env_var_honored(monkeypatch):
 # --------------------------------------------------------------------------- #
 #                    mcp_inbound_protocol_mode                                  #
 # --------------------------------------------------------------------------- #
-def test_mcp_inbound_protocol_mode_defaults_to_legacy():
-    """Library default is 'legacy'."""
+def test_mcp_inbound_protocol_mode_defaults_to_auto():
+    """Library default is 'auto'."""
     s = Settings(_env_file=None)
-    assert s.mcp_inbound_protocol_mode == "legacy"
+    assert s.mcp_inbound_protocol_mode == "auto"
 
 
 @pytest.mark.parametrize("valid_value", ["auto", "legacy"])
