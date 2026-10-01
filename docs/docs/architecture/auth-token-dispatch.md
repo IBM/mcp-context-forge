@@ -28,7 +28,7 @@ roots applies:
 ## Ingress dispatch
 
 `get_current_user()` in `mcpgateway/auth.py` is the authentication choke
-point for every bearer token. When trust mode is ON it first calls
+point for bearer tokens on REST routes. When trust mode is ON it first calls
 `_try_external_verification()`, which reads the token's `iss` claim
 UNVERIFIED (`verify_signature: False`) solely to choose the verification
 path — no other claim from this peek is ever trusted — then delegates to
@@ -46,6 +46,16 @@ the external verification chain (`_maybe_verify_external` ->
 - **Issuer is not a configured trust root** (or is the internal issuer,
   or the token is not a JWT at all) -> `None`; the caller falls through
   to the internal verifier exactly as before.
+
+The streamable-HTTP MCP transport (`/servers/<id>/mcp` and `/mcp`) does
+not use `get_current_user()`. Its handler,
+`_StreamableHttpAuthHandler._auth_jwt` in
+`mcpgateway/transports/streamablehttp_transport.py`, calls
+`_auth_trusted_issuer()` first when trust mode is ON. That method applies the
+same three outcomes through `_maybe_verify_external(..., fail_closed=True)`
+and checks the configured revocation claim on every request. RBAC on this
+transport (`_check_streamable_permission`) receives the claims-derived roles
+and admin flag of a trust principal.
 
 ## Marked tokens get HTTP 401 when trust mode is OFF
 
