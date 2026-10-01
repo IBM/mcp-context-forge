@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e/test_upstream_connect_mode_e2e.py
+"""Location: ./tests/live_gateway/mcp/test_upstream_connect_mode_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
@@ -59,6 +59,11 @@ pytestmark = pytest.mark.e2e
 TEST_JWT_SECRET = "T3stJwtS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
 TEST_JWT_ALGORITHM = "HS256"
 TEST_ADMIN_EMAIL = "admin@example.com"
+# Startup validation (Settings.validate_security_combinations) rejects the
+# default passwords under the email-auth gate; the curated env must supply
+# strong values or the source-run gateway exits at boot.
+TEST_ADMIN_PASSWORD = "T3stAdm1n!Pw#9kPqR@vW2m"  # pragma: allowlist secret
+TEST_USER_PASSWORD = "T3stUs3r!Pw#9kPqR@vW2mN"  # pragma: allowlist secret
 
 LEGACY_UPSTREAM_URL = os.environ.get("E2E_LEGACY_UPSTREAM_URL", "http://localhost:8888/mcp")
 
@@ -143,6 +148,8 @@ def _gateway_env(db_path: str, mode: str) -> dict[str, str]:
         "DATABASE_URL": f"sqlite:///{db_path}",
         "JWT_SECRET_KEY": TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": "T3stEncS3cr3t!XyZ#9kPqR@vW2mN8hL",  # pragma: allowlist secret
+        "PLATFORM_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+        "DEFAULT_USER_PASSWORD": TEST_USER_PASSWORD,
         "AUTH_REQUIRED": "true",
         "REQUIRE_USER_IN_DB": "false",
         "REQUIRE_JTI": "false",
