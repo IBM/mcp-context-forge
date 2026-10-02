@@ -89,6 +89,23 @@ def patch_isolated_client(mock_client):
         yield
 
 
+@contextmanager
+def patch_oauth_isolated_client(mock_client):
+    """Patch the OAuth isolated HTTP client factory.
+
+    Args:
+        mock_client: Mock standing in for ``httpx.AsyncClient``.
+
+    Yields:
+        None: The patch stays active for the duration of the block.
+    """
+    context_manager = MagicMock()
+    context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+    context_manager.__aexit__ = AsyncMock(return_value=False)
+    with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", return_value=context_manager):
+        yield
+
+
 @pytest.mark.integration
 class TestPKCEFlowIntegration:
     """Integration tests for complete PKCE flow."""
@@ -109,8 +126,10 @@ class TestPKCEFlowIntegration:
         def mock_get_db():
             yield test_db
 
+        database_settings = get_settings().model_copy(update={"cache_type": "database"})
+
         with patch("mcpgateway.db.get_db", mock_get_db):
-            with patch("mcpgateway.config.get_settings", return_value=get_settings()):
+            with patch("mcpgateway.services.oauth_manager.get_settings", return_value=database_settings):
                 token_storage = TokenStorageService(test_db)
                 oauth_manager = OAuthManager(token_storage=token_storage)
 
@@ -168,7 +187,7 @@ class TestPKCEFlowIntegration:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(oauth_manager, "_get_client", return_value=mock_client):
+                with patch_oauth_isolated_client(mock_client):
                     # Complete flow
                     _result = await oauth_manager.complete_authorization_code_flow(gateway_id="test-gateway-123", code=code, state=state, credentials=credentials)  # noqa: F841
 

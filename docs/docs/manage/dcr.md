@@ -37,7 +37,7 @@ DCR_ENABLED=true                              # Enable/disable DCR (default: tru
 DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true # Auto-register when gateway has issuer but no client_id (default: true)
 
 # DCR Configuration
-DCR_DEFAULT_SCOPES=["mcp:read"]                          # Default scopes to request
+DCR_DEFAULT_SCOPES='["mcp:read"]'                        # Default scopes to request
 DCR_ALLOWED_ISSUERS=[]                                   # Optional issuer URL allowlist; empty allows any issuer
 DCR_TOKEN_ENDPOINT_AUTH_METHOD="client_secret_basic"     # Auth method: client_secret_basic, client_secret_post, or none
 DCR_METADATA_CACHE_TTL=3600                              # AS metadata cache TTL in seconds (default: 1 hour)
