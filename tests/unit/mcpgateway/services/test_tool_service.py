@@ -7324,7 +7324,9 @@ class TestRestToolNonJsonResponses:
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
             assert result.is_error is True
-            assert len(result.content[0].text) == len("HTTP 500: ") + settings.rest_response_text_max_length
+            expected_prefix = f"HTTP {mock_response.status_code}: "
+            assert result.content[0].text.startswith(expected_prefix)
+            assert len(result.content[0].text) == len(expected_prefix) + settings.rest_response_text_max_length
 
     @pytest.mark.asyncio
     async def test_rest_tool_http_error_non_string_error_value_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -7384,6 +7386,34 @@ class TestRestToolNonJsonResponses:
 
             assert result.is_error is True
             assert len(result.content[0].text) <= settings.rest_response_text_max_length
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_nonstandard_2xx_non_json_body_reports_parse_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A 203 whose body is not JSON reports the parse failure instead of a generic tool error."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        body = "<html>gateway says no</html>"
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 203
+        mock_response.text = body
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", body, 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+        assert result.is_error is True
+        assert "not valid JSON" in result.content[0].text
+        assert body in result.content[0].text
 
 
 class TestSchemaValidatorCaching:
