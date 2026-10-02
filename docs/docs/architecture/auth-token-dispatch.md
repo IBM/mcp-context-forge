@@ -51,11 +51,14 @@ The streamable-HTTP MCP transport (`/servers/<id>/mcp` and `/mcp`) does
 not use `get_current_user()`. Its handler,
 `_StreamableHttpAuthHandler._auth_jwt` in
 `mcpgateway/transports/streamablehttp_transport.py`, calls
-`_auth_trusted_issuer()` first when trust mode is ON. That method applies the
-same three outcomes through `_maybe_verify_external(..., fail_closed=True)`
-and checks the configured revocation claim on every request. RBAC on this
-transport (`_check_streamable_permission`) receives the claims-derived roles
-and admin flag of a trust principal.
+`_auth_trusted_issuer()` when trust mode is ON and the target server's own
+OAuth path does not handle the token (the server is not `oauth_enabled`, or
+its `authorization_servers` do not list the issuer). That method runs the
+REST steps (`_try_external_verification()`, `_is_trust_eligible()`,
+`_resolve_trusted_principal()`), so it has the same three outcomes and checks
+the configured revocation claim on every request. RBAC on this transport
+(`_check_streamable_permission`) receives the claims-derived roles and admin
+flag only for a principal that `_auth_trusted_issuer()` built.
 
 ## Marked tokens get HTTP 401 when trust mode is OFF
 
