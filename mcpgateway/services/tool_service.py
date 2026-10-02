@@ -1192,9 +1192,8 @@ def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str
 class ResolvedTool:
     """Result of resolving and authorizing a tool name for invocation.
 
-    Shared return type of ``ToolService._resolve_tool_for_invocation``, called by both
-    ``invoke_tool`` (live invocation) and ``preview_tool_invocation`` (dry-run, #5629) so
-    tool lookup, RBAC, and visibility rules can never drift between the two paths.
+    Shared return type of ``ToolService._resolve_tool_for_invocation``. Python invocation,
+    dry-run preview, and Rust plan preparation use it so lookup and authorization cannot drift.
 
     Attributes:
         is_direct_proxy: True when resolved via the X-Context-Forge-Gateway-Id direct-proxy
@@ -1537,13 +1536,7 @@ class ToolService(BaseService):
             tool_id = tool_payload.get("id")
             if not tool_id:
                 return False
-            server_match = db.execute(
-                select(server_tool_association.c.tool_id).where(
-                    server_tool_association.c.server_id == server_id,
-                    server_tool_association.c.tool_id == tool_id,
-                )
-            ).first()
-            if not server_match:
+            if not self._tool_belongs_to_server(db, server_id, str(tool_id)):
                 return False
         if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
             return False
@@ -1552,6 +1545,28 @@ class ToolService(BaseService):
         if require_model_visible and not is_model_visible_tool(tool_payload):
             return False
         return True
+
+    @staticmethod
+    def _tool_belongs_to_server(db: Session, server_id: str, tool_id: str) -> bool:
+        """Return whether a tool remains attached to a virtual server.
+
+        Args:
+            db: Database session used for the membership query.
+            server_id: Virtual server identifier.
+            tool_id: Tool identifier.
+
+        Returns:
+            True when the tool is attached to the server.
+        """
+        return (
+            db.execute(
+                select(server_tool_association.c.tool_id).where(
+                    server_tool_association.c.server_id == server_id,
+                    server_tool_association.c.tool_id == tool_id,
+                )
+            ).first()
+            is not None
+        )
 
     @staticmethod
     def _negative_cache_caller_scope(
@@ -4582,7 +4597,7 @@ class ToolService(BaseService):
     ) -> Dict[str, Any]:
         """Build a narrow MCP execution plan for the Rust runtime hot path.
 
-        This reuses Python's existing auth, scoping, and secret-handling logic,
+        This uses Python's shared resolver, auth, scoping, and secret-handling logic,
         but stops before the actual upstream MCP call. The Rust runtime can then
         execute the call directly for the simple streamable HTTP MCP cases that
         dominate load tests, while Python remains the authority for policy.
@@ -4614,152 +4629,24 @@ class ToolService(BaseService):
             ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
         """
 
-        gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
-        is_direct_proxy = False
-        tool = None
-        gateway = None
-        tool_lookup_cache = _get_tool_lookup_cache()
-        tool_membership_verified = False
-        negative_cache_allowed = False
-        negative_cache_caller_scope = self._negative_cache_caller_scope(user_email, token_teams, require_model_visible=require_model_visible)
-        tool_payload: Dict[str, Any] = {}
-        gateway_payload: Optional[Dict[str, Any]] = None
-        if gateway_id_from_header:
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
-                if not await check_gateway_access(db, gateway, user_email, token_teams):
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                is_direct_proxy = True
-                gateway_payload = {
-                    "id": str(gateway.id),
-                    "name": gateway.name,
-                    "url": gateway.url,
-                    "auth_type": gateway.auth_type,
-                    "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
-                    "auth_query_params": gateway.auth_query_params,
-                    "oauth_config": gateway.oauth_config,
-                    "ca_certificate": gateway.ca_certificate,
-                    "ca_certificate_sig": gateway.ca_certificate_sig,
-                    "passthrough_headers": gateway.passthrough_headers,
-                    "gateway_mode": gateway.gateway_mode,
-                }
-                tool_payload = {
-                    "id": None,
-                    "name": name,
-                    "original_name": name,
-                    "enabled": True,
-                    "reachable": True,
-                    "integration_type": "MCP",
-                    "request_type": "streamablehttp",
-                    "gateway_id": str(gateway.id),
-                }
-
-        if not is_direct_proxy:
-            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
-
-            if cached_payload and cached_payload.get("status", "active") == "active":
-                cached_tool_payload = cached_payload.get("tool") or {}
-                if await self._cached_tool_is_usable(
-                    db,
-                    cached_tool_payload,
-                    user_email,
-                    token_teams,
-                    server_id,
-                    require_model_visible=require_model_visible,
-                ):
-                    tool_membership_verified = bool(server_id)
-                    negative_cache_allowed = True
-                    tool_payload = cached_tool_payload
-                    gateway_payload = cached_payload.get("gateway")
-
-            if not tool_payload and tool_lookup_cache.enabled:
-                negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
-                if negative_payload:
-                    self._raise_for_negative_tool_status(name, negative_payload.get("status"))
-
-        if not tool_payload:
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
-            tool_membership_verified = bool(server_id)
-
-            if not tools:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-            multiple_found = len(tools) > 1
-            negative_cache_allowed = not multiple_found
-            if not multiple_found:
-                tool = tools[0]
-            else:
-                visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
-                for candidate in tools:
-                    tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
-                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
-                        priority = visibility_priority.get(candidate.visibility, 99)
-                        accessible_tools.append((name_priority, priority, candidate))
-
-                if not accessible_tools:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                accessible_tools.sort(key=lambda item: (item[0], item[1]))
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [candidate for name_priority, priority, candidate in accessible_tools if name_priority == best_name_priority and priority == best_visibility_priority]
-                if len(best_tools) > 1:
-                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-                tool = best_tools[0]
-
-            if not tool.enabled:
-                raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-
-            if not tool.reachable:
-                if negative_cache_allowed:
-                    tool_gateway_id = getattr(tool, "gateway_id", None)
-                    await tool_lookup_cache.set_negative(
-                        name,
-                        "offline",
-                        negative_cache_caller_scope,
-                        gateway_id=str(tool_gateway_id) if tool_gateway_id else None,
-                        server_id=server_id,
-                    )
-                raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-
-            gateway = tool.gateway
-            cache_payload = self._build_tool_cache_payload(tool, gateway)
-            tool_payload = cache_payload.get("tool") or {}
-            gateway_payload = cache_payload.get("gateway")
-            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
-                gateway_id = tool_payload.get("gateway_id")
-                if server_id:
-                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
-                else:
-                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
-
-        if tool_payload.get("enabled") is False:
-            raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-        if tool_payload.get("reachable") is False:
-            raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-
-        if is_direct_proxy:
+        resolved = await self._resolve_tool_for_invocation(
+            db,
+            name,
+            request_headers,
+            user_email,
+            token_teams,
+            server_id,
+            False,
+            require_model_visible,
+            arguments=None,
+        )
+        if resolved.is_direct_proxy:
             return {"eligible": False, "fallbackReason": "direct-proxy"}
 
-        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
-            raise ToolNotFoundError(f"Tool not found: {name}")
-
-        if require_model_visible and not is_model_visible_tool(tool_payload):
-            raise ToolNotFoundError(f"Tool not found: {name}")
-
-        if server_id and not tool_membership_verified:
-            tool_id_for_check = tool_payload.get("id")
-            if not tool_id_for_check:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-            server_match = db.execute(
-                select(server_tool_association.c.tool_id).where(
-                    server_tool_association.c.server_id == server_id,
-                    server_tool_association.c.tool_id == tool_id_for_check,
-                )
-            ).first()
-            if not server_match:
-                raise ToolNotFoundError(f"Tool not found: {name}")
+        tool = resolved.tool
+        gateway = resolved.gateway
+        tool_payload = resolved.tool_payload
+        gateway_payload = resolved.gateway_payload
 
         tool_integration_type = tool_payload.get("integration_type")
         if tool_integration_type != "MCP":
@@ -5404,8 +5291,8 @@ class ToolService(BaseService):
         Side-effect-free (beyond cache reads/writes and the read-only DB queries already
         required to answer "is this tool invocable by this caller"): no network call, no
         plugin hook, no dispatch. Extracted from ``invoke_tool`` (#5629) so the live
-        invocation path and the dry-run preview path (``preview_tool_invocation``) share
-        one resolution/RBAC/schema-validation implementation and cannot silently drift apart.
+        invocation path, dry-run preview, and Rust plan preparation share one resolution
+        and authorization implementation. Python invocation and preview also share schema validation.
 
         Args:
             db: Database session.
@@ -5443,7 +5330,6 @@ class ToolService(BaseService):
         tool = None
         gateway = None
         tool_lookup_cache = _get_tool_lookup_cache()
-        tool_membership_verified = False
         negative_cache_allowed = False
         negative_cache_caller_scope = self._negative_cache_caller_scope(
             user_email,
@@ -5513,7 +5399,6 @@ class ToolService(BaseService):
                     require_app_visible=require_app_visible,
                     require_model_visible=require_model_visible,
                 ):
-                    tool_membership_verified = bool(server_id)
                     negative_cache_allowed = True
                     tool_payload = cached_tool_payload
                     gateway_payload = cached_payload.get("gateway")
@@ -5529,7 +5414,6 @@ class ToolService(BaseService):
             # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
             # tool names across teams without crashing on MultipleResultsFound.
             tools = self._load_invocable_tools(db, name, server_id=server_id)
-            tool_membership_verified = bool(server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
@@ -5619,27 +5503,6 @@ class ToolService(BaseService):
                         server_id=server_id,
                     )
                 raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
-
-            # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY: Enforce server scoping if server_id is provided
-            # Tool must be attached to the specified virtual server
-            # ═══════════════════════════════════════════════════════════════════════════
-            if server_id and not tool_membership_verified:
-                tool_id_for_check = tool_payload.get("id")
-                if not tool_id_for_check:
-                    # Cannot verify server membership without tool ID - deny access
-                    # This should not happen with properly cached tools, but fail safe
-                    logger.warning("Tool '%s' has no ID in payload, cannot verify server membership", name)
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                server_match = db.execute(
-                    select(server_tool_association.c.tool_id).where(
-                        server_tool_association.c.server_id == server_id,
-                        server_tool_association.c.tool_id == tool_id_for_check,
-                    )
-                ).first()
-                if not server_match:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
 
         if require_app_visible:
             if is_direct_proxy or not is_app_visible_tool(tool_payload):
