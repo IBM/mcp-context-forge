@@ -103,8 +103,6 @@ def _classify_pyproject_scope(source: str, root: Path) -> str:
         return "mcpgateway (core)"
     if rel_parts[0] == "mcpgateway":
         return "mcpgateway (core)"
-    if rel_parts[0] == "mcp-servers" and len(rel_parts) >= 3 and rel_parts[1] == "python":
-        return f"mcp-servers/python/{rel_parts[2]}"
     if rel_parts[0] == "plugins" and len(rel_parts) >= 3 and rel_parts[1] == "external":
         return f"plugins/external/{rel_parts[2]}"
     if rel_parts[0] == "plugins":

@@ -59,7 +59,6 @@ prune .devcontainer
 exclude CLAUDE.*
 exclude llms-full.txt
 
-# Exclude deployment, mcp-servers and agent_runtimes
+# Exclude deployment and agent_runtimes
 prune deployment
-prune mcp-servers
 prune agent_runtimes

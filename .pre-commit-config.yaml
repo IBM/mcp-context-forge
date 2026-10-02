@@ -18,7 +18,7 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
 fail_fast: true
 
 default_language_version:
@@ -333,8 +333,7 @@ repos:
           (?x)^(
             tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate|targets)/.*\.py|
             tests/.*/_[^/]+\.py|
-            tests/.*/make_[^/]+\.py|
-            mcp-servers/python/url_to_markdown_server/tests/e2e_verify_ssrf_fix\.py
+            tests/.*/make_[^/]+\.py
           )$
         args: [--pytest-test-first] # `test_.*\.py`
 

@@ -4502,7 +4502,6 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	  -not -path './.venv/*' \
 	  -not -path './.cache/*' \
 	  -not -path './.venv/*' \
-	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
 
