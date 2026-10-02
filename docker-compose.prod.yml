@@ -1,0 +1,47 @@
+###############################################################################
+#  Production resource overrides
+#
+#  Pins every long-running service to the same 4 CPU / 4 G limit and
+#  reservation so benchmark runs compare like with like. This raises pgbouncer,
+#  redis and nginx above their docker-compose.yml defaults, and fixes the
+#  gateway at 4 CPU / 4 G regardless of the GATEWAY_*_LIMIT env knobs.
+#  Docker ignores `reservations.cpus` outside swarm mode.
+#  Usage:  make prod-up          (layers this on top of docker-compose.yml)
+#          make prod-down
+###############################################################################
+
+x-prod-resources: &prod-resources
+  limits:
+    cpus: '4'
+    memory: 4G
+  reservations:
+    cpus: '4'
+    memory: 4G
+
+services:
+
+  nginx:
+    deploy:
+      resources: *prod-resources
+
+  gateway:
+    deploy:
+      mode: replicated
+      replicas: ${GATEWAY_REPLICAS:-3}
+      resources: *prod-resources
+
+  postgres:
+    deploy:
+      resources: *prod-resources
+
+  pgbouncer:
+    deploy:
+      resources: *prod-resources
+
+  redis:
+    deploy:
+      resources: *prod-resources
+
+  fast_time_server:
+    deploy:
+      resources: *prod-resources

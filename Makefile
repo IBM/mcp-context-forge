@@ -2761,6 +2761,33 @@ MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
 MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
+MODE ?= legacy
+# modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
+# proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
+PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
+PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
+PROD_BENCH_USERS ?= 125
+PROD_BENCH_SPAWN_RATE ?= 30
+# Locust exits 1 when any request failed. Set 0 to report numbers regardless.
+PROD_BENCH_EXIT_CODE_ON_ERROR ?= 1
+TIME ?= 1800s
+
+# TOKEN wins, from the command line or the environment, then MCPGATEWAY_BEARER_TOKEN.
+# With both empty, legacy mode mints a fresh token from the running gateway; modern
+# mode cannot mint, because the Rust dataplane verifies RS256 against its JWKS.
+# A token that went stale on a stack restart stops at the 401 preflight below.
+PROD_BENCH_TOKEN = $(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))
+PROD_BENCH_USER ?= admin@example.com
+# Reports carry the commit they measured, so a rerun of the same commit overwrites
+# its own report instead of clobbering another commit's numbers.
+PROD_BENCH_COMMIT ?= $(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit)
+PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_COMMIT).html
+# Compose project label of the running stack; its containers carry the resource table.
+PROD_BENCH_PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
+# Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
+# summary and the history row, so it is deleted when the run ends.
+# Appended one row per run, tracked in git so results are comparable across commits.
+PROD_BENCH_HISTORY_CSV ?= tests/loadtest/historic_load_data.csv
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2847,6 +2874,67 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo ""
 	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
+
+# help: prod-benchmark-tools     - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
+.PHONY: prod-benchmark-tools
+prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
+	@case "$(MODE)" in legacy|modern) ;; *) echo "❌ MODE must be legacy or modern (got: $(MODE))"; exit 1 ;; esac
+	@echo "📊 Running production tool benchmark..."
+	@echo "🔑 Token: run \`export TOKEN=\$$(make create-token)\`"
+	@echo "   Mode: $(MODE) (handshake: $(if $(filter modern,$(MODE)),skipped,initialize))"
+	@echo "   Host: $(PROD_BENCH_HOST)"
+	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
+	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(TIME)"
+	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		GW_SECRET="$(gateway_jwt_secret)" && \
+		BENCH_TOKEN="$(PROD_BENCH_TOKEN)" && \
+		if [ -z "$$BENCH_TOKEN" ] && [ -n "$$GW_SECRET" ]; then \
+			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(PROD_BENCH_USER) --exp 10080 2>/dev/null); \
+		fi; \
+		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp" \
+			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
+		case "$$CODE" in \
+			2*) ;; \
+			401) \
+				echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
+				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
+				exit 1 ;; \
+			000) \
+				echo "Preflight failed: no HTTP response from $(PROD_BENCH_HOST). Start the stack with: make prod-up"; \
+				exit 1 ;; \
+			*) \
+				echo "Preflight failed (HTTP $$CODE) from $(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp"; \
+				exit 1 ;; \
+		esac; \
+		STATS_DIR=$$(mktemp -d); trap "rm -rf $$STATS_DIR" EXIT; \
+		STATUS=0; \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
+		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
+		PROD_BENCH_MODE=$(MODE) \
+		JWT_SECRET_KEY=$${GW_SECRET:-$${JWT_SECRET_KEY:-}} \
+		MCPGATEWAY_BEARER_TOKEN=$$BENCH_TOKEN \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(PROD_BENCH_HOST) \
+			--users=$(PROD_BENCH_USERS) \
+			--spawn-rate=$(PROD_BENCH_SPAWN_RATE) \
+			--run-time=$(TIME) \
+			--headless \
+			--exit-code-on-error=$(PROD_BENCH_EXIT_CODE_ON_ERROR) \
+			--html=$(PROD_BENCH_HTML_REPORT) \
+			--csv="$$STATS_DIR/stats" \
+			--only-summary \
+			ProdToolUser || STATUS=$$?; \
+		$(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$$STATS_DIR/stats_stats.csv" \
+			--mode "$(MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --project "$(PROD_BENCH_PROJECT)" \
+			--history "$(PROD_BENCH_HISTORY_CSV)"; \
+		echo ""; \
+		echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"; \
+		echo "🗂  History:     $(PROD_BENCH_HISTORY_CSV)"; \
+		exit $$STATUS'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
@@ -5600,6 +5688,8 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
+# help: prod-up              - Start stack with production resource overrides (REPLICA=3)
+# help: prod-down             - Stop production-override stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
@@ -5683,10 +5773,11 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-compose-siem-up compose-siem-down compose-siem-logs \
+	compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
-	compose-ui-config-check
+	compose-ui-config-check \
+	prod-up prod-down
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5738,6 +5829,39 @@ compose-upgrade-pg18: compose-validate
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+
+PROD_COMPOSE_FILE := docker-compose.prod.yml
+PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
+REPLICA ?= 3
+
+prod-up: compose-validate                 ## Start stack with production resource overrides (REPLICA=3)
+	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🚀  Using $(COMPOSE_CMD) + $(PROD_COMPOSE_FILE); starting production stack ($(REPLICA) gateway replica(s))..."
+	IMAGE_LOCAL=$(call get_image_name) GATEWAY_REPLICAS=$(REPLICA) $(PROD_COMPOSE) up -d
+
+# Signing secret of the running gateway container; empty when no gateway is up.
+# The container wins over .env: compose lets a shell JWT_SECRET_KEY override the
+# file, so .env can hold a secret the running gateway never saw (every call 401s).
+gateway_jwt_secret = $$(docker ps -q -f label=com.docker.compose.service=gateway 2>/dev/null | { read -r id; [ -n "$$id" ] && docker exec "$$id" printenv JWT_SECRET_KEY 2>/dev/null; } || true)
+
+# help: create-token          - Print a bare admin JWT (use: export TOKEN=$(make create-token))
+.PHONY: create-token
+create-token:                             ## Print a bare admin JWT signed with the running gateway's secret
+	@SECRET="$(gateway_jwt_secret)"; \
+	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
+
+prod-down: compose-validate               ## Stop production-override stack
+	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping production stack..."
+	@$(PROD_COMPOSE) stop -t 10 2>/dev/null || true
+	$(PROD_COMPOSE) down --remove-orphans
+	@echo "✅ Production stack stopped."
 
 compose-sso: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
