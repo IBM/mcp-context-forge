@@ -6134,7 +6134,7 @@ class TestTeamScopedListVisibility:
 
 
 def test_startup_warns_when_uaid_allowlist_empty():
-    """Verify ERROR logged when A2A enabled but UAID allowlist empty."""
+    """Verify WARNING logged when A2A enabled but UAID allowlist empty."""
     with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
         mock_settings.mcpgateway_a2a_enabled = True
         mock_settings.uaid_allowed_domains = []
@@ -6146,11 +6146,12 @@ def test_startup_warns_when_uaid_allowlist_empty():
 
         validate_uaid_security_config()
 
-        # Verify ERROR was logged
-        assert mock_logger.error.called
-        error_message = mock_logger.error.call_args[0][0]
-        assert "UAID cross-gateway routing is DISABLED" in error_message
-        assert "UAID_ALLOWED_DOMAINS" in error_message
+        # Verify WARNING was logged
+        assert mock_logger.warning.called
+        assert not mock_logger.error.called
+        warning_message = mock_logger.warning.call_args[0][0]
+        assert "UAID cross-gateway routing is DISABLED" in warning_message
+        assert "UAID_ALLOWED_DOMAINS" in warning_message
 
 
 def test_startup_no_warning_when_allowlist_configured():
@@ -6164,7 +6165,8 @@ def test_startup_no_warning_when_allowlist_configured():
 
         validate_uaid_security_config()
 
-        # Verify no ERROR logged
+        # Verify no warning or error logged
+        assert not mock_logger.warning.called
         assert not mock_logger.error.called
 
 
@@ -6179,7 +6181,8 @@ def test_startup_no_warning_when_a2a_disabled():
 
         validate_uaid_security_config()
 
-        # Verify no ERROR logged
+        # Verify no warning or error logged
+        assert not mock_logger.warning.called
         assert not mock_logger.error.called
 
 
@@ -6213,11 +6216,12 @@ def test_startup_succeeds_with_uaid_require_allowlist_false():
 
         from mcpgateway.main import validate_uaid_security_config
 
-        # Should NOT raise, just log ERROR
+        # Should NOT raise, just log WARNING
         validate_uaid_security_config()
 
-        # Verify ERROR was logged
-        assert mock_logger.error.called
+        # Verify WARNING was logged
+        assert mock_logger.warning.called
+        assert not mock_logger.error.called
 
 
 def test_db_pool_warning_calculation_with_gunicorn_workers():
