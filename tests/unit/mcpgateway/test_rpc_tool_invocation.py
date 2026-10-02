@@ -425,3 +425,59 @@ class TestRPCServerIdScoping:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRPCToolsCallFailuresAreToolResults:
+    """tools/call failures on /rpc are reported in the result with isError (#7055).
+
+    The MCP spec reports a failed tool call inside the result so the model can
+    see why; protocol errors are for malformed requests and unknown tools.
+    Session affinity reroutes /servers/<id>/mcp tool calls to /rpc, so this
+    path must match the streamable transport's call_tool.
+    """
+
+    @staticmethod
+    def _call(client, mock_db, side_effect):
+        with patch("mcpgateway.config.settings.auth_required", False):
+            with patch("mcpgateway.main.get_db", return_value=mock_db):
+                with patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock) as mock_invoke:
+                    mock_invoke.side_effect = side_effect
+                    response = client.post("/rpc", json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}, "id": 7})
+        assert response.status_code == 200
+        return response.json()
+
+    def test_plugin_violation_is_an_iserror_result(self, client, mock_db):
+        # First-Party
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
+
+        violation = PluginViolation(reason="not_connected", description="Zoho is not connected: connect it at https://portal.example/", code="NOT_CONNECTED")
+        body = self._call(client, mock_db, PluginViolationError("Blocked by policy", violation=violation))
+
+        assert "error" not in body
+        assert body["id"] == 7
+        assert body["result"]["isError"] is True
+        text = body["result"]["content"][0]["text"]
+        assert body["result"]["content"][0]["type"] == "text"
+        assert "Blocked by policy" in text
+
+    def test_tool_invocation_error_is_an_iserror_result(self, client, mock_db):
+        # First-Party
+        from mcpgateway.services.tool_service import ToolInvocationError
+
+        body = self._call(client, mock_db, ToolInvocationError("Please authorize zoho first. Visit /oauth/authorize/abc to complete OAuth flow."))
+
+        assert "error" not in body
+        assert body["result"]["isError"] is True
+        assert "Please authorize zoho first" in body["result"]["content"][0]["text"]
+
+    def test_plugin_error_stays_a_protocol_error(self, client, mock_db):
+        """A plugin that crashed is not a tool-call outcome; keep the JSON-RPC error."""
+        # First-Party
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
+
+        body = self._call(client, mock_db, PluginError(error=PluginErrorModel(message="Plugin crashed", plugin_name="p", code="CRASH")))
+
+        assert "result" not in body
+        assert "error" in body
