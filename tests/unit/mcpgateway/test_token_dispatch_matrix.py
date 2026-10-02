@@ -41,7 +41,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway import auth as auth_module
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import Base, EmailUser, SSOProvider
@@ -457,14 +456,18 @@ class TestIngressExternalDispatch:
 
     @pytest.mark.asyncio
     async def test_db_mode_external_token_stays_on_internal_funnel(self, monkeypatch, ext_signing_key):
-        """Trust mode OFF + external-issuer token -> 401 via the internal funnel.
+        """Trust mode OFF + external-issuer token -> 401 via the shared verifier.
 
-        The trust-mode ingress dispatch must never run: with
-        jwt_trust_mode="db" the shared verifier alone decides, and it rejects
-        the externally-signed RS256 token (real signature check against the
-        gateway HMAC secret). The wraps-spy proves the ingress dispatch is
-        never consulted.
+        The trust-mode dispatch must never run with jwt_trust_mode="db".
+        The shared verifier may consult its SSO_API_TOKEN_AUTH external
+        step by design (#6396); an untrusted issuer falls through and the
+        internal verifier rejects the externally-signed RS256 token (real
+        signature check against the gateway HMAC secret). The wraps-spy
+        proves the trust dispatch is never consulted.
         """
+        # First-Party
+        import mcpgateway.auth as auth_module
+
         token = _mint_external_token(ext_signing_key, "ext")
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)  # pragma: allowlist secret
 
