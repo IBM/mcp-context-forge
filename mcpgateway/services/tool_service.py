@@ -651,6 +651,54 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     return [TextContent(type="text", text=error_message)]
 
 
+def _format_rest_error_message(response: Any, result: object, fallback_message: Optional[str] = None) -> str:
+    """Return a useful, bounded message from a parsed REST error response.
+
+    REST APIs use several common JSON error envelopes. Preserve those details
+    for tool callers and fall back to the raw response body for unknown or
+    non-object JSON values. Both extracted values and fallback text respect
+    the limit used for non-JSON responses.
+
+    Args:
+        response: HTTP response with ``status_code`` and ``text`` attributes.
+        result: Parsed JSON body.
+        fallback_message: Message to use when a non-JSON-compatible result
+            cannot be rendered.
+
+    Returns:
+        Error text suitable for a ``TextContent`` response.
+    """
+    max_length = settings.rest_response_text_max_length
+    if isinstance(result, Mapping):
+        for key in ("error", "errors", "message", "detail"):
+            value = result.get(key)
+            if value not in (None, "", [], {}):
+                text = value if isinstance(value, str) else orjson.dumps(value).decode()
+                return text[:max_length]
+
+    if isinstance(result, str):
+        body = result
+    else:
+        response_text = getattr(response, "text", "")
+        if isinstance(response_text, str) and response_text:
+            body = response_text
+        else:
+            try:
+                body = orjson.dumps(result).decode()
+            except (TypeError, ValueError):
+                if fallback_message is not None:
+                    return fallback_message
+                body = _safe_text_repr(result, _safe_type_name(result))
+
+    if body:
+        if len(body) > max_length:
+            logger.warning("REST error response truncated from %s to %s characters.", len(body), max_length)
+            body = body[:max_length]
+        return f"HTTP {response.status_code}: {body}"
+
+    return f"HTTP {response.status_code}"
+
+
 # SECURITY: JSON Schemas validated here are tool-controlled data — a federated tool ships its
 # own input/output schema — and jsonschema's default registry resolves remote ``$ref`` URIs by
 # fetching them with ``urllib.request.urlopen``. That is an SSRF primitive reachable from the
@@ -6403,15 +6451,8 @@ class ToolService(BaseService):
                             # Non-2xx response — parse body (may be HTML, plain text, XML, etc.)
                             try:
                                 result = response.json()
-                                # JSON parsed successfully - format as error message
-                                if isinstance(result, dict) and "error" in result:
-                                    error_val = result["error"]
-                                else:
-                                    error_val = f"HTTP {response.status_code}: {response.text[: settings.rest_response_text_max_length]}"
-                                # A non-string "error" value is serialized fresh here and was never
-                                # bounded by _handle_json_parse_error, so bound it to the same limit.
-                                serialized_error = error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode()[: settings.rest_response_text_max_length]
-                                content = [TextContent(type="text", text=serialized_error)]
+                                error_val = _format_rest_error_message(response, result)
+                                content = [TextContent(type="text", text=error_val)]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler
                                 error_content = _handle_json_parse_error(response, e, is_error_response=True)
@@ -6436,10 +6477,8 @@ class ToolService(BaseService):
                             # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
                             try:
                                 result = response.json()
-                                # JSON parsed successfully - extract error message
-                                error_val = result["error"] if isinstance(result, dict) and "error" in result else "Tool error encountered"
-                                serialized_error = error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode()[: settings.rest_response_text_max_length]
-                                content = [TextContent(type="text", text=serialized_error)]
+                                error_val = _format_rest_error_message(response, result, fallback_message="Tool error encountered")
+                                content = [TextContent(type="text", text=error_val)]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 # JSON parse failed - get error TextContent from handler
                                 content = _handle_json_parse_error(response, e, is_error_response=True)

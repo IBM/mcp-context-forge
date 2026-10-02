@@ -6791,8 +6791,72 @@ class TestRestToolQueryParamHandling:
             assert params == {"q": "test"}
 
 
-class TestRestToolNonJsonResponses:
-    """Tests for handling non-JSON responses from REST tools (#3855)."""
+class TestRestToolErrorResponses:
+    """Tests for preserving error details from REST tool responses (#3855, #6027)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            ({"error": "Invalid zone identifier"}, "Invalid zone identifier"),
+            ({"errors": [{"code": 6003, "message": "Invalid zone identifier"}]}, '[{"code":6003,"message":"Invalid zone identifier"}]'),
+            ({"message": "Invalid zone identifier"}, "Invalid zone identifier"),
+            ({"detail": "Invalid zone identifier"}, "Invalid zone identifier"),
+            ({"reason": "Invalid zone identifier"}, 'HTTP 403: {"reason":"Invalid zone identifier"}'),
+            ([{"code": 6003, "message": "Invalid zone identifier"}], 'HTTP 403: [{"code":6003,"message":"Invalid zone identifier"}]'),
+            ("forbidden", "HTTP 403: forbidden"),
+            (None, "HTTP 403: null"),
+            (403, "HTTP 403: 403"),
+        ],
+    )
+    async def test_rest_tool_preserves_json_error_details(self, tool_service, mock_tool, mock_global_config_obj, test_db, body, expected):
+        """REST errors retain common vendor envelopes and arbitrary JSON bodies (#6027)."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        response = Mock()
+        response.status_code = 403
+        response.text = orjson.dumps(body).decode()
+        response.json = Mock(return_value=body)
+        request = httpx.Request("GET", "https://api.example.com/test")
+        response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Forbidden", request=request, response=response))
+        tool_service._http_client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.structured_content == {"status_code": 403}
+        assert result.content[0].text == expected
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_preserves_nonstandard_2xx_error_details(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Non-standard 2xx errors use the same vendor error extraction (#6027)."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        body = {"errors": [{"code": "partial_failure", "message": "One operation failed"}]}
+        response = Mock()
+        response.status_code = 207
+        response.text = orjson.dumps(body).decode()
+        response.json = Mock(return_value=body)
+        response.raise_for_status = Mock()
+        tool_service._http_client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.content[0].text == '[{"code":"partial_failure","message":"One operation failed"}]'
 
     @pytest.mark.asyncio
     async def test_rest_tool_handles_html_error_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
@@ -6849,9 +6913,7 @@ class TestRestToolNonJsonResponses:
         mock_response = AsyncMock()
         mock_request = Mock(spec=httpx.Request)
         mock_request.url = "https://api.example.com/test"
-        mock_response.raise_for_status = Mock(
-            side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response)
-        )
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
         mock_response.status_code = 500
         mock_response.text = '{"error": "Internal server error", "code": "ERR_500"}'
         mock_response.json = Mock(return_value={"error": "Internal server error", "code": "ERR_500"})
@@ -6883,9 +6945,7 @@ class TestRestToolNonJsonResponses:
         mock_response = AsyncMock()
         mock_request = Mock(spec=httpx.Request)
         mock_request.url = "https://api.example.com/test"
-        mock_response.raise_for_status = Mock(
-            side_effect=httpx.HTTPStatusError("Not Found", request=mock_request, response=mock_response)
-        )
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Not Found", request=mock_request, response=mock_response))
         mock_response.status_code = 404
         mock_response.text = '{"message": "Resource not found", "path": "/api/test"}'
         mock_response.json = Mock(return_value={"message": "Resource not found", "path": "/api/test"})
@@ -6898,9 +6958,9 @@ class TestRestToolNonJsonResponses:
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
             assert result.is_error is True
-            # Error message should use fallback format
-            assert "HTTP 404:" in result.content[0].text
-            assert "Resource not found" in result.content[0].text
+            # The vendor message is extracted; HTTP status remains structured.
+            assert result.content[0].text == "Resource not found"
+            assert result.structured_content == {"status_code": 404}
 
     @pytest.mark.asyncio
     async def test_rest_tool_handles_plain_text_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
@@ -7227,7 +7287,7 @@ class TestRestToolNonJsonResponses:
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
             assert result.is_error is True
-            assert result.content[0].text == "Tool error encountered"
+            assert result.content[0].text == 'HTTP 203: [{"id": 1}]'
             assert "Failed to parse JSON" not in caplog.text
 
     @pytest.mark.asyncio
@@ -7295,8 +7355,9 @@ class TestRestToolNonJsonResponses:
             assert "1000000000000000000000000000000" in result.content[0].text
 
     @pytest.mark.asyncio
-    async def test_rest_tool_http_error_json_body_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db):
-        """A non-2xx JSON body without an error key is echoed but bounded to the limit."""
+    @pytest.mark.parametrize(("key", "prefix"), [("error", ""), ("errors", ""), ("message", ""), ("detail", ""), ("reason", "HTTP 500: ")])
+    async def test_rest_tool_http_error_json_body_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db, key, prefix):
+        """Extracted JSON error details and unknown envelopes remain bounded."""
         # Third-Party
         import httpx
 
@@ -7307,14 +7368,14 @@ class TestRestToolNonJsonResponses:
 
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
 
-        body = '{"message": "' + "A" * 10000 + '"}'
+        body = {key: "A" * 10000}
         mock_response = AsyncMock()
         mock_request = Mock(spec=httpx.Request)
         mock_request.url = "https://api.example.com/test"
         mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
         mock_response.status_code = 500
-        mock_response.text = body
-        mock_response.json = Mock(return_value={"message": "A" * 10000})
+        mock_response.text = orjson.dumps(body).decode()
+        mock_response.json = Mock(return_value=body)
 
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
@@ -7324,7 +7385,8 @@ class TestRestToolNonJsonResponses:
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
             assert result.is_error is True
-            assert len(result.content[0].text) == len("HTTP 500: ") + settings.rest_response_text_max_length
+            assert len(result.content[0].text) == len(prefix) + settings.rest_response_text_max_length
+            assert result.content[0].text.startswith(prefix)
 
     @pytest.mark.asyncio
     async def test_rest_tool_http_error_non_string_error_value_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db):
