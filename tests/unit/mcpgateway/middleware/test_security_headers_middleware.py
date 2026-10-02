@@ -104,6 +104,20 @@ async def test_x_frame_options_deny():
 
 
 @pytest.mark.asyncio
+async def test_csp_blocks_inline_event_handler_attributes():
+    """CSP forbids inline on* handlers so injected markup cannot execute script."""
+    mock, _ = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        response = await middleware.dispatch(_make_request(), _call_next)
+        directives = [d.strip() for d in response.headers.get("Content-Security-Policy", "").split(";")]
+        assert "script-src-attr 'none'" in directives
+        assert not any(d.startswith("script-src-attr") and "'unsafe-inline'" in d for d in directives)
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
 async def test_x_frame_options_sameorigin():
     """Test X-Frame-Options SAMEORIGIN."""
     mock, settings = _mock_settings()
