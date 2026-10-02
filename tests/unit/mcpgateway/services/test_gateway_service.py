@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
+import ssl
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
@@ -8087,6 +8088,28 @@ class TestInitializeGateway:
         gateway_service.connect_to_sse_server = AsyncMock(side_effect=ConnectionError("refused"))
         with pytest.raises(GatewayConnectionError, match="Failed to initialize gateway"):
             await gateway_service._initialize_gateway(url="http://example.com", transport="SSE")
+
+    @pytest.mark.asyncio
+    async def test_tls_failure_classified_separately_from_connect_failure(self, gateway_service, monkeypatch):
+        """A TLS fault wrapped by httpx must report gateway_tls_failed, not a generic connect failure."""
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+
+        try:
+            raise ssl.SSLCertVerificationError("certificate verify failed")
+        except ssl.SSLError as inner:
+            wrapped = httpx.ConnectError("TLS handshake failed")
+            wrapped.__cause__ = inner
+
+        gateway_service.connect_to_sse_server = AsyncMock(side_effect=wrapped)
+        with pytest.raises(GatewayConnectionError) as tls_exc:
+            await gateway_service._initialize_gateway(url="https://example.com", transport="SSE")
+        assert tls_exc.value.reason_code == "gateway_tls_failed"
+
+        gateway_service.connect_to_sse_server = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+        with pytest.raises(GatewayConnectionError) as connect_exc:
+            await gateway_service._initialize_gateway(url="https://example.com", transport="SSE")
+        assert connect_exc.value.reason_code == "gateway_connection_failed"
 
     @pytest.mark.asyncio
     async def test_invalid_transport_raises_error(self, gateway_service, monkeypatch):
