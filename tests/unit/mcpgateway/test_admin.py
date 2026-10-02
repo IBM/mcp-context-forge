@@ -7498,9 +7498,10 @@ class TestOAuthFunctionality:
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 422
+        assert result.status_code == 500
         body = json.loads(result.body)
         assert "Failed to sign CA certificate" in body["message"]
+        assert body["reason_code"] == "gateway_ca_signing_failed"
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_error_handlers(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
