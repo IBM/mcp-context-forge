@@ -6193,6 +6193,162 @@ def test_extract_using_jq_short_circuits_and_errors():
 # --------------------------------------------------------------------------- #
 
 
+class TestInvokeToolCancellationOutcome:
+    """invoke_tool records a cancellation only when it interrupts a call before an upstream result exists."""
+
+    @pytest.fixture
+    def rest_tool(self, mock_tool, mock_global_config_obj, test_db):
+        """Configure ``mock_tool`` as an unauthenticated REST tool that ``test_db`` returns."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        return mock_tool
+
+    @pytest.fixture
+    def recorders(self):
+        """Patch the metrics buffer, the DB observability span and the OTel span, and yield the mocks."""
+        metrics_buffer = Mock()
+        observability = MagicMock()
+        observability.start_span.return_value = "db-span-1"
+        otel_span = MagicMock()
+        span_cm = MagicMock()
+        span_cm.__enter__.return_value = otel_span
+        span_cm.__exit__.return_value = False
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.metrics_buffer", metrics_buffer),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))),
+            patch("mcpgateway.services.tool_service.ObservabilityService", return_value=observability),
+            patch("mcpgateway.services.tool_service.record_control_telemetry"),
+            patch("mcpgateway.services.tool_service.create_span", return_value=span_cm),
+            patch("mcpgateway.services.tool_service.set_span_attribute") as set_span_attribute,
+        ):
+            yield SimpleNamespace(metrics_buffer=metrics_buffer, observability=observability, otel_span=otel_span, set_span_attribute=set_span_attribute)
+
+    @staticmethod
+    def _retrying_plugin_manager(*, post_invoke_error=None):
+        """Build a plugin manager whose post-invoke hook requests one 50 ms retry or raises ``post_invoke_error``."""
+
+        def invoke_hook_side_effect(hook_type, *_args, **_kwargs):
+            if hook_type == ToolHookType.TOOL_POST_INVOKE:
+                if post_invoke_error is not None:
+                    raise post_invoke_error
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=50), None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+
+        plugin_manager = Mock()
+        plugin_manager.has_hooks_for.return_value = True
+        plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
+        return plugin_manager
+
+    @staticmethod
+    def _upstream_error_response(status_code):
+        """Build an httpx-like REST response whose ``raise_for_status`` reports ``status_code``."""
+        # Third-Party
+        import httpx
+
+        response = MagicMock()
+        response.status_code = status_code
+        response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("upstream error", request=MagicMock(), response=response))
+        response.json = Mock(return_value={"error": "upstream unavailable"})
+        return response
+
+    @staticmethod
+    def _assert_failure_recorded(structured_logger, recorders, *, error_message):
+        """Assert the ERROR log, the ``error`` spans and the failure tool and server metrics."""
+        structured_logger.error.assert_called_once()
+        assert "invocation failed" in structured_logger.error.call_args.args[0]
+        assert structured_logger.error.call_args.kwargs["custom_fields"]["error_message"] == error_message
+        assert not [c for c in structured_logger.info.call_args_list if "invocation cancelled" in c.args[0]]
+        recorders.observability.end_span.assert_called_once()
+        end_span_kwargs = recorders.observability.end_span.call_args.kwargs
+        assert end_span_kwargs["status"] == "error"
+        assert end_span_kwargs["status_message"] == error_message
+        assert end_span_kwargs["attributes"]["cancelled"] is False
+        recorders.set_span_attribute.assert_any_call(recorders.otel_span, "cancelled", False)
+        recorders.metrics_buffer.record_tool_metric.assert_called_once()
+        assert recorders.metrics_buffer.record_tool_metric.call_args.kwargs["success"] is False
+        assert recorders.metrics_buffer.record_tool_metric.call_args.kwargs["error_message"] == error_message
+        recorders.metrics_buffer.record_server_metric.assert_called_once()
+        assert recorders.metrics_buffer.record_server_metric.call_args.kwargs["server_id"] == "server-1"
+        assert recorders.metrics_buffer.record_server_metric.call_args.kwargs["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_cancellation_before_upstream_result_logs_info_and_records_no_metric(self, tool_service, rest_tool, test_db, recorders, mock_logging_services):
+        """A call cancelled while the upstream request is in flight logs INFO, ends the DB span as cancelled and records no metric."""
+        tool_service._http_client.request.side_effect = asyncio.CancelledError()
+        structured_logger = mock_logging_services["structured_logger"]
+
+        with patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)):
+            with pytest.raises(asyncio.CancelledError):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id="server-1")
+
+        structured_logger.error.assert_not_called()
+        cancelled_logs = [c for c in structured_logger.info.call_args_list if "invocation cancelled" in c.args[0]]
+        assert len(cancelled_logs) == 1
+        assert cancelled_logs[0].kwargs["resource_id"] == rest_tool.id
+        assert cancelled_logs[0].kwargs["custom_fields"]["cancelled"] is True
+        recorders.observability.end_span.assert_called_once()
+        end_span_kwargs = recorders.observability.end_span.call_args.kwargs
+        assert end_span_kwargs["span_id"] == "db-span-1"
+        assert end_span_kwargs["status"] == "cancelled"
+        assert end_span_kwargs["attributes"]["cancelled"] is True
+        assert end_span_kwargs["attributes"]["success"] is False
+        recorders.set_span_attribute.assert_any_call(recorders.otel_span, "cancelled", True)
+        recorders.metrics_buffer.record_tool_metric.assert_not_called()
+        recorders.metrics_buffer.record_server_metric.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_upstream_failure_keeps_error_log_span_and_failure_metrics(self, tool_service, rest_tool, test_db, recorders, mock_logging_services):
+        """A real upstream failure keeps the ERROR log, the ``error`` DB span and the failure metrics."""
+        tool_service._http_client.request.side_effect = RuntimeError("connection reset")
+
+        with patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)):
+            with pytest.raises(ToolInvocationError):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id="server-1")
+
+        self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message="connection reset")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "upstream_error",
+        [RuntimeError("connection reset"), ToolTimeoutError("timed out after 30s", retry_delay_ms=75)],
+        ids=["exception", "timeout"],
+    )
+    async def test_cancellation_during_failure_retry_sleep_keeps_failure_record(self, tool_service, rest_tool, test_db, recorders, mock_logging_services, upstream_error):
+        """A cancellation during the backoff after a failed attempt propagates and keeps that failure's ERROR log, span and metrics."""
+        tool_service._http_client.request.side_effect = upstream_error
+
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock, side_effect=asyncio.CancelledError()) as mock_sleep,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=self._retrying_plugin_manager())),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id="server-1")
+
+        mock_sleep.assert_awaited_once()
+        self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message=str(upstream_error))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancel_point", ["post_invoke_hook", "retry_sleep"])
+    async def test_cancellation_after_error_result_keeps_failure_record(self, tool_service, rest_tool, test_db, recorders, mock_logging_services, cancel_point):
+        """A cancellation after the upstream returned an error result propagates and keeps that failure's ERROR log, span and metrics."""
+        tool_service._http_client.request.return_value = self._upstream_error_response(503)
+        post_invoke_error = asyncio.CancelledError() if cancel_point == "post_invoke_hook" else None
+        sleep_effect = asyncio.CancelledError() if cancel_point == "retry_sleep" else None
+
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock, side_effect=sleep_effect) as mock_sleep,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=self._retrying_plugin_manager(post_invoke_error=post_invoke_error))),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id="server-1")
+
+        assert mock_sleep.await_count == (1 if cancel_point == "retry_sleep" else 0)
+        self._assert_failure_recorded(mock_logging_services["structured_logger"], recorders, error_message=None)
+
+
 class TestApplyMappingIntoTarget:
     """Unit tests for the apply_mapping_into_target utility function."""
 
