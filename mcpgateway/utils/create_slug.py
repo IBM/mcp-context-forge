@@ -82,3 +82,16 @@ def slugify(text: str) -> str:
     # Normalize the non-ASCII text to ASCII
     slug = normalize("NFKD", slug).encode("ascii", "ignore").decode()
     return slug
+
+
+def build_gateway_tool_invocation_name(gateway_name: str, tool_name: str) -> str:
+    """Build persisted invocation name for a gateway-backed tool.
+
+    Args:
+        gateway_name: Gateway name used for the namespace prefix.
+        tool_name: Tool custom name used for the namespace suffix.
+
+    Returns:
+        Normalized gateway-prefixed invocation name.
+    """
+    return slugify(gateway_name) + settings.gateway_tool_name_separator + slugify(tool_name)

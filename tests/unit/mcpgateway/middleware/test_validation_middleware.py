@@ -19,6 +19,11 @@ from starlette.responses import Response
 # First-Party
 from mcpgateway.middleware.validation_middleware import is_path_traversal, ValidationMiddleware
 
+# The middleware under test is deprecated; constructing it in fixtures below
+# emits its deprecation warning by design. test_init_emits_deprecation_warning
+# still asserts it via pytest.warns, which overrides this filter.
+pytestmark = pytest.mark.filterwarnings("ignore:ValidationMiddleware is deprecated:DeprecationWarning")
+
 
 class TestIsPathTraversal:
     """Tests for is_path_traversal function."""

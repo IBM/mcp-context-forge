@@ -3887,3 +3887,182 @@ class TestGatewayLifecycle:
             },
         )
         assert duplicate.status == 409, f"duplicate POST /gateways returned {duplicate.status}, expected 409: {duplicate.text()[:500]}"
+
+    def test_tool_name_collision_rejects_second_gateway(self, admin_api: APIRequestContext, admin_token: str) -> None:
+        """A second gateway cannot persist a normalized tool-name collision.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        uid = uuid.uuid4().hex[:8]
+        first_name = f"gateway-collision-{uid}-api"
+        second_name = f"{first_name}-api"
+        collision_name = f"{first_name}-api-echo"
+        first_id: str | None = None
+        second_id: str | None = None
+        try:
+            first = admin_api.post(
+                "/gateways",
+                data={
+                    "name": first_name,
+                    "url": f"{_GATEWAY_UPSTREAM_URL}?gateway_collision={uid}",
+                    "transport": "STREAMABLEHTTP",
+                },
+            )
+            assert first.status in (200, 201), f"first POST /gateways returned {first.status}: {first.text()[:500]}"
+            first_id = _json_or_fail(first, "first POST /gateways")["id"]
+            assert _wait_for_gateway_tool_names(admin_api, first_id), f"gateway {first_id} did not sync tools"
+
+            echo_tool = next((tool for tool in _gateway_tools(admin_api, first_id) if tool["name"].endswith("-echo")), None)
+            assert echo_tool, f"gateway {first_id} did not expose echo tool"
+            renamed = admin_api.put(f"/tools/{echo_tool['id']}", data={"custom_name": "api-echo"})
+            assert renamed.status == 200, f"PUT /tools/{echo_tool['id']} returned {renamed.status}: {renamed.text()[:500]}"
+            assert collision_name in _wait_for_gateway_tool_names(admin_api, first_id), f"renamed tool {collision_name} did not persist"
+
+            second = admin_api.post(
+                "/gateways",
+                data={
+                    "name": second_name,
+                    "url": _GATEWAY_UPSTREAM_URL,
+                    "transport": "STREAMABLEHTTP",
+                },
+            )
+            if second.status in (200, 201):
+                second_id = second.json().get("id")
+            assert second.status == 409, f"colliding POST /gateways returned {second.status}: {second.text()[:500]}"
+            assert second.json() == {"message": "Gateway tool name conflicts with an existing tool"}
+
+            gateways = _json_or_fail(admin_api.get("/gateways"), "GET /gateways")
+            assert all(gateway["name"] != second_name for gateway in gateways), "colliding gateway persisted"
+            tools = _json_or_fail(admin_api.get("/tools", params={"limit": 0}), "GET /tools")
+            assert sum(tool["name"] == collision_name for tool in tools) == 1, "colliding tool persisted"
+
+            result = _mcp_tool_call(admin_token, collision_name, {"message": "collision-guard"})
+            assert result.is_error is False, f"original tool call failed: {result.content}"
+        finally:
+            for gateway_id in (second_id, first_id):
+                if gateway_id:
+                    with suppress(Exception):
+                        admin_api.delete(f"/gateways/{gateway_id}")
+
+# ---------------------------------------------------------------------------
+# Schema ReDoS: a hostile input-schema pattern must not stall the gateway
+# ---------------------------------------------------------------------------
+# The phrase the sandboxed regex timeout contributes to the tool-call error text.
+# Mirrors BOUNDED in tests/unit/mcpgateway/services/test_tool_service_regex_safety.py,
+# asserted here at the wire level instead of against the validator directly.
+_REDOS_BOUNDED_PHRASE = "exceeded the execution time limit"
+
+
+class TestSchemaRegexReDoS:
+    """A catastrophic input-schema pattern must not stall the live gateway."""
+
+    @pytest.mark.timeout(60)
+    def test_hostile_pattern_does_not_stall_the_gateway(self, admin_api: APIRequestContext, admin_token: str, create_server: Any) -> None:
+        """Register a tool with a catastrophic pattern, invoke it, and prove the gateway stays up.
+
+        Drives the full path a unit test cannot: HTTP routing, auth, RBAC, and the
+        sandboxed validator built at real app startup. The load-bearing assertion is
+        the health check taken immediately after the hostile call -- the original
+        vulnerability was one request freezing the worker for every other tenant on
+        it, not merely a slow validation.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            admin_token: Un-narrowed platform-admin JWT, for the MCP session.
+            create_server: Factory that creates a throwaway virtual server.
+        """
+        tool_name = f"redos-probe-{uuid.uuid4().hex[:8]}"
+        created = admin_api.post(
+            "/tools",
+            data={
+                "tool": {
+                    "name": tool_name,
+                    "url": f"{BASE_URL}/health",
+                    "description": "Schema ReDoS probe tool",
+                    "integration_type": "REST",
+                    "request_type": "GET",
+                    "input_schema": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+                    },
+                },
+                "team_id": None,
+            },
+        )
+        assert created.status in (200, 201), f"POST /tools returned {created.status}: {created.text()[:500]}"
+        tool_id = _json_or_fail(created, "POST /tools")["id"]
+
+        server_id: str | None = None
+        try:
+            server_resp = create_server(tool_ids=[tool_id])
+            assert server_resp.status == 201, f"POST /servers returned {server_resp.status}: {server_resp.text()[:500]}"
+            server_id = _json_or_fail(server_resp, "POST /servers")["id"]
+
+            observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, {tool_name})
+            assert tool_name in observed, f"probe tool never appeared in the scoped MCP catalog; observed={sorted(observed)}"
+
+            # _mcp_tool_call opens a session and does initialize() then call_tool() on it,
+            # each a separately-bounded send_request round trip capped at _CLIENT_TIMEOUT
+            # (mcp/shared/session.py's anyio.fail_after) -- see _unwrap_exception_group's
+            # docstring above: "initialize() followed by call_tool() on the same session
+            # wraps twice". A genuine regression -- the sandbox no longer bounding the
+            # match -- surfaces as an McpError from one of those round trips, wrapped in
+            # (possibly nested) ExceptionGroup by the SDK's anyio TaskGroups on the way out,
+            # not as a slow "took Xs" assertion below: catastrophic backtracking on this
+            # input would run far longer than any client timeout, so the client gives up
+            # first. Catching it here turns that opaque nested traceback into a diagnostic
+            # that also names the other explanation -- an overloaded CI box exceeding
+            # MCP_E2E_CLIENT_TIMEOUT -- rather than leaving raw exception-group nesting to
+            # interpret. Matches the except/_unwrap_exception_group pattern used above at
+            # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
+            start = time.perf_counter()
+            try:
+                result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
+            except (McpError, ExceptionGroup) as exc:
+                elapsed = time.perf_counter() - start
+                leaf = _unwrap_exception_group(exc)[0]
+                pytest.fail(
+                    f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
+                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
+                    "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
+                    "env var to rule out the latter before treating this as a regression."
+                )
+            elapsed = time.perf_counter() - start
+            # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
+            # session opens, then initialize() and call_tool() each make their own bounded
+            # round trip on it. The honest ceiling past this point is a small multiple of
+            # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
+            # round trips without being so loose it stops guarding a future regression that
+            # adds more round trips to this path.
+            assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
+            print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
+            assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
+            text = result.content[0].text if result.content else ""
+            assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
+
+            # Load-bearing: the vulnerability was one hostile request freezing the
+            # worker for every other tenant. This must succeed immediately, not
+            # eventually -- no retry loop, unlike the catalog-convergence poll above.
+            health = admin_api.get("/health")
+            assert health.status == 200, f"gateway did not answer /health immediately after the hostile call: {health.status} {health.text()[:200]}"
+        finally:
+            # Delete the server before the tool: the tool is associated to it, and no
+            # other test in this file deletes an associated tool ahead of its server.
+            # create_server's own owned_objects teardown would also delete the server,
+            # but that runs after this function returns -- deleting it here first keeps
+            # deletion order the same as everywhere else, and _delete_owned treats the
+            # fixture's later redundant attempt as a harmless 404. Failures are surfaced,
+            # not swallowed: a cleanup problem here is itself worth knowing about.
+            failures = []
+            if server_id is not None:
+                failure = _delete_owned(admin_api, "/servers", server_id)
+                if failure:
+                    failures.append(failure)
+            failure = _delete_owned(admin_api, "/tools", tool_id)
+            if failure:
+                failures.append(failure)
+            if failures:
+                pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))

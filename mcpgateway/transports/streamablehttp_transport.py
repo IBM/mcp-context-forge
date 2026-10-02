@@ -121,6 +121,144 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def _parse_mcp_scope_headers(scope: Scope) -> dict[str, str]:
+    """Extract and normalise HTTP headers from an ASGI scope into a lowercase str dict.
+
+    Args:
+        scope: ASGI scope dict.
+
+    Returns:
+        Dict mapping lowercase header name to decoded value.
+    """
+    result: dict[str, str] = {}
+    for item in scope.get("headers") or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        name, value = item
+        if not isinstance(name, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
+            continue
+        result[name.decode("latin-1").lower()] = value.decode("latin-1")
+    return result
+
+
+def _check_mcp_origin(origin: Optional[str]) -> bool:
+    """Return True when the Origin header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Origin (``None``) is always accepted. An empty-string Origin is treated as
+    present-and-must-match. When ``mcp_allowed_origins`` is empty, all origins are
+    accepted (opt-in enforcement). Otherwise the origin must be an exact member of the
+    configured set or the request must be rejected with HTTP 403.
+
+    Args:
+        origin: Value of the Origin header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if origin is None:
+        return True
+    if not settings.mcp_allowed_origins:
+        return True
+    return origin in settings.mcp_allowed_origins
+
+
+# Loopback hostname literals. Port is stripped before the check.
+# A DNS-rebound page cannot control the loopback address in Host; only genuine
+# same-host callers (e.g. test_server_handshake in-process self-calls) send these.
+_LOOPBACK_HOSTNAMES: frozenset[str] = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+
+def _check_mcp_host(host: Optional[str]) -> bool:
+    """Return True when the Host header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Host (``None``) is always accepted. An empty-string Host is treated as
+    present-and-must-match. Loopback literals (``127.0.0.1``, ``localhost``,
+    ``[::1]``) are always accepted regardless of the allowlist — in-process
+    self-calls (e.g. ``test_server_handshake``) send these and a DNS-rebound page
+    cannot forge a loopback hostname in ``Host``. When ``mcp_allowed_hosts`` is
+    empty all other hosts are accepted (opt-in enforcement). Otherwise the host
+    must be an exact member of the configured set or the request is rejected.
+
+    Args:
+        host: Value of the Host header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if host is None:
+        return True
+    # Strip port suffix (host:port or [::1]:port) before loopback check.
+    bare = host.rsplit(":", 1)[0] if ":" in host else host
+    # De-bracket IPv6 literals: "[::1]" → "::1"
+    if bare.startswith("[") and bare.endswith("]"):
+        bare = bare[1:-1]
+    if bare in _LOOPBACK_HOSTNAMES:
+        return True
+    if not settings.mcp_allowed_hosts:
+        return True
+    return host in settings.mcp_allowed_hosts
+
+
+class MCPOriginHostGate:
+    """ASGI gate that enforces MCP Origin/Host allowlists at the public /mcp mount.
+
+    Runs before any ingress dispatch (Python, rust-internal, rust-public) so the
+    check is not duplicated per-transport. The ``/_internal/mcp/transport`` bridge
+    is mounted separately and intentionally bypasses this gate — requests on that
+    path arrive from the trusted Rust sidecar at 127.0.0.1 only.
+
+    When session-affinity is enabled, loopback-sourced requests carrying
+    ``x-forwarded-internally: true`` are also bypassed (worker-to-worker routing).
+    The bypass is gated on affinity being enabled so a DNS-rebound page on loopback
+    cannot spoof the header when affinity is off (the default).
+    """
+
+    def __init__(self, app: Any) -> None:
+        """Wrap an ASGI application with the Origin/Host gate.
+
+        Args:
+            app: Downstream ASGI callable.
+        """
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Enforce Origin/Host allowlists before dispatching to the wrapped app.
+
+        Args:
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+
+        hdrs = _parse_mcp_scope_headers(scope)
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_loopback_forward = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and hdrs.get("x-forwarded-internally") == "true"
+
+        if not is_loopback_forward:
+            _raw_origin: Optional[str] = hdrs.get("origin")
+            _raw_host: Optional[str] = hdrs.get("host")
+            if not _check_mcp_origin(_raw_origin):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Origin: %s",
+                    sanitize_for_log(str(_raw_origin)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+            if not _check_mcp_host(_raw_host):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Host: %s",
+                    sanitize_for_log(str(_raw_host)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+
+        await self._app(scope, receive, send)
+
+
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
     """Return an active span context manager for raw MCP initialize traffic.
 
@@ -4472,16 +4610,16 @@ class SessionManagerWrapper:
         match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
-        raw_headers = scope.get("headers") or []
-        headers: dict[str, str] = {}
-        for item in raw_headers:
-            if not isinstance(item, (tuple, list)) or len(item) != 2:
-                continue
-            k, v = item
-            if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
-                continue
-            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
-            headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+        headers = _parse_mcp_scope_headers(scope)
+
+        # Internal-forward bypass: only valid when session-affinity is enabled (the sole code path
+        # that sets x-forwarded-internally). Gate on loopback source to prevent external spoofing.
+        # Origin/Host checks are enforced at the /mcp mount level (main.py MCPOriginHostGate) so
+        # that all ingress shapes — Python, rust-internal, and rust-public — are covered by a single
+        # gate without duplicating the logic here.
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
@@ -4497,11 +4635,6 @@ class SessionManagerWrapper:
 
         # Multi-worker session affinity: check if we should forward to another worker
         # This must happen BEFORE the SDK's session manager handles the request
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _client = scope.get("client")
-        _client_host = _client[0] if _client else None
-        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
-        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
@@ -4766,21 +4899,21 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
-                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": WORKER_ID}) as affinity_span:
+                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": get_worker_id()}) as affinity_span:
                     # The span wraps the Redis owner lookup itself — that round-trip
                     # is the latency this instrumentation exists to measure.
                     owner = await pool.get_session_owner(mcp_session_id)
                     if affinity_span is not None:
                         set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
-                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != get_worker_id()) else "local")
+                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", get_worker_id(), mcp_session_id[:8], owner)
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", get_worker_id(), mcp_session_id[:8], owner)
 
                     # Package the edge-validated identity so the owner can dispatch via
                     # the trusted internal /_internal/mcp/rpc endpoint without
@@ -4836,17 +4969,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", get_worker_id(), mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", get_worker_id(), mcp_session_id[:8])
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", get_worker_id(), mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -5231,13 +5364,13 @@ class SessionManagerWrapper:
                 try:
                     # First-Party - lazy import to avoid circular dependencies
                     # First-Party
-                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                     pool = get_session_affinity()
                     await pool.register_session_owner(session_to_register)
                     logger.debug(
                         "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
+                        get_worker_id(),
                         session_to_register[:8],
                     )
                 except Exception as e:

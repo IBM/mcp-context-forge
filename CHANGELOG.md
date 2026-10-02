@@ -6,6 +6,25 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
+## [Unreleased]
+
+- **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.
+
+- **Federated gateway tool-name collisions** - Gateway registration, refresh, OAuth discovery, reactivation, rename, and visibility updates now reject detected tool-name collisions in public, team, and private visibility scopes. Gateway automation must handle the endpoint's conflict response when a previously accepted colliding registration is rejected. Existing duplicate rows require administrator review before affected invocation names are usable. Operators can identify duplicates with:
+
+  ```sql
+  SELECT name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'public' GROUP BY name HAVING COUNT(*) > 1 ORDER BY name;
+  SELECT team_id, name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'team' GROUP BY team_id, name HAVING COUNT(*) > 1 ORDER BY team_id, name;
+  SELECT owner_email, name, COUNT(*) AS duplicate_count FROM tools WHERE visibility = 'private' GROUP BY owner_email, name HAVING COUNT(*) > 1 ORDER BY owner_email, name;
+  ```
+
+- **Modern MCP protocol negotiation is on by default** - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto` instead of `legacy`. Outbound upstream connections probe `server/discover` and negotiate the 2026-07-28 revision, with transparent fallback to the legacy `initialize` handshake. Inbound clients may send `mcp-protocol-version: 2026-07-28` instead of receiving a 400. Set either variable to `legacy` to restore the previous behaviour.
+
+## [Unreleased]
+
+### Security
+
+- **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
 
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
 
@@ -45,6 +64,40 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 - **`invoke_tool` now enforces input-schema validation** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Live tool invocation (`tools/call`) now validates `arguments` against the tool's `input_schema` before dispatch, raising `ToolInvocationError` on a mismatch, via the same `_validate_tool_input_arguments` check `POST /tools/preview/{name}` uses (#5629). Previously `invoke_tool` never checked `arguments` against `input_schema` at all, so a tool whose callers relied on that gap will now reject calls it previously accepted. To find affected callers before enabling, preview the same arguments against `POST /tools/preview/{name}`: a `validated: false` response with an `invalid_arguments` warning is exactly what live invocation will now reject. Remediate by correcting the caller's arguments or by relaxing the tool's published `input_schema` to match what it actually accepts.
 - **Tool execution failures return MCP-compliant errors** ([#6181](https://github.com/IBM/mcp-context-forge/pull/6181)) - A failed tool execution returns a protocol-conformant error result instead of the previous ad-hoc shape. Clients that parsed the old payload must read the MCP error fields.
 - **MCP Python SDK 2.x** ([#6868](https://github.com/IBM/mcp-context-forge/pull/6868)) - The gateway now requires `mcp>=2.0.0`, `mcp-types>=2.0.0`, and `cpex>=0.1.4`, the first CPEX release built for `mcp` 2.x. Python consumers that import the gateway next to `mcp` 1.x must upgrade. Protocol behaviour is unchanged by default: `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` both default to `legacy`, and `GATEWAY_MODERN_LISTENERS_ENABLED` defaults to `false`. Set them to `auto` and `true` to negotiate the 2026-07-28 revision.
+
+### Security
+
+- JSON Schema validation now runs in a killable worker process whenever the schema carries a
+  `pattern` or `patternProperties` keyword. A catastrophic regex in a tool or prompt schema
+  can no longer stall a gateway worker. Registration is unchanged: a schema carrying such a
+  pattern is still accepted, and an operator warning names it.
+
+- **Outbound connection hardening** - Outbound HTTP requests now establish connections against an
+  address that the outbound URL policy validated, while preserving the original hostname for the
+  `Host` header and for TLS certificate verification. No configuration change is required.
+
+  Operators should note the following behavior changes:
+
+  - Outbound URL validation now runs even when `SSRF_PROTECTION_ENABLED=false`. The scheme allowlist,
+    dangerous-protocol, control-character, embedded-credential and XSS checks in `SecurityValidator`
+    apply unconditionally. Disabling SSRF protection previously disabled these unrelated checks as a
+    side effect; it no longer does. A deployment that relied on that side effect to reach a
+    non-HTTP(S) URL will now see it rejected.
+  - Pooled upstream MCP sessions no longer follow HTTP redirects. An upstream that answers `/sse`
+    with a 307 redirect to `/sse/` now fails instead of following it. Register the redirected URL
+    directly if you rely on that behavior.
+  - Connection setup fails closed when a caller-supplied HTTP client's TLS context cannot be read,
+    rather than continuing with default trust material. Under `SKIP_SSL_VERIFY=true` the previous
+    fallback would have meant no certificate verification at all.
+  - Some outbound requests now connect to a single validated address instead of retrying every
+    address returned by DNS. A dual-stack upstream whose first-sorted address is unreachable may now
+    fail where a plain resolution previously fell through to the next address.
+  - Requests that connect to a validated address now use a dedicated connection rather than a shared
+    pool, so two destinations that resolve to the same address can no longer share a connection whose
+    certificate was verified for only one of them.
+  - Connection handling is unchanged when an environment proxy (`HTTP_PROXY`, `HTTPS_PROXY`,
+    `ALL_PROXY`) applies to the target, since the proxy performs name resolution.
+
 
 ### Fixed
 

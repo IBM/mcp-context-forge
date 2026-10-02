@@ -178,6 +178,7 @@ from mcpgateway.services.gateway_service import (
     GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
+    GatewayToolNameConflictError,
     GatewayService,
     test_gateway_connectivity,
 )
@@ -210,6 +211,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -3734,6 +3736,8 @@ async def admin_set_gateway_state(
         await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
+        error_message = str(e)
+    except GatewayToolNameConflictError as e:
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
@@ -12498,6 +12502,9 @@ async def generate_schemas_from_openapi(
             status_code=500,
         )
 
+    warn_unprovable_patterns(input_schema, source=f"openapi:{spec_url}")
+    warn_unprovable_patterns(output_schema, source=f"openapi:{spec_url}")
+
     return ORJSONResponse(
         content={
             "message": "Schemas generated successfully from OpenAPI spec",
@@ -12914,6 +12921,8 @@ async def admin_add_gateway(
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except GatewayToolNameConflictError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except RuntimeError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
@@ -13049,6 +13058,8 @@ async def admin_update_gateway_rest(
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as ex:
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
@@ -13333,6 +13344,8 @@ async def admin_edit_gateway(
     except HTTPException:
         raise
     except Exception as ex:
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):

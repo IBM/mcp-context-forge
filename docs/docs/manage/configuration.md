@@ -497,12 +497,12 @@ These settings control how the gateway authenticates inbound MCP client connecti
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `MCP_INBOUND_PROTOCOL_MODE`   | Protocol versions accepted from inbound MCP clients | `legacy`              | `auto`, `legacy` |
+| `MCP_INBOUND_PROTOCOL_MODE`   | Protocol versions accepted from inbound MCP clients | `auto`                | `auto`, `legacy` |
 
 | Value    | Behavior |
 | -------- | -------- |
-| `auto` | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
-| `legacy` (default) | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
+| `auto` (default) | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
+| `legacy` | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
 
 #### Outbound MCP Connect Mode (Gateway → MCP Servers)
 
@@ -510,12 +510,12 @@ These settings control how the gateway authenticates inbound MCP client connecti
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `MCP_CLIENT_CONNECT_MODE`     | Protocol negotiation for outbound connections to upstream MCP servers | `legacy`              | `auto`, `legacy` |
+| `MCP_CLIENT_CONNECT_MODE`     | Protocol negotiation for outbound connections to upstream MCP servers | `auto`                | `auto`, `legacy` |
 
 | Value    | Behavior |
 | -------- | -------- |
-| `auto` | Outbound connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
-| `legacy` (default) | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
+| `auto` (default) | Outbound connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
+| `legacy` | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
 
 !!! note "Upgrading the MCP SDK"
     The upstream transport health check reads SDK-internal dispatcher flags. The compatibility spike tests in `tests/unit/mcpgateway/utils/test_sdk_client_compat.py` fail loudly if a future SDK release changes those internals, so run them before adopting a new SDK pin.
@@ -699,6 +699,9 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
+| `REGEX_TIMEOUT_SECONDS`   | Time budget for validating against a schema that carries `pattern` or `patternProperties`; on expiry validation fails closed | `1.0` | float > 0 |
+| `REGEX_WORKERS`           | Worker processes in the JSON Schema regex sandbox | `2`                                         | int > 0    |
+| `REGEX_MAX_SUBJECT_BYTES` | Largest value a regex-bearing schema validates; larger values fail closed | `262144`                        | int >= 1024 |
 | `HSTS_ENABLED`            | Enable HSTS header             | `true`                                         | bool       |
 | `HSTS_MAX_AGE`            | HSTS max age in seconds        | `31536000`                                     | int        |
 | `HSTS_INCLUDE_SUBDOMAINS` | Include subdomains in HSTS header | `true`                                      | bool       |
@@ -913,6 +916,17 @@ mcpContextForge:
     The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
     Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
+
+### URL Scheme Allowlist
+
+Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation; restart required to re-run the startup database scan.
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `VALIDATION_ALLOWED_URL_SCHEMES` | Permitted URL scheme prefixes | `["http://", "https://", "ws://", "wss://"]` | JSON array |
+| `STRICT_SCHEME_ENFORCEMENT` | Fail startup when existing records violate the allowlist | `false` | bool |
+
+When `STRICT_SCHEME_ENFORCEMENT` is `false` (default), the startup check logs a warning per non-compliant record. Set to `true` to prevent the gateway from starting until all records use allowed schemes.
 
 ### Content Security - Size Limits
 

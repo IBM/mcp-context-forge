@@ -54,7 +54,6 @@ from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, valida
 import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
-import referencing
 import referencing.exceptions
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -101,7 +100,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
@@ -114,9 +113,11 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
@@ -654,10 +655,12 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
 # own input/output schema — and jsonschema's default registry resolves remote ``$ref`` URIs by
 # fetching them with ``urllib.request.urlopen``. That is an SSRF primitive reachable from the
 # preview route and from every live invocation. Two layers close it: non-local refs are refused
-# outright (below), and validators are built against this registry, which holds only the bundled
-# metaschemas and has no ``retrieve`` callable, so any residual resolution attempt raises
-# ``referencing.exceptions.Unresolvable`` instead of hitting the network.
-_NO_RETRIEVE_REGISTRY: referencing.Registry = referencing.Registry()
+# outright, by ``_assert_local_refs_only`` below, before any validator sees the schema; and
+# ``validate_safely`` (``mcpgateway.utils.safe_jsonschema``) builds every validator — inline and
+# inside the sandbox worker — against the module-level ``_NO_RETRIEVE_REGISTRY``, an empty
+# ``referencing.Registry()`` that holds only the bundled metaschemas and has no ``retrieve``
+# callable, so any residual resolution attempt raises ``referencing.exceptions.Unresolvable``
+# instead of hitting the network.
 
 # Every keyword whose value is a reference URI, across the drafts we accept.
 _REFERENCE_KEYWORDS = ("$ref", "$dynamicRef", "$recursiveRef")
@@ -754,19 +757,21 @@ def _canonicalize_schema(schema: dict) -> str:
 
 
 def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
-    """Validate instance against schema using cached validator class.
+    """Validate instance against schema using the cached validator class.
 
-    Creates a fresh validator instance for thread safety, but reuses
-    the cached validator class and schema check. Uses best_match to
-    preserve jsonschema.validate() error selection semantics.
+    Reuses the cached validator class and schema check, then delegates the actual
+    validation to ``validate_safely``, which runs it inline for a regex-free schema and
+    behind a killable sandbox process for a schema that carries a regex keyword.
 
     Args:
         instance: The data to validate.
         schema: The JSON Schema to validate against.
 
     Raises:
-        error: The best matching ValidationError from jsonschema validation.
-        jsonschema.exceptions.ValidationError: If validation fails.
+        jsonschema.exceptions.ValidationError: If validation fails, or if the sandbox path
+            could not complete safely (timeout, busy pool, broken pool, an oversized
+            instance, unserializable input, or the sandbox being unavailable) — ``validate_safely``
+            never fails open.
         jsonschema.exceptions.SchemaError: If the schema itself is invalid or carries a
             non-local ``$ref``.
         referencing.exceptions.Unresolvable: If a reference cannot be resolved from the
@@ -774,13 +779,10 @@ def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
     """
     schema_json = _canonicalize_schema(schema)
     validator_cls, checked_schema = _get_validator_class_and_check(schema_json)
-    # Create fresh validator instance for thread safety. The registry never retrieves,
-    # so an unresolvable reference fails closed instead of triggering a network fetch.
-    validator = validator_cls(checked_schema, registry=_NO_RETRIEVE_REGISTRY)
-    # Use best_match to match jsonschema.validate() error selection behavior
-    error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
-    if error is not None:
-        raise error
+    # Validation runs behind a process boundary when the schema carries a regex keyword,
+    # because jsonschema reaches Python's backtracking engine from several places and a
+    # non-terminating match holds the GIL for the whole worker.
+    validate_safely(instance, checked_schema, validator_cls)
 
 
 def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -4118,6 +4120,44 @@ class ToolService(BaseService):
 
         # Use MCP SDK to connect and call tool
         try:
+            try:
+                pinned_target = await resolve_pinned_target(gateway_url, "Tool URL")
+            except ValueError as pin_exc:
+                raise ToolInvocationError("Outbound URL blocked by URL policy") from pin_exc
+
+            def get_httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx2.Timeout | None = None,
+                auth: httpx2.Auth | None = None,
+            ) -> httpx2.AsyncClient:
+                """Build the SDK's httpx client so it dials the address pinned at validation time.
+
+                Args:
+                    headers: Optional headers for the client
+                    timeout: Optional timeout for the client
+                    auth: Optional auth for the client
+
+                Returns:
+                    httpx2.AsyncClient: Configured HTTPX async client
+                """
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
+
+                return httpx2.AsyncClient(
+                    follow_redirects=False,
+                    headers=headers,
+                    timeout=timeout if timeout else get_httpx2_timeout(),
+                    auth=auth,
+                    **pinned_target.client_kwargs(
+                        verify=get_default_verify(),
+                        limits=httpx2.Limits(
+                            max_connections=settings.httpx_max_connections,
+                            max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                            keepalive_expiry=settings.httpx_keepalive_expiry,
+                        ),
+                    ),
+                )
+
             with create_span(
                 "mcp.client.call",
                 {
@@ -4137,6 +4177,7 @@ class ToolService(BaseService):
                     url=gateway_url,
                     headers=traced_headers,
                     timeout=settings.mcpgateway_direct_proxy_timeout,
+                    httpx_client_factory=get_httpx_client_factory,
                 ) as client:
                     with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                         pass  # Client auto-initializes on first RPC call
@@ -5609,7 +5650,12 @@ class ToolService(BaseService):
         # Input-schema validation (#5629): shared by invoke_tool and preview_tool_invocation
         # so the two can never disagree about whether a given set of arguments is acceptable.
         # Reported, not raised -- see ResolvedTool.schema_validation_error.
-        schema_validation_error = _validate_tool_input_arguments(arguments, tool_payload.get("input_schema")) if arguments is not None else None
+        #
+        # Offloaded to a thread because a regex-bearing schema blocks on
+        # SandboxPool.submit().result(), which is a synchronous wait on the worker
+        # process. Without this, a hostile request holds the event loop for the
+        # sandbox's timeout budget instead of returning to it immediately.
+        schema_validation_error = await asyncio.to_thread(_validate_tool_input_arguments, arguments, tool_payload.get("input_schema")) if arguments is not None else None
 
         return ResolvedTool(
             is_direct_proxy=is_direct_proxy,
@@ -6430,8 +6476,14 @@ class ToolService(BaseService):
                             # The validator skips for isError=true (per #4202) and, on validation
                             # failure, mutates tool_result in place with is_error=True, so the
                             # single post-validation read below covers all cases uniformly.
+                            #
+                            # Offloaded to a thread: _extract_and_validate_structured_content is
+                            # entirely synchronous, and a regex-bearing output_schema blocks on
+                            # SandboxPool.submit().result() inside it. Running it directly here
+                            # would hold the event loop for the sandbox's timeout budget instead
+                            # of returning to it immediately -- the method itself is unchanged.
                             if tool_output_schema:
-                                self._extract_and_validate_structured_content(tool_for_validation, tool_result)
+                                await asyncio.to_thread(self._extract_and_validate_structured_content, tool_for_validation, tool_result)
                             # ``success`` must reflect both upstream ``isError`` *and* any
                             # validator-imposed error state. Previously this path set
                             # ``success = bool(valid)``, which clobbered an upstream
@@ -6615,6 +6667,13 @@ class ToolService(BaseService):
                     _client_cert_value = gateway_client_cert
                     _client_key_value = gateway_client_key
 
+                    if gateway_url is None:
+                        raise ToolInvocationError("Outbound URL blocked by URL policy")
+                    try:
+                        pinned_target = await resolve_pinned_target(gateway_url, "Tool URL")
+                    except ValueError as pin_exc:
+                        raise ToolInvocationError("Outbound URL blocked by URL policy") from pin_exc
+
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
                         timeout: httpx2.Timeout | None = None,
@@ -6664,15 +6723,17 @@ class ToolService(BaseService):
                         factory_timeout = timeout if timeout else get_httpx2_timeout(read_timeout=effective_timeout)
 
                         return httpx2.AsyncClient(
-                            verify=ctx if ctx else get_default_verify(),
                             follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
-                            limits=httpx2.Limits(
-                                max_connections=settings.httpx_max_connections,
-                                max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                                keepalive_expiry=settings.httpx_keepalive_expiry,
+                            **pinned_target.client_kwargs(
+                                verify=ctx if ctx else get_default_verify(),
+                                limits=httpx2.Limits(
+                                    max_connections=settings.httpx_max_connections,
+                                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                                ),
                             ),
                         )
 
@@ -8005,6 +8066,45 @@ class ToolService(BaseService):
         if existing_tool:
             raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 
+    @staticmethod
+    def _check_gateway_tool_invocation_name_conflict(db: Session, invocation_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
+        """Raise ToolNameConflictError for a conflicting persisted gateway-tool name.
+
+        Args:
+            db: The SQLAlchemy database session.
+            invocation_name: The final gateway-prefixed invocation name.
+            visibility: The target visibility scope.
+            tool_id: The tool being updated, excluded from the conflict search.
+            team_id: Team namespace identity for team-visible tools.
+            owner_email: Owner namespace identity for private tools.
+
+        Raises:
+            ToolNameConflictError: If another tool occupies the target namespace.
+        """
+        if visibility == "public":
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "public", DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
+            )
+        elif visibility == "team" and team_id:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "team", DbTool.team_id == team_id, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
+            )
+        elif visibility == "private" and owner_email:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(DbTool.name == invocation_name, DbTool.visibility == "private", DbTool.owner_email == owner_email, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
+            )
+        else:
+            logger.warning("Skipping gateway-tool conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
+            return
+        if existing_tool:
+            raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+
     async def update_tool(
         self,
         db: Session,
@@ -8112,6 +8212,23 @@ class ToolService(BaseService):
             # Track whether a name change occurred (before tool.name is mutated)
             name_is_changing = bool(tool_update.name and tool_update.name != tool.name)
 
+            visibility_is_changing = tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility
+            gateway_id = getattr(tool, "gateway_id", None)
+            gateway_name = getattr(getattr(tool, "gateway", None), "name", None)
+            gateway_collision_check = isinstance(gateway_id, str) and bool(gateway_id) and isinstance(gateway_name, str) and (tool_update.custom_name is not None or visibility_is_changing)
+            if gateway_collision_check:
+                final_custom_name = tool.custom_name if tool_update.custom_name is None else tool_update.custom_name
+                invocation_name = build_gateway_tool_invocation_name(gateway_name, final_custom_name)
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                self._check_gateway_tool_invocation_name_conflict(
+                    db,
+                    invocation_name,
+                    tool_visibility_ref,
+                    tool.id,
+                    team_id=tool.team_id,
+                    owner_email=tool.owner_email,
+                )
+
             # Check for name change and ensure uniqueness
             if name_is_changing:
                 # Always derive ownership fields from the DB record — never trust client-provided team_id/owner_email
@@ -8122,13 +8239,14 @@ class ToolService(BaseService):
                     custom_name_ref = tool_update.name  # custom_name will track the rename
                 else:
                     custom_name_ref = tool.custom_name  # custom_name stays unchanged
-                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+                if not gateway_collision_check:
+                    self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
 
             # Check for conflicts when visibility changes without a name change
-            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
+            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing and not gateway_collision_check:
                 new_visibility = tool_update.visibility.lower()
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 

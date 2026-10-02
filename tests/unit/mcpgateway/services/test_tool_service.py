@@ -2045,6 +2045,43 @@ class TestToolService:
         assert "statement" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_update_gateway_tool_custom_name_checks_final_invocation_name(self, tool_service, mock_tool, test_db, monkeypatch):
+        """Gateway-backed custom-name updates reject collisions with full local invocation names."""
+        mock_tool.gateway.name = "prod"
+        conflicting_tool = MagicMock(spec=DbTool)
+        conflicting_tool.id = "2"
+        conflicting_tool.name = "prod-search"
+        conflicting_tool.enabled = True
+        conflicting_tool.visibility = "public"
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_for_update", Mock(side_effect=[mock_tool, conflicting_tool]))
+        tool_service._server_ids_for_tool_cache_invalidation = Mock(return_value=())
+        test_db.rollback = Mock()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.update_tool(test_db, "1", ToolUpdate(custom_name="search"))
+
+        test_db.rollback.assert_called_once()
+        assert mock_tool.custom_name == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_tool_visibility_checks_final_invocation_name(self, tool_service, mock_tool, test_db, monkeypatch):
+        """Gateway-backed visibility updates validate full invocation name in target scope."""
+        mock_tool.gateway.name = "prod"
+        conflicting_tool = MagicMock(spec=DbTool)
+        conflicting_tool.id = "2"
+        conflicting_tool.name = "prod-test-tool"
+        conflicting_tool.enabled = True
+        conflicting_tool.visibility = "team"
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_for_update", Mock(side_effect=[mock_tool, conflicting_tool]))
+        tool_service._server_ids_for_tool_cache_invalidation = Mock(return_value=())
+        test_db.rollback = Mock()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.update_tool(test_db, "1", ToolUpdate(visibility="team"))
+
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_tool_not_found(self, tool_service, test_db):
         """Test updating a non-existent tool."""
         # Mock DB get to return None
@@ -2225,6 +2262,142 @@ class TestToolService:
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
         with pytest.raises(ToolInvocationError):
             await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.asyncio
+    async def test_preview_tool_invocation_offloads_hostile_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A catastrophic input_schema must not stall the loop through the real entry point.
+
+        tests/security/test_schema_regex_redos.py proves the sandbox mechanism itself stays
+        bounded, but it wraps its own call in ``asyncio.to_thread`` and so never exercises
+        whether production actually offloads it. ``_resolve_tool_for_invocation`` -- shared by
+        ``invoke_tool`` and ``preview_tool_invocation`` -- calls the schema validator directly
+        from async code; without ``asyncio.to_thread`` there, this test stalls for the sandbox's
+        timeout budget instead of returning to the loop immediately. ``preview_tool_invocation``
+        is the entry point here because it resolves and validates without dispatching (#5629),
+        so no HTTP/MCP/jq mocking is needed to isolate the validation offload.
+        """
+        # First-Party
+        from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+
+        # The subject length and the timeout phrase mirror tests/security/test_schema_regex_redos.py,
+        # which documents that reasoning.
+        #
+        # The loop-stall budget here is deliberately tighter than that sibling test's, because
+        # this test targets a different bug shape. That sibling test proves the sandbox worker
+        # itself is bounded; a thread-only non-fix there still stalls the loop for close to the
+        # sandbox's own timeout (~1s), so its budget only needs to rule out an *unbounded* stall
+        # (multiple seconds). This test proves the offload at the call site is actually present;
+        # a MISSING offload here also stalls for close to the sandbox timeout, not forever,
+        # because the sandbox still kills the runaway worker -- so a loose budget would pass on
+        # a genuinely broken call site. Measured directly: with the offload removed, the call
+        # blocks the loop for 1.01s (the sandbox's own regex_timeout_seconds); with it in place,
+        # 0.006s. Half of the timeout setting sits with wide margin on both sides of that gap.
+        bounded_phrase = "exceeded the execution time limit"
+        max_supported_regex_timeout_seconds = 1.0
+        min_heartbeats = 15
+
+        mock_tool.input_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+        }
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        start_validation_pool()
+        try:
+            lateness: list[float] = []
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                """Wake every 10 ms and record how late each wake-up was."""
+                while not stop.is_set():
+                    start = time.perf_counter()
+                    await asyncio.sleep(0.01)
+                    lateness.append(time.perf_counter() - start - 0.01)
+
+            beat = asyncio.create_task(heartbeat())
+            await asyncio.sleep(0.2)
+            preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {"q": "a" * 28 + "b"})
+            stop.set()
+            await beat
+        finally:
+            shutdown_validation_pool()
+
+        assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
+            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
+        )
+        budget = 0.5 * settings.regex_timeout_seconds
+        assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s -- a missing offload stalls near the sandbox's own timeout, not forever, so this must stay tight"
+
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" and bounded_phrase in w.message for w in preview_result.warnings), f"validation must be stopped by the budget, not by an unrelated refusal; got {preview_result.warnings!r}"
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.asyncio
+    async def test_invoke_tool_offloads_hostile_output_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A catastrophic output_schema must not stall the loop through ``invoke_tool``.
+
+        The output path validates in ``_extract_and_validate_structured_content``, offloaded
+        with ``asyncio.to_thread`` at its call site. Removing that offload stalls the loop for
+        the sandbox timeout, so the budget is half of ``regex_timeout_seconds``, as in the
+        input-path test above.
+        """
+        # First-Party
+        from mcpgateway.config import settings
+        from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+
+        min_heartbeats = 15
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.output_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+        }
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"q": "a" * 28 + "b"})
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        start_validation_pool()
+        try:
+            lateness: list[float] = []
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                """Wake every 10 ms and record how late each wake-up was."""
+                while not stop.is_set():
+                    start = time.perf_counter()
+                    await asyncio.sleep(0.01)
+                    lateness.append(time.perf_counter() - start - 0.01)
+
+            beat = asyncio.create_task(heartbeat())
+            await asyncio.sleep(0.2)
+            with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+                result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+            stop.set()
+            await beat
+        finally:
+            shutdown_validation_pool()
+
+        assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+        max_supported_regex_timeout_seconds = 1.0
+        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
+            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
+        )
+        budget = 0.5 * settings.regex_timeout_seconds
+        assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
+        assert result.is_error, "the hostile output must fail validation, not pass"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
