@@ -233,8 +233,9 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
+from mcpgateway.utils.error_formatter import PUBLIC_REASON_CODES, ErrorFormatter, extract_reason_code, sanitize_validation_error_for_log, should_expose_error_details
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
@@ -2454,10 +2455,19 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
     Returns:
         JSONResponse: A 422 Unprocessable Entity response with error details.
     """
-    logger.warning("Request validation error on %s: %s", _request.url.path if _request else "unknown", sanitize_validation_error_for_log(exc))
+    reason_code = extract_reason_code(exc)
+    logger.warning(
+        "Request validation error on %s: %s request_id=%s",
+        _request.url.path if _request else "unknown",
+        sanitize_validation_error_for_log(exc),
+        get_correlation_id(),
+    )
 
     if not should_expose_error_details():
-        return ORJSONResponse(status_code=422, content={"detail": "An error occurred, please try again."})
+        content: dict = {"detail": "An error occurred, please try again."}
+        if reason_code in PUBLIC_REASON_CODES:
+            content["reason_code"] = reason_code
+        return ORJSONResponse(status_code=422, content=content)
 
     if _request.url.path.startswith("/tools"):
         error_details = []
@@ -7640,6 +7650,7 @@ async def register_gateway(
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, GatewayConnectionError):
+            logger.warning("Gateway registration rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
@@ -7780,6 +7791,7 @@ async def update_gateway(
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, GatewayConnectionError):
+            logger.warning("Gateway update rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
