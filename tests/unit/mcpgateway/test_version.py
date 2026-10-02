@@ -426,6 +426,35 @@ def test_system_metrics_no_psutil(monkeypatch: pytest.MonkeyPatch) -> None:
     assert metrics == {}
 
 
+@pytest.mark.parametrize("exc", [
+    SystemError("cpu_freq C extension error"),
+    RuntimeError("invalid CPU frequency data"),
+])
+def test_system_metrics_cpu_freq_exception_sets_none(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    """cpu_freq_mhz is None when psutil.cpu_freq() raises (psutil bug #2382)."""
+    # Standard
+    from unittest.mock import MagicMock
+
+    # First-Party
+    from mcpgateway import version as ver_mod
+
+    mock_psutil = MagicMock()
+    mock_psutil.cpu_freq.side_effect = exc
+    mock_psutil.cpu_percent.return_value = 12.3
+    mock_psutil.cpu_count.return_value = 8
+    mock_psutil.virtual_memory.return_value = MagicMock(total=8 * 1_073_741_824, used=4 * 1_073_741_824)
+    mock_psutil.swap_memory.return_value = MagicMock(total=2 * 1_073_741_824, used=1 * 1_073_741_824)
+    mock_psutil.disk_usage.return_value = MagicMock(total=100 * 1_073_741_824, used=40 * 1_073_741_824)
+    mock_psutil.boot_time.return_value = 0
+    mock_psutil.Process.return_value = MagicMock(pid=1234)
+    monkeypatch.setattr(ver_mod, "psutil", mock_psutil)
+
+    metrics = ver_mod._system_metrics()
+
+    assert metrics["cpu_freq_mhz"] is None
+    assert metrics["cpu_percent"] == 12.3
+
+
 def test_login_html_rendering() -> None:
     """Test _login_html function."""
     # First-Party
