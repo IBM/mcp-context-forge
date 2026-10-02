@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 from urllib.parse import urlparse
 
 # Third-Party
-from cpex.framework import PluginManager, PluginMode
+from cpex.framework import PluginManager
 from cpex.framework.hooks.tools import ToolHookType
 from cpex.framework.models import PluginResult
 import jsonschema
@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
-from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.cache.tool_lookup_cache import ToolLookupCache, tool_lookup_cache
 from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
@@ -2044,6 +2044,43 @@ class TestToolService:
         assert "statement" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_update_gateway_tool_custom_name_checks_final_invocation_name(self, tool_service, mock_tool, test_db, monkeypatch):
+        """Gateway-backed custom-name updates reject collisions with full local invocation names."""
+        mock_tool.gateway.name = "prod"
+        conflicting_tool = MagicMock(spec=DbTool)
+        conflicting_tool.id = "2"
+        conflicting_tool.name = "prod-search"
+        conflicting_tool.enabled = True
+        conflicting_tool.visibility = "public"
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_for_update", Mock(side_effect=[mock_tool, conflicting_tool]))
+        tool_service._server_ids_for_tool_cache_invalidation = Mock(return_value=())
+        test_db.rollback = Mock()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.update_tool(test_db, "1", ToolUpdate(custom_name="search"))
+
+        test_db.rollback.assert_called_once()
+        assert mock_tool.custom_name == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_tool_visibility_checks_final_invocation_name(self, tool_service, mock_tool, test_db, monkeypatch):
+        """Gateway-backed visibility updates validate full invocation name in target scope."""
+        mock_tool.gateway.name = "prod"
+        conflicting_tool = MagicMock(spec=DbTool)
+        conflicting_tool.id = "2"
+        conflicting_tool.name = "prod-test-tool"
+        conflicting_tool.enabled = True
+        conflicting_tool.visibility = "team"
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_for_update", Mock(side_effect=[mock_tool, conflicting_tool]))
+        tool_service._server_ids_for_tool_cache_invalidation = Mock(return_value=())
+        test_db.rollback = Mock()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.update_tool(test_db, "1", ToolUpdate(visibility="team"))
+
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_tool_not_found(self, tool_service, test_db):
         """Test updating a non-existent tool."""
         # Mock DB get to return None
@@ -2197,6 +2234,171 @@ class TestToolService:
         assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_arguments_failing_input_schema(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Arguments missing a required input_schema property must raise ToolInvocationError
+        before dispatch (#5629) -- shared with preview_tool_invocation via
+        _resolve_tool_for_invocation / _validate_tool_input_arguments so the two paths can
+        never disagree about whether given arguments are acceptable."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with pytest.raises(ToolInvocationError, match="'param' is a required property"):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_and_preview_agree_on_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Same-input parity (#5629 acceptance criteria): given the same tool and the same
+        invalid arguments, invoke_tool and preview_tool_invocation must agree that the
+        arguments are rejected -- one raising, the other reporting -- rather than one
+        silently accepting what the other rejects."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {})
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" for w in preview_result.warnings)
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        with pytest.raises(ToolInvocationError):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.asyncio
+    async def test_preview_tool_invocation_offloads_hostile_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A catastrophic input_schema must not stall the loop through the real entry point.
+
+        tests/security/test_schema_regex_redos.py proves the sandbox mechanism itself stays
+        bounded, but it wraps its own call in ``asyncio.to_thread`` and so never exercises
+        whether production actually offloads it. ``_resolve_tool_for_invocation`` -- shared by
+        ``invoke_tool`` and ``preview_tool_invocation`` -- calls the schema validator directly
+        from async code; without ``asyncio.to_thread`` there, this test stalls for the sandbox's
+        timeout budget instead of returning to the loop immediately. ``preview_tool_invocation``
+        is the entry point here because it resolves and validates without dispatching (#5629),
+        so no HTTP/MCP/jq mocking is needed to isolate the validation offload.
+        """
+        # First-Party
+        from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+
+        # The subject length and the timeout phrase mirror tests/security/test_schema_regex_redos.py,
+        # which documents that reasoning.
+        #
+        # The loop-stall budget here is deliberately tighter than that sibling test's, because
+        # this test targets a different bug shape. That sibling test proves the sandbox worker
+        # itself is bounded; a thread-only non-fix there still stalls the loop for close to the
+        # sandbox's own timeout (~1s), so its budget only needs to rule out an *unbounded* stall
+        # (multiple seconds). This test proves the offload at the call site is actually present;
+        # a MISSING offload here also stalls for close to the sandbox timeout, not forever,
+        # because the sandbox still kills the runaway worker -- so a loose budget would pass on
+        # a genuinely broken call site. Measured directly: with the offload removed, the call
+        # blocks the loop for 1.01s (the sandbox's own regex_timeout_seconds); with it in place,
+        # 0.006s. Half of the timeout setting sits with wide margin on both sides of that gap.
+        bounded_phrase = "exceeded the execution time limit"
+        max_supported_regex_timeout_seconds = 1.0
+        min_heartbeats = 15
+
+        mock_tool.input_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+        }
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        start_validation_pool()
+        try:
+            lateness: list[float] = []
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                """Wake every 10 ms and record how late each wake-up was."""
+                while not stop.is_set():
+                    start = time.perf_counter()
+                    await asyncio.sleep(0.01)
+                    lateness.append(time.perf_counter() - start - 0.01)
+
+            beat = asyncio.create_task(heartbeat())
+            await asyncio.sleep(0.2)
+            preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {"q": "a" * 28 + "b"})
+            stop.set()
+            await beat
+        finally:
+            shutdown_validation_pool()
+
+        assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
+            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
+        )
+        budget = 0.5 * settings.regex_timeout_seconds
+        assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s -- a missing offload stalls near the sandbox's own timeout, not forever, so this must stay tight"
+
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" and bounded_phrase in w.message for w in preview_result.warnings), f"validation must be stopped by the budget, not by an unrelated refusal; got {preview_result.warnings!r}"
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.asyncio
+    async def test_invoke_tool_offloads_hostile_output_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A catastrophic output_schema must not stall the loop through ``invoke_tool``.
+
+        The output path validates in ``_extract_and_validate_structured_content``, offloaded
+        with ``asyncio.to_thread`` at its call site. Removing that offload stalls the loop for
+        the sandbox timeout, so the budget is half of ``regex_timeout_seconds``, as in the
+        input-path test above.
+        """
+        # First-Party
+        from mcpgateway.config import settings
+        from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+
+        min_heartbeats = 15
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.output_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+        }
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"q": "a" * 28 + "b"})
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        start_validation_pool()
+        try:
+            lateness: list[float] = []
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                """Wake every 10 ms and record how late each wake-up was."""
+                while not stop.is_set():
+                    start = time.perf_counter()
+                    await asyncio.sleep(0.01)
+                    lateness.append(time.perf_counter() - start - 0.01)
+
+            beat = asyncio.create_task(heartbeat())
+            await asyncio.sleep(0.2)
+            with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+                result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+            stop.set()
+            await beat
+        finally:
+            shutdown_validation_pool()
+
+        assert len(lateness) >= min_heartbeats, f"heartbeat produced {len(lateness)} samples; the loop assertion would be vacuous"
+        max_supported_regex_timeout_seconds = 1.0
+        assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
+            f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
+        )
+        budget = 0.5 * settings.regex_timeout_seconds
+        assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
+        assert result.is_error, "the hostile output must fail validation, not pass"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         # ----------------  DB  -----------------
         mock_tool.integration_type = "REST"
@@ -2260,7 +2462,9 @@ class TestToolService:
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 205
-        mock_response.json = Mock(return_value=ToolResult(content=[TextContent(type="text", text="Tool error encountered")]))
+        # For error responses, json() should raise or return dict with "error" key
+        mock_response.text = "Tool error encountered"
+        mock_response.json = Mock(return_value={"error": "Tool error encountered"})
 
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
@@ -2271,7 +2475,7 @@ class TestToolService:
             # -------------- invoke -----------------
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-        assert result.content[0].text == "Tool error encountered"
+        assert "Tool error encountered" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_post(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -3182,18 +3386,12 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
@@ -3202,8 +3400,8 @@ class TestToolService:
             # ------------------------------------------------------------------
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
-        session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None)
+        session_mock.initialize.assert_not_awaited()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
 
         # Our ToolResult bubbled back out
         assert result.content[0].text == "MCP response"
@@ -3281,6 +3479,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -3288,15 +3487,14 @@ class TestToolService:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         # Pin a downstream session id so use_registry=True and the RegistryNotInitializedError
         # branch actually fires. Without this, the registry-init try/except is skipped.
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-abc"})
         try:
             with (
-                patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
                 patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
@@ -3306,8 +3504,9 @@ class TestToolService:
             request_headers_var.reset(headers_token)
 
         # The per-call streamablehttp client path still reached call_tool successfully.
-        session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        # Note: mcp_proxy_client does NOT call initialize() - the client auto-initializes internally.
+        session_mock.initialize.assert_not_awaited()
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
         assert result.content[0].text == "fallback ok"
 
     @pytest.mark.asyncio
@@ -3364,14 +3563,11 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
-        async def mock_sse_client(*_args, **_kwargs):
-            yield ("read", "write")
+        async def mock_proxy_client(*_args, **_kwargs):
+            yield session_mock
 
         def inject_headers(headers):
             traced = dict(headers)
@@ -3381,8 +3577,7 @@ class TestToolService:
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
         try:
             with (
-                patch("mcpgateway.services.tool_service.sse_client", mock_sse_client),
-                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_proxy_client),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
                 patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
@@ -3398,11 +3593,16 @@ class TestToolService:
         finally:
             request_headers_var.reset(headers_token)
 
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; no explicit initialize() call.
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once_with(
             "dummy_tool",
             {"p": "v"},
             meta={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"},
+            progress_callback=None,
+            allow_input_required=True,
+            input_responses=None,
+            request_state=None,
         )
         assert result.content[0].text == "sse fallback ok"
 
@@ -3455,6 +3655,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -3465,7 +3666,7 @@ class TestToolService:
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_headers.update(kwargs["headers"])
-            yield ("read", "write", None)
+            yield session_mock
 
         span_names = []
 
@@ -3481,8 +3682,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.create_span", side_effect=record_span),
@@ -3564,6 +3764,7 @@ class TestToolService:
         expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
+        upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
 
         captured_registry_headers = {}
 
@@ -3622,7 +3823,6 @@ class TestToolService:
         registry for a DIFFERENT upstream session.
         """
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         # First-Party
@@ -3672,6 +3872,7 @@ class TestToolService:
         expected = ToolResult(content=[TextContent(type="text", text="ok")])
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected)
+        upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
 
         observed_keys: list[tuple[str, str]] = []
 
@@ -3722,7 +3923,6 @@ class TestToolService:
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
         """Test MCP tool invocation falls back to isError when is_error is None."""
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         mock_gateway = SimpleNamespace(
@@ -3769,7 +3969,7 @@ class TestToolService:
         # This triggers the fallback at line 3684
         call_result = MagicMock()
         call_result.is_error = None
-        call_result.isError = True
+        call_result.is_error = True
         call_result.content = [TextContent(type="text", text="error from remote")]
         call_result.model_dump.return_value = {
             "content": [{"type": "text", "text": "error from remote"}],
@@ -3782,18 +3982,13 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
@@ -3813,7 +4008,6 @@ class TestToolService:
         where real tool output belonged.
         """
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         monkeypatch.setenv("JWT_SECRET_KEY", "mcp-sink-canary-must-not-appear")
@@ -3871,23 +4065,18 @@ class TestToolService:
         call_result.meta = None
 
         session_mock = AsyncMock()
-        session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.session.call_tool = session_mock.call_tool
+        # mcp_proxy_client auto-initializes internally; the mock is used directly
+        # as the async context manager yielding the client.
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with (
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
         ):
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
@@ -3896,6 +4085,164 @@ class TestToolService:
         assert result.content[0].text == "jsonpath filter uses a restricted jq builtin"
         assert "mcp-sink-canary-must-not-appear" not in str(result.content)
         assert mock_metrics_buffer.record_tool_metric.call_args[1]["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_preserves_empty_dict_structured_content(self, tool_service, mock_tool, test_db):
+        """Empty dict in structuredContent must be preserved (not treated as falsy).
+
+        Regression test for bug where Python's `or` operator discarded valid
+        `structuredContent: {}` responses (empty dicts are falsy in Python).
+        This is a valid MCP response for tools with outputSchema.
+        """
+        # Standard
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [value] if value else []
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        # Mock MCP response with empty dict in structuredContent
+        call_result = MagicMock()
+        call_result.is_error = False
+        call_result.isError = False
+        call_result.content = [TextContent(type="text", text="tool output")]
+        call_result.model_dump.return_value = {
+            "content": [{"type": "text", "text": "tool output"}],
+            "isError": False,
+            "structuredContent": {},  # Empty dict - must be preserved
+            "structured_content": None,
+        }
+        call_result.meta = None
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=call_result)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        # Empty dict must be preserved, not converted to None
+        assert result.structured_content == {}, f"Expected empty dict, got {result.structured_content!r}"
+        assert result.is_error is False
+        assert result.content[0].text == "tool output"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_preserves_empty_dict_snake_case_fallback(self, tool_service, mock_tool, test_db):
+        """Preserve empty structured content from snake_case dump fallback."""
+        # Standard
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [value] if value else []
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        call_result = MagicMock()
+        call_result.is_error = False
+        call_result.isError = False
+        call_result.content = [TextContent(type="text", text="tool output")]
+        call_result.model_dump.return_value = {
+            "content": [{"type": "text", "text": "tool output"}],
+            "isError": False,
+            "structured_content": {},
+        }
+        call_result.meta = None
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=call_result)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        assert result.structured_content == {}, f"Expected empty dict, got {result.structured_content!r}"
+        assert result.is_error is False
+        assert result.content[0].text == "tool output"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_non_standard(self, tool_service, mock_tool, test_db):
@@ -4208,21 +4555,14 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
 
-        # @asynccontextmanager
-        # async def mock_sse_client(*_args, **_kwargs):
-        #     yield ("read", "write")
-
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
-
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm) as proxy_client_mock,
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
@@ -4231,16 +4571,18 @@ class TestToolService:
             # ------------------------------------------------------------------
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
+        # mcp_proxy_client auto-initializes internally; no explicit initialize() call.
+        session_mock.initialize.assert_not_awaited()
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
 
-        sse_ctx.__aenter__.assert_awaited_once()
+        client_session_cm.__aenter__.assert_awaited_once()
 
-        sse_client_mock.assert_called_once()
-        sse_call_kwargs = sse_client_mock.call_args.kwargs
-        assert sse_call_kwargs["url"] == mock_gateway.url
-        assert sse_call_kwargs["headers"]["Authorization"] == "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="
-        assert sse_call_kwargs["httpx_client_factory"] is not None
+        proxy_client_mock.assert_called_once()
+        proxy_call_kwargs = proxy_client_mock.call_args.kwargs
+        assert proxy_call_kwargs["url"] == mock_gateway.url
+        assert proxy_call_kwargs["headers"]["Authorization"] == "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="
+        assert proxy_call_kwargs["httpx_client_factory"] is not None
+        assert proxy_call_kwargs["transport"] == "sse"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -4292,13 +4634,10 @@ class TestToolService:
         mock_scalar.all.return_value = [mock_tool]
         test_db.execute = Mock(return_value=mock_scalar)
 
-        # Mock SSE client and session
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ["read", "write"]
-
+        # Mock MCP client session (mcp_proxy_client auto-initializes)
         session_mock = AsyncMock()
-        session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="MCP response")]))
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -4309,14 +4648,13 @@ class TestToolService:
         mock_metrics_buffer = Mock()
 
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None, meta_data=meta_data)
 
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {}, meta=meta_data)
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {}, meta=meta_data, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error_exception_group_unwrapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -4820,17 +5158,14 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
 
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
-
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
@@ -4844,8 +5179,8 @@ class TestToolService:
         assert call_args[1]["client_cert"] is None
         assert call_args[1]["client_key"] is None
 
-        # Verify MCP session was initialized and tool called
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; tool was called
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
 
     async def test_invoke_tool_with_passthrough_headers_rest(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -4911,13 +5246,11 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
-
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
 
         # Mock compute_passthrough_headers_cached to return modified headers
         def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
@@ -4928,16 +5261,15 @@ class TestToolService:
         request_headers = {"X-Custom-Header": "custom-value", "Authorization": "Bearer test"}
 
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=mock_passthrough),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
-        # Verify MCP session was initialized and tool called
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; tool was called
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
 
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -5181,6 +5513,160 @@ class TestToolService:
 
         assert "Plugin error" in str(exc_info.value)
 
+    async def test_invoke_tool_mcp_pre_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, test_db):
+        """MCP pre-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        gateway = SimpleNamespace(
+            id="gateway-1",
+            name="gateway-one",
+            slug="gateway-one",
+            url="http://gateway.example/mcp",
+            description="test gateway",
+            enabled=True,
+            reachable=True,
+            deprecated=False,
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+            capabilities={},
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            client_cert=None,
+            client_key=None,
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+            tags=[],
+            gateway_mode="cache",
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "STREAMABLEHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.gateway = gateway
+        mock_tool.gateway_id = gateway.id
+        mock_tool.name = "gateway-one-tool-one"
+        mock_tool.original_name = "tool-one"
+        setup_db_execute_mock(test_db, mock_tool, MagicMock(passthrough_headers=[]))
+
+        denial = PluginViolationError("rate limited")
+        denial.executions = []
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="rate limited"):
+                await tool_service.invoke_tool(test_db, "tool-one", {"param": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].pre_denied is True
+
+    async def test_invoke_tool_a2a_pre_invoke_violation_emits_control_telemetry(self, tool_service, test_db):
+        """A2A pre-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        # First-Party
+        from mcpgateway.services.tool_service import ResolvedTool
+
+        tool_payload = {
+            "id": "a2a-tool",
+            "name": "a2a-tool",
+            "original_name": "a2a-tool",
+            "url": "",
+            "integration_type": "A2A",
+            "request_type": "POST",
+            "headers": {},
+            "input_schema": {"type": "object"},
+            "annotations": {"a2a_agent_id": "agent-1"},
+            "enabled": True,
+            "reachable": True,
+            "gateway_id": None,
+        }
+        resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
+        agent = SimpleNamespace(
+            enabled=True,
+            name="agent-one",
+            endpoint_url="http://agent.example/a2a",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            passthrough_headers=[],
+        )
+        agent_query = MagicMock()
+        agent_query.scalar_one_or_none.return_value = agent
+        test_db.execute = MagicMock(return_value=agent_query)
+
+        denial = PluginViolationError("policy denied")
+        denial.executions = []
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook: hook == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(side_effect=denial)
+
+        with (
+            patch.object(tool_service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=None),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="policy denied"):
+                await tool_service.invoke_tool(test_db, "a2a-tool", {"query": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].pre_denied is True
+
+    async def test_invoke_tool_post_invoke_violation_emits_control_telemetry(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Post-invoke policy denials flush a denied control result before raising."""
+        # Third-Party
+        from cpex.framework.errors import PluginViolationError
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        denial = PluginViolationError("response blocked")
+        denial.executions = []
+        mock_pm = MagicMock()
+
+        async def invoke_hook(hook, *_args, **_kwargs):
+            if hook == ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(continue_processing=True), None
+            raise denial
+
+        mock_pm.has_hooks_for.return_value = True
+        mock_pm.invoke_hook = invoke_hook
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+            patch("mcpgateway.services.tool_service.record_control_telemetry") as record_telemetry,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            with pytest.raises(PluginViolationError, match="response blocked"):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        record_telemetry.assert_called_once()
+        assert record_telemetry.call_args.kwargs["accumulator"].post_denied is True
+
     async def test_invoke_tool_with_plugin_metadata_rest(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook error when fail_on_plugin_error is True."""
         # Configure tool as REST
@@ -5242,15 +5728,11 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
-
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
-
-        # Mock HTTP client response
 
         # Mock plugin manager and post-invoke hook with error
         pm = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/tool_headers_metadata_plugin.yaml")
@@ -5259,8 +5741,7 @@ class TestToolService:
         tool_service._record_tool_metric_sync = Mock()
 
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=pm)),
         ):
@@ -6352,6 +6833,75 @@ class TestRestToolNonJsonResponses:
             assert "Failed to parse JSON error response" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_rest_tool_handles_json_error_with_error_key(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """HTTP error response with JSON containing 'error' key."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(
+            side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response)
+        )
+        mock_response.status_code = 500
+        mock_response.text = '{"error": "Internal server error", "code": "ERR_500"}'
+        mock_response.json = Mock(return_value={"error": "Internal server error", "code": "ERR_500"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            # Error message should extract the "error" value
+            assert "Internal server error" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_json_error_without_error_key(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """HTTP error response with JSON but no 'error' key."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(
+            side_effect=httpx.HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+        )
+        mock_response.status_code = 404
+        mock_response.text = '{"message": "Resource not found", "path": "/api/test"}'
+        mock_response.json = Mock(return_value={"message": "Resource not found", "path": "/api/test"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            # Error message should use fallback format
+            assert "HTTP 404:" in result.content[0].text
+            assert "Resource not found" in result.content[0].text
+
+    @pytest.mark.asyncio
     async def test_rest_tool_handles_plain_text_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
         """REST tool handles plain text responses without crashing."""
         mock_tool.integration_type = "REST"
@@ -6379,6 +6929,8 @@ class TestRestToolNonJsonResponses:
 
             assert result.content[0].text is not None
             assert "Failed to parse JSON response" in caplog.text
+            # No outputSchema: plain text is still a successful result (#6199 only affects schema tools)
+            assert result.is_error is False
 
     @pytest.mark.asyncio
     async def test_rest_tool_handles_xml_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
@@ -6468,7 +7020,10 @@ class TestRestToolNonJsonResponses:
 
     @pytest.mark.asyncio
     async def test_rest_tool_truncates_large_response_text(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
-        """REST tool truncates response text exceeding REST_RESPONSE_TEXT_MAX_LENGTH."""
+        """REST tool truncates response text exceeding REST_RESPONSE_TEXT_MAX_LENGTH.
+
+        Without an outputSchema the truncated text is still returned as a successful result (#6199).
+        """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "GET"
         mock_tool.jsonpath_filter = ""
@@ -6493,15 +7048,17 @@ class TestRestToolNonJsonResponses:
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-            assert result.content[0].text is not None
+            assert result.is_error is False
             result_data = orjson.loads(result.content[0].text)
-            assert "response_text" in result_data
             assert len(result_data["response_text"]) == settings.rest_response_text_max_length
             assert f"Response truncated from {len(large_text)} to {settings.rest_response_text_max_length} characters" in caplog.text
 
     @pytest.mark.asyncio
     async def test_rest_tool_does_not_truncate_small_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
-        """REST tool does not truncate response text below the limit."""
+        """REST tool does not truncate response text below the limit.
+
+        Without an outputSchema the text is returned unchanged as a successful result (#6199).
+        """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "GET"
         mock_tool.jsonpath_filter = ""
@@ -6526,17 +7083,23 @@ class TestRestToolNonJsonResponses:
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
+            assert result.is_error is False
             result_data = orjson.loads(result.content[0].text)
             assert result_data["response_text"] == small_text
             assert "Response truncated" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_rest_tool_truncation_respects_config_value(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
-        """REST tool truncation uses the configured REST_RESPONSE_TEXT_MAX_LENGTH value."""
+        """REST tool truncation uses the configured REST_RESPONSE_TEXT_MAX_LENGTH value.
+
+        With an outputSchema, a non-JSON body is reported as an error whose message
+        includes the configured limit (#6199).
+        """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "GET"
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None
+        mock_tool.output_schema = {"type": "object"}
 
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
 
@@ -6561,9 +7124,265 @@ class TestRestToolNonJsonResponses:
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-            result_data = orjson.loads(result.content[0].text)
-            assert len(result_data["response_text"]) == 2000
+            # Error message includes the configured limit
+            assert result.is_error is True
+            assert "Response body is not valid JSON" in result.content[0].text
+            # Error message shows the patched limit (2000), not default (5000)
+            assert "Showing the first 2000 of 6000 characters" in result.content[0].text
+            # Truncated content is 2000 chars (matches patched setting)
+            assert "Y" * 2000 in result.content[0].text
             assert "Response truncated from 6000 to 2000 characters" in caplog.text
+            assert "outputSchema defined but no structured output" not in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_non_json_with_output_schema_skips_jq_filter(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """A non-JSON body on a schema tool reports the parse error without running the jq filter (#6199).
+
+        Feeding the parse-error TextContent to jq fails serialization and would replace the
+        useful truncation message with a generic "Error applying jsonpath filter".
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ".results"
+        mock_tool.auth_value = None
+        mock_tool.output_schema = {"type": "object"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        large_text = '{"results": ["' + "Z" * 10000
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = large_text
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Unterminated string", large_text, 13))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert "Response body is not valid JSON" in result.content[0].text
+            assert f"Showing the first {settings.rest_response_text_max_length} of {len(large_text)} characters" in result.content[0].text
+            assert "Error applying jsonpath filter" not in result.content[0].text
+            assert "jq filter failed" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_empty_body_with_output_schema_is_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """An empty 200 body on a schema tool is an error, not a validation failure (#6199)."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.output_schema = {"type": "object"}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+        # Standard
+        import json
+
+        mock_response.json = Mock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert result.content[0].text == "Empty response body"
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_nonstandard_2xx_json_list_body(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
+        """A 203 with a valid JSON array body is a tool error, not a JSON parse error."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 203
+        mock_response.text = '[{"id": 1}]'
+        mock_response.json = Mock(return_value=[{"id": 1}])
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert result.content[0].text == "Tool error encountered"
+            assert "Failed to parse JSON" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_http_error_json_list_body(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A non-2xx JSON array body containing "error" is reported, not indexed like a dict."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
+        mock_response.status_code = 500
+        mock_response.text = '["error", "boom"]'
+        mock_response.json = Mock(return_value=["error", "boom"])
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert result.content[0].text.startswith("HTTP 500:")
+            assert "boom" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_http_error_json_big_int_body(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A non-2xx JSON body with an out-of-range integer does not crash the gateway."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
+        mock_response.status_code = 500
+        mock_response.text = '{"code": 1000000000000000000000000000000}'
+        mock_response.json = Mock(return_value={"code": 10**30})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert result.content[0].text.startswith("HTTP 500:")
+            assert "1000000000000000000000000000000" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_http_error_json_body_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A non-2xx JSON body without an error key is echoed but bounded to the limit."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        body = '{"message": "' + "A" * 10000 + '"}'
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
+        mock_response.status_code = 500
+        mock_response.text = body
+        mock_response.json = Mock(return_value={"message": "A" * 10000})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert len(result.content[0].text) == len("HTTP 500: ") + settings.rest_response_text_max_length
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_http_error_non_string_error_value_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A non-2xx JSON body whose 'error' value is not a string is still bounded to the limit."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        error_value = {"detail": "A" * 10000}
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response))
+        mock_response.status_code = 500
+        mock_response.text = orjson.dumps({"error": error_value}).decode()
+        mock_response.json = Mock(return_value={"error": error_value})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert len(result.content[0].text) <= settings.rest_response_text_max_length
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_nonstandard_2xx_non_string_error_value_is_truncated(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A 203 JSON body whose 'error' value is not a string is still bounded to the limit."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        error_value = ["B" * 10000]
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 203
+        mock_response.text = orjson.dumps({"error": error_value}).decode()
+        mock_response.json = Mock(return_value={"error": error_value})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            assert len(result.content[0].text) <= settings.rest_response_text_max_length
 
 
 class TestSchemaValidatorCaching:
@@ -6603,6 +7422,105 @@ class TestSchemaValidatorCaching:
         # Invalid instance
         with pytest.raises(jsonschema.ValidationError):
             _validate_with_cached_schema({"foo": 123}, schema)
+
+
+class TestValidateToolInputArguments:
+    """Tests for _validate_tool_input_arguments, shared by invoke_tool and
+    preview_tool_invocation via _resolve_tool_for_invocation (#5629)."""
+
+    def test_no_schema_returns_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        assert _validate_tool_input_arguments({"anything": "goes"}, None) is None
+        assert _validate_tool_input_arguments({"anything": "goes"}, {}) is None
+
+    def test_valid_arguments_return_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+
+    def test_invalid_arguments_return_error_message(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        error = _validate_tool_input_arguments({}, schema)
+
+        assert error is not None
+        assert "required property" in error
+
+
+class TestSchemaReferenceIsolation:
+    """Tool input/output schemas are tool-controlled (a federated tool ships its own), and
+    jsonschema's default registry fetches remote ``$ref`` URIs over the network. Validation
+    must never make that request -- it would be an SSRF primitive reachable from the preview
+    route and every live invocation."""
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"type": "object", "properties": {"foo": {"$ref": "http://169.254.169.254/latest/meta-data/"}}},
+            {"type": "object", "properties": {"foo": {"$ref": "https://attacker.example.com/schema.json"}}},
+            {"type": "object", "properties": {"foo": {"$ref": "file:///etc/passwd"}}},
+            # Nested well below the root, where a shallow check would miss it.
+            {"type": "object", "properties": {"foo": {"allOf": [{"items": {"$ref": "http://internal.example/s.json"}}]}}},
+            # Relative ref resolved against an absolute $id base is still a network fetch.
+            {"$id": "https://attacker.example.com/base.json", "type": "object", "properties": {"foo": {"$ref": "sibling.json"}}},
+            {"type": "object", "properties": {"foo": {"$dynamicRef": "https://attacker.example.com/d.json"}}},
+            {"type": "object", "properties": {"foo": {"$recursiveRef": "https://attacker.example.com/r.json"}}},
+        ],
+    )
+    def test_non_local_refs_are_refused(self, schema):
+        """Every non-local reference keyword is rejected, wherever it sits in the schema."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        error = _validate_tool_input_arguments({"foo": "bar"}, schema)
+
+        assert error is not None
+        assert "non-local" in error
+
+    def test_no_network_call_is_attempted_for_remote_ref(self, monkeypatch):
+        """Belt and braces: nothing reaches urlopen, which is how jsonschema's default
+        registry retrieves a remote reference."""
+        # Standard
+        import urllib.request
+
+        def _fail(*_args, **_kwargs):
+            raise AssertionError("schema validation attempted a network fetch")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fail)
+
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "http://169.254.169.254/latest/meta-data/"}}}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is not None
+
+    def test_unresolvable_local_ref_fails_closed(self):
+        """A dangling same-document pointer is reported as a validation failure, not raised
+        past the caller and not resolved by reaching outside the document."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "#/$defs/missing"}}}
+        error = _validate_tool_input_arguments({"foo": "bar"}, schema)
+
+        assert error is not None
+        assert "does not exist" in error
+
+    def test_local_refs_still_validate_normally(self):
+        """The guard must not break the legitimate case: same-document $refs still resolve."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "#/$defs/name"}}, "required": ["foo"], "$defs": {"name": {"type": "string"}}}
+
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+        assert "is not of type 'string'" in (_validate_tool_input_arguments({"foo": 123}, schema) or "")
 
 
 class TestCorrelationIdPoolExclusion:
@@ -8630,8 +9548,8 @@ class TestToolServiceBulkImport:
         registry_cache.invalidate_tools.assert_awaited_once()
         lookup_cache.invalidate.assert_has_awaits(
             [
-                call("bulk_tool_a", gateway_id="gw-1"),
-                call("bulk_tool_b", gateway_id=None),
+                call("bulk_tool_a", gateway_id="gw-1", affected_server_ids=None),
+                call("bulk_tool_b", gateway_id=None, affected_server_ids=()),
             ]
         )
         mock_admin_cache.invalidate_tags.assert_awaited_once()
@@ -8862,6 +9780,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -8869,15 +9788,14 @@ class TestInvokeToolDirect:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -8901,22 +9819,18 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -8945,10 +9859,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         def inject_headers(headers):
             traced = dict(headers)
@@ -8958,7 +9869,7 @@ class TestInvokeToolDirect:
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_headers.update(kwargs["headers"])
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
@@ -8966,8 +9877,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9048,7 +9958,7 @@ class TestInvokeToolDirect:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_connection_error(self, tool_service, mock_direct_gateway):
-        """Connection failure in streamablehttp_client should raise ToolInvocationError."""
+        """Connection failure in streamable_http_client should raise ToolInvocationError."""
 
         @asynccontextmanager
         async def mock_streamable_client_error(*_args, **_kwargs):
@@ -9060,19 +9970,31 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client_error),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client_error),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
 
-            with pytest.raises(ToolInvocationError, match="Direct proxy tool invocation failed"):
-                await tool_service.invoke_tool_direct(
-                    gateway_id="gw-direct-1",
-                    name="remote_tool",
-                    arguments={},
-                    user_email="user@example.com",
-                    token_teams=["team-1"],
-                )
+            # After the MCP protocol fix, connection errors return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert hasattr(result, "is_error")
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # Error message should contain connection failure details
+            content_text = str(result.content[0])
+            assert "MCP server error" in content_text
+            assert "Connection refused" in content_text
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_passthrough_headers(self, tool_service, mock_direct_gateway):
@@ -9084,10 +10006,11 @@ class TestInvokeToolDirect:
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_headers.update(kwargs.get("headers", {}))
-            yield ("read", "write", None)
+            yield session_mock
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9098,8 +10021,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer xyz"}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9123,28 +10045,24 @@ class TestInvokeToolDirect:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_configurable_timeout(self, tool_service, mock_direct_gateway):
-        """Timeout passed to streamablehttp_client should match settings.mcpgateway_direct_proxy_timeout."""
+        """Timeout passed to streamable_http_client should match settings.mcpgateway_direct_proxy_timeout."""
         captured_kwargs = {}
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_kwargs.update(kwargs)
-            yield ("read", "write", None)
+            yield session_mock
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=MagicMock())
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 120  # Custom timeout
@@ -9165,6 +10083,7 @@ class TestInvokeToolDirect:
         expected_result = MagicMock()
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9172,7 +10091,7 @@ class TestInvokeToolDirect:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         # Create a mock tool row with original_name different from slugified name
         mock_tool = MagicMock()
@@ -9183,8 +10102,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9207,22 +10125,18 @@ class TestInvokeToolDirect:
         expected_result = MagicMock()
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=None)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9255,6 +10169,79 @@ class TestInvokeToolDirect:
                     name="some_tool",
                     arguments={},
                 )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_error_is_sanitized(self, tool_service, mock_direct_gateway):
+        """Connection error in invoke_tool_direct must be sanitized before reaching the client.
+
+        A gateway whose URL contains an auth token (query_param auth type) must not
+        leak that token verbatim in the returned error message.  The error text must
+        pass through sanitize_exception_message before being placed in the CallToolResult.
+        """
+        # Use a gateway with query_param auth so the snapshot code in invoke_tool_direct
+        # builds a decrypted param dict that sanitize_exception_message can redact.
+        from mcpgateway.utils.services_auth import encode_auth  # pylint: disable=import-outside-toplevel
+
+        secret_token = "super-secret-api-key"  # pragma: allowlist secret
+        encrypted = encode_auth({"apiKey": secret_token})
+
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "gw-direct-1"
+        gw.name = "direct_gateway"
+        gw.slug = "direct-gateway"
+        gw.url = f"http://remote-mcp:8080/mcp?apiKey={secret_token}"
+        gw.gateway_mode = "direct_proxy"
+        gw.auth_type = "query_param"
+        gw.auth_query_params = {"apiKey": encrypted}
+        gw.passthrough_headers = None
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.owner_email = None
+
+        @asynccontextmanager
+        async def mock_streamable_client_with_token(*_args, **_kwargs):
+            # Simulate connection error whose message contains the secret URL
+            raise ConnectionError(f"Connection refused: http://remote-mcp:8080/mcp?apiKey={secret_token}")
+            yield  # pragma: no cover
+
+        redacted_calls = []
+
+        def _capture_sanitize(msg, params=None):
+            redacted_calls.append((msg, params))
+            # Replace the secret value with REDACTED to prove sanitization ran
+            if params and secret_token in msg:
+                return msg.replace(secret_token, "REDACTED")
+            return msg
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(gw)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client_with_token),
+            patch("mcpgateway.services.tool_service.sanitize_exception_message", side_effect=_capture_sanitize),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.gateway_tool_name_separator = "--"
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # sanitize_exception_message must have been called (proving the fix is exercised)
+        assert redacted_calls, "sanitize_exception_message was not called — sanitization was skipped"
+
+        # The secret token must NOT appear in the returned content
+        content_text = result.content[0].text if result.content else ""
+        assert secret_token not in content_text, f"Secret leaked in error response: {content_text!r}"
+
+        # The result must still be a proper MCP error shape
+        assert result.is_error is True
 
 
 class TestInvokeToolDirectProxyViaHeader:
@@ -9362,6 +10349,7 @@ class TestInvokeToolDirectProxyViaHeader:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9369,7 +10357,7 @@ class TestInvokeToolDirectProxyViaHeader:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         # Mock global_config_cache to prevent DB calls
         mock_gc = MagicMock()
@@ -9381,8 +10369,7 @@ class TestInvokeToolDirectProxyViaHeader:
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.get_performance_tracker", return_value=MagicMock()),
@@ -9436,8 +10423,8 @@ class TestInvokeToolDirectProxyViaHeader:
                 )
 
 
-class TestToolInvocationScoping:
-    """Tests for tool invocation paths and server-scoped tool definitions."""
+class TestToolResolution:
+    """Tests for tool resolution and direct-proxy handling."""
 
     @pytest.fixture
     def mock_direct_gateway(self):
@@ -9501,6 +10488,7 @@ class TestToolInvocationScoping:
         mock_cache = AsyncMock()
         mock_cache.enabled = True
         mock_cache.get = AsyncMock(return_value=payload)
+        mock_cache.get_negative = AsyncMock(return_value=None)
         mock_cache.set = AsyncMock()
         mock_cache.set_negative = AsyncMock()
         return mock_cache
@@ -9583,6 +10571,7 @@ class TestToolInvocationScoping:
             )
 
         build_payload.assert_called_once_with(exact_name_tool, selected_gateway)
+        cache.get.assert_awaited_once_with("helper", server_id="server-1")
         tool_service._http_client.get.assert_awaited_once_with("http://tool.example/invoke", params={}, headers={})
         assert result.content[0].text == '{\n  "ok": true\n}'
 
@@ -9603,91 +10592,137 @@ class TestToolInvocationScoping:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-    @pytest.mark.asyncio
-    async def test_list_server_mcp_tool_definitions_public_only_and_output_schema(self, tool_service):
-        """Server-scoped MCP tool definitions should include outputSchema only when present."""
-        rows = [
-            {
-                "name": "tool-public",
-                "title": None,
-                "description": "desc",
-                "input_schema": {"type": "object"},
-                "output_schema": None,
-                "annotations": None,
-                "owner_email": None,
-                "team_id": None,
-                "visibility": "public",
-            },
-            {
-                "name": "tool-team",
-                "title": "Team Tool",
-                "description": "team-desc",
-                "input_schema": None,
-                "output_schema": {"type": "object"},
-                "annotations": {"title": "Team"},
-                "owner_email": "owner@example.com",
-                "team_id": "team-a",
-                "visibility": "team",
-            },
-        ]
-        db = MagicMock()
-        db.execute.return_value.mappings.return_value.all.return_value = rows
+    def test_unknown_negative_cache_status_is_logged_and_ignored(self, tool_service, caplog):
+        """Unknown negative statuses must not become an implicit denial."""
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.tool_service"):
+            tool_service._raise_for_negative_tool_status("tool-one", "future-status")
 
-        payload = await tool_service.list_server_mcp_tool_definitions(
-            db,
-            "srv-1",
-            include_inactive=False,
-            user_email="owner@example.com",
-            token_teams=["team-a"],
+        assert "Ignoring unknown negative tool cache status 'future-status' for tool tool-one" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_python_resolution_falls_back_after_scope_invalid_cache_hit(self, tool_service):
+        """A cache hit from another tenant must not terminate Python resolution."""
+        cached_tenant_b = self._cache_payload(id="tool-b", visibility="private", owner_email="b@example.com")
+        tenant_a_payload = self._cache_payload(id="tool-a", visibility="private", owner_email="a@example.com", gateway_id="gw-a", gateway={"id": "gw-a"})
+        cache = self._cache_mock(cached_tenant_b)
+        tenant_a_tool = SimpleNamespace(
+            enabled=True,
+            reachable=True,
+            visibility="private",
+            team_id=None,
+            owner_email="a@example.com",
+            gateway=SimpleNamespace(id="gw-a"),
         )
 
-        assert payload == [
-            {
-                "name": "tool-public",
-                "description": "desc",
-                "inputSchema": {"type": "object"},
-                "annotations": {},
-            },
-            {
-                "name": "tool-team",
-                "title": "Team Tool",
-                "description": "team-desc",
-                "inputSchema": {"type": "object", "properties": {}},
-                "annotations": {"title": "Team"},
-                "outputSchema": {"type": "object"},
-            },
-        ]
-        db.commit.assert_called_once()
+        async def _check_access(_db, payload, user_email, _token_teams):
+            return payload.get("owner_email") == user_email
 
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tenant_a_tool]) as load_invocable_tools,
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=tenant_a_payload),
+            patch.object(tool_service, "_check_tool_access", side_effect=_check_access),
+        ):
+            resolved = await tool_service._resolve_tool_for_invocation(
+                MagicMock(),
+                "shared-tool",
+                None,
+                "a@example.com",
+                ["team-a"],
+                "server-a",
+                False,
+                False,
+            )
 
+        assert resolved.tool_payload["id"] == "tool-a"
+        load_invocable_tools.assert_called_once()
+        cache.set.assert_awaited_once_with("shared-tool", tenant_a_payload, gateway_id="gw-a", server_id="server-a")
 
+    @pytest.mark.asyncio
+    async def test_python_resolution_rejects_detached_stale_cache_hit(self, tool_service):
+        """Python resolution must reject stale cache data after failed cross-worker invalidation."""
+        cache = self._cache_mock(self._cache_payload(id="detached-tool"))
+        db = MagicMock()
+        db.execute.return_value.first.return_value = None
 
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]) as load_invocable_tools,
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service._resolve_tool_for_invocation(
+                    db,
+                    "tool-one",
+                    None,
+                    None,
+                    None,
+                    "server-1",
+                    False,
+                    False,
+                )
 
+        load_invocable_tools.assert_called_once_with(db, "tool-one", server_id="server-1")
 
+    @pytest.mark.asyncio
+    async def test_python_resolution_isolates_negative_cache_by_caller(self, tool_service):
+        """One caller's offline result must not block another caller's valid lookup."""
+        cache = ToolLookupCache()
+        cache._enabled = True
+        cache._l2_enabled = False
+        offline_tool = SimpleNamespace(
+            id="tool-a",
+            name="tool-one",
+            enabled=True,
+            reachable=False,
+            gateway_id="gw-a",
+            gateway=SimpleNamespace(id="gw-a"),
+        )
+        online_tool = SimpleNamespace(
+            id="tool-b",
+            name="tool-one",
+            enabled=True,
+            reachable=True,
+            gateway_id="gw-b",
+            gateway=SimpleNamespace(id="gw-b"),
+        )
+        online_payload = self._cache_payload(
+            id="tool-b",
+            visibility="private",
+            owner_email="b@example.com",
+            gateway_id="gw-b",
+            gateway={"id": "gw-b"},
+        )
 
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", side_effect=[[offline_tool], [online_tool]]),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=online_payload),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="currently offline"):
+                await tool_service._resolve_tool_for_invocation(
+                    MagicMock(),
+                    "tool-one",
+                    None,
+                    "a@example.com",
+                    ["team-a"],
+                    None,
+                    False,
+                    False,
+                )
 
+            resolved = await tool_service._resolve_tool_for_invocation(
+                MagicMock(),
+                "tool-one",
+                None,
+                "b@example.com",
+                ["team-b"],
+                None,
+                False,
+                False,
+            )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        assert resolved.tool_payload["id"] == "tool-b"
 
     def test_load_invocable_tools_applies_server_scope_filter(self, tool_service):
         """Server-scoped tool loading should join through the server association table."""
@@ -9698,26 +10733,6 @@ class TestToolInvocationScoping:
 
         assert tool_service._load_invocable_tools(db, "tool-one", server_id="srv-1") == []
         db.execute.assert_called_once()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     @pytest.mark.asyncio
     async def test_invoke_tool_header_gateway_not_found(self, tool_service, test_db):

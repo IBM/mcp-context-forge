@@ -32,7 +32,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 from cpex.framework import PluginViolationError
 from cpex.framework.models import PluginViolation
 from fastapi import HTTPException
-import httpx
 from mcp_types import PromptArgument
 import mcp_types as types
 from mcp.shared.exceptions import MCPError
@@ -9019,12 +9018,8 @@ async def test_forwarded_post_routes_to_rpc(monkeypatch):
     mock_response.status_code = 200
     mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
@@ -9073,18 +9068,14 @@ async def test_forwarded_post_routes_to_rpc_multipart_body_and_auth_header(monke
         ]
     )
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, receive, send)
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
-    assert mock_client.post.call_args.kwargs["headers"]["authorization"] == "Bearer abc"
+    assert mock_post_rpc.call_args.kwargs["headers"]["authorization"] == "Bearer abc"
     # No client mcp-session-id was provided -> should not be echoed back
     assert b"mcp-session-id" not in [h[0] for h in messages[0]["headers"]]
 
@@ -9191,12 +9182,8 @@ async def test_forwarded_post_exception_falls_through(monkeypatch):
     body = b'{"jsonrpc":"2.0","method":"tools/list","id":1}'
     scope = _make_scope("/mcp", method="POST", headers=[(b"x-forwarded-internally", b"true")])
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=Exception("httpx fail"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.side_effect = Exception("httpx fail")
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
@@ -9242,18 +9229,14 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
     mock_response.status_code = 200
     mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
         # Verify the POST to /rpc includes server_id in params (created if missing)
-        mock_client.post.assert_called_once()
-        posted_content = mock_client.post.call_args.kwargs["content"]
+        mock_post_rpc.assert_called_once()
+        posted_content = mock_post_rpc.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
         assert "params" in posted_json, "params dict should be created when missing"
@@ -9301,17 +9284,13 @@ async def test_forwarded_post_injects_server_id_with_existing_params(monkeypatch
     mock_response.status_code = 200
     mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
-        mock_client.post.assert_called_once()
-        posted_content = mock_client.post.call_args.kwargs["content"]
+        mock_post_rpc.assert_called_once()
+        posted_content = mock_post_rpc.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
         assert posted_json["params"]["server_id"] == server_id
@@ -9365,18 +9344,14 @@ async def test_forwarded_post_injects_server_id_with_non_dict_params(monkeypatch
     mock_response.status_code = 200
     mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, _make_receive(params_json), send)
 
         # Must reach /rpc (not fall through to SDK)
-        mock_client.post.assert_called_once()
-        posted_content = mock_client.post.call_args.kwargs["content"]
+        mock_post_rpc.assert_called_once()
+        posted_content = mock_post_rpc.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
         assert isinstance(posted_json["params"], dict), f"params should be dict, was {type(posted_json['params'])}"
@@ -9421,18 +9396,14 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
     mock_response.status_code = 200
     mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, _make_receive(original_body), send)
 
         # Verify the POST to /rpc does NOT include server_id
-        mock_client.post.assert_called_once()
-        posted_content = mock_client.post.call_args.kwargs["content"]
+        mock_post_rpc.assert_called_once()
+        posted_content = mock_post_rpc.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
         # Body should be unchanged - no server_id injection
@@ -9466,16 +9437,10 @@ async def test_forwarded_post_denies_non_owner_session_access(monkeypatch):
     body = b'{"jsonrpc":"2.0","method":"ping","id":"x1"}'
     scope = _make_scope("/mcp", method="POST", headers=[(b"x-forwarded-internally", b"true"), (b"mcp-session-id", b"sess-abc")])
 
-    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
-
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
-        mock_client.post.assert_not_awaited()
+        mock_post_rpc.assert_not_awaited()
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 403
@@ -9567,19 +9532,15 @@ async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, receive, send)
 
         # Verify server_id was injected in local-owner branch
-        mock_client.post.assert_called_once()
-        posted_content = mock_client.post.call_args.kwargs["content"]
+        mock_post_rpc.assert_called_once()
+        posted_content = mock_post_rpc.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
         assert "params" in posted_json
@@ -9595,8 +9556,8 @@ async def test_local_affinity_post_dispatches_to_internal_endpoint_with_auth_con
     Closes the coverage gap for the local-owner path: instead of re-authenticating
     against public /rpc (which only understands ContextForge JWTs/cookies and would
     401 virtual-server OAuth or MCP_REQUIRE_AUTH=false public-only sessions), the
-    owner dispatches to the trusted-internal endpoint carrying the affinity runtime
-    marker, the HMAC, and the edge-validated auth context. The originating
+    owner dispatches through the trusted in-process helper with the edge-validated
+    auth context. The helper adds the affinity marker and HMAC. The originating
     Authorization header is preserved for the CSRF bearer short-circuit.
     """
     # Third-Party
@@ -9640,23 +9601,15 @@ async def test_local_affinity_post_dispatches_to_internal_endpoint_with_auth_con
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, receive, send)
 
-        mock_client.post.assert_called_once()
-        # Routed to the trusted-internal endpoint, NOT public /rpc.
-        assert mock_client.post.call_args.args[0] == "/_internal/mcp/rpc"
-        headers = mock_client.post.call_args.kwargs["headers"]
-        assert headers["x-contextforge-mcp-runtime"] == "affinity"
-        assert headers["x-contextforge-mcp-runtime-auth"]
-        assert headers["x-contextforge-auth-context"]
+        mock_post_rpc.assert_called_once()
+        assert mock_post_rpc.call_args.kwargs["auth_context"]
+        headers = mock_post_rpc.call_args.kwargs["headers"]
         # Authorization preserved for the CSRF bearer short-circuit.
         assert headers["authorization"] == "Bearer tok"
 
@@ -9709,18 +9662,14 @@ async def test_local_affinity_post_preserves_custom_auth_header(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, receive, send)
 
-        mock_client.post.assert_called_once()
-        headers = mock_client.post.call_args.kwargs["headers"]
+        mock_post_rpc.assert_called_once()
+        headers = mock_post_rpc.call_args.kwargs["headers"]
         # Configured header preserved (lowercased); hardcoded "authorization" not used.
         assert headers["x-mcp-gateway-auth"] == "Bearer custom-tok"
         assert "authorization" not in headers
@@ -9779,18 +9728,14 @@ async def test_local_affinity_post_injects_server_id_with_non_dict_params(monkey
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, receive, send)
 
-        mock_client.post.assert_called_once()
-        posted_content = mock_client.post.call_args.kwargs["content"]
+        mock_post_rpc.assert_called_once()
+        posted_content = mock_post_rpc.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
         assert isinstance(posted_json["params"], dict), f"params should be dict, was {type(posted_json['params'])}"
@@ -10128,13 +10073,9 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
@@ -10237,17 +10178,11 @@ async def test_local_affinity_post_denies_non_owner_session_access(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
-
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
-        mock_client.post.assert_not_awaited()
+        mock_post_rpc.assert_not_awaited()
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 403
@@ -10306,19 +10241,15 @@ async def test_local_affinity_post_routes_to_rpc_multipart_and_auth_header(monke
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
 
         await wrapper.handle_streamable_http(scope, receive, send)
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
-    assert mock_client.post.call_args.kwargs["headers"]["authorization"] == "Bearer abc"
+    assert mock_post_rpc.call_args.kwargs["headers"]["authorization"] == "Bearer abc"
 
 
 @pytest.mark.asyncio
@@ -10477,13 +10408,9 @@ async def test_local_affinity_post_exception_falls_through(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=Exception("httpx fail"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.side_effect = Exception("httpx fail")
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
@@ -13171,17 +13098,13 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
     with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
         with patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"):
             with patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class):
-                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_response)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=None)
-                    mock_client_cls.return_value = mock_client
+                with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+                    mock_post_rpc.return_value = mock_response
 
                     await wrapper.handle_streamable_http(scope, receive, send)
 
-                    mock_client.post.assert_called_once()
-                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    mock_post_rpc.assert_called_once()
+                    posted_content = mock_post_rpc.call_args.kwargs["content"]
                     posted_json = orjson.loads(posted_content)
 
                     assert "server_id" in posted_json["params"]
@@ -14281,17 +14204,13 @@ async def test_local_affinity_post_injects_server_id_when_params_missing(monkeyp
     with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
         with patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"):
             with patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class):
-                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_response)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=None)
-                    mock_client_cls.return_value = mock_client
+                with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+                    mock_post_rpc.return_value = mock_response
 
                     await wrapper.handle_streamable_http(scope, receive, send)
 
-                    mock_client.post.assert_called_once()
-                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    mock_post_rpc.assert_called_once()
+                    posted_content = mock_post_rpc.call_args.kwargs["content"]
                     posted_json = orjson.loads(posted_content)
 
                     # params was created and server_id injected
@@ -14344,17 +14263,13 @@ async def test_local_affinity_post_no_injection_without_server_url(monkeypatch):
     with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool):
         with patch("mcpgateway.services.session_affinity.get_worker_id", return_value="worker-1"):
             with patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class):
-                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_response)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=None)
-                    mock_client_cls.return_value = mock_client
+                with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc:
+                    mock_post_rpc.return_value = mock_response
 
                     await wrapper.handle_streamable_http(scope, receive, send)
 
-                    mock_client.post.assert_called_once()
-                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    mock_post_rpc.assert_called_once()
+                    posted_content = mock_post_rpc.call_args.kwargs["content"]
                     posted_json = orjson.loads(posted_content)
 
                     # No server_id injected
@@ -19509,13 +19424,9 @@ async def test_affinity_span_attributes_owner_is_different_worker(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.get_worker_id", return_value="this-worker"),
         patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process") as mock_post_rpc,
     ):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_client_cls.return_value = mock_client
+        mock_post_rpc.return_value = mock_response
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
     await wrapper.shutdown()
