@@ -869,6 +869,8 @@ class TimeseriesResponse(BaseModel):
 
     buckets: list[str]
     values: list[int]
+    success_count: list[int]
+    error_count: list[int]
 
 
 class PercentilesResponse(BaseModel):
@@ -906,7 +908,7 @@ async def get_metrics_timeseries(
         HTTPException: 500 if aggregation fails
     """
     if not settings.observability_enabled:
-        return TimeseriesResponse(buckets=[], values=[])
+        return TimeseriesResponse(buckets=[], values=[], success_count=[], error_count=[])
 
     try:
         service = ObservabilityService()

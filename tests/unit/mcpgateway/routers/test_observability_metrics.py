@@ -162,17 +162,20 @@ async def call_percentiles(db, *, hours=24, interval_minutes=60):
 
 @pytest.mark.asyncio
 async def test_timeseries_counts_executions_per_bucket(db_session, grant_permissions, monkeypatch):
-    """Traces are counted into fixed-width buckets, sparse and time-ordered."""
+    """Traces and statuses are counted into sparse, time-ordered buckets."""
     grant_permissions()
     monkeypatch.setattr(observability_module, "datetime", _FrozenDatetime)
-    make_trace(db_session, offset_seconds=300)
-    make_trace(db_session, offset_seconds=600)
-    make_trace(db_session, offset_seconds=5400)
+    make_trace(db_session, offset_seconds=300, status="ok")
+    make_trace(db_session, offset_seconds=600, status="error")
+    make_trace(db_session, offset_seconds=5400, status="ok")
+    make_trace(db_session, offset_seconds=5500, status="unset")
 
     response = await call_timeseries(db_session)
 
     assert response.buckets == ["2025-01-01T12:00:00+00:00", "2025-01-01T13:00:00+00:00"]
-    assert response.values == [2, 1]
+    assert response.values == [2, 2]
+    assert response.success_count == [1, 1]
+    assert response.error_count == [1, 0]
 
 
 @pytest.mark.asyncio
@@ -216,7 +219,7 @@ async def test_observability_disabled_returns_empty_series(db_session, grant_per
     timeseries = await call_timeseries(db_session)
     percentiles = await call_percentiles(db_session)
 
-    assert (timeseries.buckets, timeseries.values) == ([], [])
+    assert (timeseries.buckets, timeseries.values, timeseries.success_count, timeseries.error_count) == ([], [], [], [])
     assert (percentiles.buckets, percentiles.p50, percentiles.p95, percentiles.p99) == ([], [], [], [])
 
 
@@ -276,10 +279,12 @@ def test_postgres_buckets_normalized_to_utc():
     bucket = datetime(2025, 1, 1, 7, 0, 0, tzinfo=est)
 
     db = MagicMock()
-    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=bucket, total=2)]
+    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=bucket, total=2, success=1, error=1)]
     timeseries = _execution_timeseries_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
     assert timeseries["buckets"] == ["2025-01-01T12:00:00+00:00"]
     assert timeseries["values"] == [2]
+    assert timeseries["success_count"] == [1]
+    assert timeseries["error_count"] == [1]
 
     db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=bucket, p50=100.0, p95=190.0, p99=198.0)]
     percentiles = _latency_percentiles_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
@@ -317,7 +322,7 @@ def test_postgres_buckets_with_naive_timestamps_labeled_utc(non_utc_host_timezon
     naive_bucket = datetime(2025, 1, 1, 12, 0, 0)
 
     db = MagicMock()
-    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=naive_bucket, total=2)]
+    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=naive_bucket, total=2, success=1, error=1)]
     timeseries = _execution_timeseries_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
     assert timeseries["buckets"] == ["2025-01-01T12:00:00+00:00"]
 
@@ -357,7 +362,7 @@ async def test_metrics_permission_check_is_global_only(db_session, monkeypatch, 
 @pytest.mark.parametrize(
     "service_method,expected_keys",
     [
-        ("get_execution_timeseries", ("buckets", "values")),
+        ("get_execution_timeseries", ("buckets", "values", "success_count", "error_count")),
         ("get_latency_percentiles", ("buckets", "p50", "p95", "p99")),
     ],
 )
