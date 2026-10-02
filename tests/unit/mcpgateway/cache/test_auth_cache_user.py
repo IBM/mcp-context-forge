@@ -206,7 +206,7 @@ async def test_auth_context_key_uses_user_id_identity(monkeypatch):
     monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
     request = SimpleNamespace(state=SimpleNamespace())
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
         with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", get_auth_context_spy):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
                 with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
