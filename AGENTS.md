@@ -541,6 +541,7 @@ When `detect-secrets` identifies false positives:
 
 - **Python files**: suppress inline with `# pragma: allowlist secret` so they don't appear in `.secrets.baseline` after `make detect-secrets-scan`.
   - Exception: doctest strings where the comment breaks the assertion. Rely on `.secrets.baseline` and audit with `make detect-secrets-audit`.
+- **Makefile**: suppress audited false positives inline with `# pragma: allowlist secret`. In variable assignments, append the pragma directly after the value (no space): make keeps whitespace before a comment in the value.
 - **All other file types**: regenerate the baseline with `make detect-secrets-scan`.
 - **Merge conflicts**: resolve `.secrets.baseline` using the version from `main`.
 

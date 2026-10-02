@@ -626,7 +626,7 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 	@echo ""
 	@echo "💡  To use this certificate:"
 	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
-	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"  # pragma: allowlist secret
 
 .PHONY: certs-remove-passphrase
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
@@ -1072,24 +1072,28 @@ coverage-pytest: uv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
-	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
-	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
+	 BASIC_AUTH_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 PLATFORM_ADMIN_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 DEFAULT_USER_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
 	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
-	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
+	 AUTH_ENCRYPTION_SECRET=$(COVERAGE_AUTH_ENCRYPTION_SECRET) \
 	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 		--durations=120 --cov-report=term --cov=mcpgateway \
 		$(PYTEST_IGNORE_FLAGS) tests/ || true
 
+# Test-only fixture values; inline pragma per AGENTS.md secret-detection policy.
+COVERAGE_TEST_PASSWORD := TestCoveragePassw0rd!42# pragma: allowlist secret
+COVERAGE_AUTH_ENCRYPTION_SECRET := coverage-test-auth-encryption-1234567890# pragma: allowlist secret
+
 coverage: coverage-pytest
 	@DATABASE_URL='sqlite:///:memory:' \
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
-	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
-	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
-	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
+	 BASIC_AUTH_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 PLATFORM_ADMIN_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
+	 DEFAULT_USER_PASSWORD=$(COVERAGE_TEST_PASSWORD) \
 	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
-	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
+	 AUTH_ENCRYPTION_SECRET=$(COVERAGE_AUTH_ENCRYPTION_SECRET) \
 	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
@@ -1154,16 +1158,19 @@ test-curl:
 	./test_endpoints.sh
 
 ## --- Doctest targets ---------------------------------------------------------
+# Test-only fixture value; inline pragma per AGENTS.md secret-detection policy.
+DOCTEST_AUTH_ENCRYPTION_SECRET := doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus# pragma: allowlist secret
+
 doctest: uv
 	@echo "🧪 Running doctest on all modules..."
 	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
 	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
 
 doctest-verbose: uv
 	@echo "🧪 Running doctest with verbose output..."
 	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
-	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=$(DOCTEST_AUTH_ENCRYPTION_SECRET) \
 	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
 
 doctest-coverage: uv
@@ -1742,7 +1749,7 @@ langfuse-monitoring-up:                    ## Start Langfuse + full monitoring s
 	@echo ""
 	@echo "✅ Langfuse + monitoring stack started!"
 	@echo ""
-	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"
+	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"  # pragma: allowlist secret
 	@echo "   🌐 Grafana:        http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
 	@echo "   🔥 Prometheus:     http://localhost:$${PROMETHEUS_PORT:-9090}"
 	@echo "   🧵 Tempo:          http://localhost:$${TEMPO_PORT:-3200}"
@@ -1961,7 +1968,7 @@ demo-a2a-up:                               ## Start all 3 A2A demo agents with a
 	@echo "   🎫 Bearer Token:  http://localhost:$(DEMO_A2A_BEARER_PORT)  (log: /tmp/demo-a2a-bearer.log)"
 	@echo "   🔑 X-API-Key:     http://localhost:$(DEMO_A2A_APIKEY_PORT)  (log: /tmp/demo-a2a-apikey.log)"
 	@echo ""
-	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"
+	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"  # pragma: allowlist secret
 	@echo "   Stop agents:      make demo-a2a-down"
 	@echo ""
 
@@ -2011,7 +2018,7 @@ demo-a2a-bearer:                           ## Start only Bearer Token demo agent
 	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
 
-demo-a2a-apikey:                           ## Start only X-API-Key demo agent
+demo-a2a-apikey:                           ## Start only X-API-Key demo agent  # pragma: allowlist secret
 	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
 	@test -x "$(VENV_DIR)/bin/python" || $(MAKE) install-dev
 	$(VENV_DIR)/bin/python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
@@ -6166,7 +6173,7 @@ IBMCLOUD_REGISTRY_SECRET ?= $(IBMCLOUD_PROJECT)-registry-secret
 # IBMCLOUD_CODE_ENGINE_APP     = Code Engine app name
 # IBMCLOUD_IMAGE_NAME          = Full image path (e.g. us.icr.io/namespace/app:tag)
 # IBMCLOUD_IMG_PROD            = Local container image name
-# IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)
+# IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)  # pragma: allowlist secret
 
 ibmcloud-check-env:
 	@test -f .env.ce || { \
@@ -6676,7 +6683,7 @@ local-pypi-start: local-pypi-install local-pypi-stop
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
-local-pypi-start-auth: local-pypi-install local-pypi-stop
+local-pypi-start-auth: local-pypi-install local-pypi-stop  # pragma: allowlist secret
 	@echo "🚀  Starting local PyPI server with authentication on $(LOCAL_PYPI_URL)..."
 	@echo "🔐  Creating htpasswd file (admin/admin)..."
 	@mkdir -p $(LOCAL_PYPI_DIR)
@@ -6688,7 +6695,7 @@ local-pypi-start-auth: local-pypi-install local-pypi-stop
 	@sleep 2
 	@echo "✅  Local PyPI server started at $(LOCAL_PYPI_URL)"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
-	@echo "🔐  Username: admin, Password: admin"
+	@echo "🔐  Username: admin, Password: admin"  # pragma: allowlist secret
 
 local-pypi-stop:
 	@echo "🛑  Stopping local PyPI server..."
@@ -6760,7 +6767,7 @@ local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-
 # Convenience target to restart server
 local-pypi-restart: local-pypi-stop local-pypi-start
 
-local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth
+local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth  # pragma: allowlist secret
 
 # Show server status
 local-pypi-status:
@@ -7176,7 +7183,7 @@ alembic-install:
 # test-only values so 'make db-*' works on a fresh checkout without secrets.
 define db_env
 	$(eval _JWT  := $(shell grep -s '^JWT_SECRET_KEY=' .env | cut -d= -f2-))
-	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))
+	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))  # pragma: allowlist secret
 	$(eval _JWT  := $(if $(_JWT),$(_JWT),alembic-jwt-secret-DO-NOT-USE-IN-PRODUCTION-xx))
 	$(eval _ENC  := $(if $(_ENC),$(_ENC),alembic-enc-secret-DO-NOT-USE-IN-PRODUCTION-xx))
 endef
@@ -7866,7 +7873,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 ## --------------------------------------------------------------------------- ##
 ##  Snyk Authentication
 ## --------------------------------------------------------------------------- ##
-snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)
+snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)  # pragma: allowlist secret
 	@echo "🔑 Authenticating with Snyk..."
 	@command -v snyk >/dev/null 2>&1 || { \
 		echo "❌ Snyk CLI not installed."; \
