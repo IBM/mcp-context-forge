@@ -688,7 +688,6 @@ These settings were tested and found to have less than ~3% effect on MCP through
 | `VALIDATION_MIDDLEWARE_ENABLED` | Deprecated as of 2026-06-11; sunsets on 2026-07-07. MCP requests bypass most validation. See [Deprecations](../deprecations.md). |
 | `DB_METRICS_RECORDING_ENABLED` | Writes are buffered, minimal per-request overhead |
 | `REGISTRY_CACHE_ENABLED` | MCP handlers use their own DB queries, not the registry cache |
-| `PERFORMANCE_TRACKING_ENABLED` | Lightweight in-memory tracking |
 | `TOKEN_USAGE_LOGGING_ENABLED` | Rate-limited to one DB write per 5 minutes per token |
 | `CORRELATION_ID_ENABLED` | Adds/reads one header per request |
 
@@ -760,7 +759,6 @@ These add some overhead but are useful in most deployments. Disable only if you 
 | Feature | Setting | Default | When to Disable |
 |---------|---------|---------|-----------------|
 | **Correlation ID** | `CORRELATION_ID_ENABLED` | `true` | If your external proxy already handles trace IDs |
-| **Performance tracking** | `PERFORMANCE_TRACKING_ENABLED` | `true` | If using external APM (Datadog, New Relic, etc.) |
 | **Metrics aggregation** | `METRICS_AGGREGATION_ENABLED` | `true` | If using external metrics (Prometheus, Grafana) |
 | **Metrics rollup** | `METRICS_ROLLUP_ENABLED` | `true` | If raw metrics are exported externally |
 | **Metrics cleanup** | `METRICS_CLEANUP_ENABLED` | `true` | Only disable if you manage retention externally |
@@ -768,7 +766,6 @@ These add some overhead but are useful in most deployments. Disable only if you 
 | **Tool cancellation** | `MCPGATEWAY_TOOL_CANCELLATION_ENABLED` | `true` | If clients do not cancel in-flight tool calls |
 | **SSE keepalive** | `SSE_KEEPALIVE_ENABLED` | `true` | If not using SSE transport |
 | **Dynamic client registration** | `DCR_ENABLED` | `true` | If not using OAuth DCR flow |
-| **OAuth discovery** | `OAUTH_DISCOVERY_ENABLED` | `true` | If not using OAuth |
 
 ### Low-impact features (safe to leave enabled)
 
@@ -853,7 +850,6 @@ DB_QUERY_LOG_ENABLED=true           # N+1 detection
 STRUCTURED_LOGGING_DATABASE_ENABLED=true
 LOG_LEVEL=INFO
 CORRELATION_ID_ENABLED=true
-PERFORMANCE_TRACKING_ENABLED=true
 ```
 
 ---
