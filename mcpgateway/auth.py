@@ -1529,6 +1529,120 @@ async def _try_external_verification(token: str, request: Optional[Request]) -> 
     return external_payload
 
 
+def _is_trust_eligible(payload: dict) -> bool:
+    """Apply the ``token_use="trusted"`` dispatch rule (#5896) to a verified payload.
+
+    A token marked ``token_use="trusted"`` is trust-eligible only when trust
+    mode is ON (``jwt_trust_mode="jwt-trust"``). With trust mode OFF the
+    marker must never enter the default funnel: the UUID->email seam could
+    silently re-attribute identity, and normalize_token_teams would honor the
+    embedded teams claim without the trust-mode claim mapping and revocation
+    rules.
+
+    Args:
+        payload: Verified JWT payload.
+
+    Returns:
+        True when the payload is marked trusted and trust mode is ON.
+
+    Raises:
+        HTTPException: 401 when the payload is marked trusted and trust mode
+            is OFF.
+    """
+    if payload.get("token_use") != "trusted":  # nosec B105 - Not a password; token_use is a JWT claim type
+        return False
+    if settings.jwt_trust_mode != "jwt-trust":
+        logger.warning(
+            "Rejected token with token_use=trusted: JWT trust mode is OFF",
+            extra={"security_event": "trust_token_rejected_mode_off"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Trusted tokens require JWT trust mode",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return True
+
+
+async def _resolve_trusted_principal(payload: dict) -> tuple[Any, str]:
+    """Derive the trust principal for a trust-eligible payload and check revocation.
+
+    Shared by the REST trust branch (``get_current_user``) and the
+    streamable-HTTP MCP transport. Runs on every request: the principal is
+    re-extracted from the claims and the configured revocation claim is
+    checked against the revocation store.
+
+    Args:
+        payload: Verified, trust-eligible payload (``token_use="trusted"``).
+
+    Returns:
+        ``(principal, revocation_id)``: the ``VirtualPrincipal`` and the
+        revocation identifier.
+
+    Raises:
+        HTTPException: 401 when a required mapped claim or the revocation
+            claim is absent, a group-resolution policy rejects the token, or
+            the token is revoked.
+    """
+    # First-Party
+    from mcpgateway.utils.trusted_claims import (
+        detect_app_only_token,
+        detect_overage_marker,
+        extract_revocation_id,
+        extract_trusted_principal,
+        resolve_overage_groups,
+        resolve_service_principal_groups,
+    )  # pylint: disable=import-outside-toplevel
+
+    # Entra group-overage markers mean the groups claim was omitted.
+    # Dispatch on jwt_trust_overage_policy (#5977): fail_closed ->
+    # 401; graph_lookup -> app-only Graph resolution;
+    # proceed_without_groups -> continue with no groups. The resolved
+    # group IDs replace the marker in a payload copy; the inbound
+    # payload is never mutated.
+    if detect_overage_marker(payload):
+        with fresh_db_session() as overage_db:
+            resolved_groups = await resolve_overage_groups(payload, settings, overage_db)
+        payload = {**payload, "groups": resolved_groups}
+    elif detect_app_only_token(payload) and payload.get("groups") is None and settings.jwt_trust_overage_policy == "graph_lookup":
+        # App-only tokens (idtyp="app") carry no groups claim and no
+        # overage markers. Under graph_lookup (#6756) the service
+        # principal's group membership resolves through
+        # /servicePrincipals/{oid}/getMemberObjects (cached,
+        # oid-keyed, TTL bounded by exp); the resolved group IDs feed
+        # the same external-group resolver as claim groups. Under
+        # fail_closed (default) and proceed_without_groups this branch
+        # is skipped: the token authenticates with token_teams=[] and
+        # the roles claim keeps the app-role path (#5902).
+        with fresh_db_session() as sp_db:
+            resolved_groups = await resolve_service_principal_groups(payload, settings, sp_db)
+        payload = {**payload, "groups": resolved_groups}
+
+    def _extract_principal_sync():
+        with fresh_db_session() as db:
+            return extract_trusted_principal(payload, settings, db)
+
+    # extract_trusted_principal raises 401 when a required mapped
+    # claim or the configured revocation claim is absent (fail-closed).
+    principal = await asyncio.to_thread(_extract_principal_sync)
+
+    # The email claim is optional in trust mode. When absent, the
+    # token subject backs the email attribute (display and tracing);
+    # the canonical user_id stays the opaque mapped claim.
+    if principal.email is None:
+        subject = payload.get("sub")
+        principal.email = subject if isinstance(subject, str) else None
+
+    revocation_id = extract_revocation_id(payload, settings)
+    if await asyncio.to_thread(_check_token_revoked_sync, revocation_id):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return principal, revocation_id
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
@@ -1863,18 +1977,7 @@ async def get_current_user(
         # could silently re-attribute identity, and normalize_token_teams
         # would honor the embedded teams claim without the trust-mode claim
         # mapping and revocation rules. Reject with 401.
-        if payload.get("token_use") == "trusted" and settings.jwt_trust_mode != "jwt-trust":  # nosec B105 - Not a password; token_use is a JWT claim type
-            logger.warning(
-                "Rejected token with token_use=trusted: JWT trust mode is OFF",
-                extra={"security_event": "trust_token_rejected_mode_off"},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Trusted tokens require JWT trust mode",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        if settings.jwt_trust_mode == "jwt-trust" and payload.get("token_use") == "trusted":  # nosec B105 - Not a password; token_use is a JWT claim type
+        if _is_trust_eligible(payload):
             # Trust-eligible branch for gateway-signed tokens (dispatch rule
             # branch (a) in docs/docs/architecture/auth-token-dispatch.md).
             # Identity, teams, and roles derive from the mapped claims via
@@ -1892,62 +1995,7 @@ async def get_current_user(
             # The revocation check is RETAINED: the configured revocation
             # claim (jwt_trust_revocation_claim, default jti) is checked
             # against the revocation store on every request.
-            # First-Party
-            from mcpgateway.utils.trusted_claims import (
-                detect_app_only_token,
-                detect_overage_marker,
-                extract_revocation_id,
-                extract_trusted_principal,
-                resolve_overage_groups,
-                resolve_service_principal_groups,
-            )  # pylint: disable=import-outside-toplevel
-
-            # Entra group-overage markers mean the groups claim was omitted.
-            # Dispatch on jwt_trust_overage_policy (#5977): fail_closed ->
-            # 401; graph_lookup -> app-only Graph resolution;
-            # proceed_without_groups -> continue with no groups. The resolved
-            # group IDs replace the marker in a payload copy; the inbound
-            # payload is never mutated.
-            if detect_overage_marker(payload):
-                with fresh_db_session() as overage_db:
-                    resolved_groups = await resolve_overage_groups(payload, settings, overage_db)
-                payload = {**payload, "groups": resolved_groups}
-            elif detect_app_only_token(payload) and payload.get("groups") is None and settings.jwt_trust_overage_policy == "graph_lookup":
-                # App-only tokens (idtyp="app") carry no groups claim and no
-                # overage markers. Under graph_lookup (#6756) the service
-                # principal's group membership resolves through
-                # /servicePrincipals/{oid}/getMemberObjects (cached,
-                # oid-keyed, TTL bounded by exp); the resolved group IDs feed
-                # the same external-group resolver as claim groups. Under
-                # fail_closed (default) and proceed_without_groups this branch
-                # is skipped: the token authenticates with token_teams=[] and
-                # the roles claim keeps the app-role path (#5902).
-                with fresh_db_session() as sp_db:
-                    resolved_groups = await resolve_service_principal_groups(payload, settings, sp_db)
-                payload = {**payload, "groups": resolved_groups}
-
-            def _extract_principal_sync():
-                with fresh_db_session() as db:
-                    return extract_trusted_principal(payload, settings, db)
-
-            # extract_trusted_principal raises 401 when a required mapped
-            # claim or the configured revocation claim is absent (fail-closed).
-            principal = await asyncio.to_thread(_extract_principal_sync)
-
-            # The email claim is optional in trust mode. When absent, the
-            # token subject backs the email attribute (display and tracing);
-            # the canonical user_id stays the opaque mapped claim.
-            if principal.email is None:
-                subject = payload.get("sub")
-                principal.email = subject if isinstance(subject, str) else None
-
-            revocation_id = extract_revocation_id(payload, settings)
-            if await asyncio.to_thread(_check_token_revoked_sync, revocation_id):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token has been revoked",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+            principal, revocation_id = await _resolve_trusted_principal(payload)
 
             token_teams = list(principal.teams)
             if request:

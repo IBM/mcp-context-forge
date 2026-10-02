@@ -54,6 +54,7 @@ from mcpgateway.transports.streamablehttp_transport import (
     tool_service,
     user_context_var,
 )
+from mcpgateway.utils.trusted_claims import VirtualPrincipal
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -14280,6 +14281,356 @@ async def test_auth_jwt_legacy_token_performs_no_subject_lookup(monkeypatch):
     assert await handler._auth_jwt(token="tok") is True
     lookup.assert_not_called()
     assert tr.user_context_var.get()["email"] == "legacy@example.com"
+
+
+# ---------------------------------------------------------------------------
+# _auth_jwt: JWT-trust ingress on the streamable transport
+# ---------------------------------------------------------------------------
+
+
+_TRUST_TOKEN = tr.jwt.encode({"iss": "https://idp.example"}, "unit-test-signing-key-32-bytes-long", algorithm="HS256")
+
+
+def _trusted_payload(**overrides):
+    """Build the identity payload build_trusted_external_identity returns.
+
+    Args:
+        **overrides: Fields to replace in the default payload.
+
+    Returns:
+        A trust-principal payload dict.
+    """
+    payload = {
+        "sub": "kc-user-1",
+        "user_id": "kc-user-1",
+        "email": "dev@idp.example",
+        "jti": "jti-trust-1",
+        "token_use": "trusted",
+        "teams": ["team-a"],
+        "roles": ["developer"],
+        "is_admin": False,
+        "exp": 9999999999,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _trust_mode(monkeypatch, *, payload=None, side_effect=None, revoked=False):
+    """Enable trust mode and stub external verification and the revocation store.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        payload: Return value of _maybe_verify_external.
+        side_effect: Exception for _maybe_verify_external to raise instead.
+        revoked: What the revocation store reports for the token's jti.
+
+    Returns:
+        Tuple of (_maybe_verify_external mock, revocation-check mock, internal-path mock).
+    """
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", "jwt-trust")
+    monkeypatch.setattr(tr.settings, "jwt_trust_revocation_claim", "jti")
+    verify = AsyncMock(return_value=payload, side_effect=side_effect)
+    monkeypatch.setattr("mcpgateway.utils.verify_credentials._maybe_verify_external", verify)
+    revocation = Mock(return_value=revoked)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", revocation)
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+    internal = AsyncMock(return_value={"sub": "internal@example.com"})
+    monkeypatch.setattr(tr, "verify_credentials", internal)
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_try_oauth_access_token", AsyncMock(return_value=tr.OAuthAuthResult.NOT_APPLICABLE))
+    monkeypatch.setattr("mcpgateway.auth.fresh_db_session", MagicMock())
+    monkeypatch.setattr(
+        "mcpgateway.utils.trusted_claims.extract_trusted_principal",
+        lambda p, _s, _db: VirtualPrincipal(user_id=p["user_id"], email=p.get("email"), teams=list(p["teams"]), roles=list(p["roles"]), is_admin=p["is_admin"]),
+    )
+    return verify, revocation, internal
+
+
+def _capture_errors(monkeypatch):
+    """Record _send_error calls instead of writing an ASGI response.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+
+    Returns:
+        List that receives each _send_error kwargs dict.
+    """
+    sent = []
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_send_error", AsyncMock(side_effect=lambda **kw: (sent.append(kw), False)[1]))
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_accepts_trust_root_token(monkeypatch):
+    """A trust-root token authenticates with a claims-derived identity and no internal-JWT fallback."""
+    handler = _auth_handler()
+    verify, revocation, internal = _trust_mode(monkeypatch, payload=_trusted_payload())
+    trace = Mock()
+    monkeypatch.setattr(tr, "set_trace_context_from_teams", trace)
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is True
+
+    verify.assert_awaited_once_with(_TRUST_TOKEN, None, fail_closed=True)
+    revocation.assert_called_once_with("jti-trust-1")
+    internal.assert_not_awaited()
+    ctx = tr.user_context_var.get()
+    assert ctx["email"] == "dev@idp.example"
+    assert ctx["teams"] == ["team-a"]
+    assert ctx["roles"] == ["developer"]
+    assert ctx["token_use"] == "trusted"
+    assert ctx["trust_principal"] is True
+    assert ctx["is_admin"] is False
+    trace.assert_called_once()
+    assert trace.call_args.args[0] == ["team-a"]
+    assert trace.call_args.kwargs["user_email"] == "dev@idp.example"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_rejects_revoked_token(monkeypatch):
+    """SECURITY: a revoked trust-root token is refused even though external verification succeeds.
+
+    The verified identity is cached by token hash, so without a per-request
+    revocation check a revoked token would keep working on MCP while REST
+    rejects it.
+    """
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    _, revocation, internal = _trust_mode(monkeypatch, payload=_trusted_payload(), revoked=True)
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is False
+    revocation.assert_called_once_with("jti-trust-1")
+    internal.assert_not_awaited()
+    assert sent[0]["detail"] == "Token has been revoked"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_rejects_missing_revocation_claim(monkeypatch):
+    """A trust payload without the configured revocation claim is refused, not waved through."""
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    _, revocation, internal = _trust_mode(monkeypatch, payload=_trusted_payload(jti=None))
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is False
+    revocation.assert_not_called()
+    internal.assert_not_awaited()
+    assert sent[0]["status_code"] == 401
+    assert "revocation claim" in sent[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_revocation_store_error_returns_503(monkeypatch):
+    """A DB failure in the revocation check fails closed with 503."""
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    _, revocation, _ = _trust_mode(monkeypatch, payload=_trusted_payload())
+    revocation.side_effect = tr.SQLAlchemyError("db down")
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is False
+    assert sent[0]["status_code"] == 503
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_verification_failure_is_fail_closed(monkeypatch):
+    """A trust-root token that fails verification is rejected and never reaches the internal-JWT path."""
+    # First-Party
+    from mcpgateway.utils.verify_credentials import ExternalIssuerVerificationError
+
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    _, revocation, internal = _trust_mode(monkeypatch, side_effect=ExternalIssuerVerificationError("bad signature"))
+    warning = Mock()
+    monkeypatch.setattr("mcpgateway.auth.logger.warning", warning)
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is False
+    internal.assert_not_awaited()
+    revocation.assert_not_called()
+    assert sent[0]["detail"] == "Invalid authentication credentials"
+    assert warning.call_args.kwargs["extra"] == {"security_event": "trust_root_token_rejected_ingress"}
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_non_trust_root_falls_through(monkeypatch):
+    """A token whose issuer is not a trust root continues to the internal-JWT path."""
+    handler = _auth_handler()
+    verify, revocation, internal = _trust_mode(monkeypatch, payload=None)
+    monkeypatch.setattr(tr.settings, "jwt_issuer_verification", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda email: None)
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: [])
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is True
+    verify.assert_awaited_once()
+    internal.assert_awaited_once()
+    assert tr.user_context_var.get()["email"] == "internal@example.com"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_db_mode_skips_trust_branch(monkeypatch):
+    """With trust mode off, external verification is never attempted on this path."""
+    handler = _auth_handler()
+    verify, _, internal = _trust_mode(monkeypatch, payload=_trusted_payload())
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", "db")
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda email: None)
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: [])
+
+    assert await handler._auth_jwt(token="tok") is True
+    verify.assert_not_awaited()
+    internal.assert_awaited_once()
+
+
+def _rbac_db(monkeypatch):
+    """Patch get_db and PermissionService so check_permission kwargs can be inspected.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+
+    Returns:
+        The check_permission AsyncMock.
+    """
+
+    @asynccontextmanager
+    async def fake_db():
+        yield MagicMock()
+
+    check = AsyncMock(return_value=True)
+    monkeypatch.setattr(tr, "get_db", fake_db)
+    monkeypatch.setattr(tr, "PermissionService", lambda db: SimpleNamespace(check_permission=check))
+    return check
+
+
+@pytest.mark.asyncio
+async def test_check_streamable_permission_passes_claims_roles_for_trust_principal(monkeypatch):
+    """Trust principals are judged by their claims-derived roles/admin, not DB role rows."""
+    check = _rbac_db(monkeypatch)
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", "jwt-trust")
+    ctx = {"email": "dev@idp.example", "teams": ["team-a"], "roles": ["developer"], "is_admin": True, "token_use": "trusted", "trust_principal": True}
+
+    assert await tr._check_streamable_permission(user_context=ctx, permission="tools.execute") is True
+    assert check.await_args.kwargs["token_roles"] == ["developer"]
+    assert check.await_args.kwargs["token_is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_check_streamable_permission_ignores_claims_roles_for_other_tokens(monkeypatch):
+    """SECURITY: roles/is_admin on a non-trust context never reach RBAC as claims."""
+    check = _rbac_db(monkeypatch)
+    ctx = {"email": "user@example.com", "teams": ["team-a"], "roles": ["platform_admin"], "is_admin": True, "token_use": "session"}
+
+    assert await tr._check_streamable_permission(user_context=ctx, permission="tools.execute") is True
+    assert check.await_args.kwargs["token_roles"] is None
+    assert check.await_args.kwargs["token_is_admin"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["jwt-trust", "db"])
+async def test_check_streamable_permission_ignores_claimed_token_use(monkeypatch, mode):
+    """SECURITY: token_use="trusted" copied from a JWT claim never grants the claims-derived admin bypass."""
+    check = _rbac_db(monkeypatch)
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", mode)
+    ctx = {"email": "user@example.com", "teams": ["team-a"], "roles": ["platform_admin"], "is_admin": True, "token_use": "trusted"}
+
+    await tr._check_streamable_permission(user_context=ctx, permission="tools.execute")
+    assert check.await_args.kwargs["token_is_admin"] is False
+    assert check.await_args.kwargs["token_roles"] is None
+
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", "db")
+    await tr._check_streamable_permission(user_context={**ctx, "trust_principal": True}, permission="tools.execute")
+    assert check.await_args.kwargs["token_is_admin"] is False
+
+
+def _internal_path(monkeypatch, payload):
+    """Route _auth_jwt to the internal-JWT path with the given verified payload.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        payload: Payload verify_credentials returns.
+    """
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value=payload))
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda email: None)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda jti: False)
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: [])
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_gateway_signed_trusted_token_rejected_when_trust_mode_off(monkeypatch):
+    """SECURITY: a gateway-signed token_use=trusted token gets 401 with trust mode off, as on REST."""
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", "db")
+    _internal_path(monkeypatch, {"sub": "user@example.com", "token_use": "trusted", "is_admin": True, "jti": "j1"})
+
+    assert await handler._auth_jwt(token="tok") is False
+    assert sent[0]["detail"] == "Invalid authentication credentials"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_gateway_signed_trusted_token_gets_no_trust_marker(monkeypatch):
+    """SECURITY: in trust mode a gateway-signed token_use=trusted token stays on the internal path, so RBAC checks the DB admin flag."""
+    handler = _auth_handler()
+    monkeypatch.setattr(tr.settings, "jwt_trust_mode", "jwt-trust")
+    _internal_path(monkeypatch, {"sub": "user@example.com", "token_use": "trusted", "is_admin": True, "jti": "j1"})
+
+    assert await handler._auth_jwt(token="tok") is True
+    ctx = tr.user_context_var.get()
+    assert "trust_principal" not in ctx
+    check = _rbac_db(monkeypatch)
+    await tr._check_streamable_permission(user_context=ctx, permission="tools.execute")
+    assert check.await_args.kwargs["token_is_admin"] is False
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_oauth_server_listing_trust_root_uses_oauth(monkeypatch):
+    """An oauth_enabled server that lists the trust root's issuer verifies the token on its own OAuth path."""
+    handler = _auth_handler()
+    verify, _, internal = _trust_mode(monkeypatch, payload=_trusted_payload())
+    oauth = AsyncMock(return_value=tr.OAuthAuthResult.SUCCESS)
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_try_oauth_access_token", oauth)
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is True
+    oauth.assert_awaited_once()
+    verify.assert_not_awaited()
+    internal.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_rejects_non_trusted_payload(monkeypatch):
+    """SECURITY: a non-trusted payload from the external identity cache is refused."""
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    _, revocation, internal = _trust_mode(monkeypatch, payload=_trusted_payload(token_use="session", is_admin=True))
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is False
+    revocation.assert_not_called()
+    internal.assert_not_awaited()
+    assert sent[0]["detail"] == "Invalid authentication credentials"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_trust_mode_unexpected_error_is_401(monkeypatch):
+    """An unexpected error in the trust branch fails closed with 401, not 500."""
+    handler = _auth_handler()
+    sent = _capture_errors(monkeypatch)
+    _trust_mode(monkeypatch, side_effect=RuntimeError("boom"))
+
+    assert await handler._auth_jwt(token=_TRUST_TOKEN) is False
+    assert sent[0].get("status_code", 401) == 401
+    assert sent[0]["headers"] == {"WWW-Authenticate": "Bearer"}
+
+
+def test_streamable_auth_context_forwards_roles():
+    """Claims-derived roles cross the internal MCP seam with the rest of the auth context."""
+    token = tr.user_context_var.set({"email": "dev@idp.example", "teams": ["team-a"], "roles": ["developer"], "token_use": "trusted"})
+    try:
+        assert tr.get_streamable_http_auth_context()["roles"] == ["developer"]
+    finally:
+        tr.user_context_var.reset(token)
 
 
 # ---------------------------------------------------------------------------
