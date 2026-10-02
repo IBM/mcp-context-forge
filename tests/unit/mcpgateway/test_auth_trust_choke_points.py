@@ -101,7 +101,7 @@ class TestValidateTokenUserTrustMode:
         _enable_trust_mode(monkeypatch, db)
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=_trust_payload())):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=_trust_payload())):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
                 user = await validate_token_user(request, "trusted_jwt_token")  # pragma: allowlist secret
 
@@ -118,7 +118,7 @@ class TestValidateTokenUserTrustMode:
         _patch_funnel_sessions(monkeypatch, db)
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=_trust_payload())):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=_trust_payload())):
             with pytest.raises(TokenValidationError) as exc_info:
                 await validate_token_user(request, "trusted_jwt_token")  # pragma: allowlist secret
 
@@ -144,7 +144,7 @@ class TestPluginHookTrustMode:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
 
         with patch("mcpgateway.auth.get_plugin_manager", AsyncMock(return_value=manager)):
-            with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=_trust_payload())):
+            with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=_trust_payload())):
                 with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
                     with caplog.at_level(logging.INFO, logger="mcpgateway.auth"):
                         user = await get_current_user(credentials=credentials, request=request)
@@ -173,7 +173,7 @@ class TestPluginHookTrustMode:
 
         with patch("mcpgateway.auth.get_plugin_manager", AsyncMock(return_value=manager)):
             with patch(
-                "mcpgateway.auth.verify_jwt_token_cached",
+                "mcpgateway.auth.verify_credentials_cached",
                 AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")),
             ):
                 with pytest.raises(HTTPException) as exc_info:
