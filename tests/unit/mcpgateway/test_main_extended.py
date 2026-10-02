@@ -15,6 +15,7 @@ import base64
 import builtins
 import importlib.util
 import json
+import logging
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -13018,6 +13019,36 @@ class TestRemainingCoverageGaps:
 
         response = await main_mod.request_validation_exception_handler(request, exc)
         assert response.status_code == 422
+
+    async def test_request_validation_log_carries_reason_code_and_correlation_id(self, monkeypatch, caplog):
+        """The rejection log must name the cause and the request it belongs to, without the submitted value."""
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.common.validators import UrlPolicyError
+
+        monkeypatch.setattr(main_mod, "get_correlation_id", lambda: "corr-abc-123")
+        request = MagicMock(spec=Request)
+        request.url = SimpleNamespace(path="/gateways")
+
+        exc = MagicMock()
+        exc.errors.return_value = [
+            {
+                "loc": ["body", "url"],
+                "msg": "URL DNS resolution failed",
+                "ctx": {"error": UrlPolicyError("url_dns_resolution_failed", "URL DNS resolution failed")},
+                "type": "value_error",
+                "input": "https://does-not-exist.invalid/mcp",
+            }
+        ]
+
+        with caplog.at_level(logging.WARNING, logger=main_mod.logger.name):
+            response = await main_mod.request_validation_exception_handler(request, exc)
+
+        assert response.status_code == 422
+        logged = "\n".join(caplog.messages)
+        assert "reason_code=url_dns_resolution_failed" in logged
+        assert "request_id=corr-abc-123" in logged
+        assert "does-not-exist.invalid" not in logged
 
     async def test_update_gateway_validation_error_branch(self, monkeypatch):
         # First-Party

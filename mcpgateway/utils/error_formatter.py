@@ -31,7 +31,8 @@ Examples:
 """
 
 # Standard
-from typing import Any, Dict, List, Union
+import re
+from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
 from pydantic import ValidationError
@@ -96,7 +97,8 @@ class ErrorFormatter:
         Returns:
             Dict[str, Any]: ``{"message": str, "detail": str, "details": [{"field": str, "message": str}, ...], "success": False}``.
                 ``message`` and ``detail`` carry the same one-line summary; ``detail`` is
-                kept for clients that read the FastAPI-style key.
+                kept for clients that read the FastAPI-style key. A ``reason_code`` key is
+                added when the failure carries a code in ``PUBLIC_REASON_CODES``.
 
         Examples:
             >>> from pydantic import BaseModel
@@ -112,10 +114,13 @@ class ErrorFormatter:
             'count'
             >>> "pydantic" in out["message"].lower() or "input_value" in out["message"]
             False
+            >>> "reason_code" in out
+            False
         """
-        # Log only loc/type — never msg, ctx, input, or input_value (Pydantic v2 includes input_value in str())
+        # Log only loc/type/reason_code — never msg, ctx, input, or input_value (Pydantic v2 includes input_value in str())
         logger.warning("Validation error: %s", sanitize_validation_error_for_log(error))
 
+        reason_code = extract_reason_code(error)
         details: List[Dict[str, str]] = []
         for err in error.errors():
             loc = err.get("loc") or ()
@@ -125,7 +130,10 @@ class ErrorFormatter:
 
         summary = "; ".join(d["message"] for d in details) if details else "Validation error"
         message = f"Validation failed: {summary}"
-        return {"message": message, "detail": message, "details": details, "success": False}
+        response: Dict[str, Any] = {"message": message, "detail": message, "details": details, "success": False}
+        if reason_code in PUBLIC_REASON_CODES:
+            response["reason_code"] = reason_code
+        return response
 
     @staticmethod
     def format_request_validation_error(error: Any) -> List[Dict[str, Any]]:
@@ -424,24 +432,80 @@ class ErrorFormatter:
         return {"message": "Unable to complete the operation. Please try again.", "success": False}
 
 
-def sanitize_validation_error_for_log(error: Union[ValidationError, Any]) -> str:
-    """Return a safe log summary of a Pydantic ValidationError.
+_REASON_CODE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
-    Includes only error count, loc, and type — never msg, ctx, input, or input_value,
-    which can contain user-submitted data in Pydantic v2 (input_value=...).
+# Codes safe to return to the caller. Destination and DNS codes stay log-only:
+# echoing them turns the endpoint into an SSRF probe oracle, because the caller
+# learns whether a submitted host resolved into a blocked internal range.
+PUBLIC_REASON_CODES = frozenset({"url_invalid_syntax", "url_scheme_not_allowed"})
+
+
+def extract_reason_code(error: Union[ValidationError, Any]) -> Optional[str]:
+    """Return the first stable reason code carried by a validation error.
+
+    Pydantic keeps the raised exception in ``ctx["error"]``, so a ``UrlPolicyError``
+    reaches here with its ``reason_code`` intact. Only lowercase snake-case codes are
+    accepted, which keeps arbitrary exception attributes out of logs and responses.
 
     Args:
         error: A Pydantic ValidationError (or any object with an .errors() method).
 
     Returns:
-        str: A safe log string, e.g. "2 error(s): [loc=('name',) type=value_error] [loc=('url',) type=url_error]"
+        Optional[str]: The first valid reason code, or None when no error carries one.
+    """
+    try:
+        raw_errors: List[Dict[str, Any]] = error.errors()
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+    for err in raw_errors:
+        code = _error_reason_code(err)
+        if code:
+            return code
+    return None
+
+
+def _error_reason_code(err: Dict[str, Any]) -> Optional[str]:
+    """Return the reason code of a single Pydantic error entry, if it carries one.
+
+    Args:
+        err: One entry from ``ValidationError.errors()``.
+
+    Returns:
+        Optional[str]: The reason code, or None.
+    """
+    ctx = err.get("ctx")
+    if not isinstance(ctx, dict):
+        return None
+    code = getattr(ctx.get("error"), "reason_code", None)
+    if isinstance(code, str) and _REASON_CODE_RE.match(code):
+        return code
+    return None
+
+
+def sanitize_validation_error_for_log(error: Union[ValidationError, Any]) -> str:
+    """Return a safe log summary of a Pydantic ValidationError.
+
+    Includes only error count, loc, type, and the stable reason code — never msg, ctx,
+    input, or input_value, which can contain user-submitted data in Pydantic v2
+    (input_value=...).
+
+    Args:
+        error: A Pydantic ValidationError (or any object with an .errors() method).
+
+    Returns:
+        str: A safe log string, e.g. "1 error(s): [loc=('url',) type=value_error reason_code=url_invalid_syntax]"
     """
     try:
         raw_errors: List[Dict[str, Any]] = error.errors()
     except Exception:
         return "validation error (could not extract detail)"
 
-    parts = [f"[loc={err.get('loc', ())} type={err.get('type', 'unknown')}]" for err in raw_errors]
+    parts = []
+    for err in raw_errors:
+        code = _error_reason_code(err)
+        suffix = f" reason_code={code}" if code else ""
+        parts.append(f"[loc={err.get('loc', ())} type={err.get('type', 'unknown')}{suffix}]")
     return f"{len(raw_errors)} error(s): {' '.join(parts)}"
 
 

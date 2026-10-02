@@ -28,7 +28,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, UrlPolicyError
 
 
 class DummySettings:
@@ -1578,6 +1578,37 @@ class TestValidateSsrf:
         ssrf_settings.ssrf_allow_private_networks = True
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    @pytest.mark.parametrize(
+        ("hostname", "reason_code"),
+        [
+            ("metadata.google.internal", "url_destination_blocked"),
+            ("169.254.169.254", "url_destination_blocked"),
+            ("127.0.0.1", "url_private_network_blocked"),
+            ("10.1.2.3", "url_private_network_blocked"),
+            ("100.64.0.1", "url_private_network_blocked"),
+        ],
+    )
+    def test_rejection_carries_reason_code(self, ssrf_settings, hostname, reason_code):
+        """Each SSRF rejection class is distinguishable by its stable reason code."""
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(UrlPolicyError) as excinfo:
+                SecurityValidator._validate_ssrf(hostname, "URL")
+
+        assert excinfo.value.reason_code == reason_code
+
+    def test_dns_failure_and_empty_result_have_distinct_reason_codes(self, ssrf_settings):
+        """DNS failure and an empty answer are separate causes, not one generic error."""
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+                with pytest.raises(UrlPolicyError) as failed:
+                    SecurityValidator._validate_ssrf("nonexistent.example.invalid", "URL")
+            with patch("socket.getaddrinfo", return_value=[]):
+                with pytest.raises(UrlPolicyError) as empty:
+                    SecurityValidator._validate_ssrf("nonexistent.example.invalid", "URL")
+
+        assert failed.value.reason_code == "url_dns_resolution_failed"
+        assert empty.value.reason_code == "url_dns_no_addresses"
 
     def test_invalid_cidr_logged(self, ssrf_settings):
         ssrf_settings.ssrf_blocked_networks = ["invalid-cidr"]
