@@ -525,6 +525,7 @@ class CompletionService:
         Raises:
             CompletionInvalidParamsError: If the prompt name is missing, the
                 prompt is not found, or the argument is not found.
+            CompletionNotSupportedError: If the owning upstream does not support completions.
 
         Examples:
             >>> from mcpgateway.services.completion_service import CompletionService, CompletionInvalidParamsError
@@ -569,18 +570,12 @@ class CompletionService:
 
         if self._is_federated(prompt):
             remote_name = getattr(prompt, "original_name", None) or prompt.name
-            try:
-                return await self._forward_completion_upstream(
-                    getattr(prompt, "gateway", None),
-                    PromptReference(type="ref/prompt", name=remote_name),
-                    {"name": arg_name, "value": arg_value},
-                    context,
-                )
-            except CompletionNotSupportedError:
-                logger.info(
-                    "Upstream gateway for federated prompt '%s' does not support completions; falling back to the locally-synced argument schema",
-                    prompt_name,
-                )
+            return await self._forward_completion_upstream(
+                getattr(prompt, "gateway", None),
+                PromptReference(type="ref/prompt", name=remote_name),
+                {"name": arg_name, "value": arg_value},
+                context,
+            )
 
         # Find argument in schema
         arg_schema = None
