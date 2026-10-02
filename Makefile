@@ -6268,15 +6268,15 @@ ibmcloud-list-containers:
 
 .PHONY: ibmcloud-tag
 ibmcloud-tag:
-	@echo "🏷️  Tagging image $(IBMCLOUD_IMG_PROD) → $(IBMCLOUD_IMAGE_NAME)"
-	podman tag $(IBMCLOUD_IMG_PROD) $(IBMCLOUD_IMAGE_NAME)
-	podman images | head -3
+	@echo "🏷️  Tagging image $(IBMCLOUD_IMG_PROD) → $(IBMCLOUD_IMAGE_NAME) with $(CONTAINER_RUNTIME)"
+	$(CONTAINER_RUNTIME) tag $(IBMCLOUD_IMG_PROD) $(IBMCLOUD_IMAGE_NAME)
+	$(CONTAINER_RUNTIME) images | head -3
 
 .PHONY: ibmcloud-push
 ibmcloud-push:
 	@echo "📤 Logging into IBM Container Registry and pushing image..."
 	@ibmcloud cr login
-	podman push $(IBMCLOUD_IMAGE_NAME)
+	$(CONTAINER_RUNTIME) push $(IBMCLOUD_IMAGE_NAME)
 
 .PHONY: ibmcloud-deploy
 ibmcloud-deploy:
