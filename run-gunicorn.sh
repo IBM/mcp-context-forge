@@ -20,7 +20,8 @@
 #  Environment Variables:
 #    PYTHON                        : Path to Python interpreter (optional)
 #    VIRTUAL_ENV                   : Path to active virtual environment (auto-detected)
-#    GUNICORN_WORKERS             : Number of worker processes (default: "auto" = 2*CPU+1, capped at 16)
+#    GUNICORN_WORKERS             : Number of worker processes (default: "auto" = 2*CPU+1, capped at 16; auto honors cgroup CPU/memory limits)
+#    GUNICORN_MEMORY_PER_WORKER_MB : Memory budget per worker for cgroup auto sizing (default: 256)
 #    GUNICORN_TIMEOUT             : Worker timeout in seconds (default: 600)
 #    GUNICORN_MAX_REQUESTS        : Max requests per worker before restart (default: 100000)
 #    GUNICORN_MAX_REQUESTS_JITTER : Random jitter for max requests (default: 100)
@@ -231,6 +232,59 @@ EOF
 # via environment variables for different deployment scenarios
 #────────────────────────────────────────────────────────────────────────────────
 
+detect_cgroup_cpu_limit() {
+    local cgroup_root="${GUNICORN_CGROUP_ROOT:-/sys/fs/cgroup}"
+    local quota_path period_path quota period cpu_cores
+
+    quota_path="${cgroup_root}/cpu.max"
+    if [[ -r "${quota_path}" ]]; then
+        read -r quota period < "${quota_path}" || true
+        if [[ "${quota:-}" =~ ^[0-9]+$ && "${period:-}" =~ ^[0-9]+$ && "${quota}" -gt 0 && "${period}" -gt 0 ]]; then
+            cpu_cores=$((quota / period))
+            if (( quota % period != 0 )); then
+                cpu_cores=$((cpu_cores + 1))
+            fi
+            printf '%s\n' "${cpu_cores}"
+            return 0
+        fi
+    fi
+
+    for quota_path in "${cgroup_root}/cpu/cpu.cfs_quota_us" "${cgroup_root}/cpu,cpuacct/cpu.cfs_quota_us"; do
+        period_path="${quota_path%/*}/cpu.cfs_period_us"
+        if [[ -r "${quota_path}" && -r "${period_path}" ]]; then
+            read -r quota < "${quota_path}" || true
+            read -r period < "${period_path}" || true
+            if [[ "${quota:-}" =~ ^[0-9]+$ && "${period:-}" =~ ^[0-9]+$ && "${quota}" -gt 0 && "${period}" -gt 0 ]]; then
+                cpu_cores=$((quota / period))
+                if (( quota % period != 0 )); then
+                    cpu_cores=$((cpu_cores + 1))
+                fi
+                printf '%s\n' "${cpu_cores}"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+detect_cgroup_memory_limit() {
+    local cgroup_root="${GUNICORN_CGROUP_ROOT:-/sys/fs/cgroup}"
+    local memory_path memory_limit
+
+    for memory_path in "${cgroup_root}/memory.max" "${cgroup_root}/memory/memory.limit_in_bytes"; do
+        if [[ -r "${memory_path}" ]]; then
+            read -r memory_limit < "${memory_path}" || true
+            if [[ "${memory_limit:-}" != "max" && "${memory_limit:-}" =~ ^[0-9]+$ && "${memory_limit}" -gt 0 && "${memory_limit}" -lt 1152921504606846976 ]]; then
+                printf '%s\n' "${memory_limit}"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
 # Number of worker processes (adjust based on CPU cores and expected load)
 # Default: 2 (safe default for most systems)
 # Set to "auto" for automatic detection based on CPU cores
@@ -245,11 +299,43 @@ if [[ -z "${GUNICORN_WORKERS:-}" || "${GUNICORN_WORKERS}" == "auto" ]]; then
         CPU_COUNT=4  # Fallback to reasonable default
     fi
 
+    CPU_LIMIT_CORES=""
+    if CPU_LIMIT_CORES=$(detect_cgroup_cpu_limit); then
+        CPU_COUNT="${CPU_LIMIT_CORES}"
+        echo "   Container CPU limit: ${CPU_COUNT} cores"
+    else
+        echo "🔧  Auto-detected CPU cores: ${CPU_COUNT}"
+    fi
+
+    if ! [[ "${CPU_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
+        CPU_COUNT=1
+    fi
+
     # Use a more conservative formula: min(2*CPU+1, 16) to avoid too many workers
     CALCULATED_WORKERS=$((CPU_COUNT * 2 + 1))
     GUNICORN_WORKERS=$((CALCULATED_WORKERS > 16 ? 16 : CALCULATED_WORKERS))
 
-    echo "🔧  Auto-detected CPU cores: ${CPU_COUNT}"
+    MEMORY_PER_WORKER_MB="${GUNICORN_MEMORY_PER_WORKER_MB:-256}"
+    if ! [[ "${MEMORY_PER_WORKER_MB}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "⚠️  WARNING: Invalid GUNICORN_MEMORY_PER_WORKER_MB=${MEMORY_PER_WORKER_MB}; using 256"
+        MEMORY_PER_WORKER_MB=256
+    fi
+
+    MEMORY_LIMIT_BYTES=""
+    MEMORY_WORKER_LIMIT=""
+    if MEMORY_LIMIT_BYTES=$(detect_cgroup_memory_limit); then
+        MEMORY_LIMIT_MIB=$((MEMORY_LIMIT_BYTES / 1024 / 1024))
+        MEMORY_WORKER_LIMIT=$((MEMORY_LIMIT_MIB / MEMORY_PER_WORKER_MB))
+        if (( MEMORY_WORKER_LIMIT < 1 )); then
+            MEMORY_WORKER_LIMIT=1
+        fi
+        echo "   Container memory limit: ${MEMORY_LIMIT_MIB} MiB (${MEMORY_PER_WORKER_MB} MiB/worker → max ${MEMORY_WORKER_LIMIT})"
+        if (( MEMORY_WORKER_LIMIT < GUNICORN_WORKERS )); then
+            GUNICORN_WORKERS="${MEMORY_WORKER_LIMIT}"
+        fi
+        echo "   Memory-derived worker limit: ${MEMORY_WORKER_LIMIT}"
+    fi
+
     echo "   Calculated workers: ${CALCULATED_WORKERS} → Capped at: ${GUNICORN_WORKERS}"
 fi
 
