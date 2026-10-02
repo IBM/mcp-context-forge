@@ -48,6 +48,42 @@ _LEGACY_TO_V1_METHODS = {
     "agent/getAuthenticatedExtendedCard": "GetExtendedAgentCard",
     "agent/getExtendedCard": "GetExtendedAgentCard",
 }
+
+# Methods whose response is an SSE stream rather than a single JSON body. Both the
+# legacy and v1 spellings are listed because the outbound method name depends on the
+# agent's negotiated protocol version.
+_STREAMING_METHODS = frozenset(
+    {
+        "message/stream",
+        "SendStreamingMessage",
+        "tasks/resubscribe",
+        "SubscribeToTask",
+    }
+)
+
+
+def is_streaming_a2a_method(method: Optional[str]) -> bool:
+    """Report whether an A2A method answers with an event stream.
+
+    Args:
+        method: JSON-RPC method name, in either the legacy or v1 spelling.
+
+    Returns:
+        True when the agent replies with ``text/event-stream``.
+
+    Examples:
+        >>> is_streaming_a2a_method("message/stream")
+        True
+        >>> is_streaming_a2a_method("SendStreamingMessage")
+        True
+        >>> is_streaming_a2a_method("message/send")
+        False
+        >>> is_streaming_a2a_method(None)
+        False
+    """
+    return method in _STREAMING_METHODS
+
+
 _V1_TO_LEGACY_METHODS = {value: key for key, value in _LEGACY_TO_V1_METHODS.items()}
 _V1_TO_LEGACY_METHODS["GetExtendedAgentCard"] = "agent/getAuthenticatedExtendedCard"
 _LEGACY_ROLE_TO_V1 = {"user": "ROLE_USER", "agent": "ROLE_AGENT", "system": "ROLE_SYSTEM"}
