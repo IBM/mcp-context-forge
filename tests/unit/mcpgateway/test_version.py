@@ -438,16 +438,9 @@ def test_system_metrics_cpu_freq_exception_sets_none(monkeypatch: pytest.MonkeyP
     # First-Party
     from mcpgateway import version as ver_mod
 
-    mock_psutil = MagicMock()
-    mock_psutil.cpu_freq.side_effect = exc
-    mock_psutil.cpu_percent.return_value = 12.3
-    mock_psutil.cpu_count.return_value = 8
-    mock_psutil.virtual_memory.return_value = MagicMock(total=8 * 1_073_741_824, used=4 * 1_073_741_824)
-    mock_psutil.swap_memory.return_value = MagicMock(total=2 * 1_073_741_824, used=1 * 1_073_741_824)
-    mock_psutil.disk_usage.return_value = MagicMock(total=100 * 1_073_741_824, used=40 * 1_073_741_824)
-    mock_psutil.boot_time.return_value = 0
-    mock_psutil.Process.return_value = MagicMock(pid=1234)
-    monkeypatch.setattr(ver_mod, "psutil", mock_psutil)
+    fake = _make_fake_psutil()
+    fake.cpu_freq = MagicMock(side_effect=exc)
+    monkeypatch.setattr(ver_mod, "psutil", fake)
 
     metrics = ver_mod._system_metrics()
 
