@@ -12,6 +12,7 @@ import copy
 import collections
 import logging
 import time
+from sys import getsizeof
 from typing import Optional, Tuple
 import urllib.parse
 
@@ -58,11 +59,14 @@ def _resolve_schema(schema_obj: Optional[dict], components_schemas: dict) -> Opt
 _MAX_SPEC_BYTES = 10 * 1024 * 1024
 
 _SPEC_CACHE_MAX = 64
+_SPEC_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _SPEC_CACHE_TTL = 60.0
 # A failed fetch is cached too, for a much shorter window. Without a negative entry every
 # queued single-flight waiter re-runs the failing fetch in turn, so N waiters pay N × timeout.
 _SPEC_ERROR_TTL = 5.0
-_spec_cache: collections.OrderedDict[str, tuple[float, dict | Exception]] = collections.OrderedDict()
+_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
+_spec_cache: collections.OrderedDict[str, tuple[float, dict | Exception, int]] = collections.OrderedDict()
+_spec_cache_bytes = 0
 _spec_locks: dict[str, asyncio.Lock] = {}
 _spec_locks_guard = asyncio.Lock()
 
@@ -74,8 +78,8 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
     ``_SPEC_ERROR_TTL`` seconds.  Concurrent callers for the same URL share a
     single in-flight fetch (single-flight), and a caller that arrives while a
     failure is still cached re-raises that failure instead of refetching.
-    The cache is bounded to ``_SPEC_CACHE_MAX`` entries; expired and overflow
-    entries are evicted on every access.
+    The cache is bounded by entry count and aggregate memory; expired and
+    overflow entries are evicted on access.
 
     Connection pinning (DNS-rebinding prevention) follows the same pattern as
     ``tool_service`` and ``a2a_protocol``: the validated DNS resolution is
@@ -95,12 +99,14 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
             response body is not valid JSON.
         httpx.HTTPError: If the request fails.
     """
+    global _spec_cache_bytes
+
     now = time.monotonic()
 
     # --- evict expired entries on every access ---
-    expired_keys = [k for k, (expires_at, _) in _spec_cache.items() if expires_at <= now]
+    expired_keys = [k for k, (expires_at, _, _) in _spec_cache.items() if expires_at <= now]
     for k in expired_keys:
-        _spec_cache.pop(k, None)
+        _spec_cache_bytes -= _spec_cache.pop(k)[2]
         _spec_locks.pop(k, None)
 
     fresh = _fresh_cached_copy(spec_url)
@@ -132,18 +138,51 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         return copy.deepcopy(result)
 
 
+def _estimate_spec_cache_size(spec_url: str, value: dict | Exception, max_bytes: int) -> int:
+    """Estimate retained bytes and stop once the cache budget is exceeded."""
+    total = getsizeof(spec_url) + _SPEC_CACHE_ENTRY_OVERHEAD_BYTES
+    seen: set[int] = set()
+    pending: list[object] = [value]
+    while pending and total <= max_bytes:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        total += getsizeof(item)
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            pending.extend(item)
+        elif isinstance(item, Exception):
+            pending.extend(item.args)
+    return total
+
+
 def _store(spec_url: str, value: dict | Exception, ttl: float) -> None:
-    """Cache *value* under *spec_url* for *ttl* seconds, enforcing the LRU bound.
+    """Cache *value* under *spec_url* within the entry and byte limits.
 
     Args:
         spec_url: Cache key for the OpenAPI spec.
         value: Parsed specification, or the exception raised by a failed fetch.
         ttl: Lifetime of the entry in seconds.
     """
-    _spec_cache[spec_url] = (time.monotonic() + ttl, value)
+    global _spec_cache_bytes
+
+    entry_size = _estimate_spec_cache_size(spec_url, value, _SPEC_CACHE_MAX_BYTES)
+    previous = _spec_cache.pop(spec_url, None)
+    if previous is not None:
+        _spec_cache_bytes -= previous[2]
+    if entry_size > _SPEC_CACHE_MAX_BYTES:
+        _spec_locks.pop(spec_url, None)
+        return
+
+    _spec_cache[spec_url] = (time.monotonic() + ttl, value, entry_size)
+    _spec_cache_bytes += entry_size
     _spec_cache.move_to_end(spec_url)
-    while len(_spec_cache) > _SPEC_CACHE_MAX:
-        evicted_key, _ = _spec_cache.popitem(last=False)
+    while len(_spec_cache) > _SPEC_CACHE_MAX or _spec_cache_bytes > _SPEC_CACHE_MAX_BYTES:
+        evicted_key, (_, _, evicted_size) = _spec_cache.popitem(last=False)
+        _spec_cache_bytes -= evicted_size
         _spec_locks.pop(evicted_key, None)
 
 

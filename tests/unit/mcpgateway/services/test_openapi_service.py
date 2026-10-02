@@ -17,11 +17,13 @@ import orjson
 import pytest
 
 # First-Party
+from mcpgateway.services import openapi_service as openapi_service_module
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
     _SPEC_CACHE_MAX,
     _SPEC_CACHE_TTL,
     _SPEC_ERROR_TTL,
+    _estimate_spec_cache_size,
     _spec_cache,
     _spec_locks,
     extract_schemas_from_openapi,
@@ -290,9 +292,11 @@ class TestFetchOpenAPISpec:
         """Clear the spec cache and locks before and after each test."""
         _spec_cache.clear()
         _spec_locks.clear()
+        openapi_service_module._spec_cache_bytes = 0
         yield
         _spec_cache.clear()
         _spec_locks.clear()
+        openapi_service_module._spec_cache_bytes = 0
 
     @pytest.mark.asyncio
     async def test_fetch_success(self):
@@ -431,8 +435,8 @@ class TestFetchOpenAPISpec:
         assert first == mock_spec_v1
 
         # Expire the cache entry by backdating its expiry.
-        expires_at, spec = _spec_cache[url]
-        _spec_cache[url] = (expires_at - _SPEC_CACHE_TTL - 1, spec)
+        expires_at, spec, size = _spec_cache[url]
+        _spec_cache[url] = (expires_at - _SPEC_CACHE_TTL - 1, spec, size)
 
         client_v2 = _mock_httpx_client(orjson.dumps(mock_spec_v2))
         with patch("httpx.AsyncClient", return_value=client_v2):
@@ -486,8 +490,8 @@ class TestFetchOpenAPISpec:
         assert all(isinstance(r, ValueError) for r in waiters)
 
         # The negative entry expires: backdate it and the next caller refetches.
-        expires_at, err = _spec_cache[url]
-        _spec_cache[url] = (expires_at - _SPEC_ERROR_TTL - 1, err)
+        expires_at, err, size = _spec_cache[url]
+        _spec_cache[url] = (expires_at - _SPEC_ERROR_TTL - 1, err, size)
         with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value={"openapi": "3.0.0"}):
             assert await fetch_openapi_spec(url) == {"openapi": "3.0.0"}
 
@@ -528,6 +532,44 @@ class TestFetchOpenAPISpec:
         assert len(_spec_locks) == _SPEC_CACHE_MAX
         assert "http://example.com/0/openapi.json" not in _spec_cache
         assert f"http://example.com/{_SPEC_CACHE_MAX + 9}/openapi.json" in _spec_cache
+
+    @pytest.mark.asyncio
+    async def test_cache_evicts_to_fit_byte_budget(self):
+        """Distinct parsed specs cannot exceed the aggregate cache budget."""
+        first_url = "http://example.com/one.json"
+        second_url = "http://example.com/two.json"
+        first_spec = {"paths": {"/one": {"get": {}}}}
+        second_spec = {"paths": {"/two": {"get": {}}}}
+        budget = max(
+            _estimate_spec_cache_size(first_url, first_spec, 1_000_000),
+            _estimate_spec_cache_size(second_url, second_spec, 1_000_000),
+        )
+
+        with patch("mcpgateway.services.openapi_service._SPEC_CACHE_MAX_BYTES", budget):
+            with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, side_effect=[first_spec, second_spec]):
+                await fetch_openapi_spec(first_url)
+                await fetch_openapi_spec(second_url)
+
+        assert first_url not in _spec_cache
+        assert second_url in _spec_cache
+        assert openapi_service_module._spec_cache_bytes == _spec_cache[second_url][2]
+        assert openapi_service_module._spec_cache_bytes <= budget
+
+    @pytest.mark.asyncio
+    async def test_oversized_spec_is_returned_without_caching(self):
+        """A spec above the cache budget remains usable without retaining its data or lock."""
+        url = "http://example.com/openapi.json"
+        spec = {"openapi": "3.0.0", "paths": {}}
+
+        with patch("mcpgateway.services.openapi_service._SPEC_CACHE_MAX_BYTES", 1):
+            with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value=spec) as fetch:
+                assert await fetch_openapi_spec(url) == spec
+                assert await fetch_openapi_spec(url) == spec
+
+        assert fetch.await_count == 2
+        assert url not in _spec_cache
+        assert url not in _spec_locks
+        assert openapi_service_module._spec_cache_bytes == 0
 
 
 class TestFetchAndExtractSchemas:
