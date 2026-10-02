@@ -367,6 +367,41 @@ class TestValidateOauthTokenClaims:
         assert result.scopes_sufficient is False
         assert any("missing required scopes" in w.lower() for w in result.warnings)
 
+    def test_offline_access_not_counted_as_missing(self):
+        """#4158: offline_access is request-only and never appears in scp."""
+        token = _make_jwt({"scp": "access_as_user"})
+        oauth_config = {"scopes": ["api://app-a/access_as_user", "offline_access"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+        assert not any("scope" in e.lower() for e in result.blocking_errors)
+
+    def test_oidc_request_only_scopes_ignored(self):
+        """openid, profile and email shape the request, not the access token."""
+        token = _make_jwt({"scope": "read"})
+        oauth_config = {"scopes": ["openid", "profile", "email", "offline_access", "read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+
+    def test_entra_default_scope_ignored(self):
+        """<resource>/.default is a request directive; granted scopes appear individually."""
+        token = _make_jwt({"scp": "Files.Read User.Read"})
+        oauth_config = {"scopes": ["https://graph.microsoft.com/.default"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+
+    def test_request_only_scope_does_not_mask_missing_scope(self):
+        """A genuinely missing scope still blocks when request-only scopes are configured."""
+        token = _make_jwt({"scp": "access_as_user"})
+        oauth_config = {"scopes": ["offline_access", "api://app-a/Files.Write"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("Files.Write" in w for w in result.warnings)
+        assert not any("offline_access" in w for w in result.warnings)
+
     def test_scope_match_with_uri_prefix(self):
         """Entra ID returns scopes without URI prefix; config has full URI."""
         token = _make_jwt({"scp": "Tools.Read Tools.Write"})
