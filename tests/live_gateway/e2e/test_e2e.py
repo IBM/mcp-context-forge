@@ -4066,3 +4066,100 @@ class TestSchemaRegexReDoS:
                 failures.append(failure)
             if failures:
                 pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))
+
+
+# ---------------------------------------------------------------------------
+# Tool-name conflicts compare the stored, normalized tool name (#6189)
+# ---------------------------------------------------------------------------
+def _name_probe_tool(name: str) -> dict[str, Any]:
+    """Build a ``POST /tools`` body for a public name-conflict probe tool.
+
+    Args:
+        name: Tool name to register.
+
+    Returns:
+        The request body.
+    """
+    return {
+        "tool": {
+            "name": name,
+            "url": f"{BASE_URL}/health",
+            "description": "Tool-name conflict probe tool",
+            "integration_type": "REST",
+            "request_type": "GET",
+            "visibility": "public",
+        },
+        "team_id": None,
+    }
+
+
+def _stored_probe_name(uid: str) -> str:
+    """Return the stored name of ``dup_probe_<uid>`` for the separator of the running gateway.
+
+    Args:
+        uid: Unique name suffix.
+
+    Returns:
+        The stored tool name.
+    """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    return f"dup{separator}probe{separator}{uid}"
+
+
+class TestToolNameConflict:
+    """``POST /tools`` and ``PUT /tools/{id}`` reject a public tool name whose stored name is already in use."""
+
+    @pytest.mark.parametrize("second_name", ["dup_probe_{uid}", "Dup.Probe_{uid}"], ids=["exact-repeat", "slug-equivalent"])
+    def test_second_public_tool_with_same_stored_name_returns_409(self, admin_api: APIRequestContext, second_name: str) -> None:
+        """A second public tool that normalizes to an existing stored name returns 409.
+
+        ``dup_probe_<uid>`` stores as ``dup-probe-<uid>`` with the default
+        separator. Both second names normalize to that stored name.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            second_name: Name template for the second tool.
+        """
+        uid = uuid.uuid4().hex[:8]
+        first = admin_api.post("/tools", data=_name_probe_tool(f"dup_probe_{uid}"))
+        assert first.status in (200, 201), f"first POST /tools returned {first.status}: {first.text()[:500]}"
+        created_ids = [_json_or_fail(first, "first POST /tools")["id"]]
+        try:
+            second = admin_api.post("/tools", data=_name_probe_tool(second_name.format(uid=uid)))
+            if second.status in (200, 201):
+                created_ids.append(_json_or_fail(second, "second POST /tools")["id"])
+            assert second.status == 409, f"second POST /tools returned {second.status}, expected 409: {second.text()[:500]}"
+            assert _stored_probe_name(uid) in second.text(), f"409 body does not name the stored tool: {second.text()[:500]}"
+        finally:
+            failures = [failure for failure in (_delete_owned(admin_api, "/tools", tool_id) for tool_id in created_ids) if failure]
+            if failures:
+                pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))
+
+    def test_rename_to_stored_name_in_use_is_rejected(self, admin_api: APIRequestContext) -> None:
+        """A rename of a public tool to a slug-equivalent name of another public tool fails.
+
+        ``PUT /tools/{id}`` maps ``ToolNameConflictError`` to HTTP 400 through
+        its generic ``ToolError`` branch.
+
+        Args:
+            admin_api: Authenticated admin API context.
+        """
+        uid = uuid.uuid4().hex[:8]
+        created_ids: list[str] = []
+        try:
+            for name in (f"dup_probe_{uid}", f"other_probe_{uid}"):
+                created = admin_api.post("/tools", data=_name_probe_tool(name))
+                assert created.status in (200, 201), f"POST /tools {name} returned {created.status}: {created.text()[:500]}"
+                created_ids.append(_json_or_fail(created, f"POST /tools {name}")["id"])
+
+            renamed = admin_api.put(f"/tools/{created_ids[1]}", data={"custom_name": f"Dup.Probe_{uid}"})
+            assert renamed.status == 400, f"PUT /tools/{created_ids[1]} returned {renamed.status}, expected 400: {renamed.text()[:500]}"
+            assert _stored_probe_name(uid) in renamed.text(), f"400 body does not name the stored tool: {renamed.text()[:500]}"
+
+            unchanged = admin_api.get(f"/tools/{created_ids[1]}")
+            assert unchanged.status == 200, f"GET /tools/{created_ids[1]} returned {unchanged.status}: {unchanged.text()[:500]}"
+            assert _json_or_fail(unchanged, "GET /tools/{id}")["customName"] == f"other_probe_{uid}"
+        finally:
+            failures = [failure for failure in (_delete_owned(admin_api, "/tools", tool_id) for tool_id in created_ids) if failure]
+            if failures:
+                pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))
