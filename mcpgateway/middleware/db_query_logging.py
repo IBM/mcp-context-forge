@@ -7,12 +7,14 @@ Database query logging middleware for N+1 detection.
 This middleware logs all database queries per request to help identify
 N+1 query patterns and other performance issues.
 
-Enable with:
-    DB_QUERY_LOG_ENABLED=true
-
 Output files:
     - logs/db-queries.log (human-readable text)
     - logs/db-queries.jsonl (JSON Lines for tooling)
+
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): query collection
+only needs the request scope and the response-start status code, so responses
+stream unbuffered. A ``dispatch`` shim is retained for tests.
+
 """
 
 # Standard
@@ -29,9 +31,9 @@ from typing import Any, Dict, List, Optional, Pattern
 import orjson
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import get_settings
@@ -381,7 +383,7 @@ def instrument_engine_for_logging(engine: Engine) -> None:
     logger.info("Database query logging instrumentation enabled")
 
 
-class DBQueryLoggingMiddleware(BaseHTTPMiddleware):
+class DBQueryLoggingMiddleware:
     """Middleware to log database queries per request.
 
     This middleware:
@@ -391,8 +393,118 @@ class DBQueryLoggingMiddleware(BaseHTTPMiddleware):
     4. Detects and flags potential N+1 query patterns
     """
 
+    def __init__(self, app: ASGIApp):
+        """Initialize the database query logging middleware.
+
+        Args:
+            app: The ASGI application
+        """
+        self.app = app
+
+    @staticmethod
+    def _build_context(request: Request, settings: Any, path: str) -> Dict[str, Any]:
+        """Create the per-request query collection context.
+
+        Args:
+            request: The incoming request
+            settings: The active settings object
+            path: The request path
+
+        Returns:
+            The context dict SQLAlchemy event handlers append queries to
+        """
+        ctx: Dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": request.method,
+            "path": path,
+            "user": None,
+            "correlation_id": request.headers.get(settings.correlation_id_header),
+            "queries": [],
+        }
+
+        # Try to get user from request state (set by auth middleware)
+        if hasattr(request.state, "user"):
+            ctx["user"] = getattr(request.state.user, "username", str(request.state.user))
+        elif hasattr(request.state, "username"):
+            ctx["user"] = request.state.username
+
+        return ctx
+
+    @staticmethod
+    def _finalize(ctx: Dict[str, Any], token: Any) -> None:
+        """Write collected queries to the log file(s) and reset the context var.
+
+        Log-write failures are logged and never affect the request; the context
+        var is always reset so query collection never leaks across requests.
+
+        Args:
+            ctx: The per-request query collection context
+            token: The ContextVar token returned when the context was set
+        """
+        # Write logs
+        try:
+            _write_logs(ctx, ctx["queries"])
+        except Exception as e:
+            logger.warning(f"Failed to write query log: {e}")
+
+        # Reset context
+        _request_context.reset(token)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        The response status code is captured from the response-start message;
+        responses stream through unbuffered.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        settings = get_settings()
+
+        if not settings.db_query_log_enabled:
+            await self.app(scope, receive, send)
+            return
+
+        # Skip static files and health checks
+        path = scope.get("path", "")
+        if should_skip_db_query_logging(path):
+            await self.app(scope, receive, send)
+            return
+
+        # The request object is only used for scope-backed attribute access
+        # (method, headers, state); the body is never read here.
+        request = Request(scope)
+        ctx = self._build_context(request, settings, path)
+
+        # Set context for SQLAlchemy event handlers
+        token = _request_context.set(ctx)
+
+        start_message: Dict[str, Any] = {}
+
+        async def send_with_status_capture(message: Message) -> None:
+            """Capture the response status code from the start message, then forward."""
+            if message.get("type") == "http.response.start":
+                start_message["status_code"] = message.get("status")
+            await send(message)
+
+        try:
+            start_time = time.perf_counter()
+            await self.app(scope, receive, send_with_status_capture)
+            request_duration = (time.perf_counter() - start_time) * 1000
+
+            ctx["status_code"] = start_message.get("status_code")
+            ctx["request_duration_ms"] = round(request_duration, 2)
+        finally:
+            self._finalize(ctx, token)
+
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Process request and log database queries.
+        """BaseHTTPMiddleware-compatible entry point retained for tests.
 
         Args:
             request: The incoming request
@@ -411,21 +523,7 @@ class DBQueryLoggingMiddleware(BaseHTTPMiddleware):
         if should_skip_db_query_logging(path):
             return await call_next(request)
 
-        # Create request context
-        ctx: Dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "method": request.method,
-            "path": path,
-            "user": None,
-            "correlation_id": request.headers.get(settings.correlation_id_header),
-            "queries": [],
-        }
-
-        # Try to get user from request state (set by auth middleware)
-        if hasattr(request.state, "user"):
-            ctx["user"] = getattr(request.state.user, "username", str(request.state.user))
-        elif hasattr(request.state, "username"):
-            ctx["user"] = request.state.username
+        ctx = self._build_context(request, settings, path)
 
         # Set context for SQLAlchemy event handlers
         token = _request_context.set(ctx)
@@ -440,14 +538,7 @@ class DBQueryLoggingMiddleware(BaseHTTPMiddleware):
 
             return response
         finally:
-            # Write logs
-            try:
-                _write_logs(ctx, ctx["queries"])
-            except Exception as e:
-                logger.warning(f"Failed to write query log: {e}")
-
-            # Reset context
-            _request_context.reset(token)
+            self._finalize(ctx, token)
 
 
 def setup_query_logging(app: Any, engine: Engine) -> None:

@@ -80,6 +80,7 @@ async def lifecycle_client():
     sys.modules.pop("mcpgateway.admin", None)
 
     import mcpgateway.main as main_mod
+    import mcpgateway.middleware.ui_auth as ui_auth_mod
     from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions
     from mcpgateway.db import Base
     import mcpgateway.services.gateway_service as gateway_service_mod
@@ -119,6 +120,7 @@ async def lifecycle_client():
 
     original_main_session_local = main_mod.SessionLocal
     original_validate_token_user = main_mod.validate_token_user
+    original_ui_auth_validate_token_user = ui_auth_mod.validate_token_user
     original_gateway_session_local = gateway_service_mod.SessionLocal
     original_db_session_local = db_mod.SessionLocal
     original_db_url = settings.database_url
@@ -143,6 +145,7 @@ async def lifecycle_client():
     settings.gateway_async_lifecycle_poll_interval = 0.01
     main_mod.SessionLocal = SessionLocal
     main_mod.validate_token_user = AsyncMock(return_value=mock_email_user)
+    ui_auth_mod.validate_token_user = AsyncMock(return_value=mock_email_user)
     gateway_service_mod.SessionLocal = SessionLocal
     db_mod.SessionLocal = SessionLocal
     main_mod.gateway_service._event_service.publish_event = AsyncMock(return_value=None)
@@ -217,6 +220,7 @@ async def lifecycle_client():
     user_context_db.close()
     main_mod.SessionLocal = original_main_session_local
     main_mod.validate_token_user = original_validate_token_user
+    ui_auth_mod.validate_token_user = original_ui_auth_validate_token_user
     gateway_service_mod.SessionLocal = original_gateway_session_local
     db_mod.SessionLocal = original_db_session_local
     rbac_mod.PermissionService = original_rbac_permission_service
