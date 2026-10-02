@@ -865,7 +865,7 @@ def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int
 
 
 class TimeseriesResponse(BaseModel):
-    """Execution counts bucketed over time."""
+    """Index-aligned execution and status counts bucketed over time."""
 
     buckets: list[str]
     values: list[int]
@@ -901,8 +901,8 @@ async def get_metrics_timeseries(
         db: Database session
 
     Returns:
-        TimeseriesResponse: Sparse buckets with one execution count each. Empty
-        series when observability is disabled.
+        TimeseriesResponse: Sparse buckets with aligned execution, success, and
+        error counts. Empty series when observability is disabled.
 
     Raises:
         HTTPException: 500 if aggregation fails

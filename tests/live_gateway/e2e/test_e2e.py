@@ -837,6 +837,25 @@ def _get_gateway_tools(admin_api: APIRequestContext, gateway_id: str, probe: str
     return _assert_replica_response(response, read_index)
 
 
+def test_observability_timeseries_response_contract() -> None:
+    """The live metrics endpoint returns aligned execution and status series."""
+    token = _make_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
+    response = httpx.get(
+        f"{BASE_URL}/v1/observability/metrics/timeseries",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    series_names = ("buckets", "values", "success_count", "error_count")
+    assert set(payload) == set(series_names)
+    assert len({len(payload[name]) for name in series_names}) == 1
+    assert all(isinstance(bucket, str) for bucket in payload["buckets"])
+    assert all(isinstance(value, int) for name in series_names[1:] for value in payload[name])
+    assert all(success + error <= total for total, success, error in zip(payload["values"], payload["success_count"], payload["error_count"], strict=True))
+
+
 # Keep synchronous Playwright cases after the async MCP protocol cases: its
 # session-scoped driver owns the thread's event loop until fixture teardown.
 def test_resource_namespacing_admin_rename(playwright: Playwright, jwt_token: str, resource_namespacing_upstreams: list[dict[str, str]], create_user: Any) -> None:

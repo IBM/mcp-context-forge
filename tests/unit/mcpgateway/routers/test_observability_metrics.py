@@ -28,7 +28,7 @@ from mcpgateway.db import Base, ObservabilityTrace
 from mcpgateway.middleware import rbac as rbac_module
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.routers import observability as observability_module
-from mcpgateway.services.observability_service import _execution_timeseries_postgresql, _latency_percentiles_postgresql, ObservabilityService
+from mcpgateway.services.observability_service import _execution_timeseries_postgresql, _execution_timeseries_python, _latency_percentiles_postgresql, ObservabilityService
 
 BASE_TIME = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -176,6 +176,7 @@ async def test_timeseries_counts_executions_per_bucket(db_session, grant_permiss
     assert response.values == [2, 2]
     assert response.success_count == [1, 1]
     assert response.error_count == [1, 0]
+    assert len({len(response.buckets), len(response.values), len(response.success_count), len(response.error_count)}) == 1
 
 
 @pytest.mark.asyncio
@@ -290,6 +291,37 @@ def test_postgres_buckets_normalized_to_utc():
     percentiles = _latency_percentiles_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
     assert percentiles["buckets"] == ["2025-01-01T12:00:00+00:00"]
     assert percentiles["p50"] == [100.0]
+
+
+def test_execution_timeseries_python_and_postgresql_paths_match(db_session):
+    """PostgreSQL and Python paths return the same aligned status counts."""
+    make_trace(db_session, offset_seconds=300, status="ok")
+    make_trace(db_session, offset_seconds=600, status="error")
+    make_trace(db_session, offset_seconds=900, status="unset")
+    make_trace(db_session, offset_seconds=5400, status="error")
+    make_trace(db_session, offset_seconds=5500, status="error")
+
+    cutoff_time = BASE_TIME - timedelta(hours=1)
+    python_timeseries = _execution_timeseries_python(db_session, cutoff_time, 60)
+
+    postgres_db = MagicMock()
+    postgres_db.execute.return_value.fetchall.return_value = [
+        SimpleNamespace(bucket=BASE_TIME, total=3, success=1, error=1),
+        SimpleNamespace(bucket=BASE_TIME + timedelta(hours=1), total=2, success=0, error=2),
+    ]
+    postgres_timeseries = _execution_timeseries_postgresql(postgres_db, cutoff_time, 60)
+
+    assert postgres_timeseries == python_timeseries
+    statement = str(postgres_db.execute.call_args.args[0])
+    assert "CASE WHEN status = 'ok'" in statement
+    assert "CASE WHEN status = 'error'" in statement
+
+
+def test_execution_timeseries_python_empty_result_has_complete_contract(db_session):
+    """The Python path returns every response array when no traces match."""
+    result = _execution_timeseries_python(db_session, BASE_TIME, 60)
+
+    assert result == {"buckets": [], "values": [], "success_count": [], "error_count": []}
 
 
 @pytest.fixture
