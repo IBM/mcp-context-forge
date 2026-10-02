@@ -30,7 +30,7 @@ def test_build_rust_tool_hook_global_context_propagates_team_id_as_tenant_id():
         request_headers=None,
     )
 
-    assert ctx.tenant_id == "team_a", "fallback-path GlobalContext must carry tool_payload['team_id'] as tenant_id — " f"got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id == "team_a", f"fallback-path GlobalContext must carry tool_payload['team_id'] as tenant_id — got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_tenant_id_none_when_team_id_absent():
@@ -47,7 +47,7 @@ def test_build_rust_tool_hook_global_context_tenant_id_none_when_team_id_absent(
         request_headers=None,
     )
 
-    assert ctx.tenant_id is None, "tenant_id must remain None when tool_payload has no team_id, " f"got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id is None, f"tenant_id must remain None when tool_payload has no team_id, got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_non_string_team_id_is_ignored():
@@ -64,7 +64,7 @@ def test_build_rust_tool_hook_global_context_non_string_team_id_is_ignored():
         request_headers=None,
     )
 
-    assert ctx.tenant_id is None, "Non-string team_id must not be accepted as tenant_id; " f"got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id is None, f"Non-string team_id must not be accepted as tenant_id; got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_fills_missing_existing_tenant_id():
@@ -83,7 +83,7 @@ def test_build_rust_tool_hook_global_context_fills_missing_existing_tenant_id():
     )
 
     assert ctx is existing_context
-    assert ctx.tenant_id == "team_a", "existing GlobalContext with tenant_id=None must be filled from " f"tool_payload['team_id']; got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id == "team_a", f"existing GlobalContext with tenant_id=None must be filled from tool_payload['team_id']; got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_preserves_existing_tenant_id():
@@ -108,5 +108,60 @@ def test_build_rust_tool_hook_global_context_preserves_existing_tenant_id():
 
     assert ctx is existing_context
     assert ctx.tenant_id == "team_middleware", (
-        "existing GlobalContext with tenant_id already set must NOT be overwritten by " f"tool_payload['team_id']; expected 'team_middleware', got tenant_id={ctx.tenant_id!r}"
+        f"existing GlobalContext with tenant_id already set must NOT be overwritten by tool_payload['team_id']; expected 'team_middleware', got tenant_id={ctx.tenant_id!r}"
     )
+
+
+def test_build_rust_tool_hook_global_context_uses_virtual_server_id():
+    """An explicit virtual-server ID must win over gateway and existing context IDs."""
+    service = ToolService()
+    existing_context = GlobalContext(request_id="request-1", server_id="middleware-server")
+
+    ctx = service._build_rust_tool_hook_global_context(
+        app_user_email="alice@example.com",
+        server_id="virtual-server",
+        tool_gateway_id="gateway-server",
+        plugin_global_context=existing_context,
+        tool_payload={"name": "search"},
+        gateway_payload=None,
+        request_headers=None,
+    )
+
+    assert ctx is existing_context
+    assert ctx.server_id == "virtual-server"
+
+
+def test_build_rust_tool_hook_global_context_preserves_existing_server_id_without_virtual_server():
+    """Without a virtual-server scope, an existing server ID is not replaced by the gateway ID."""
+    service = ToolService()
+    existing_context = GlobalContext(request_id="request-1", server_id="middleware-server")
+
+    ctx = service._build_rust_tool_hook_global_context(
+        app_user_email=None,
+        server_id=None,
+        tool_gateway_id="gateway-server",
+        plugin_global_context=existing_context,
+        tool_payload=None,
+        gateway_payload=None,
+        request_headers=None,
+    )
+
+    assert ctx is existing_context
+    assert ctx.server_id == "middleware-server"
+
+
+def test_build_rust_tool_hook_global_context_falls_back_to_gateway_server_id():
+    """A fresh context uses the gateway ID when no virtual-server ID is provided."""
+    service = ToolService()
+
+    ctx = service._build_rust_tool_hook_global_context(
+        app_user_email=None,
+        server_id=None,
+        tool_gateway_id="gateway-server",
+        plugin_global_context=None,
+        tool_payload=None,
+        gateway_payload=None,
+        request_headers=None,
+    )
+
+    assert ctx.server_id == "gateway-server"
