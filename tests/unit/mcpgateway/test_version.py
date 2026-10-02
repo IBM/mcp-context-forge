@@ -26,9 +26,9 @@ import pytest
 
 
 # --------------------------------------------------------------------------- #
-# Utility - fake psutil so _system_metrics code path runs                     #
+# Utility - mock psutil so _system_metrics code path runs                     #
 # --------------------------------------------------------------------------- #
-def _make_fake_psutil() -> types.ModuleType:  # noqa: D401
+def _make_mock_psutil() -> types.ModuleType:  # noqa: D401
     """Return an in-memory *psutil* stub implementing just what we need."""
 
     class _MemInfo:
@@ -291,7 +291,7 @@ def test_system_metrics_full(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    monkeypatch.setattr(ver_mod, "psutil", _make_fake_psutil())
+    monkeypatch.setattr(ver_mod, "psutil", _make_mock_psutil())
     metrics = ver_mod._system_metrics()
     assert metrics["process"]["pid"] == 1234
 
@@ -438,7 +438,7 @@ def test_system_metrics_cpu_freq_exception_sets_none(monkeypatch: pytest.MonkeyP
     # First-Party
     from mcpgateway import version as ver_mod
 
-    fake = _make_fake_psutil()
+    fake = _make_mock_psutil()
     fake.cpu_freq = MagicMock(side_effect=exc)
     monkeypatch.setattr(ver_mod, "psutil", fake)
 
