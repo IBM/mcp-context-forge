@@ -1770,6 +1770,9 @@ TESTING_LOCUST_WORKERS ?= 1
 # can write reports to ./reports on bind mounts without EACCES.
 HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
+# Profiles that bring up the testing stack. Also used to resolve the web_ui
+# host port for the startup summary, so both paths see the same services.
+TESTING_COMPOSE_PROFILES := --profile testing --profile inspector --profile sso
 
 .PHONY: testing-up
 testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
@@ -1785,14 +1788,15 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
 	@echo "Service              URL                           Purpose"
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
-	@echo "Gateway UX (nginx)   http://localhost:$${WEB_UI_PORT:-3001}         Gateway Supported UX"
+	@WEB_UI_PUBLISHED_PORT=$$(COMPOSE_CMD='$(COMPOSE_CMD_MONITOR)' COMPOSE_PROFILES='$(TESTING_COMPOSE_PROFILES)' scripts/testing-web-ui-port.sh); \
+		echo "ContextForge Web UI  http://localhost:$$WEB_UI_PUBLISHED_PORT         Gateway Supported UX"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
 	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
