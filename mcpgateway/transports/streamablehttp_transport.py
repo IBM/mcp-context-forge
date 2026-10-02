@@ -46,7 +46,6 @@ import anyio
 from cpex.framework import GlobalContext, PluginContextTable, PluginViolationError
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
-import httpx
 import jwt
 from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import MCPError
