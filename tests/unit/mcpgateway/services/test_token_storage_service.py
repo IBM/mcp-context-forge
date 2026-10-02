@@ -340,6 +340,35 @@ async def test_get_token_info_delegates_to_backend(mock_db, mock_settings_databa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method, kwargs",
+    [
+        (
+            "store_tokens",
+            {
+                "gateway_id": "gw-1",
+                "user_id": "oauth-user-1",
+                "app_user_email": None,
+                "access_token": "access-token",
+                "refresh_token": None,
+                "expires_in": 3600,
+                "scopes": [],
+            },
+        ),
+        ("get_user_token", {"gateway_id": "gw-1", "app_user_email": None}),
+        ("get_user_auth_headers", {"gateway_id": "gw-1", "app_user_email": None}),
+        ("get_token_info", {"gateway_id": "gw-1", "app_user_email": None}),
+        ("revoke_user_tokens", {"gateway_id": "gw-1", "app_user_email": None}),
+        ("get_user_learned_audience", {"gateway_id": "gw-1", "app_user_email": None}),
+    ],
+)
+async def test_user_scoped_operations_reject_missing_email(service, method, kwargs):
+    """No user-scoped operation may route a missing identity to a backend."""
+    with pytest.raises(ValueError, match="app_user_email is required"):
+        await getattr(service, method)(**kwargs)
+
+
+@pytest.mark.asyncio
 async def test_revoke_user_tokens_delegates_to_backend(mock_db, mock_settings_database):
     """Test revoke_user_tokens delegates to backend with team_id."""
     with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
