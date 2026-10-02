@@ -1,0 +1,81 @@
+name: Feature
+description: A cohesive capability that delivers part of an Epic.
+labels: ["triage"]
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A Feature belongs to an Epic and decomposes into Stories.
+
+        After filing, link this issue as a sub-issue of its Epic. Link each
+        Story as a sub-issue of this Feature.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this capability
+          required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Parent Epic
+      description: Issue number of the Epic this Feature delivers. Leave empty when no Epic exists.
+      placeholder: "#123"
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: The current user or operator need.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: The capability to build. Include a diagram or sketch when it clarifies the design.
+    validations:
+      required: true
+  - type: textarea
+    id: stories
+    attributes:
+      label: Story breakdown
+      description: List the Stories that deliver this Feature. After filing, create each Story. Link it here as a sub-issue.
+      placeholder: |
+        - #456 Story: ...
+        - Story: ...
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: What must be true before this Feature closes.
+    validations:
+      required: true
+  - type: checkboxes
+    id: standards
+    attributes:
+      label: MCP standards check
+      description: Confirm each point that applies.
+      options:
+        - label: The change follows the current MCP specification
+        - label: No breaking changes to MCP-compliant integrations
+        - label: This issue describes the deviations
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other designs, workarounds, or rejected ideas.
+  - type: textarea
+    id: scope-out
+    attributes:
+      label: Out of scope
+      description: Excluded work.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Related issues, discussions, or references.

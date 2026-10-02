@@ -718,6 +718,15 @@ async def make_requests():
 
 ## Contributing
 
+### Reporting Issues
+
+Issues use GitHub Issue Types: `Epic`, `Feature`, `Story`, `Task`, and `Bug`.
+
+- Hierarchy: Epics hold Features, Features hold Stories, Stories hold Tasks. Bugs stand alone or nest anywhere in that chain. Link children with GitHub sub-issues on the parent issue.
+- Pick the matching template in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). The template sets the issue type and defines the body fields.
+- Write titles without type prefixes. The issue type carries that information.
+- New issues start with the `triage` label. Chores and documentation updates use dedicated Task templates that also apply `chore` and `documentation`.
+
 ### Development Process
 
 1. **Fork and clone** the repository

@@ -1,0 +1,74 @@
+name: Chore
+description: A maintenance task such as CI, dependencies, tooling, or formatting.
+labels: ["triage", "chore"]
+type: Task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Chores are Tasks. This template applies the `chore` label.
+
+        Chores stand alone or complete a Story. Typical work: CI pipelines,
+        hooks and linters, dependency updates, build tooling, containers,
+        security scans.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this chore
+          required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Parent Story
+      description: Issue number of the Story this Chore completes. Leave empty for standalone work.
+      placeholder: "#123"
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area affected
+      description: Select every area involved.
+      multiple: true
+      options:
+        - GitHub Actions or CI pipelines
+        - Pre-commit hooks or linters
+        - Formatting (black, isort, ruff)
+        - Type checking (mypy, ty, pyrefly)
+        - Dependency updates or cleanup
+        - Build system or Makefile
+        - Containers (Docker, Podman, Compose)
+        - SBOM, CVE scans, or license checks
+        - Docs tooling or spellcheck
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this chore exists and what it unblocks or improves.
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: Work required
+      description: The change to make. Name known targets, configs, or files.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      description: The checkable state that closes this Chore.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Related Make targets, issues, pull requests, or commands.
