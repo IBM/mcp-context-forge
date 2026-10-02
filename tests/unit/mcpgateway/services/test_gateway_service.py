@@ -4,8 +4,8 @@ Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Unit-tests for the GatewayService implementation.
-These tests use only MagicMock / AsyncMock - no real network access
-and no real database needed.  Where the service relies on Pydantic
+These tests use MagicMock / AsyncMock for network access, with selected
+catalog regressions using the test database. Where the service relies on Pydantic
 models or SQLAlchemy Result objects, we monkey-patch or fake just
 enough behaviour to satisfy the code paths under test.
 """
@@ -16,15 +16,18 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from uuid import uuid4
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
 import pytest
+from sqlalchemy import Delete, delete, select
 from url_normalize import url_normalize
 
 # First-Party
@@ -37,7 +40,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import set_custom_name_and_slug
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate, ToolCreate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayCatalogSyncResult,
@@ -211,6 +214,38 @@ class TestGatewayToolNameCollisions:
             gateway_visibility="public",
             tools=[SimpleNamespace(name="search")],
         )
+
+    @pytest.mark.parametrize(
+        "visibility,existing_team,existing_owner,conflicts",
+        [
+            ("public", None, None, True),
+            ("team", "team-one", "other@example.com", True),
+            ("team", "team-two", "owner@example.com", False),
+            ("private", "team-two", "owner@example.com", True),
+            ("private", "team-one", "other@example.com", False),
+        ],
+    )
+    def test_retained_gateway_alias_respects_visibility_scope(self, visibility, existing_team, existing_owner, conflicts):
+        """Retained local aliases use the same namespace rules as external tools."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(original_name="local_lookup", name="prod-search", visibility=visibility, team_id=existing_team, owner_email=existing_owner, gateway_id="current")]
+        )
+        kwargs = {
+            "gateway_name": "prod",
+            "gateway_id": "current",
+            "gateway_team_id": "team-one",
+            "gateway_owner_email": "owner@example.com",
+            "gateway_visibility": visibility,
+            "tools": [SimpleNamespace(name="search")],
+            "retained_tool_original_names": {"local_lookup"},
+        }
+        if conflicts:
+            with pytest.raises(GatewayToolNameConflictError):
+                service._validate_tool_name_collisions(db, **kwargs)
+        else:
+            service._validate_tool_name_collisions(db, **kwargs)
 
     def test_ordinary_refresh_ignores_historical_external_collision(self):
         """Unchanged gateway tools do not block refresh because of legacy duplicates."""
@@ -5546,19 +5581,215 @@ async def test_fetch_tools_after_oauth_streamablehttp(gateway_service, monkeypat
     assert "capabilities" in result_data
 
 
+@pytest.fixture
+def oauth_catalog_db(gateway_service, test_db, monkeypatch):
+    """Use real catalog persistence while isolating remote OAuth and cache calls."""
+    gateway = DbGateway(
+        name=f"oauth-catalog-{uuid4().hex}",
+        url="https://example.com/mcp",
+        transport="streamablehttp",
+        oauth_config={"grant_type": "authorization_code"},
+        visibility="public",
+        capabilities={},
+    )
+    test_db.add(gateway)
+    test_db.commit()
+    gateway_id = gateway.id
+    token_storage = SimpleNamespace(get_user_token=AsyncMock(return_value="token"), get_user_learned_audience=AsyncMock(return_value=(None, None)))
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", Mock(return_value=token_storage))
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service._get_registry_cache", lambda: SimpleNamespace(invalidate_tools=AsyncMock(), invalidate_resources=AsyncMock(), invalidate_prompts=AsyncMock())
+    )
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: SimpleNamespace(invalidate_gateway=AsyncMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", Mock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    def add_tool(original_name="local_lookup", created_via="ui", visibility="public"):
+        tool = gateway_service._create_db_tool(ToolCreate(name=original_name, description="original", input_schema={"type": "object"}), gateway)
+        tool.gateway = gateway
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.created_via = created_via
+        tool.visibility = visibility
+        test_db.add(tool)
+        test_db.commit()
+        return tool
+
+    yield test_db, gateway, add_tool
+    test_db.rollback()
+    test_db.execute(delete(DbTool).where(DbTool.gateway_id == gateway_id))
+    test_db.execute(delete(DbGateway).where(DbGateway.id == gateway_id))
+    test_db.commit()
+
+
 @pytest.mark.asyncio
-async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch):
+@pytest.mark.parametrize("created_via", ["ui", "api", None], ids=["ui", "api", "legacy"])
+async def test_fetch_tools_after_oauth_rejects_retained_alias_collision(gateway_service, oauth_catalog_db, created_via):
+    db, gateway, add_tool = oauth_catalog_db
+    retained = add_tool(created_via=created_via)
+    retained_id = retained.id
+    incoming = ToolCreate(name="search", description="discovered", input_schema={"type": "object"})
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [incoming], [], [], []))
+    db.commit = Mock(wraps=db.commit)
+    db.rollback = Mock(wraps=db.rollback)
+
+    with pytest.raises(GatewayToolNameConflictError):
+        await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
+    persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
+    assert [(tool.id, tool.original_name, tool.description, tool.created_via) for tool in persisted] == [(retained_id, "local_lookup", "original", created_via)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("created_via", ["oauth", "notification_service"])
+async def test_fetch_tools_after_oauth_replaces_stale_discovered_alias(gateway_service, oauth_catalog_db, created_via):
+    db, gateway, add_tool = oauth_catalog_db
+    stale = add_tool(created_via=created_via)
+    stale_id, invocation_name = stale.id, stale.name
+    incoming = ToolCreate(name="search", description="discovered", input_schema={"type": "object"})
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [incoming], [], [], []))
+
+    await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
+    assert len(persisted) == 1
+    assert persisted[0].id != stale_id
+    assert (persisted[0].original_name, persisted[0].name, persisted[0].created_via) == ("search", invocation_name, "oauth")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("incoming_name,retained_visibility", [("local_lookup", "public"), ("fresh", "public"), ("search", "private")], ids=["same-original", "different-name", "different-scope"])
+async def test_fetch_tools_after_oauth_keeps_nonconflicting_local_tools(gateway_service, oauth_catalog_db, incoming_name, retained_visibility):
+    db, gateway, add_tool = oauth_catalog_db
+    retained = add_tool(visibility=retained_visibility)
+    retained_id = retained.id
+    incoming = ToolCreate(name=incoming_name, description="discovered", input_schema={"type": "object"})
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [incoming], [], [], []))
+
+    await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
+    assert {tool.original_name for tool in persisted} == {"local_lookup", incoming_name}
+    assert db.get(DbTool, retained_id).created_via == "ui"
+    assert db.get(DbTool, retained_id).description == ("discovered" if incoming_name == "local_lookup" else "original")
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_empty_catalog_keeps_existing_aliases(gateway_service, oauth_catalog_db):
+    db, gateway, add_tool = oauth_catalog_db
+    first = add_tool()
+    second = add_tool(original_name="another_local", created_via="api")
+    retained_ids = {first.id, second.id}
+    assert first.name == second.name
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({}, [], [], [], []))
+
+    await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    assert {tool.id for tool in db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()} == retained_ids
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_empty_catalog_preserves_existing_items(gateway_service, monkeypatch, caplog):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "streamablehttp"
+    gateway.tools = [SimpleNamespace(id=1, original_name="existing-tool", created_via="oauth")]
+    gateway.resources = [SimpleNamespace(id=2, uri="existing://resource", created_via="oauth")]
+    gateway.prompts = [SimpleNamespace(id=3, original_name="existing-prompt", created_via="oauth")]
+
+    db = MagicMock()
+    # Mock the EmailUser lookup used to build user_context for token storage
+    mock_user = MagicMock()
+    mock_user.is_admin = False
+
+    gateway_result = MagicMock()
+    gateway_result.scalar_one_or_none.return_value = gateway
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = mock_user
+
+    # Record every statement so the test can assert that no DELETE is issued.
+    executed_statements = []
+    lookup_results = [gateway_result, user_result]
+
+    def mock_execute(statement, *args, **kwargs):
+        executed_statements.append(statement)
+        if len(executed_statements) <= len(lookup_results):
+            return lookup_results[len(executed_statements) - 1]
+        # Any further statement would be part of the stale cleanup this guard prevents
+        return MagicMock()
+
+    db.execute.side_effect = mock_execute
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
+
+    class DummyTokenStorage:
+        def __init__(self, _db, user_context=None):
+            self.db = _db
+            self.user_context = user_context
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "token"
+
+        async def get_user_learned_audience(self, _gateway_id, _email):
+            return (None, None)
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({}, [], [], [], []))
+    gateway_service._update_or_create_tools = MagicMock(return_value=[])
+    gateway_service._update_or_create_resources = MagicMock(return_value=[])
+    gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+    registry_cache = SimpleNamespace(
+        invalidate_tools=AsyncMock(),
+        invalidate_resources=AsyncMock(),
+        invalidate_prompts=AsyncMock(),
+    )
+    tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    with caplog.at_level(logging.WARNING):
+        await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+    assert gateway.tools[0].original_name == "existing-tool"
+    assert gateway.resources[0].uri == "existing://resource"
+    assert gateway.prompts[0].original_name == "existing-prompt"
+    assert [statement for statement in executed_statements if isinstance(statement, Delete)] == []
+    assert "preserving existing items" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial_catalog", [False, True], ids=["full-catalog", "tools-only-catalog"])
+async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch, caplog, partial_catalog):
     gateway = MagicMock(spec=DbGateway)
     gateway.id = "gw-1"
     gateway.name = "gw"
     gateway.oauth_config = {"grant_type": "authorization_code"}
     gateway.transport = "sse"
     gateway.tools = [
-        SimpleNamespace(id=1, original_name="old-tool", name="gw-old-tool", visibility="public", team_id=None, owner_email=None),
-        SimpleNamespace(id=2, original_name="keep-tool", name="gw-keep-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=1, original_name="old-tool", created_via="oauth", name="gw-old-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth", name="gw-keep-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=7, original_name="ui-tool", created_via="ui", name="gw-ui-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=10, original_name="notify-tool", created_via="notification_service", name="gw-notify-tool", visibility="public", team_id=None, owner_email=None),
     ]
-    gateway.resources = [SimpleNamespace(id=3, uri="old://res"), SimpleNamespace(id=4, uri="keep://res")]
-    gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt"), SimpleNamespace(id=6, original_name="keep-prompt")]
+    gateway.resources = [
+        SimpleNamespace(id=3, uri="old://res", created_via="oauth"),
+        SimpleNamespace(id=4, uri="keep://res", created_via="oauth"),
+        SimpleNamespace(id=8, uri="api://res", created_via="api"),
+    ]
+    gateway.prompts = [
+        SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth"),
+        SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth"),
+        SimpleNamespace(id=9, original_name="ui-prompt", created_via="ui"),
+    ]
     gateway.capabilities = {}
     gateway.last_seen = None
     gateway.visibility = "public"
@@ -5612,7 +5843,13 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
 
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
     gateway_service._connect_to_sse_server_without_validation = AsyncMock(
-        return_value=({"resources": True, "prompts": True}, [SimpleNamespace(name="keep-tool")], [SimpleNamespace(uri="keep://res")], [SimpleNamespace(name="keep-prompt")], [])
+        return_value=(
+            {"resources": True, "prompts": True},
+            [SimpleNamespace(name="keep-tool")],
+            [] if partial_catalog else [SimpleNamespace(uri="keep://res")],
+            [] if partial_catalog else [SimpleNamespace(name="keep-prompt")],
+            [],
+        )
     )
     gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
     gateway_service._update_or_create_resources = MagicMock(return_value=[MagicMock()])
@@ -5629,12 +5866,23 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
     monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
-    result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+    with caplog.at_level(logging.WARNING):
+        result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
 
     assert result_data["capabilities"]["resources"] is True
-    assert len(gateway.tools) == 1
-    assert len(gateway.resources) == 1
-    assert len(gateway.prompts) == 1
+    assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool"}
+    assert {resource.uri for resource in gateway.resources} == ({"api://res"} if partial_catalog else {"keep://res", "api://res"})
+    assert {prompt.original_name for prompt in gateway.prompts} == ({"ui-prompt"} if partial_catalog else {"keep-prompt", "ui-prompt"})
+    assert "preserving existing items" not in caplog.text
+
+    deletes = [call.args[0] for call in db.execute.call_args_list if isinstance(call.args[0], Delete)]
+    deleted_ids = {statement.table.name: set(next(iter(statement.compile().params.values()))) for statement in deletes}
+    # notify-tool carries created_via="notification_service", which MCP_SYNC_CREATED_VIA_VALUES
+    # treats as MCP-discovered, so a stale one is pruned like any other discovered entry.
+    assert deleted_ids[DbTool.__tablename__] == {1, 10}
+    assert deleted_ids[DbResource.__tablename__] == ({3, 4} if partial_catalog else {3})
+    assert deleted_ids[DbPrompt.__tablename__] == ({5, 6} if partial_catalog else {5})
+    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6, 10} if partial_catalog else {1, 3, 5, 10})
 
 
 # ---------------------------------------------------------------------------

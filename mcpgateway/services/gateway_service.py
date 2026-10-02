@@ -2503,12 +2503,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resources=resources,
                 prompts=prompts,
                 created_via="oauth",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
             )
+
+            skip_stale_cleanup = not tools and not resources and not prompts
+            if skip_stale_cleanup:
+                logger.warning("Empty catalog from auth_code gateway %s during OAuth fetch, preserving existing items", SecurityValidator.sanitize_log_message(gateway.name))
+
+            # Only prune entries that came from MCP discovery. API/UI and legacy
+            # entries can share the gateway but are not authoritative upstream data.
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway OAuth fetch",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+                skip_stale_cleanup=skip_stale_cleanup,
             )
 
             # Update gateway capabilities and last_seen
@@ -6560,6 +6570,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         project_gateway_rename: bool = False,
         project_gateway_visibility: bool = False,
         original_gateway_visibility: str | None = None,
+        retained_tool_original_names: set[str] | None = None,
     ) -> None:
         """Reject federated tool names that collide in their persisted visibility scope.
 
@@ -6613,7 +6624,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         for candidate_name, visibility, team_id, owner_email in sorted(external_conflict_candidates, key=lambda item: item[0]):
             for existing in matching_tools:
-                if gateway_id is not None and str(existing.gateway_id) == str(gateway_id):
+                if gateway_id is not None and str(existing.gateway_id) == str(gateway_id) and (not retained_tool_original_names or existing.original_name not in retained_tool_original_names):
                     continue
                 if existing.name != candidate_name:
                     continue
@@ -6637,10 +6648,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_resources: bool = True,
         include_prompts: bool = True,
         project_gateway_rename: bool = False,
+        stale_created_via_values: Optional[Set[str]] = None,
     ) -> GatewayCatalogSyncResult:
         """Update/create fetched catalog rows inside caller transaction."""
         tools = [tool for tool in tools if tool is not None]
         existing_tools_by_original_name = {tool.original_name: tool for tool in gateway.tools}
+        fetched_tool_names = {tool.name for tool in tools}
+        # Match the caller's pruning policy: retained local aliases must still
+        # participate in namespace validation, unlike stale discovered tools.
+        retained_tool_original_names = {
+            tool.original_name
+            for tool in gateway.tools
+            if stale_created_via_values is not None and tool.original_name not in fetched_tool_names and getattr(tool, "created_via", None) not in stale_created_via_values
+        }
         self._validate_tool_name_collisions(
             db,
             gateway_name=gateway.name,
@@ -6652,6 +6672,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             existing_tools_by_original_name=existing_tools_by_original_name,
             update_visibility=update_visibility,
             project_gateway_rename=project_gateway_rename,
+            retained_tool_original_names=retained_tool_original_names,
         )
         return GatewayCatalogSyncResult(
             new_tool_names=[tool.name for tool in tools],
