@@ -577,7 +577,7 @@ async def test_forward_completion_upstream_raises_not_supported_without_capabili
 
 
 # ---------------------------------------------------------------------------
-# Task 4: _complete_prompt_argument() — federated dispatch + local fallback
+# Task 4: _complete_prompt_argument() — federated dispatch
 # ---------------------------------------------------------------------------
 
 from unittest.mock import MagicMock  # noqa: E402
@@ -623,12 +623,11 @@ async def test_federated_prompt_completion_is_answered_by_upstream(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_federated_prompt_falls_back_to_local_enum_when_unsupported(monkeypatch):
+@pytest.mark.parametrize("argument_schema", [{"type": "string"}, {"name": "color", "enum": ["red", "blue"]}])
+async def test_federated_prompt_raises_not_supported_without_fallback(monkeypatch, argument_schema):
+    """Preserve unsupported upstream errors regardless of the synced schema."""
     gateway = _DummyGatewayForForwarding()
-    # "blue" (not "green") as the non-matching enum value: "r" is a substring
-    # of "green" too ("g-R-een"), which would make this assertion pass
-    # vacuously regardless of whether the fallback filter actually ran.
-    schema = {"properties": {"color": {"name": "color", "enum": ["red", "blue"]}}}
+    schema = {"properties": {"color": argument_schema}}
     prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
@@ -637,8 +636,9 @@ async def test_federated_prompt_falls_back_to_local_enum_when_unsupported(monkey
 
     monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
     service = CompletionService()
-    result = await service._complete_prompt_argument(db, {"name": "upstream-prompt"}, "color", "r")
-    assert result.completion["values"] == ["red"]
+    with pytest.raises(CompletionNotSupportedError, match="nope") as exc_info:
+        await service.handle_completion(db, {"ref": {"type": "ref/prompt", "name": "upstream-prompt"}, "argument": {"name": "color", "value": "r"}})
+    assert completion_error_code(exc_info.value) == -32601
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 # Standard
 from contextlib import suppress
+import os
 import subprocess
 import sys
 import time
@@ -43,8 +44,8 @@ from ..helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_n
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
-COMPLETION_TEST_SERVER_URL = "http://completion_test_server:9102/mcp"
-COMPLETION_TEST_SERVER_NO_COMPLETIONS_URL = "http://completion_test_server_no_completions:9103/mcp"
+COMPLETION_TEST_SERVER_URL = os.getenv("COMPLETION_TEST_SERVER_URL", "http://completion_test_server:9102/mcp")
+COMPLETION_TEST_SERVER_NO_COMPLETIONS_URL = os.getenv("COMPLETION_TEST_SERVER_NO_COMPLETIONS_URL", "http://completion_test_server_no_completions:9103/mcp")
 
 
 # ---------------------------------------------------------------------------
@@ -134,13 +135,8 @@ def federated_prompt_without_completions(admin_client: httpx.Client) -> Generato
 def test_federated_completion_is_answered_by_upstream(admin_client: httpx.Client, federated_prompt: dict[str, Any]) -> None:
     """A federated prompt's completion/complete is answered by its owning upstream, not a stale synced schema.
 
-    `greet`'s `style` argument has no `enum` in its synced argument_schema at
-    all (confirmed by `_register_gateway_and_get_prompt` finding it via
-    `/prompts`, whose argument_schema carries only `{"name": "style",
-    "required": true}` -- see completion_test_server/server.py's docstring).
-    So "formal"/"friendly"/"playful" coming back can only have come from the
-    live upstream `completion/complete` call this PR adds, never from a
-    local-schema fallback.
+    The synced schema has no enum for `style`.
+    The live upstream supplies the completion values.
     """
     response = admin_client.post(
         "/rpc",
@@ -164,13 +160,8 @@ def test_federated_completion_is_answered_by_upstream(admin_client: httpx.Client
 def test_upstream_without_completions_capability_returns_method_not_found(admin_client: httpx.Client, federated_prompt_without_completions: dict[str, Any]) -> None:
     """A federated prompt owned by an upstream lacking the `completions` capability maps to -32601.
 
-    `completion_test_server_no_completions` is the same fixture image with no
-    `completion` handler registered (`COMPLETIONS_ENABLED=false`), so its
-    negotiated `server_capabilities` has no `completions` key at all --
-    exercising CompletionNotSupportedError's R3 mapping end-to-end. (The
-    `greet` prompt here also has no enum in its argument_schema, so there is
-    no local-schema fallback available either -- the request must surface
-    the upstream-derived error, not a silent empty result.)
+    `COMPLETIONS_ENABLED=false` removes the upstream completion handler and capability.
+    The local schema must not replace the upstream error.
     """
     response = admin_client.post(
         "/rpc",
