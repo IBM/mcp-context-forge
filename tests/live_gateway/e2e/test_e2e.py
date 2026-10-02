@@ -389,8 +389,9 @@ class TestConnectivity:
             assert "tools" in raw_result["capabilities"], f"unexpected discover result: {raw_result}"
             assert "logging" not in raw_result["capabilities"], f"logging advertised to modern client: {raw_result['capabilities']}"
 
-            await modern_client.list_tools()
-            tool_result = await modern_client.call_tool("fast-time-get-system-time", {"timezone": "UTC"})
+            tools = (await modern_client.list_tools()).tools
+            assert any(tool.name == "a2a-a2a-echo-agent" for tool in tools), "echo agent tool unavailable for the modern call check"
+            tool_result = await modern_client.call_tool("a2a-a2a-echo-agent", {"query": "modern logging check"})
             assert tool_result.is_error is False, f"modern tools/call failed (upstream may be down): {tool_result.content}"
 
             for resource in (await modern_client.list_resources()).resources[:3]:
