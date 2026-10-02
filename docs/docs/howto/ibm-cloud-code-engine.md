@@ -1,629 +1,116 @@
-# Deploy ContextForge on IBM Cloud with Code Engine
+# Deploy ContextForge on IBM Cloud Code Engine
 
-This guide covers two supported deployment paths for the **ContextForge**:
+Single instance, SQLite on the container disk, public image. No build, no registry.
 
-1. **Makefile automation** - a single-command workflow that wraps `ibmcloud` CLI.
-2. **Manual IBM Cloud CLI** - the raw commands the Makefile executes, for fine-grained control.
-
----
+!!! warning "Data is ephemeral"
+    SQLite lives on the container disk. Every instance replacement starts from an empty database.
 
 ## 1 - Prerequisites
 
-| Requirement          | Details                                                            |
-| -------------------- | ------------------------------------------------------------------ |
-| IBM Cloud account    | [Create one](https://cloud.ibm.com/registration) if needed         |
-| Docker **or** Podman | Builds the production container image locally                      |
-| IBM Cloud CLI ≥ 2.16 | Installed automatically with `make ibmcloud-cli-install`           |
-| Code Engine project  | Create or select one in the IBM Cloud console                      |
-| IAM permissions      | Editor or higher on Code Engine; Writer or higher on Container Registry in the resource group |
-| `.env` file          | Runtime secrets & config for the gateway                           |
-| `.env.ce` file       | Deployment credentials & metadata for Code Engine / Container Reg. |
-
----
-
-## 2 - Environment files
-
-Both files are already in **`.gitignore`**.
-Templates named **`.env.example`** and **`.env.ce.example`** are included; copy them:
+- IBM Cloud account and the [IBM Cloud CLI](https://cloud.ibm.com/docs/cli?topic=cli-getting-started).
+- Code Engine plugin: `ibmcloud plugin install code-engine -f`
+- Log in and pick a project:
 
 ```bash
-cp .env.example .env         # runtime settings (uploaded to Code Engine as a secret)
-cp .env.ce.example .env.ce   # deployment credentials (CLI only, never reach the container)
+ibmcloud login                  # or: ibmcloud login --apikey "$IBMCLOUD_API_KEY"
+ibmcloud target -r us-south -g default   # any region and resource group works, just set one
+ibmcloud ce project select --name my-project   # or: ibmcloud ce project create --name my-project
 ```
 
-### `.env` - runtime settings
+The commands below are region-independent. Use whichever region and resource group you have; every
+later command runs against the targeted one.
 
-This file holds the runtime configuration for the gateway. Locally it is passed to the container via `--env-file=.env`, but **Code Engine has no access to your local filesystem** — you must upload these values as a Code Engine secret (covered in the deploy steps below). Treat this file as an application secret store and never commit it to version control.
+## 2 - Prepare `.env`
 
 ```bash
-# ─────────────────────────────────────────────────────────────────────────────
-#  Core gateway settings
-# ─────────────────────────────────────────────────────────────────────────────
-AUTH_REQUIRED=true
-# Generate once:  openssl rand -hex 32
-JWT_SECRET_KEY=eef5e9f70ca7fe6f9677ad2acaf4d32c55e9d98e9cb74299b33f5c5d1a3c8ef0
+cp .env.example .env
+make init-secrets-patch-env
+```
 
-HOST=0.0.0.0
+That replaces the `__REPLACE_ME__` placeholders with real secrets. Read back the admin login used to
+bootstrap the first user:
+
+```bash
+grep -E '^(PLATFORM_ADMIN_EMAIL|PLATFORM_ADMIN_PASSWORD)=' .env
+```
+
+Change `PLATFORM_ADMIN_EMAIL` if you want. Both values are read at first start only.
+
+Append the SQLite and port settings:
+
+```bash
+cat >> .env <<'EOF'
 PORT=4444
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Database configuration  - choose ONE block
-# ─────────────────────────────────────────────────────────────────────────────
-
-## (A) Local SQLite  (good for smoke-tests / CI only)
-## --------------------------------------------------
-## - SQLite lives on the container's ephemeral file system.
-## - On Code Engine every new instance starts fresh; scale-out, restarts or
-##   deploys will wipe data.  **Not suitable for production.**
-## - If you still need file persistence, attach Code Engine's file-system
-##   mount or an external filesystem / COS bucket.
-#CACHE_TYPE=database
-#DATABASE_URL=sqlite:////tmp/mcp.db
-
-
-## (B) Managed PostgreSQL on IBM Cloud  (recommended for staging/production)
-## --------------------------------------------------------------------------
-## - Provision an IBM Cloud Databases for PostgreSQL instance (see below).
-## - Use the service credentials to build the URL.
-## - sslmode=require is mandatory for IBM Cloud databases.
-CACHE_TYPE=database
-DATABASE_URL=postgresql+psycopg://pguser:pgpass@my-pg-host.databases.appdomain.cloud:32727/mcpgwdb?sslmode=require
-#            │ │      │                                   │           │
-#            │ │      │                                   │           └─ database name
-#            │ │      │                                   └─ hostname:port
-#            │ │      └─ password
-#            │ └─ username
-#            └─ scheme
+DATABASE_URL=sqlite:////tmp/mcp.db
+CACHE_TYPE=memory
+EOF
 ```
 
-The `JWT_SECRET_KEY` variable is used to generate a Bearer token used to access the APIs.
-To access the APIs you need to generate your JWT token using the same `JWT_SECRET_KEY`, for example:
+`.env.example` already sets `HOST=0.0.0.0`, which Code Engine requires. Leave `APP_DOMAIN` alone for
+now; step 4 points it at the generated app URL.
+
+!!! note "Inline comments"
+    `--from-env-file` drops lines like `KEY=value  # comment`. Find them with
+    `grep -nE '^[A-Z_]+=.*[^#]+#' .env` and move the comment to its own line.
+
+## 3 - Deploy
 
 ```bash
-# Generate a one-off token for the default admin user
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com)
-echo ${MCPGATEWAY_BEARER_TOKEN} # Check that the key was generated
+ibmcloud ce secret create --name cf-app-secrets --format generic --from-env-file .env
+
+ibmcloud ce application create --name mcpgateway \
+    --image ghcr.io/ibm/mcp-context-forge:v1.0.11 \
+    --env-from-secret cf-app-secrets \
+    --port 4444 --cpu 1 --memory 4G \
+    --min-scale 1 --max-scale 1 \
+    --request-timeout 600
 ```
 
-### `.env.ce` - Code Engine deployment settings
+`--min-scale 1 --max-scale 1` keeps exactly one instance, so one SQLite file serves every request.
+`--request-timeout 600` is the Code Engine maximum, so long-lived SSE streams survive.
 
-These keys are **only** consumed by Makefile / CLI. They never reach the running container.
+## 4 - Point `APP_DOMAIN` at the app
+
+Code Engine generates the hostname, so this only works after the app exists:
 
 ```bash
-# ─────────────────────────────────────────────────────────────────────────────
-#  IBM Cloud / Code Engine deployment variables
-# ─────────────────────────────────────────────────────────────────────────────
-IBMCLOUD_REGION=us-south
-IBMCLOUD_RESOURCE_GROUP=default
-IBMCLOUD_PROJECT=my-codeengine-project
-IBMCLOUD_CODE_ENGINE_APP=mcpgateway
+APP_URL=$(ibmcloud ce application get --name mcpgateway --output url)
+curl -s "$APP_URL/health"
 
-# Image details
-IBMCLOUD_IMAGE_NAME=us.icr.io/myspace/mcpgateway:latest  # target in IBM Container Registry
-IBMCLOUD_IMG_PROD=mcpgateway/mcpgateway                  # local tag produced by Make
-
-# Authentication
-IBMCLOUD_API_KEY=***your-api-key***    # leave blank to use SSO flow at login
-
-# Resource combo - see https://cloud.ibm.com/docs/codeengine?topic=codeengine-mem-cpu-combo
-IBMCLOUD_CPU=1                         # vCPU for the container
-IBMCLOUD_MEMORY=4G                     # Memory (must match a valid CPU/MEM pair)
-
-# Registry secret in Code Engine (first-time creation is automated)
-IBMCLOUD_REGISTRY_SECRET=my-regcred
+sed -i.bak "s|^APP_DOMAIN=.*|APP_DOMAIN=$APP_URL|" .env
+ibmcloud ce secret update --name cf-app-secrets --from-env-file .env
+ibmcloud ce application update --name mcpgateway
 ```
 
-> **Tip:** run `make ibmcloud-check-env` to verify every required `IBMCLOUD_*` key is present in `.env.ce`.
+`APP_DOMAIN` must hold the `https://` URL that `--output url` returns. The CSRF middleware rejects
+any admin POST whose `Referer` does not match it, and virtual-server MCP URLs are built from it. The
+`.env.example` default of `http://localhost:8080` makes admin login fail with 403.
 
-### Verify environment files
+## 5 - Access
+
+Open `$APP_URL/admin` and log in with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
+
+For API calls, mint a token with the same `JWT_SECRET_KEY` the app runs with:
 
 ```bash
-# Confirm both env files exist and contain required keys
-test -f .env && echo "OK: .env exists" || echo "MISSING: .env"
-test -f .env.ce && echo "OK: .env.ce exists" || echo "MISSING: .env.ce"
-grep -q DATABASE_URL .env && echo "OK: DATABASE_URL set" || echo "WARNING: DATABASE_URL not set in .env"
-grep -q JWT_SECRET_KEY .env && echo "OK: JWT_SECRET_KEY set" || echo "WARNING: JWT_SECRET_KEY not set in .env"
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    -u "$(grep -m1 '^PLATFORM_ADMIN_EMAIL=' .env | cut -d= -f2-)" \
+    --secret "$(grep -m1 '^JWT_SECRET_KEY=' .env | cut -d= -f2-)")
+
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" "$APP_URL/tools"
 ```
 
-!!! warning "Set `HOST=0.0.0.0` in your `.env`"
-    Code Engine routes external traffic into the container. If `HOST` is set to `127.0.0.1`
-    (the application default) the process binds to loopback only and Code Engine's routing
-    cannot reach it — the app will appear to start but all requests will fail.
+Logs: `ibmcloud ce application logs --name mcpgateway --follow`
 
-    Make sure your `.env` contains:
-    ```bash
-    HOST=0.0.0.0
-    PORT=4444
-    ```
-
----
-
-## 3 - Workflow A - Makefile targets
-
-| Target                      | Action it performs                                                                   |
-| --------------------------- | ------------------------------------------------------------------------------------ |
-| **`podman`** / **`docker`** | Build the production image (`$IBMCLOUD_IMG_PROD`).                                   |
-| `ibmcloud-cli-install`      | Install IBM Cloud CLI + **container-registry** and **code-engine** plugins.          |
-| `ibmcloud-check-env`        | Ensure all `IBMCLOUD_*` vars exist in `.env.ce`; abort if any are missing.           |
-| `ibmcloud-login`            | `ibmcloud login` - uses API key or interactive SSO.                                  |
-| `ibmcloud-ce-login`         | `ibmcloud ce project select --name $IBMCLOUD_PROJECT`.                               |
-| `ibmcloud-list-containers`  | Show ICR images and existing Code Engine apps.                                       |
-| `ibmcloud-tag`              | `podman tag $IBMCLOUD_IMG_PROD $IBMCLOUD_IMAGE_NAME`.                                |
-| `ibmcloud-push`             | `ibmcloud cr login` + `podman push` to ICR.                                          |
-| `ibmcloud-deploy`           | Create **or** update the app; syncs `.env` to a Code Engine secret (`<app>-env`), sets CPU/MEM, attaches registry secret, exposes port 4444. |
-| `ibmcloud-ce-status`        | `ibmcloud ce application get` - see route URL, revisions, health.                    |
-| `ibmcloud-ce-logs`          | `ibmcloud ce application logs --follow` - live log stream.                           |
-| `ibmcloud-ce-rm`            | Delete the application and its `<app>-env` runtime secret.                           |
-
-**Typical first deploy**
+## 6 - Update and clean up
 
 ```bash
-make ibmcloud-check-env
-make ibmcloud-cli-install
-make ibmcloud-login
-make ibmcloud-ce-login
-make podman            # or: make docker
-make ibmcloud-tag
-make ibmcloud-push
-make ibmcloud-deploy
+ibmcloud ce secret update --name cf-app-secrets --from-env-file .env
+ibmcloud ce application update --name mcpgateway       # required, a secret update alone does not restart
+
+ibmcloud ce revision list --application mcpgateway     # every update adds one
+ibmcloud ce revision delete --name mcpgateway-00001 -f # old revisions keep billing for min-scale 1
+
+ibmcloud ce application delete --name mcpgateway -f
+ibmcloud ce secret delete --name cf-app-secrets -f
 ```
-
-!!! info "`make ibmcloud-deploy` handles env injection automatically"
-    The target creates or updates a Code Engine secret named `<app>-env` (where `<app>` is
-    `$IBMCLOUD_CODE_ENGINE_APP`) from your local `.env` on every run, then passes
-    `--env-from-secret <app>-env` to the app. You do not need a
-    separate step — just make sure `.env` is present and populated before running the target.
-
-!!! warning "`--from-env-file` skips lines with inline comments"
-    The `ibmcloud ce secret` flag used to upload `.env` silently **skips any line that contains
-    an inline comment** (e.g. `KEY=value  # comment`).  Before running `make ibmcloud-deploy`,
-    check your `.env` for lines of the form `KEY=value  # comment` and move the comment to its
-    own line above the key.
-
-    Do **not** use a blanket `sed` stripper — values such as `DATABASE_URL` or `REDIS_URL`
-    pasted from the IBM Cloud console can legitimately contain `#`, and stripping would silently
-    truncate them.
-
-**Redeploy after code changes**
-
-```bash
-make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
-```
-
-**Update runtime config (`.env` changed, no code change)**
-
-```bash
-ibmcloud ce secret update --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
-ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
-```
-
----
-
-## 4 - Workflow B - Manual IBM Cloud CLI
-
-```bash
-# 1 - Install the IBM Cloud CLI using the official instructions:
-#     https://cloud.ibm.com/docs/cli?topic=cli-getting-started
-#     Then install the required plugins:
-ibmcloud plugin install container-registry -f
-ibmcloud plugin install code-engine      -f
-
-# 2 - Login
-ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$IBMCLOUD_REGION" -g "$IBMCLOUD_RESOURCE_GROUP"
-ibmcloud resource groups # list resource groups
-
-# 3 - Target Code Engine project
-ibmcloud ce project list # list current projects
-ibmcloud ce project select --name "$IBMCLOUD_PROJECT"
-
-# 4 - Build + tag image
-podman build -t "$IBMCLOUD_IMG_PROD" .
-podman tag "$IBMCLOUD_IMG_PROD" "$IBMCLOUD_IMAGE_NAME"
-
-# 5 - Push image to ICR
-#
-# Note: if you are deploying to a region other than us-south (e.g. eu-de, jp-tok),
-# set the Container Registry region first:
-#   ibmcloud cr region-set <region>   (e.g. ibmcloud cr region-set eu-de)
-# Without this step `ibmcloud cr login` will authenticate to the wrong endpoint
-# and the push will fail with authentication errors.
-ibmcloud cr login
-ibmcloud cr namespaces       # Ensure your namespace exists
-podman push "$IBMCLOUD_IMAGE_NAME"
-ibmcloud cr images # list images
-```
-
-### Verify image in registry
-
-```bash
-# Confirm the image is present in ICR
-ibmcloud cr images --restrict "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f2)"
-# Expected: your image listed with "No Issues" vulnerability status
-```
-
-```bash
-# 6 - Create registry secret (first time)
-# Note: 'ibmcloud ce registry create-secret' is deprecated — use the form below.
-ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
-    --format registry \
-    --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
-    --username iamapikey --password "$IBMCLOUD_API_KEY"
-ibmcloud ce secret list # list every secret (generic, registry, SSH, TLS, etc.)
-ibmcloud ce secret get --name "$IBMCLOUD_REGISTRY_SECRET"         # add --decode to see clear-text values
-
-# 6b - Create a runtime environment secret from .env
-# Code Engine has no access to your local .env file — upload it as a secret.
-# The secret name is derived from the app name to keep naming consistent.
-#
-# NOTE: --from-env-file skips lines with inline comments (KEY=value  # comment).
-# Check your .env for such lines and move comments to their own line before running.
-# See the warning in Workflow A above for details.
-#
-# First time:
-ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
-#
-# To update later (e.g. rotating credentials or changing config):
-# ibmcloud ce secret update --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
-# ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
-
-# 7 - Deploy / update (attach the env secret so the container sees your config)
-if ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" >/dev/null 2>&1; then
-  ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
-      --image "$IBMCLOUD_IMAGE_NAME" \
-      --cpu "$IBMCLOUD_CPU" --memory "$IBMCLOUD_MEMORY" \
-      --registry-secret "$IBMCLOUD_REGISTRY_SECRET" \
-      --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"
-else
-  ibmcloud ce application create --name "$IBMCLOUD_CODE_ENGINE_APP" \
-      --image "$IBMCLOUD_IMAGE_NAME" \
-      --cpu "$IBMCLOUD_CPU" --memory "$IBMCLOUD_MEMORY" \
-      --port 4444 \
-      --registry-secret "$IBMCLOUD_REGISTRY_SECRET" \
-      --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"
-fi
-```
-
-### Verify application is running
-
-```bash
-# Check application status
-ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep -E "Status|URL|Ready"
-# Expected: Status showing "Ready", URL showing the public endpoint
-
-# Quick health check
-APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
-curl -s "${APP_URL}/health" | jq .
-# Expected: {"status": "healthy"}
-```
-
-```bash
-# 8 - Status & logs
-ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP"
-ibmcloud ce application events --name "$IBMCLOUD_CODE_ENGINE_APP"
-ibmcloud ce application get   --name "$IBMCLOUD_CODE_ENGINE_APP"
-ibmcloud ce application logs  --name "$IBMCLOUD_CODE_ENGINE_APP" --follow
-```
-
----
-
-## 5 - Accessing the gateway
-
-```bash
-ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url
-```
-
-Open the returned URL (e.g.
-`https://mcpgateway.us-south.codeengine.appdomain.cloud/admin`) and log in with the basic-auth credentials from `.env`.
-
-Test the API endpoints with the generated `MCPGATEWAY_BEARER_TOKEN`:
-
-```bash
-# Generate a one-off token for the default admin user
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com)
-
-# Call a protected endpoint. Since there are no tools, initially this just returns `[]`
-curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
-     https://mcpgateway.us-south.codeengine.appdomain.cloud/tools
-
-# Check the logs
-make ibmcloud-ce-logs
-```
-
----
-
-## 6 - Cleanup
-
-```bash
-# via Makefile
-make ibmcloud-ce-rm
-
-# or directly
-ibmcloud ce application delete --name "$IBMCLOUD_CODE_ENGINE_APP" -f
-
-# Also remove the runtime env secret if you no longer need it
-ibmcloud ce secret delete --name "${IBMCLOUD_CODE_ENGINE_APP}-env" -f
-```
-
----
-
-## 7 - Using IBM Cloud Databases for PostgreSQL
-
-Need durable data, high availability, and automated backups? Provision **IBM Cloud Databases for PostgreSQL** and connect ContextForge to it.
-
-!!! tip "Already have `DATABASE_URL` in your `.env`?"
-    If you set `DATABASE_URL` in `.env` before running `make ibmcloud-deploy`, it is already
-    present in the `<app>-env` secret and you can skip steps 4–5 below. The separate
-    `mcpgw-db-url` secret approach shown here is useful when you want to manage the database
-    credential independently from the rest of your config — for example, rotating it without
-    re-uploading the entire `.env`.
-
-```bash
-###############################################################################
-# 1 - Provision PostgreSQL
-###############################################################################
-# Choose a plan:  standard (shared) or enterprise (dedicated). For small
-# workloads start with: standard / 1 member / 4 GB RAM.
-ibmcloud resource service-instance-create mcpgw-db \
-    databases-for-postgresql standard $IBMCLOUD_REGION
-
-###############################################################################
-# 2 - Create service credentials
-###############################################################################
-ibmcloud resource service-key-create mcpgw-db-creds Administrator \
-    --instance-name mcpgw-db
-
-###############################################################################
-# 3 - Retrieve credentials & craft DATABASE_URL
-###############################################################################
-creds_json=$(ibmcloud resource service-key mcpgw-db-creds --output json)
-host=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.hosts[0].hostname')
-port=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.hosts[0].port')
-user=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.authentication.username')
-pass=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.authentication.password')
-db=$(echo "$creds_json"   | jq -r '.[0].credentials.connection.postgres.database')
-
-DATABASE_URL="postgresql+psycopg://${user}:${pass}@${host}:${port}/${db}?sslmode=require"
-
-###############################################################################
-# 4 - Store DATABASE_URL as a Code Engine secret
-###############################################################################
-ibmcloud ce secret create --name mcpgw-db-url \
-    --from-literal DATABASE_URL="$DATABASE_URL"
-
-###############################################################################
-# 5 - Mount the secret into the application
-###############################################################################
-ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
-    --env-from-secret mcpgw-db-url
-```
-
-### Verify PostgreSQL connectivity
-
-```bash
-# Confirm the secret is mounted
-ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep mcpgw-db-url
-# Expected: secret listed in environment references
-
-# Test the application can reach the database (wait ~30s for restart)
-APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
-curl -s "${APP_URL}/health" | jq .
-# Expected: health check passes — if it fails, check application logs:
-# ibmcloud ce application logs --name "$IBMCLOUD_CODE_ENGINE_APP" --tail 50
-```
-
-### Choosing the right PostgreSQL size
-
-| Workload profile | Suggested plan | Members × RAM | Notes                                                 |
-| ---------------- | -------------- | ------------- | ----------------------------------------------------- |
-| **Dev / PoC**    | `standard`     | 1 × 4 GB      | Cheapest; no HA; easy to scale later                  |
-| **Prod small**   | `standard`     | 2 × 8 GB      | Two members enable HA & automatic fail-over           |
-| **Prod heavy**   | `enterprise`   | 3 × 16 GB     | Dedicated bare-metal; highest performance & isolation |
-
-Scale up at any time with:
-
-```bash
-ibmcloud cdb deployment-scaling-set mcpgw-db \
-    --members 3 --memory-gb 16
-
-# Update the number of maximum connections:
-ibmcloud cdb deployment-configuration YOUR_DB_CRN '{"configuration":{"max_connections":215}}'
-
-# show max_connections;
-```
-
-The gateway will reconnect transparently because the host name remains stable. See the [documentation for more details](https://cloud.ibm.com/docs/databases-for-postgresql?topic=databases-for-postgresql-managing-connections&locale=en#raise-connection-limit).
-
----
-
-### Local SQLite vs. Managed PostgreSQL
-
-| Aspect          | Local SQLite (`sqlite:////tmp/mcp.db`)  | Managed PostgreSQL   |
-| --------------- | --------------------------------------- | -------------------- |
-| Persistence     | **None** - lost on restarts / scale-out | Durable & backed-up  |
-| Concurrency     | Single-writer lock                      | Multiple writers     |
-| Scale-out ready | No - state is per-pod                   | Yes                  |
-| Best for        | Unit tests, CI pipelines                | Staging & production |
-
-For production workloads you **must** switch to a managed database or mount a persistent file system.
-
----
-
-## 8 - Adding IBM Cloud Databases for Redis (optional cache layer)
-
-Need a high-performance shared cache? Provision **IBM Cloud Databases for Redis**
-and point ContextForge at it.
-
-!!! tip "Already have `REDIS_URL` in your `.env`?"
-    If you set `REDIS_URL` and `CACHE_TYPE=redis` in `.env` before running `make ibmcloud-deploy`,
-    they are already present in the `<app>-env` secret and you can skip steps 4–5 below. The
-    separate `mcpgw-redis-url` secret approach shown here is useful when you want to manage the
-    Redis credential independently from the rest of your config.
-
-```bash
-###############################################################################
-# 1 - Provision Redis
-###############################################################################
-# Choose a plan: standard (shared) or enterprise (dedicated).
-ibmcloud resource service-instance-create mcpgw-redis \
-    databases-for-redis standard $IBMCLOUD_REGION
-
-###############################################################################
-# 2 - Create service credentials
-###############################################################################
-ibmcloud resource service-key-create mcpgw-redis-creds Administrator \
-    --instance-name mcpgw-redis
-
-###############################################################################
-# 3 - Retrieve credentials & craft REDIS_URL
-###############################################################################
-creds_json=$(ibmcloud resource service-key mcpgw-redis-creds --output json)
-host=$(echo "$creds_json" | jq -r '.[0].credentials.connection.rediss.hosts[0].hostname')
-port=$(echo "$creds_json" | jq -r '.[0].credentials.connection.rediss.hosts[0].port')
-pass=$(echo "$creds_json" | jq -r '.[0].credentials.connection.rediss.authentication.password')
-
-REDIS_URL="rediss://:${pass}@${host}:${port}/0"   # rediss = TLS-secured Redis
-
-###############################################################################
-# 4 - Store REDIS_URL as a Code Engine secret
-###############################################################################
-ibmcloud ce secret create --name mcpgw-redis-url \
-    --from-literal REDIS_URL="$REDIS_URL"
-
-###############################################################################
-# 5 - Mount the secret and switch cache backend
-###############################################################################
-ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
-    --env-from-secret mcpgw-redis-url \
-    --env CACHE_TYPE=redis
-```
-
-### Verify Redis connectivity
-
-```bash
-# Confirm both secrets are mounted
-ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep -E "mcpgw-(db|redis)"
-# Expected: both mcpgw-db-url and mcpgw-redis-url listed
-
-# Verify the application restarts and is healthy
-APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
-curl -s "${APP_URL}/health" | jq .
-# Expected: health check passes with Redis cache active
-```
-
-### Choosing the right Redis size
-
-| Use-case         | Plan         | Memory | Notes                             |
-| ---------------- | ------------ | ------ | --------------------------------- |
-| Dev / CI         | `standard`   | 256 MB | Minimum footprint, single member  |
-| Small production | `standard`   | 1 GB   | Two-member HA cluster             |
-| High-throughput  | `enterprise` | ≥4 GB  | Dedicated nodes, persistence, AOF |
-
-Scale later with:
-
-```bash
-ibmcloud cdb deployment-scaling-set mcpgw-redis --memory-gb 4
-```
-
-Once redeployed, the gateway will use Redis for request-level caching,
-reducing latency and database load.
-
----
-
-## 9 - Gunicorn configuration (optional tuning)
-
-The container starts `gunicorn` with the settings defined in **`gunicorn.config.py`** found at the project root.
-If you need to change worker counts, ports, or time-outs, edit this file **before** you build the image (`make podman` or `make docker`). The settings are baked into the container at build time.
-
-```python
-# -*- coding: utf-8 -*-
-"""
-Gunicorn configuration
-Docs: https://docs.gunicorn.org/en/stable/settings.html
-"""
-
-# Network interface / port ──────────────────────────────────────────────
-bind = "0.0.0.0:4444"        # Listen on all interfaces, port 4444
-
-# Worker processes ──────────────────────────────────────────────────────
-workers = 8                  # Rule of thumb: 2-4 × NUM_CPU_CORES
-
-# Request/worker life-cycle ─────────────────────────────────────────────
-timeout = 600                # Kill a worker after 600 s of no response
-max_requests = 10000         # Restart worker after N requests
-max_requests_jitter = 100    # Add randomness to avoid synchronized restarts
-
-# Logging & verbosity ───────────────────────────────────────────────────
-loglevel = "info"            # "debug", "info", "warning", "error", "critical"
-
-# Optimisations ─────────────────────────────────────────────────────────
-preload_app = True           # Load app code once in parent, fork workers (saves RAM)
-reuse_port  = True           # SO_REUSEPORT for quicker restarts
-
-# Alternative worker models (uncomment ONE and install extras) ----------
-# worker_class = "gevent"     # pip install "gunicorn[gevent]"
-# worker_class = "eventlet"   # pip install "gunicorn[eventlet]"
-# worker_class = "tornado"    # pip install "gunicorn[tornado]"
-# threads = 2                 # If using the 'sync' worker with threads
-
-# TLS certificates (if you terminate HTTPS inside the container)
-# certfile = 'certs/cert.pem'
-# keyfile  = 'certs/key.pem'
-
-# Server hooks (logging examples) ───────────────────────────────────────
-def when_ready(server):
-    server.log.info("Server is ready. Spawning workers")
-
-def post_fork(server, worker):
-    server.log.info("Worker spawned (pid: %s)", worker.pid)
-
-def worker_exit(server, worker):
-    server.log.info("Worker exit (pid: %s)", worker.pid)
-```
-
-**Typical tweaks**
-
-| Scenario                              | Setting(s) to adjust                            |
-| ------------------------------------- | ----------------------------------------------- |
-| High-latency model calls → time-outs  | `timeout` (e.g. 1200 s)                         |
-| CPU-bound workload on 4-core instance | `workers = 8` → `workers = 16`                  |
-| Memory-limited instance               | Reduce `workers` or disable `preload_app`       |
-| Websocket / async traffic             | Switch `worker_class` to `gevent` or `eventlet` |
-
-After changing the file, rebuild and redeploy:
-
-```bash
-make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
-```
-
----
-
-## 10 - Troubleshooting
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `ibmcloud ce application get` shows "Failed" | Image pull error — wrong registry secret or image path | Verify `IBMCLOUD_IMAGE_NAME` matches the pushed image: `ibmcloud cr images` |
-| Application starts then crashes (OOMKilled) | Insufficient memory for gunicorn workers | Increase `IBMCLOUD_MEMORY` in `.env.ce` or reduce `workers` in `gunicorn.config.py` |
-| App running but env vars missing (auth fails, wrong DB, etc.) | `.env` was never uploaded as a Code Engine secret, or has lines with inline comments that `--from-env-file` skips (see warning in Workflow A) | Check `.env` for `KEY=value  # comment` lines and move comments to their own line, then run:<br>`ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env`<br>`ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"` |
-| App starts but requests never reach it (connection refused / 502) | `HOST=127.0.0.1` in `.env` — app binds to loopback only | Set `HOST=0.0.0.0` in `.env`, update the secret, and trigger a new revision |
-| `connection refused` to PostgreSQL | Database not yet provisioned or wrong hostname | Verify with: `ibmcloud resource service-instance mcpgw-db` and check credentials JSON |
-| `SSL: CERTIFICATE_VERIFY_FAILED` on database connection | Missing `sslmode=require` in `DATABASE_URL` | Ensure `DATABASE_URL` ends with `?sslmode=require` |
-| Redis connection timeout | Security group or allowlist blocking Code Engine IPs | IBM Cloud Databases allowlist must include Code Engine's outbound IPs, or use private endpoints |
-| Application starts but `/tools` returns `[]` | Database is empty — first deploy needs bootstrap | Access `/admin` to configure gateways and virtual servers, or use the API |
-| `ibmcloud ce application logs` shows no output | Application scaled to zero — no instances running | Send a request to wake it: `curl $APP_URL/health` then retry logs |
-| Slow cold starts (>10s) | Code Engine scales from zero by default | Set `--min-scale 1` to keep at least one instance warm |
-
-!!! tip "Checking application logs"
-
-    Most deployment issues are visible in the application logs. Use these commands to investigate:
-
-    ```bash
-    # Recent logs (last 50 lines)
-    ibmcloud ce application logs --name "$IBMCLOUD_CODE_ENGINE_APP" --tail 50
-
-    # Follow logs in real-time
-    ibmcloud ce application logs --name "$IBMCLOUD_CODE_ENGINE_APP" --follow
-
-    # System events (scheduling, scaling, image pull)
-    ibmcloud ce application events --name "$IBMCLOUD_CODE_ENGINE_APP"
-    ```
