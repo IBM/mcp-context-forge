@@ -33,16 +33,16 @@ Dynamic Client Registration is defined in [RFC 7591](https://tools.ietf.org/html
 
 ```bash
 # DCR Feature Control
-MCPGATEWAY_DCR_ENABLED=true                              # Enable/disable DCR (default: true)
-MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true # Auto-register when gateway has issuer but no client_id (default: true)
+DCR_ENABLED=true                              # Enable/disable DCR (default: true)
+DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true # Auto-register when gateway has issuer but no client_id (default: true)
 
 # DCR Configuration
-MCPGATEWAY_DCR_DEFAULT_SCOPES="mcp:read"                 # Default scopes to request (comma-separated, default: mcp:read)
-MCPGATEWAY_DCR_ALLOWED_ISSUERS=""                        # Optional allowlist of issuer URLs (empty = allow any)
-MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD="client_secret_basic" # Auth method: client_secret_basic or client_secret_post
-MCPGATEWAY_DCR_METADATA_CACHE_TTL=3600                   # AS metadata cache TTL in seconds (default: 1 hour)
-MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE="ContextForge ({gateway_name})" # Client name template for registration
-MCPGATEWAY_DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=false       # Request refresh_token when AS omits grant_types_supported
+DCR_DEFAULT_SCOPES='["mcp:read"]'                        # Default scopes to request
+DCR_ALLOWED_ISSUERS=[]                                   # Optional issuer URL allowlist; empty allows any issuer
+DCR_TOKEN_ENDPOINT_AUTH_METHOD="client_secret_basic"     # Auth method: client_secret_basic, client_secret_post, or none
+DCR_METADATA_CACHE_TTL=3600                              # AS metadata cache TTL in seconds (default: 1 hour)
+DCR_CLIENT_NAME_TEMPLATE="ContextForge ({gateway_name})" # Client name template for registration
+DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=false         # Request refresh_token when AS omits grant_types_supported
 
 # OAuth Settings (used by DCR)
 OAUTH_REQUEST_TIMEOUT=30                                 # HTTP request timeout in seconds
@@ -77,11 +77,11 @@ The metadata response includes:
 - `token_endpoint` - Token exchange URL
 - Supported grant types, scopes, and auth methods
 
-**Caching:** Metadata is cached for `MCPGATEWAY_DCR_METADATA_CACHE_TTL` seconds (default: 1 hour).
+**Caching:** Metadata is cached for `DCR_METADATA_CACHE_TTL` seconds (default: 1 hour).
 
 ### 2. Client Registration (RFC 7591)
 
-If no `client_id` is configured and `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true`, the gateway automatically registers:
+If no `client_id` is configured and `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true`, the gateway automatically registers:
 
 ```json
 POST https://auth.example.com/register
@@ -111,7 +111,7 @@ The AS responds with registered credentials:
 Gateway stores these in the `registered_oauth_clients` table (encrypted).
 
 !!! note "Refresh Token Behavior"
-    By default, `refresh_token` is only requested if the AS metadata explicitly includes `"refresh_token"` in `grant_types_supported`. This prevents DCR failures with strict AS servers. To request `refresh_token` when AS metadata omits `grant_types_supported`, set `MCPGATEWAY_DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=true`.
+    By default, `refresh_token` is only requested if the AS metadata explicitly includes `"refresh_token"` in `grant_types_supported`. This prevents DCR failures with strict AS servers. To request `refresh_token` when AS metadata omits `grant_types_supported`, set `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=true`.
 
 ### 3. OAuth Flow with Registered Credentials
 
@@ -404,12 +404,28 @@ After downgrading:
 
 ## Security Features
 
+### Temporary Mitigation for Unpatched Versions
+
+Disable DCR to block automatic registration through untrusted discovery metadata:
+
+```env
+DCR_ENABLED=false
+DCR_ALLOWED_ISSUERS=["https://trusted.example.com"]
+SSRF_PROTECTION_ENABLED=true
+SSRF_ALLOW_LOCALHOST=false
+SSRF_ALLOW_PRIVATE_NETWORKS=false
+```
+
+`DCR_ENABLED=false` is the temporary mitigation for unpatched versions. Issuer allowlisting reduces exposure, but does not replace runtime endpoint validation.
+
+Patched versions validate and pin each discovery, registration, update, and deletion request before sending it. DCR endpoints from metadata and registration responses must use the same origin as the configured issuer. Cross-origin endpoints are rejected even when SSRF policy otherwise allows them.
+
 ### 1. Issuer Allowlist
 
 Restrict which Authorization Servers can be used:
 
 ```bash
-MCPGATEWAY_DCR_ALLOWED_ISSUERS='["https://trusted-as1.com", "https://trusted-as2.com"]'
+DCR_ALLOWED_ISSUERS='["https://trusted-as1.com", "https://trusted-as2.com"]'
 ```
 
 If set, gateway will reject DCR for any issuer not in the list.
@@ -451,7 +467,7 @@ Gateway validates AS metadata responses:
 
 **Error: "Issuer not in allowed issuers list"**
 
-- The issuer URL is not in `MCPGATEWAY_DCR_ALLOWED_ISSUERS`
+- The issuer URL is not in `DCR_ALLOWED_ISSUERS`
 - Solution: Add the issuer to the allowlist or clear the allowlist to allow any
 
 **Error: "Failed to discover AS metadata"**
