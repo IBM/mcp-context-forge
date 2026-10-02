@@ -103,6 +103,8 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 
 ### Fixed
 
+- **Frontend email routes** - Invitation and password emails include the React `/app` mount prefix. Set `UI_BASE_URL` to the origin and deployment prefix before `/app`. Existing values ending in `/app` produce a startup warning and have that suffix removed. The invitation frontend route remains tracked by #6776.
+
 #### **Security & Auth**
 
 - **CORS origin reflection requires an explicit allowlist in every environment** - In `development` and `staging`, an empty `ALLOWED_ORIGINS` made `SecurityHeadersMiddleware` reflect any request `Origin` and send `Access-Control-Allow-Credentials: true`. A malicious site could then read credentialed responses cross-origin. The middleware now reflects only origins listed in `ALLOWED_ORIGINS`. Deployments that set an empty `ALLOWED_ORIGINS` in non-production and rely on cross-origin access must list each origin explicitly. ([#6941](https://github.com/IBM/mcp-context-forge/pull/6941))

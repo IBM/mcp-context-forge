@@ -230,7 +230,7 @@ class TestEmailAuthBasic:
         ("admin_api_enabled", "expected_forgot_url", "expected_reset_url"),
         [
             (True, "https://gateway.example.com/root/admin/forgot-password", "https://gateway.example.com/root/admin/reset-password/tok%20en"),
-            (False, "https://gateway.example.com/root/forgot-password", "https://gateway.example.com/root/reset-password/tok%20en"),
+            (False, "https://gateway.example.com/root/app/forgot-password", "https://gateway.example.com/root/app/reset-password/tok%20en"),
         ],
     )
     def test_build_password_reset_urls(self, service, admin_api_enabled, expected_forgot_url, expected_reset_url):
@@ -255,8 +255,8 @@ class TestEmailAuthBasic:
             forgot_url = service._build_forgot_password_url()
             reset_url = service._build_reset_password_url("tok/en")
 
-        assert forgot_url == "https://ui.example.com/contextforge/forgot-password"
-        assert reset_url == "https://ui.example.com/contextforge/reset-password/tok%2Fen"
+        assert forgot_url == "https://ui.example.com/contextforge/app/forgot-password"
+        assert reset_url == "https://ui.example.com/contextforge/app/reset-password/tok%2Fen"
 
     @pytest.mark.parametrize(
         ("password_hash", "password_hash_type", "expected"),

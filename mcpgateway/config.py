@@ -85,6 +85,8 @@ if not logging.getLogger().handlers:
 
 logger = logging.getLogger(__name__)
 
+FRONTEND_MOUNT_PREFIX = "/app"
+
 
 def _normalize_env_list_vars() -> None:
     """Normalize list-typed env vars to valid JSON arrays.
@@ -1352,6 +1354,12 @@ class Settings(BaseSettings):
             raise ValueError("UI_BASE_URL must not contain a query string")
         if value.fragment:
             raise ValueError("UI_BASE_URL must not contain a fragment")
+        if (value.path or "").rstrip("/").endswith(FRONTEND_MOUNT_PREFIX):
+            logger.warning("UI_BASE_URL excludes the %s mount prefix; removing the trailing %s from the configured base", FRONTEND_MOUNT_PREFIX, FRONTEND_MOUNT_PREFIX)
+            normalized = str(value).rstrip("/")
+            while normalized.endswith(FRONTEND_MOUNT_PREFIX):
+                normalized = normalized[: -len(FRONTEND_MOUNT_PREFIX)].rstrip("/")
+            return HttpUrl(normalized)
         return value
 
     # Security settings
@@ -1800,11 +1808,11 @@ class Settings(BaseSettings):
                 password_route_warning = (
                     "Password-recovery links will use legacy /admin routes because MCPGATEWAY_ADMIN_API_ENABLED=true."
                     if self.mcpgateway_admin_api_enabled
-                    else "Password-recovery links will use frontend /forgot-password and /reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
+                    else "Password-recovery links will use frontend /app/forgot-password and /app/reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
                 )
                 logger.warning(
                     "SMTP_ENABLED=true while UI_BASE_URL is unset. Invitation links will use APP_DOMAIN plus "
-                    "APP_ROOT_PATH and require /accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
+                    "APP_ROOT_PATH and require /app/accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
                     password_route_warning,
                 )
 
