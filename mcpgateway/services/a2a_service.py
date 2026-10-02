@@ -14,6 +14,7 @@ and interactions with A2A-compatible agents.
 # Standard
 import base64
 import binascii
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -35,7 +36,7 @@ from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailT
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
@@ -2438,6 +2439,7 @@ class A2AAgentService(BaseService):
 
         with create_span("a2a.invoke", span_attributes) as span:
             try:
+                prepared = replace(prepared, headers=inject_trace_context_headers(prepared.headers))
                 # Log A2A external call start (with sanitized URL to prevent credential leakage)
                 call_start_time = datetime.now(timezone.utc)
                 structured_logger.log(
@@ -2854,6 +2856,12 @@ class A2AAgentService(BaseService):
             correlation_id = get_correlation_id()
             if correlation_id:
                 headers["X-Correlation-ID"] = correlation_id
+
+            # Propagate the active W3C trace context so the receiving gateway
+            # continues this trace instead of rooting a detached one. Runs
+            # after bearer/hop stamping; the injector only owns the
+            # traceparent/tracestate/baggage keys.
+            headers = inject_trace_context_headers(headers)
 
             # Log cross-gateway call start
             call_start_time = datetime.now(timezone.utc)
