@@ -483,7 +483,6 @@ preview = true
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D1", "D417", "E402"]
 "scripts/**/*.py" = ["D1", "D417"]
-"mcp-servers/**/*.py" = ["D1", "D417"]
 ".github/**/*.py" = ["D1", "D417"]
 "migration_add_annotations.py" = ["D1", "D417"]
 "playwright.config.py" = ["D1", "D417"]
