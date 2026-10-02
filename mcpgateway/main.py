@@ -228,7 +228,6 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
-    MCPOriginHostGate,
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
