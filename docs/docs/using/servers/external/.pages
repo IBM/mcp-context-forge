@@ -1,5 +1,6 @@
 title: External Servers
 nav:
+  - Docling MCP: docling.md
   - GitHub Copilot: microsoft
   - Box: box
   - monday.com: monday
