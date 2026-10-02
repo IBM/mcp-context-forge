@@ -9,6 +9,7 @@ Black-box DCR SSRF regression against an isolated running gateway.
 from __future__ import annotations
 
 # Standard
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -29,6 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 # First-Party
 from mcpgateway.db import Gateway, RegisteredOAuthClient
+from mcpgateway.services.encryption_service import get_encryption_service
 from tests.helpers.auth import make_auth_headers, make_test_jwt
 
 pytestmark = pytest.mark.e2e
@@ -41,6 +43,17 @@ class _DcrAuthorizationServer(ThreadingHTTPServer):
     issuer: str
     registration_endpoint: str
     redirect_uri: str
+
+
+@dataclass(frozen=True)
+class _LiveDcrStack:
+    """Resources exposed by the live DCR fixture."""
+
+    client: httpx.Client
+    db: Session
+    log_path: Path
+    malicious_authority: str
+    encryption_secret: str
 
 
 class _AuthorizationServerHandler(BaseHTTPRequestHandler):
@@ -59,6 +72,7 @@ class _AuthorizationServerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """Return RFC 8414 metadata for this test server."""
+        self.requests.append((self.command, self.path, self.headers.get("Host", "")))
         if self.path != "/.well-known/oauth-authorization-server":
             self._send_json(404, {"error": "not_found"})
             return
@@ -147,7 +161,7 @@ def _start_authorization_server() -> tuple[_DcrAuthorizationServer, threading.Th
 
 
 @pytest.fixture
-def live_dcr_stack(tmp_path: Path) -> Generator[tuple[httpx.Client, Session], None, None]:
+def live_dcr_stack(tmp_path: Path) -> Generator[_LiveDcrStack, None, None]:
     """Start authorization servers, blocked receiver, and isolated gateway."""
     _AuthorizationServerHandler.requests.clear()
     _BlockedReceiverHandler.requests.clear()
@@ -168,6 +182,7 @@ def live_dcr_stack(tmp_path: Path) -> Generator[tuple[httpx.Client, Session], No
 
     gateway_port = _free_port()
     signing_key = secrets.token_urlsafe(48)
+    encryption_secret = secrets.token_urlsafe(48)
     database_url = f"sqlite:///{tmp_path / 'gateway.db'}"
     env = {
         "PATH": os.environ["PATH"],
@@ -176,7 +191,7 @@ def live_dcr_stack(tmp_path: Path) -> Generator[tuple[httpx.Client, Session], No
         "CACHE_TYPE": "memory",
         "REDIS_URL": "",
         "JWT_SECRET_KEY": signing_key,
-        "AUTH_ENCRYPTION_SECRET": secrets.token_urlsafe(48),
+        "AUTH_ENCRYPTION_SECRET": encryption_secret,
         "PLATFORM_ADMIN_PASSWORD": secrets.token_urlsafe(32),
         "DEFAULT_USER_PASSWORD": secrets.token_urlsafe(32),
         "PLATFORM_ADMIN_EMAIL": "admin@example.com",
@@ -238,7 +253,13 @@ def live_dcr_stack(tmp_path: Path) -> Generator[tuple[httpx.Client, Session], No
                     )
                 )
             db.commit()
-            yield client, db
+            yield _LiveDcrStack(
+                client=client,
+                db=db,
+                log_path=log_path,
+                malicious_authority=f"127.0.0.1:{malicious_as.server_port}",
+                encryption_secret=encryption_secret,
+            )
         finally:
             if db is not None:
                 db.close()
@@ -258,13 +279,20 @@ def live_dcr_stack(tmp_path: Path) -> Generator[tuple[httpx.Client, Session], No
                 worker.join(timeout=5)
 
 
-def test_live_gateway_blocks_dcr_ssrf_and_allows_valid_registration(live_dcr_stack: tuple[httpx.Client, Session]) -> None:
+def test_live_gateway_blocks_dcr_ssrf_and_allows_valid_registration(live_dcr_stack: _LiveDcrStack) -> None:
     """Patched gateway blocks exploit receiver and completes valid DCR."""
-    client, db = live_dcr_stack
+    client = live_dcr_stack.client
+    db = live_dcr_stack.db
 
     blocked_response = client.get("/oauth/authorize/dcr-ssrf-live")
     assert blocked_response.status_code == 500, blocked_response.text
+    assert any(
+        method == "GET" and path == "/.well-known/oauth-authorization-server" and host == live_dcr_stack.malicious_authority
+        for method, path, host in _AuthorizationServerHandler.requests
+    )
+    assert "DCR registration_endpoint must share the issuer origin" in live_dcr_stack.log_path.read_text()
     assert _BlockedReceiverHandler.requests == []
+    assert db.query(RegisteredOAuthClient).filter_by(gateway_id="dcr-ssrf-live").count() == 0
 
     valid_response = client.get("/oauth/authorize/dcr-valid-live")
     assert valid_response.status_code == 307, valid_response.text
@@ -274,5 +302,9 @@ def test_live_gateway_blocks_dcr_ssrf_and_allows_valid_registration(live_dcr_sta
 
     db.expire_all()
     registered_client = db.query(RegisteredOAuthClient).filter_by(gateway_id="dcr-valid-live").one()
-    assert registered_client.client_secret_encrypted != "live-dcr-secret"  # pragma: allowlist secret
-    assert registered_client.registration_access_token_encrypted != "live-registration-token"  # pragma: allowlist secret
+    assert registered_client.client_secret_encrypted
+    assert registered_client.registration_access_token_encrypted
+
+    encryption = get_encryption_service(live_dcr_stack.encryption_secret)
+    assert encryption.decrypt_secret(registered_client.client_secret_encrypted) == "live-dcr-secret"  # pragma: allowlist secret
+    assert encryption.decrypt_secret(registered_client.registration_access_token_encrypted) == "live-registration-token"  # pragma: allowlist secret
