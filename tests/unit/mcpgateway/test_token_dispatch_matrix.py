@@ -263,7 +263,7 @@ class TestTokenDispatchMatrix:
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
         monkeypatch.setattr(settings, "require_user_in_db", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
                 with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["team-from-db"]) as mock_resolve_db:
                     user = await get_current_user(credentials=credentials, request=request)
@@ -298,7 +298,7 @@ class TestTokenDispatchMatrix:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=_make_user("api@example.com")):
                 with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_db:
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
@@ -335,7 +335,7 @@ class TestTokenDispatchMatrix:
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
         _repoint_funnel_sessions(monkeypatch)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
                 # No EmailUser row exists for this principal.
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
@@ -369,7 +369,7 @@ class TestTokenDispatchMatrix:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=_make_user("existing@example.com")):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
@@ -411,7 +411,7 @@ class TestTokenDispatchMatrix:
         monkeypatch.setattr(vc, "build_external_identity", mock_build)
         internal_verifier = AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             user = await get_current_user(credentials=credentials, request=request)
 
         # Trust-semantics: claims-derived identity, no local provisioning,
@@ -456,27 +456,32 @@ class TestIngressExternalDispatch:
 
     @pytest.mark.asyncio
     async def test_db_mode_external_token_stays_on_internal_funnel(self, monkeypatch, ext_signing_key):
-        """Trust mode OFF + external-issuer token -> 401 via the internal funnel.
+        """Trust mode OFF + external-issuer token -> 401 via the shared verifier.
 
-        The external dispatch must never run: with jwt_trust_mode="db" the
-        internal verifier alone decides, and it rejects the externally-signed
-        RS256 token (real signature check against the gateway HMAC secret).
-        The wraps-spy proves the real dispatch is never consulted.
+        The trust-mode dispatch must never run with jwt_trust_mode="db".
+        The shared verifier may consult its SSO_API_TOKEN_AUTH external
+        step by design (#6396); an untrusted issuer falls through and the
+        internal verifier rejects the externally-signed RS256 token (real
+        signature check against the gateway HMAC secret). The wraps-spy
+        proves the trust dispatch is never consulted.
         """
+        # First-Party
+        import mcpgateway.auth as auth_module
+
         token = _mint_external_token(ext_signing_key, "ext")
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)  # pragma: allowlist secret
 
         monkeypatch.setattr(settings, "jwt_trust_mode", "db")
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
-        external_spy = AsyncMock(wraps=vc._maybe_verify_external)
-        monkeypatch.setattr(vc, "_maybe_verify_external", external_spy)
+        trust_dispatch_spy = AsyncMock(wraps=auth_module._try_external_verification)
+        monkeypatch.setattr(auth_module, "_try_external_verification", trust_dispatch_spy)
 
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(credentials=credentials, request=None)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        external_spy.assert_not_called()
+        trust_dispatch_spy.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_trust_mode_external_token_authenticates_via_external_path(self, monkeypatch, ext_signing_key):
@@ -505,7 +510,7 @@ class TestIngressExternalDispatch:
         monkeypatch.setattr(vc, "_maybe_verify_external", external_spy)
         internal_verifier = AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials"))
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "ext.user@example.com"
@@ -539,7 +544,7 @@ class TestIngressExternalDispatch:
         monkeypatch.setattr(vc, "_maybe_verify_external", external_spy)
         internal_verifier = AsyncMock(return_value={"sub": "internal@example.com", "exp": _exp(), "jti": "internal-jti"})
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=request)
 
@@ -584,7 +589,7 @@ class TestIngressExternalDispatch:
         # verifier is stubbed exactly as in the default-funnel rows above.
         internal_verifier = AsyncMock(return_value=jwt_payload)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", internal_verifier):
+        with patch("mcpgateway.auth.verify_credentials_cached", internal_verifier):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=_make_user("api@example.com")):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     user = await get_current_user(credentials=credentials, request=request)
