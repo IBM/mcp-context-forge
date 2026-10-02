@@ -17,7 +17,7 @@ setup() {
     TMP_DIR="$(mktemp -d)"
     ENV_FILE="${TMP_DIR}/compose.env"
     # Required by compose interpolation; unrelated to the port under test.
-    printf 'DEFAULT_USER_PASSWORD=test\nPLATFORM_ADMIN_PASSWORD=test\n' > "${ENV_FILE}"  # pragma: allowlist secret
+    printf 'DEFAULT_USER_PASSWORD=test\nPLATFORM_ADMIN_PASSWORD=test\nJWT_SECRET_KEY=test-only-jwt-secret\nAUTH_ENCRYPTION_SECRET=test-only-encryption-secret\n' > "${ENV_FILE}"  # pragma: allowlist secret
 }
 
 teardown() {
