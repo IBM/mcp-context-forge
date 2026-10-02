@@ -457,9 +457,6 @@
                 "false"
               ]
             },
-            "ELASTICSEARCH_ENABLED": {
-              "type": "string"
-            },
             "ENABLE_HEADER_PASSTHROUGH": {
               "type": "string"
             },
@@ -1240,9 +1237,6 @@
             "STRUCTURED_LOGGING_EXTERNAL_ENABLED": {
               "type": "string"
             },
-            "SYSLOG_ENABLED": {
-              "type": "string"
-            },
             "TEAM_MEMBER_COUNT_CACHE_ENABLED": {
               "type": "string"
             },
@@ -1326,9 +1320,6 @@
               "type": "string"
             },
             "VALIDATION_STRICT": {
-              "type": "string"
-            },
-            "WEBHOOK_LOGGING_ENABLED": {
               "type": "string"
             },
             "WELL_KNOWN_CACHE_MAX_AGE": {
