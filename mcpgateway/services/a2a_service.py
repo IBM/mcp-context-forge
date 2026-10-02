@@ -2861,6 +2861,12 @@ class A2AAgentService(BaseService):
             if correlation_id:
                 headers["X-Correlation-ID"] = correlation_id
 
+            # Propagate the active W3C trace context so the receiving gateway
+            # continues this trace instead of rooting a detached one. Runs
+            # after bearer/hop stamping; the injector only owns the
+            # traceparent/tracestate/baggage keys.
+            headers = inject_trace_context_headers(headers)
+
             # Log cross-gateway call start
             call_start_time = datetime.now(timezone.utc)
             structured_logger.log(

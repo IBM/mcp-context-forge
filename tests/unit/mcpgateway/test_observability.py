@@ -7,7 +7,6 @@ Tests for observability module.
 """
 
 # Standard
-import importlib
 import inspect
 import logging
 import os
@@ -428,6 +427,8 @@ class TestObservability:
             ("/a2a/invoke/", True),
             ("/a2a/example-agent/invoke", True),
             ("/a2a/example-agent/invoke/", True),
+            ("/a2a/example-agent/jsonrpc", True),
+            ("/a2a/example-agent/jsonrpc/", True),
             ("/a2a", False),
             ("/a2a/example-agent", False),
             ("/a2a/example-agent/card/invoke", False),
@@ -438,6 +439,88 @@ class TestObservability:
     def test_should_trace_only_a2a_invoke_paths(self, path, expected):
         """Trace only the two supported A2A invocation route shapes."""
         assert observability._should_trace_request_path(path) is expected
+
+    @pytest.fixture
+    def real_api_propagator(self, monkeypatch):
+        """Wire the real opentelemetry-api propagator into the observability module globals.
+
+        The API package is a transitive core dependency (via ``mcp``), so these
+        tests exercise the genuine composite propagator without the SDK extra.
+        """
+        otel_trace_api = pytest.importorskip("opentelemetry.trace")
+        # Third-Party
+        from opentelemetry import baggage as otel_baggage_api
+        from opentelemetry.propagate import inject as real_inject
+
+        monkeypatch.setattr(observability, "OTEL_AVAILABLE", True)
+        monkeypatch.setattr(observability, "trace", otel_trace_api)
+        monkeypatch.setattr(observability, "otel_inject", real_inject)
+        monkeypatch.setattr(observability, "otel_baggage", otel_baggage_api)
+        return otel_trace_api
+
+    @pytest.mark.parametrize(
+        ("baggage_enabled", "propagate_external", "expect_baggage"),
+        [
+            (False, False, False),
+            (True, False, False),
+            (False, True, False),
+            (True, True, True),
+        ],
+    )
+    def test_inject_gates_context_baggage_on_propagation_policy(self, monkeypatch, real_api_propagator, baggage_enabled, propagate_external, expect_baggage):
+        """Context baggage reaches outbound headers only when both baggage settings allow it."""
+        # Third-Party
+        from opentelemetry import baggage as otel_baggage_api
+        from opentelemetry import context as otel_context_api
+        from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+        span_context = SpanContext(trace_id=0x0AF7651916CD43DD8448EB211C80319C, span_id=0x00F067AA0BA902B7, is_remote=False, trace_flags=TraceFlags(0x01))  # pragma: allowlist secret
+        mock_settings = MagicMock()
+        mock_settings.otel_baggage_enabled = baggage_enabled
+        mock_settings.otel_baggage_propagate_to_external = propagate_external
+        monkeypatch.setattr(observability, "get_settings", lambda: mock_settings)
+
+        context_token = otel_context_api.attach(otel_baggage_api.set_baggage("review-marker", "internal"))
+        try:
+            with real_api_propagator.use_span(NonRecordingSpan(span_context)):
+                result = inject_trace_context_headers({"Authorization": "Bearer keep"})
+        finally:
+            otel_context_api.detach(context_token)
+
+        assert result["traceparent"] == "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"  # pragma: allowlist secret
+        assert result["Authorization"] == "Bearer keep"
+        assert ("baggage" in result) is expect_baggage
+        if expect_baggage:
+            assert "review-marker=internal" in result["baggage"]
+
+    def test_inject_replaces_stale_propagation_headers_case_insensitively(self, monkeypatch, real_api_propagator):
+        """Prepared mixed-case propagation headers are replaced by the active span context."""
+        # Third-Party
+        from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+        span_context = SpanContext(trace_id=0x0AF7651916CD43DD8448EB211C80319C, span_id=0x00F067AA0BA902B7, is_remote=False, trace_flags=TraceFlags(0x01))  # pragma: allowlist secret
+        mock_settings = MagicMock()
+        mock_settings.otel_baggage_enabled = False
+        mock_settings.otel_baggage_propagate_to_external = False
+        monkeypatch.setattr(observability, "get_settings", lambda: mock_settings)
+
+        prepared = {
+            "Traceparent": "00-11111111111111111111111111111111-2222222222222222-01",  # pragma: allowlist secret
+            "TraceState": "stale=yes",
+            "Baggage": "stale=baggage",
+            "Authorization": "Bearer keep",
+        }
+        with real_api_propagator.use_span(NonRecordingSpan(span_context)):
+            result = inject_trace_context_headers(prepared)
+
+        lowered = {}
+        for key, value in result.items():
+            assert key.lower() not in lowered, f"conflicting duplicate header casing: {key}"
+            lowered[key.lower()] = value
+        assert lowered["traceparent"] == "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"  # pragma: allowlist secret
+        assert "tracestate" not in lowered
+        assert "baggage" not in lowered
+        assert result["Authorization"] == "Bearer keep"
 
     @pytest.mark.asyncio
     async def test_a2a_request_adopts_incoming_w3c_parent(self, monkeypatch):

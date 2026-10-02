@@ -5493,6 +5493,40 @@ class TestCrossGatewayRoutingCoverage:
 
         assert result == {"result": "success"}
 
+    async def test_invoke_remote_agent_injects_trace_context(self, service, monkeypatch):
+        """Cross-gateway forwarding injects the active trace context and keeps hop/auth headers."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        def fake_inject(headers):
+            return {**headers, "traceparent": "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"}  # pragma: allowlist secret
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.inject_trace_context_headers", fake_inject)
+
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+            hop_count=2,
+        )
+
+        assert result == {"result": "success"}
+        sent_headers = mock_client.post.call_args.kwargs.get("headers") or {}
+        assert sent_headers["traceparent"] == "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"  # pragma: allowlist secret
+        assert sent_headers["X-Contextforge-UAID-Hop"] == "3"
+        assert sent_headers["Content-Type"] == "application/json"
+
     async def test_invoke_remote_agent_with_mcp_protocol(self, service, monkeypatch):
         """Test _invoke_remote_agent with MCP protocol."""
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=mcp;nativeId=mcp.example.com"
