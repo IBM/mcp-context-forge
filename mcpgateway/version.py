@@ -951,7 +951,10 @@ def _system_metrics() -> Dict[str, Any]:
         load = (None, None, None)
 
     # CPU metrics
-    freq = psutil.cpu_freq()
+    try:
+        freq = psutil.cpu_freq()
+    except Exception:  # psutil may raise SystemError on macOS (psutil bug #2382)
+        freq = None
     cpu_pct = psutil.cpu_percent(interval=0.3)
     cpu_count = psutil.cpu_count(logical=True)
 
