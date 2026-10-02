@@ -414,7 +414,7 @@ async def _drive_app_only_funnel(monkeypatch, db, payload, *, graph_client):
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
     request = SimpleNamespace(state=SimpleNamespace())
 
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=payload)):
         with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
             # Fail the test loudly if the trust path touches the user table
             # through the default-funnel helpers.
