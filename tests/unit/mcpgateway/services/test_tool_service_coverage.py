@@ -1578,7 +1578,7 @@ class TestProcessSingleToolForBulk:
         existing = MagicMock()
         result = tool_service._process_single_tool_for_bulk(
             tool=self._make_tool_create(),
-            existing_tools_map={"bulk_tool": existing},
+            existing_tool=existing,
             conflict_strategy="skip",
             visibility="public",
             team_id=None,
@@ -1597,7 +1597,7 @@ class TestProcessSingleToolForBulk:
         existing = MagicMock()
         result = tool_service._process_single_tool_for_bulk(
             tool=self._make_tool_create(),
-            existing_tools_map={"bulk_tool": existing},
+            existing_tool=existing,
             conflict_strategy="fail",
             visibility="public",
             team_id=None,
@@ -1618,7 +1618,7 @@ class TestProcessSingleToolForBulk:
         existing.version = 1
         result = tool_service._process_single_tool_for_bulk(
             tool=self._make_tool_create(),
-            existing_tools_map={"bulk_tool": existing},
+            existing_tool=existing,
             conflict_strategy="update",
             visibility="public",
             team_id=None,
@@ -1649,7 +1649,7 @@ class TestProcessSingleToolForBulk:
         tc.plugin_chain_post = ["p2"]
         result = tool_service._process_single_tool_for_bulk(
             tool=tc,
-            existing_tools_map={"bulk_tool": existing},
+            existing_tool=existing,
             conflict_strategy="update",
             visibility="public",
             team_id=None,
@@ -1669,7 +1669,7 @@ class TestProcessSingleToolForBulk:
         existing = MagicMock()
         result = tool_service._process_single_tool_for_bulk(
             tool=self._make_tool_create(),
-            existing_tools_map={"bulk_tool": existing},
+            existing_tool=existing,
             conflict_strategy="rename",
             visibility="public",
             team_id=None,
@@ -1687,7 +1687,7 @@ class TestProcessSingleToolForBulk:
         """Should return add for new tools without conflict."""
         result = tool_service._process_single_tool_for_bulk(
             tool=self._make_tool_create("new_tool"),
-            existing_tools_map={},
+            existing_tool=None,
             conflict_strategy="skip",
             visibility="public",
             team_id=None,
@@ -1713,7 +1713,7 @@ class TestProcessSingleToolForBulk:
         with patch.object(tool_service, "_create_tool_object", side_effect=RuntimeError("boom")):
             result = tool_service._process_single_tool_for_bulk(
                 tool=tc,
-                existing_tools_map={},
+                existing_tool=None,
                 conflict_strategy="skip",
                 visibility="public",
                 team_id=None,
@@ -5043,9 +5043,8 @@ class TestProcessSingleToolFail:
         tool.visibility = None
 
         existing = MagicMock()
-        existing_map = {"existing_tool": existing}
 
-        result = tool_service._process_single_tool_for_bulk(tool, existing_map, "fail", "public", None, None, None, None, None, None, None, None)
+        result = tool_service._process_single_tool_for_bulk(tool, existing, "fail", "public", None, None, None, None, None, None, None, None)
         assert result["status"] == "fail"
         assert "conflict" in result["error"].lower()
 
@@ -5059,13 +5058,12 @@ class TestProcessSingleToolFail:
         tool.visibility = "public"
 
         existing = MagicMock()
-        existing_map = {"existing_tool": existing}
 
         sentinel_tool = MagicMock()
         with patch.object(tool_service, "_create_tool_object", return_value=sentinel_tool) as mock_create:
             result = tool_service._process_single_tool_for_bulk(
                 tool,
-                existing_map,
+                existing,
                 "unknown",
                 "public",
                 None,

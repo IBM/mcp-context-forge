@@ -57,7 +57,7 @@ import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
 import referencing.exceptions
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, ColumnElement, delete, desc, false, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -2278,6 +2278,87 @@ class ToolService(BaseService):
             return ToolResult(content=[TextContent(type="text", text=_safe_text_repr(payload, payload_type))])
         return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
+    @staticmethod
+    def _stored_tool_name(db: Session, tool: ToolCreate) -> str:
+        """Return the ``DbTool.name`` value that the ``set_custom_name_and_slug`` listener stores for a new tool.
+
+        A tool without a gateway stores the slug of its name. A tool with a known
+        gateway stores the gateway-prefixed invocation name.
+
+        Args:
+            db: The SQLAlchemy database session.
+            tool: Tool creation schema.
+
+        Returns:
+            The normalized name of the new tool row.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> ToolService._stored_tool_name(None, SimpleNamespace(name="Get_Weather", gateway_id=None))
+            'get-weather'
+        """
+        gateway = db.get(DbGateway, tool.gateway_id) if isinstance(tool.gateway_id, str) and tool.gateway_id else None
+        if gateway is None:
+            return slugify(tool.name)
+        return build_gateway_tool_invocation_name(gateway.name, tool.name)
+
+    @staticmethod
+    def _tool_name_scope(visibility: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> Optional[ColumnElement[bool]]:
+        """Return the filter for the tool-name namespace of a visibility scope.
+
+        All public tools share one namespace. Team tools share one namespace per team.
+        Private tools share one namespace per owner.
+
+        Args:
+            visibility: The visibility scope (``public``, ``team``, or ``private``).
+            team_id: Team of the tool; identifies the namespace for ``team`` visibility.
+            owner_email: Owner of the tool; identifies the namespace for ``private`` visibility.
+
+        Returns:
+            The filter for the namespace, or ``None`` when the scope has no team or owner to identify it.
+
+        Examples:
+            >>> ToolService._tool_name_scope("Public") is not None
+            True
+            >>> ToolService._tool_name_scope("team") is None
+            True
+            >>> ToolService._tool_name_scope("private", owner_email="a@example.com") is not None
+            True
+        """
+        visibility = visibility.lower()
+        if visibility == "public":
+            return DbTool.visibility == "public"
+        if visibility == "team" and team_id:
+            return and_(DbTool.visibility == "team", DbTool.team_id == team_id)
+        if visibility == "private" and owner_email:
+            return and_(DbTool.visibility == "private", DbTool.owner_email == owner_email)
+        return None
+
+    @staticmethod
+    def _check_new_tool_name_conflict(db: Session, stored_name: str, visibility: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
+        """Raise ToolNameConflictError if a tool in the target visibility scope already uses the stored name.
+
+        The check compares normalized ``DbTool.name`` values, so names that differ only in
+        case or separator characters conflict. ``LIMIT 1`` keeps the check valid when legacy
+        duplicate rows already exist.
+
+        Args:
+            db: The SQLAlchemy database session.
+            stored_name: The normalized name of the new tool row.
+            visibility: The target visibility scope (``public``, ``team``, or ``private``).
+            team_id: Team of the new tool; scopes the check for ``team`` visibility.
+            owner_email: Owner of the new tool; scopes the check for ``private`` visibility.
+
+        Raises:
+            ToolNameConflictError: If a conflicting tool already exists in the target scope.
+        """
+        scope = ToolService._tool_name_scope(visibility, team_id=team_id, owner_email=owner_email)
+        if scope is None:
+            return
+        existing_tool = db.execute(select(DbTool).where(DbTool.name == stored_name, scope).limit(1)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+        if existing_tool:
+            raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+
     async def register_tool(
         self,
         db: Session,
@@ -2312,7 +2393,7 @@ class ToolService(BaseService):
 
         Raises:
             IntegrityError: If there is a database integrity error.
-            ToolNameConflictError: If a tool with the same name and visibility public exists.
+            ToolNameConflictError: If a tool in the same visibility scope already uses the stored tool name.
             ToolError: For other tool registration errors.
 
         Examples:
@@ -2391,19 +2472,7 @@ class ToolService(BaseService):
                     # Skip validation if schema is not JSON-serializable (e.g., test mocks)
                     pass
 
-            # Check for existing tool with the same name and visibility
-            if visibility.lower() == "public":
-                # Check for existing public tool with the same name
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public")).scalar_one_or_none()  # pylint: disable=comparison-with-callable
-                if existing_tool:
-                    raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-            elif visibility.lower() == "team" and team_id:
-                # Check for existing team tool with the same name, team_id
-                existing_tool = db.execute(
-                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id)  # pylint: disable=comparison-with-callable
-                ).scalar_one_or_none()
-                if existing_tool:
-                    raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+            self._check_new_tool_name_conflict(db, self._stored_tool_name(db, tool), visibility, team_id=team_id, owner_email=owner_email or created_by)
 
             db_tool = DbTool(
                 original_name=tool.name,
@@ -2688,25 +2757,22 @@ class ToolService(BaseService):
         return stats
 
     @staticmethod
-    def _existing_tools_query(tool_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
+    def _existing_tools_query(stored_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
         """Build the conflict lookup for bulk registration within the requested scope.
 
         Args:
-            tool_names: Tool names to look up.
+            stored_names: Stored tool names (``DbTool.name`` values) to look up.
             visibility: Tool visibility level ("public", "team", or "private").
             team_id: Team ID for team-scoped tools.
             owner_email: Email of the tool owner.
             created_by: Email of the user creating the tools.
 
         Returns:
-            Select statement matching existing tools by name within the scope.
+            Select statement matching existing tools by stored name within the scope. It matches
+            nothing when the scope has no team or owner to identify it.
         """
-        if visibility.lower() == "public":
-            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
-        if visibility.lower() == "team" and team_id:
-            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
-        # Private tools - check by owner
-        return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
+        scope = ToolService._tool_name_scope(visibility, team_id=team_id, owner_email=owner_email or created_by)
+        return select(DbTool).where(DbTool.name.in_(stored_names), scope if scope is not None else false())
 
     async def _load_authorized_tool_conflicts(
         self,
@@ -2735,10 +2801,10 @@ class ToolService(BaseService):
             user_email: Email of the authenticated caller. When empty, every existing tool is unowned.
 
         Returns:
-            Tuple of the existing tools map keyed by name and the frozen set of names the caller must not modify.
+            Tuple of the existing tools map keyed by stored name and the frozen set of stored names the caller must not modify.
         """
-        tool_names = [name for name in (getattr(tool, "name", None) for tool in chunk) if name]
-        existing_tools = db.execute(self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)).scalars().all()
+        stored_names = [self._stored_tool_name(db, tool) for tool in chunk if getattr(tool, "name", None)]
+        existing_tools = db.execute(self._existing_tools_query(stored_names, visibility, team_id, owner_email, created_by)).scalars().all()
         existing_tools_map = {tool.name: tool for tool in existing_tools}
         if conflict_strategy != "update":
             return existing_tools_map, frozenset()
@@ -2758,7 +2824,7 @@ class ToolService(BaseService):
         chunk: List[ToolCreate],
         conflict_strategy: str,
         visibility: str,
-        team_id: Optional[int],
+        team_id: Optional[str],
         owner_email: Optional[str],
         created_by: str,
         created_from_ip: Optional[str],
@@ -2784,8 +2850,8 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
-            unowned_names: Names of existing tools the caller may not modify.
-            existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
+            unowned_names: Stored names of existing tools the caller may not modify.
+            existing_tools_map: Conflicting tools keyed by stored name, already loaded and authorized by the caller. When
                 given, no second conflict query runs, so only checked rows can be modified.
 
         Returns:
@@ -2794,20 +2860,23 @@ class ToolService(BaseService):
         stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
         try:
+            stored_names = [self._stored_tool_name(db, tool) for tool in chunk]
             if existing_tools_map is None:
-                tool_names = [tool.name for tool in chunk]
-                existing_tools_query = self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)
-                existing_tools = db.execute(existing_tools_query).scalars().all()
-                existing_tools_map = {tool.name: tool for tool in existing_tools}
+                existing_tools = db.execute(self._existing_tools_query(stored_names, visibility, team_id, owner_email, created_by)).scalars().all()
+                existing_tools_map = {existing.name: existing for existing in existing_tools}
                 unowned_names = frozenset(existing_tools_map)
+            tools_by_stored_name: Dict[str, DbTool] = dict(existing_tools_map)
+            scope_is_known = self._tool_name_scope(visibility, team_id=team_id, owner_email=owner_email or created_by) is not None
 
             tools_to_add = []
+            added_stored_names = []
             tools_to_update = []
 
-            for tool in chunk:
+            for tool, stored_name in zip(chunk, stored_names):
+                existing_tool = tools_by_stored_name.get(stored_name)
                 result = self._process_single_tool_for_bulk(
                     tool=tool,
-                    existing_tools_map=existing_tools_map,
+                    existing_tool=existing_tool,
                     conflict_strategy=conflict_strategy,
                     visibility=visibility,
                     team_id=team_id,
@@ -2823,7 +2892,10 @@ class ToolService(BaseService):
 
                 if result["status"] == "add":
                     tools_to_add.append(result["tool"])
+                    added_stored_names.append(stored_name)
                     stats["created"] += 1
+                    if scope_is_known and existing_tool is None:
+                        tools_by_stored_name[stored_name] = result["tool"]
                 elif result["status"] == "update":
                     tools_to_update.append(result["tool"])
                     stats["updated"] += 1
@@ -2835,14 +2907,13 @@ class ToolService(BaseService):
 
             if conflict_strategy == "update" and tools_to_add:
                 # A tool committed after the authorized load is a new collision. Reject it; never modify it.
-                added_names = [db_tool.name for db_tool in tools_to_add]
-                late_names = {row.name for row in db.execute(self._existing_tools_query(added_names, visibility, team_id, owner_email, created_by)).scalars().all()}
-                rejected = [db_tool for db_tool in tools_to_add if db_tool.name in late_names]
+                late_names = {row.name for row in db.execute(self._existing_tools_query(added_stored_names, visibility, team_id, owner_email, created_by)).scalars().all()}
+                rejected = [stored_name for stored_name in added_stored_names if stored_name in late_names]
                 if rejected:
-                    tools_to_add = [db_tool for db_tool in tools_to_add if db_tool.name not in late_names]
+                    tools_to_add = [db_tool for db_tool, stored_name in zip(tools_to_add, added_stored_names) if stored_name not in late_names]
                     stats["created"] -= len(rejected)
                     stats["failed"] += len(rejected)
-                    stats["errors"].extend(f"Tool name conflict: {db_tool.name}" for db_tool in rejected)
+                    stats["errors"].extend(f"Tool name conflict: {stored_name}" for stored_name in rejected)
 
             # Bulk add new tools
             if tools_to_add:
@@ -2877,10 +2948,10 @@ class ToolService(BaseService):
     def _process_single_tool_for_bulk(
         self,
         tool: ToolCreate,
-        existing_tools_map: dict,
+        existing_tool: Optional[DbTool],
         conflict_strategy: str,
         visibility: str,
-        team_id: Optional[int],
+        team_id: Optional[str],
         owner_email: Optional[str],
         created_by: str,
         created_from_ip: Optional[str],
@@ -2894,7 +2965,7 @@ class ToolService(BaseService):
 
         Args:
             tool: ToolCreate object to process.
-            existing_tools_map: Dictionary mapping tool names to existing DbTool objects.
+            existing_tool: The tool in the target scope that already uses the stored name of *tool*, or ``None``.
             conflict_strategy: Strategy for handling conflicts ("skip", "update", or "fail").
             visibility: Tool visibility level ("public", "team", or "private").
             team_id: Team ID for team-scoped tools.
@@ -2905,7 +2976,7 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
-            unowned_names: Names of existing tools the caller may not modify.
+            unowned_names: Stored names of existing tools the caller may not modify.
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
@@ -2956,14 +3027,12 @@ class ToolService(BaseService):
             tool_owner_email = owner_email or getattr(tool, "owner_email", None) or created_by
             tool_visibility = visibility if visibility is not None else (getattr(tool, "visibility", None) or "public")
 
-            existing_tool = existing_tools_map.get(tool.name)
-
             if existing_tool:
                 # Handle conflict based on strategy
                 if conflict_strategy == "skip":
                     return {"status": "skip"}
                 if conflict_strategy == "update":
-                    if tool.name in unowned_names:
+                    if existing_tool.name in unowned_names:
                         return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
@@ -3054,7 +3123,7 @@ class ToolService(BaseService):
         name: str,
         auth_type: Optional[str],
         auth_value: Optional[str],
-        tool_team_id: Optional[int],
+        tool_team_id: Optional[str],
         tool_owner_email: Optional[str],
         tool_visibility: str,
         created_by: str,
@@ -7576,12 +7645,15 @@ class ToolService(BaseService):
         return str(v)
 
     @staticmethod
-    def _check_tool_name_conflict(db: Session, custom_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
-        """Raise ToolNameConflictError if another tool with the same name exists in the target visibility scope.
+    def _check_tool_name_conflict(db: Session, stored_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
+        """Raise ToolNameConflictError if another tool in the target visibility scope uses the stored name.
+
+        The check compares normalized ``DbTool.name`` values, so names that differ only in
+        case or separator characters conflict.
 
         Args:
             db: The SQLAlchemy database session.
-            custom_name: The custom name to check for conflicts.
+            stored_name: The ``DbTool.name`` value of the tool after the update.
             visibility: The target visibility scope (``public``, ``team``, or ``private``).
             tool_id: The ID of the tool being updated (excluded from the conflict search).
             team_id: Required when *visibility* is ``team``; scopes the uniqueness check to this team.
@@ -7590,80 +7662,11 @@ class ToolService(BaseService):
         Raises:
             ToolNameConflictError: If a conflicting tool already exists in the target scope.
         """
-        if visibility == "public":
-            existing_tool = get_for_update(
-                db,
-                DbTool,
-                where=and_(
-                    DbTool.custom_name == custom_name,
-                    DbTool.visibility == "public",
-                    DbTool.id != tool_id,
-                ),
-            )
-        elif visibility == "team" and team_id:
-            existing_tool = get_for_update(
-                db,
-                DbTool,
-                where=and_(
-                    DbTool.custom_name == custom_name,
-                    DbTool.visibility == "team",
-                    DbTool.team_id == team_id,
-                    DbTool.id != tool_id,
-                ),
-            )
-        elif visibility == "private" and owner_email:
-            existing_tool = get_for_update(
-                db,
-                DbTool,
-                where=and_(
-                    DbTool.custom_name == custom_name,
-                    DbTool.visibility == "private",
-                    DbTool.owner_email == owner_email,
-                    DbTool.id != tool_id,
-                ),
-            )
-        else:
+        scope = ToolService._tool_name_scope(visibility, team_id=team_id, owner_email=owner_email)
+        if scope is None:
             logger.warning("Skipping conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
             return
-        if existing_tool:
-            raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-
-    @staticmethod
-    def _check_gateway_tool_invocation_name_conflict(db: Session, invocation_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
-        """Raise ToolNameConflictError for a conflicting persisted gateway-tool name.
-
-        Args:
-            db: The SQLAlchemy database session.
-            invocation_name: The final gateway-prefixed invocation name.
-            visibility: The target visibility scope.
-            tool_id: The tool being updated, excluded from the conflict search.
-            team_id: Team namespace identity for team-visible tools.
-            owner_email: Owner namespace identity for private tools.
-
-        Raises:
-            ToolNameConflictError: If another tool occupies the target namespace.
-        """
-        if visibility == "public":
-            existing_tool = get_for_update(
-                db,
-                DbTool,
-                where=and_(DbTool.name == invocation_name, DbTool.visibility == "public", DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
-            )
-        elif visibility == "team" and team_id:
-            existing_tool = get_for_update(
-                db,
-                DbTool,
-                where=and_(DbTool.name == invocation_name, DbTool.visibility == "team", DbTool.team_id == team_id, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
-            )
-        elif visibility == "private" and owner_email:
-            existing_tool = get_for_update(
-                db,
-                DbTool,
-                where=and_(DbTool.name == invocation_name, DbTool.visibility == "private", DbTool.owner_email == owner_email, DbTool.id != tool_id),  # pylint: disable=comparison-with-callable
-            )
-        else:
-            logger.warning("Skipping gateway-tool conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
-            return
+        existing_tool = get_for_update(db, DbTool, where=and_(DbTool.name == stored_name, scope, DbTool.id != tool_id))  # pylint: disable=comparison-with-callable
         if existing_tool:
             raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 
@@ -7718,6 +7721,7 @@ class ToolService(BaseService):
             >>> import asyncio
             >>> tool_update = MagicMock()
             >>> tool_update.extension_metadata = None
+            >>> tool_update.name = tool_update.custom_name = tool_update.visibility = None
             >>> asyncio.run(service.update_tool(db, 'tool_id', tool_update))
             'tool_read'
         """
@@ -7773,44 +7777,30 @@ class ToolService(BaseService):
 
             # Track whether a name change occurred (before tool.name is mutated)
             name_is_changing = bool(tool_update.name and tool_update.name != tool.name)
-
+            custom_name_tracks_rename = name_is_changing and tool_update.custom_name is None and tool.name == tool.custom_name
             visibility_is_changing = tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility
-            gateway_id = getattr(tool, "gateway_id", None)
-            gateway_name = getattr(getattr(tool, "gateway", None), "name", None)
-            gateway_collision_check = isinstance(gateway_id, str) and bool(gateway_id) and isinstance(gateway_name, str) and (tool_update.custom_name is not None or visibility_is_changing)
-            if gateway_collision_check:
-                final_custom_name = tool.custom_name if tool_update.custom_name is None else tool_update.custom_name
-                invocation_name = build_gateway_tool_invocation_name(gateway_name, final_custom_name)
-                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
-                self._check_gateway_tool_invocation_name_conflict(
-                    db,
-                    invocation_name,
-                    tool_visibility_ref,
-                    tool.id,
-                    team_id=tool.team_id,
-                    owner_email=tool.owner_email,
-                )
 
-            # Check for name change and ensure uniqueness
-            if name_is_changing:
-                # Always derive ownership fields from the DB record — never trust client-provided team_id/owner_email
-                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+            if name_is_changing or visibility_is_changing or tool_update.custom_name is not None:
                 if tool_update.custom_name is not None:
-                    custom_name_ref = tool_update.custom_name
-                elif tool.name == tool.custom_name:
-                    custom_name_ref = tool_update.name  # custom_name will track the rename
+                    final_custom_name = tool_update.custom_name
+                elif custom_name_tracks_rename:
+                    final_custom_name = tool_update.name
                 else:
-                    custom_name_ref = tool.custom_name  # custom_name stays unchanged
-                if not gateway_collision_check:
-                    self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
-                if tool_update.custom_name is None and tool.name == tool.custom_name:
+                    final_custom_name = tool.custom_name
+                gateway_id = getattr(tool, "gateway_id", None)
+                gateway_name = getattr(getattr(tool, "gateway", None), "name", None)
+                if isinstance(gateway_id, str) and gateway_id and isinstance(gateway_name, str):
+                    final_stored_name = build_gateway_tool_invocation_name(gateway_name, final_custom_name)
+                else:
+                    final_stored_name = slugify(final_custom_name)
+                # Always derive ownership fields from the DB record — never trust client-provided team_id/owner_email
+                final_visibility = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                self._check_tool_name_conflict(db, final_stored_name, final_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+
+            if name_is_changing:
+                if custom_name_tracks_rename:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
-
-            # Check for conflicts when visibility changes without a name change
-            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing and not gateway_collision_check:
-                new_visibility = tool_update.visibility.lower()
-                self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
