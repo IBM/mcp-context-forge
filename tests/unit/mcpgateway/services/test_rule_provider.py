@@ -33,10 +33,22 @@ def test_factory_passes_audit_flag_through(monkeypatch):
     assert provider.audit_enabled is False
 
 
-def test_factory_fails_closed_for_unimplemented_engine(monkeypatch):
+def test_factory_dispatches_openfga(monkeypatch):
     monkeypatch.setattr(settings, "rbac_rule_provider", "openfga")
-    with pytest.raises(RuntimeError, match="not implemented yet"):
-        get_rule_provider(Mock())
+    monkeypatch.setattr(settings, "rbac_rule_provider_shadow", False)
+    from mcpgateway.services.openfga_provider import OpenFgaRuleProvider
+
+    provider = get_rule_provider(Mock())
+    assert isinstance(provider, OpenFgaRuleProvider)
+
+
+def test_factory_shadow_wraps_db(monkeypatch):
+    monkeypatch.setattr(settings, "rbac_rule_provider", "db")
+    monkeypatch.setattr(settings, "rbac_rule_provider_shadow", True)
+    from mcpgateway.services.rule_provider import ShadowRuleProvider
+
+    provider = get_rule_provider(Mock())
+    assert isinstance(provider, ShadowRuleProvider)
 
 
 def test_invalidate_user_clears_provider_cache():
