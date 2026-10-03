@@ -29,11 +29,15 @@ without a fork of the enforcement path.
 3. **OpenFGA as engine, database as source of truth.** The gateway
    database owns identity and rules. `openfga_sync` mirrors them as
    tuples (role assignments, memberships, role-permission grants on
-   type wildcards, simple entity rules as grants or blocked tuples) and
+   type marker objects, simple entity rules as grants or blocked tuples) and
    a reconciliation loop repairs SQL-level drift. Predicates richer
    than `role.` or `team.` truthiness stay database-side because
    OpenFGA tuples carry no predicate grammar.
-4. **Fail-closed.** Every OpenFGA transport failure denies with an
+4. **Marker objects for type-wide grants.** OpenFGA rejects typed
+   wildcards as tuple objects, so role-permission grants target the
+   marker ``<type>:all``. The sync writes the markers and the provider
+   queries them. A live engine check drove this rule.
+5. **Fail-closed.** Every OpenFGA transport failure denies with an
    ERROR log. `RBAC_RULE_PROVIDER_SHADOW` runs both engines, enforces
    the db answer, and logs divergence as the cutover rehearsal.
 
