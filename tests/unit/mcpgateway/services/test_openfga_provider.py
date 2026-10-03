@@ -33,13 +33,13 @@ def provider():
 
 
 async def test_check_permission_maps_to_engine(provider):
-    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj: obj == "tool:*")
+    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj: obj == "tool:all")
     assert await provider.check_permission("anne@example.com", "tools.read") is True
-    provider._client.check.assert_any_call("user:anne@example.com", "tools_read", "tool:*")
+    provider._client.check.assert_any_call("user:anne@example.com", "tools_read", "tool:all")
 
 
 async def test_entity_deny_blocks_wildcard_grant(provider):
-    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj: obj == "tool:*" or relation == "blocked")
+    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj: obj == "tool:all" or relation == "blocked")
     assert await provider.check_permission("anne@example.com", "tools.execute", resource_id="tool-42") is False
 
 

@@ -6,7 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 OpenFGA-backed Layer-2 rule provider.
 
 Permission questions translate to OpenFGA Check calls against tuples
-mirrored by :mod:`mcpgateway.services.openfga_sync`. Decisions cache
+mirrored by :mod:`mcpgateway.services.openfga_sync`. Type-wide grants
+live on the ``<type>:all`` marker object: OpenFGA rejects typed
+wildcards as tuple objects. Decisions cache
 client-side for ``openfga_cache_ttl_seconds``. Every transport failure
 denies: the provider logs ERROR and returns False. Ownership and
 team-scoped admin semantics stay on the database fallback, because the
@@ -175,7 +177,7 @@ class OpenFgaRuleProvider(DbRuleProvider):
             return bool(cached)
 
         user = f"user:{user_email}"
-        allowed = await self._check(user, relation, f"{capability}:*")
+        allowed = await self._check(user, relation, f"{capability}:all")
         if not allowed and resource_id:
             allowed = await self._check(user, relation, f"{capability}:{resource_id}")
         if allowed and resource_id:
