@@ -91,6 +91,22 @@ describe("ToolDetailsPanel", () => {
     expect(aside).toHaveAttribute("aria-hidden", "false");
   });
 
+  it("shows a Deprecated badge for a deprecated selected tool", async () => {
+    const tools = [createMockTool(1, { deprecated: true })];
+    render(
+      <ToolDetailsPanel
+        tools={tools}
+        gatewaySlug="test-gateway"
+        open={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Deprecated").length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it("displays gateway name, description, and integration type", () => {
     const tools = [createMockTool(1, { integrationType: "MCP" })];
     render(
