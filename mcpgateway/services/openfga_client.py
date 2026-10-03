@@ -26,6 +26,9 @@ from mcpgateway.config import settings
 logger = logging.getLogger(__name__)
 
 
+_MAX_TUPLES_PER_WRITE = 100  # engine cap per write request (exceeded_entity_limit)
+
+
 class OpenFgaUnavailable(Exception):
     """Raised when the OpenFGA API cannot answer a request."""
 
@@ -84,6 +87,9 @@ class OpenFgaClient:
                 response = await client.request(method, f"{self._api_url}{path}", json=json, headers=headers)
                 response.raise_for_status()
                 return response.json()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:200]
+            raise OpenFgaUnavailable(f"OpenFGA request failed: {exc} body={detail}") from exc
         except httpx.HTTPError as exc:
             raise OpenFgaUnavailable(f"OpenFGA request failed: {exc}") from exc
 
@@ -149,23 +155,26 @@ class OpenFgaClient:
         return str(body["authorization_model_id"])
 
     async def write_tuples(self, writes: list[dict[str, str]], deletes: list[dict[str, str]]) -> None:
-        """Apply tuple writes and deletes in one transaction.
+        """Apply tuple writes and deletes in capped batches.
+
+        The engine rejects more than 100 write operations per request
+        (exceeded_entity_limit), so both directions ship in chunks of
+        100. Batches apply sequentially: a later failure leaves earlier
+        batches applied, which the reconciliation loop converges.
 
         Args:
             writes: Tuple keys to write.
             deletes: Tuple keys to delete.
 
         Raises:
-            OpenFgaUnavailable: When the transaction is rejected.
+            OpenFgaUnavailable: When a batch is rejected.
         """
-        if not writes and not deletes:
-            return
-        payload: dict[str, Any] = {}
-        if writes:
-            payload["writes"] = {"tuple_keys": writes}
-        if deletes:
-            payload["deletes"] = {"tuple_keys": deletes}
-        await self._request("POST", f"/stores/{settings.openfga_store_id}/write", payload)
+        for start in range(0, len(writes), _MAX_TUPLES_PER_WRITE):
+            batch = writes[start : start + _MAX_TUPLES_PER_WRITE]
+            await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"writes": {"tuple_keys": batch}})
+        for start in range(0, len(deletes), _MAX_TUPLES_PER_WRITE):
+            batch = deletes[start : start + _MAX_TUPLES_PER_WRITE]
+            await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"deletes": {"tuple_keys": batch}})
 
     async def read_tuples(self, object_filter: Optional[str] = None) -> list[dict[str, Any]]:
         """Read stored tuples, optionally filtered by object prefix.
