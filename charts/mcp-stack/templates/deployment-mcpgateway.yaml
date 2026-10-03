@@ -73,6 +73,18 @@ spec:
           #   placeholders in the derived URL variables declared below.
           ################################################################
           env:
+            {{- if .Values.openfga.enabled }}
+            # ---------- OPENFGA (Layer-2 RBAC engine) ----------
+            - name: RBAC_RULE_PROVIDER
+              value: {{ .Values.mcpContextForge.env.RBAC_RULE_PROVIDER | default "openfga" | quote }}
+            - name: OPENFGA_API_URL
+              value: {{ printf "http://%s-openfga:%v" (include "mcp-stack.fullname" .) (.Values.openfga.service.port | default 8080) | quote }}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.openfgaSecretName" . | trim | quote }}
+                  key: {{ .Values.openfga.presharedKey.secretKey | default "OPENFGA_API_TOKEN" }}
+            {{- end }}
             # ---------- POSTGRES (via PgBouncer if enabled) ----------
             - name: POSTGRES_HOST
               {{- if .Values.pgbouncer.enabled }}

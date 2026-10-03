@@ -1580,17 +1580,37 @@
           "type": "object",
           "description": "Direct TLS configuration for the gateway pod (end-to-end HTTPS)",
           "properties": {
-            "enabled":    { "type": "boolean", "default": false },
-            "secretName": { "type": "string",  "default": "" },
-            "mountPath":  { "type": "string",  "default": "/app/certs/tls" },
-            "certFile":   { "type": "string",  "default": "/app/certs/tls/tls.crt" },
-            "keyFile":    { "type": "string",  "default": "/app/certs/tls/tls.key" },
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "secretName": {
+              "type": "string",
+              "default": ""
+            },
+            "mountPath": {
+              "type": "string",
+              "default": "/app/certs/tls"
+            },
+            "certFile": {
+              "type": "string",
+              "default": "/app/certs/tls/tls.crt"
+            },
+            "keyFile": {
+              "type": "string",
+              "default": "/app/certs/tls/tls.key"
+            },
             "keyFilePasswordSecret": {
               "type": "object",
               "description": "Reference to a Kubernetes Secret key holding the private-key passphrase",
               "properties": {
-                "name": { "type": "string" },
-                "key":  { "type": "string", "default": "keyFilePassword" }
+                "name": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "default": "keyFilePassword"
+                }
               }
             }
           }
@@ -1823,18 +1843,25 @@
             },
             "AUTH_ENCRYPTION_SECRET": {
               "type": "string",
-              "description": "Auth encryption secret — must be set to a strong value before deploy (run make init-secrets-patch-env)",
+              "description": "Auth encryption secret \u2014 must be set to a strong value before deploy (run make init-secrets-patch-env)",
               "default": ""
             },
             "IDENTITY_PROPAGATION_ENABLED": {
               "type": "string",
-              "enum": ["true", "false"],
+              "enum": [
+                "true",
+                "false"
+              ],
               "description": "Enable end-user identity propagation to upstream MCP servers",
               "default": "false"
             },
             "IDENTITY_PROPAGATION_MODE": {
               "type": "string",
-              "enum": ["headers", "meta", "both"],
+              "enum": [
+                "headers",
+                "meta",
+                "both"
+              ],
               "description": "How to propagate identity: headers (HTTP), meta (MCP _meta), or both",
               "default": "both"
             },
@@ -1850,7 +1877,10 @@
             },
             "IDENTITY_SIGN_CLAIMS": {
               "type": "string",
-              "enum": ["true", "false"],
+              "enum": [
+                "true",
+                "false"
+              ],
               "description": "Sign propagated user claims with HMAC-SHA256 for upstream verification",
               "default": "false"
             },
@@ -1972,7 +2002,7 @@
             },
             "JWT_SECRET_KEY": {
               "type": "string",
-              "description": "JWT secret key — must be set to a strong value before deploy (run make init-secrets-patch-env)",
+              "description": "JWT secret key \u2014 must be set to a strong value before deploy (run make init-secrets-patch-env)",
               "default": ""
             },
             "MAX_FAILED_LOGIN_ATTEMPTS": {
@@ -3377,6 +3407,64 @@
       },
       "description": "Optional monitoring profile values"
     },
+    "openfga": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
+          }
+        },
+        "presharedKey": {
+          "type": "object",
+          "properties": {
+            "secretKey": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "datastore": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer"
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
     "networkPolicies": {
       "type": "object",
       "properties": {
@@ -4666,7 +4754,7 @@
         },
         "maxclients": {
           "type": "integer",
-          "description": "Maximum number of client connections. Formula: replicas × workers × REDIS_MAX_CONNECTIONS × 1.2",
+          "description": "Maximum number of client connections. Formula: replicas \u00d7 workers \u00d7 REDIS_MAX_CONNECTIONS \u00d7 1.2",
           "default": 15000,
           "minimum": 5000,
           "maximum": 30000
