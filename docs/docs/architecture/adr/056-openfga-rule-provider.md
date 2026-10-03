@@ -61,6 +61,8 @@ without a fork of the enforcement path.
 - **OpenFGA as the source of truth.** Rejected: alembic data
   migrations and admin tooling write SQL directly. Reconciliation from
   the gateway database keeps one authority.
-- **Full predicate compilation to OpenFGA conditions.** Deferred: the
-  APL subset covers seeded rules. Conditions would couple the grammar
-  to the engine version.
+- **Full predicate compilation to OpenFGA conditions.** Rejected for
+  rule predicates: the APL subset covers seeded rules and full
+  compilation would couple the grammar to the engine version. One
+  condition is adopted: ``non_expired_grant`` enforces role-assignment
+  expiry at check time, with the window stored as tuple context.
