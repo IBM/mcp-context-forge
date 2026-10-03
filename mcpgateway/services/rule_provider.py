@@ -86,13 +86,95 @@ class RuleProvider(Protocol):
 
 
 class DbRuleProvider(PermissionService):
-    """Default provider: the database-backed role model.
+    """Default provider: the database-backed role model plus rule catalog.
 
     Inherits every authorization method from
-    :class:`~mcpgateway.services.permission_service.PermissionService`
-    unchanged and adds the cache-invalidation entry point the provider
-    contract names ``invalidate_user``.
+    :class:`~mcpgateway.services.permission_service.PermissionService`.
+    ``check_permission`` additionally applies the ``rbac_rules`` catalog
+    as an overlay: a matching deny rule blocks, a matching allow rule
+    grants, and no matching rule leaves the decision unchanged. Platform
+    admin bypass is evaluated before the overlay, so a bypass grant is
+    never denied by a catalog rule.
     """
+
+    async def check_permission(
+        self,
+        user_email: str,
+        permission: str,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        allow_admin_bypass: bool = True,
+        check_any_team: bool = False,
+        token_is_admin: bool = False,
+        token_roles: Optional[List[str]] = None,
+    ) -> bool:
+        """Answer the permission question with the catalog overlay applied.
+
+        Args:
+            user_email: Principal identity.
+            permission: Permission string being checked.
+            resource_type: Optional resource type of the target entity.
+            resource_id: Optional entity id for entity-scoped rules.
+            team_id: Optional team scope of the check.
+            token_teams: Layer-1 narrowed team list, when present.
+            ip_address: Caller address for audit rows.
+            user_agent: Caller agent for audit rows.
+            allow_admin_bypass: Whether platform admins bypass the check.
+            check_any_team: Grant when the permission holds in any team.
+            token_is_admin: Admin flag from the token, when present.
+            token_roles: Role names from the token, when present.
+
+        Returns:
+            bool: The overlaid decision.
+        """
+        from mcpgateway.services.rule_catalog_service import RuleCatalogService  # pylint: disable=import-outside-toplevel
+
+        base = await super().check_permission(
+            user_email=user_email,
+            permission=permission,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            team_id=team_id,
+            token_teams=token_teams,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            allow_admin_bypass=allow_admin_bypass,
+            check_any_team=check_any_team,
+            token_is_admin=token_is_admin,
+            token_roles=token_roles,
+        )
+        catalog = RuleCatalogService(self.db)
+        overlay = catalog.evaluate_overlay(permission, self._overlay_attributes(user_email, token_teams, token_is_admin, token_roles), capability_id=resource_id)
+        if overlay is None:
+            return base
+        if overlay:
+            return True
+        if allow_admin_bypass and base and await self.check_platform_admin_permission(user_email, token_teams=token_teams):
+            return True
+        return False
+
+    def _overlay_attributes(self, user_email: str, token_teams: Optional[List[str]], token_is_admin: bool, token_roles: Optional[List[str]]) -> dict:
+        """Build predicate attributes for the overlay evaluation.
+
+        Args:
+            user_email: Principal identity.
+            token_teams: Layer-1 narrowed team list, when present.
+            token_is_admin: Admin flag from the token, when present.
+            token_roles: Role names from the token, when present.
+
+        Returns:
+            Nested attribute mapping for the predicate evaluator.
+        """
+        attributes: dict = {"authenticated": True, "subject": {"id": user_email}, "token": {"is_admin": token_is_admin}, "role": {}, "team": {}}
+        for name in token_roles or []:
+            attributes["role"][name] = True
+        for name in token_teams or []:
+            attributes["team"][name] = True
+        return attributes
 
     def invalidate_user(self, user_email: str) -> None:
         """Clear cached permissions for a user.

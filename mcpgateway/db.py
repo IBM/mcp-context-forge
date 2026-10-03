@@ -1220,6 +1220,35 @@ class Role(Base):
         return sorted(list(effective_permissions))
 
 
+class RbacRule(Base):
+    """End-user-editable Layer-2 rule in the CPEX APL taxonomy.
+
+    A rule overlays the role-based decision for one capability. The
+    optional ``permission`` column narrows the match to a single
+    permission string; a NULL value matches every permission of the
+    capability type. The optional ``capability_id`` narrows the match to
+    one entity; a NULL value matches every entity of the type.
+    """
+
+    __tablename__ = "rbac_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    capability_type: Mapped[str] = mapped_column(String(30), nullable=False)  # tool|resource|prompt|server|gateway|a2a_agent|route
+    capability_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    permission: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, default="pre_invocation")
+    predicate: Mapped[str] = mapped_column(Text, nullable=False)
+    effect: Mapped[str] = mapped_column(String(10), nullable=False)  # allow|deny
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=utc_now)
+
+
 class UserRole(Base):
     """User role assignment model."""
 
