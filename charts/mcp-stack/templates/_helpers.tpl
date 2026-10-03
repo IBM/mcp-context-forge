@@ -123,3 +123,17 @@ failureThreshold:    {{ $p.failureThreshold    | default 3 }}
 {{- include "helpers.renderProbe" (dict "probe" $p "root" .root) }}
 {{- end }}
 {{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.openfgaSecretName
+     Returns the Secret name for the OpenFGA preshared key.
+     If users set `openfga.existingSecret`, that name is used.
+     Otherwise a release-scoped name is returned.
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.openfgaSecretName" -}}
+{{- if .Values.openfga.existingSecret }}
+{{- .Values.openfga.existingSecret }}
+{{- else }}
+{{- printf "%s-openfga" (include "mcp-stack.fullname" .) }}
+{{- end }}
+{{- end }}
