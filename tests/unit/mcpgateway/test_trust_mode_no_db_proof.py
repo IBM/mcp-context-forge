@@ -175,7 +175,7 @@ async def _drive(payload: dict):
     """
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_token")  # pragma: allowlist secret
     request = SimpleNamespace(state=SimpleNamespace())
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=payload)):
         user = await get_current_user(credentials=credentials, request=request)
     return user, request
 
