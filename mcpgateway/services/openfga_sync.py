@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeamMember, Permissions, RbacRule, Role, UserRole
+from mcpgateway.db import EmailTeamMember, Permissions, RbacRule, Role, SessionLocal, UserRole
 from mcpgateway.services.openfga_client import OpenFgaClient, OpenFgaUnavailable
 from mcpgateway.services.rule_catalog_service import capability_for_permission
 from mcpgateway.services.rule_predicate import Truthiness, parse_predicate
@@ -190,3 +190,47 @@ class OpenFgaSyncService:
         except OpenFgaUnavailable as exc:
             logger.error("OpenFGA sync failed (%s): %s", reason, exc)
             return -1
+
+
+def openfga_sync_enabled() -> bool:
+    """Say whether the OpenFGA engine participates in this deployment.
+
+    Returns:
+        True when the provider is openfga or shadow mode is on.
+    """
+    return settings.rbac_rule_provider == "openfga" or settings.rbac_rule_provider_shadow
+
+
+async def openfga_sync_after_commit(db: Session, reason: str) -> None:
+    """Resync tuples after an identity mutation, without failing the caller.
+
+    Args:
+        db: The caller's session, used read-only for the mirror query.
+        reason: Trigger description for the log line.
+    """
+    if not openfga_sync_enabled():
+        return
+    try:
+        await OpenFgaSyncService(db, OpenFgaClient()).sync_now(reason)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("OpenFGA post-commit sync failed (%s): %s", reason, exc)
+
+
+async def openfga_reconciliation_loop() -> None:
+    """Converge tuples periodically while the engine is enabled.
+
+    Covers drift that bypasses the service hooks, such as alembic data
+    migrations editing role permissions with raw SQL.
+    """
+    import asyncio  # pylint: disable=import-outside-toplevel
+
+    while True:
+        if openfga_sync_enabled():
+            try:
+                with SessionLocal() as db:
+                    service = OpenFgaSyncService(db, OpenFgaClient())
+                    await service.bootstrap()
+                    await service.sync_now("reconciliation")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error("OpenFGA reconciliation failed: %s", exc)
+        await asyncio.sleep(settings.openfga_reconcile_seconds)

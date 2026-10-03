@@ -41,6 +41,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.redis_client import get_redis_client
+from mcpgateway.services.openfga_sync import openfga_sync_after_commit
 
 # Initialize logging
 logging_service = LoggingService()
@@ -1329,6 +1330,7 @@ class TeamManagementService:
             self.db.rollback()
             logger.error("Failed to add %s to team %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), e)
             raise TeamMemberAddError("Failed to add member to team") from e
+        await openfga_sync_after_commit(self.db, "team member added")
 
     async def remove_member_from_team(self, team_id: str, user_email: str, removed_by: Optional[str] = None) -> bool:
         """Remove a member from a team.
@@ -1405,6 +1407,7 @@ class TeamManagementService:
             self.db.rollback()
             logger.error("Failed to remove %s from team %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), e)
             return False
+        await openfga_sync_after_commit(self.db, "team member removed")
 
     async def update_member_role(self, team_id: str, user_email: str, new_role: str, updated_by: Optional[str] = None) -> bool:
         """Update a team member's role.
@@ -1517,6 +1520,7 @@ class TeamManagementService:
             self.db.rollback()
             logger.error("Failed to update role of %s in team %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), e)
             return False
+        await openfga_sync_after_commit(self.db, "team member role updated")
 
     async def get_member(self, team_id: str, user_email: str) -> Optional[EmailTeamMember]:
         """Get a single team member by team ID and user email.

@@ -205,3 +205,35 @@ async def test_sync_now_swallows_unavailable(db_session):
             raise OpenFgaUnavailable("down")
 
     assert await OpenFgaSyncService(db_session, _Down()).sync_now("test") == -1  # type: ignore[arg-type]
+
+
+async def test_hook_noop_when_disabled(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "rbac_rule_provider", "db")
+    monkeypatch.setattr(settings, "rbac_rule_provider_shadow", False)
+    called = []
+
+    async def _boom(db, reason):
+        called.append(reason)
+
+    import mcpgateway.services.openfga_sync as sync_mod
+
+    monkeypatch.setattr(sync_mod, "OpenFgaSyncService", lambda db, client: _fail())
+    await sync_mod.openfga_sync_after_commit(db_session, "test")  # must not touch the engine
+    assert not called
+
+
+def _fail():
+    raise AssertionError("engine must not be consulted when disabled")
+
+
+async def test_hook_runs_and_swallows_engine_failure(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "rbac_rule_provider", "openfga")
+    import mcpgateway.services.openfga_sync as sync_mod
+
+    class _Exploding:
+        async def sync_now(self, reason):
+            raise RuntimeError("engine down")
+
+    monkeypatch.setattr(sync_mod, "OpenFgaSyncService", lambda db, client: _Exploding())
+    monkeypatch.setattr(sync_mod, "OpenFgaClient", lambda: None)
+    await sync_mod.openfga_sync_after_commit(db_session, "role assigned")  # must not raise
