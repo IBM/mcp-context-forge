@@ -154,7 +154,21 @@ def db_session():
 
 def _seed(db) -> None:
     db.add(Role(id="r-dev", name="developer", description="", scope="team", permissions=["tools.read", "tools.execute"], created_by="admin@example.com", is_system_role=True, is_active=True))
-    db.add(UserRole(id="ur-1", user_email="anne@example.com", user_id="anne", role_id="r-dev", scope="global", granted_by="admin@example.com", is_active=True))
+    from datetime import datetime, timedelta, timezone
+
+    db.add(
+        UserRole(
+            id="ur-1",
+            user_email="anne@example.com",
+            user_id="anne",
+            role_id="r-dev",
+            scope="global",
+            granted_by="admin@example.com",
+            granted_at=datetime.now(timezone.utc) - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            is_active=True,
+        )
+    )
     db.add(EmailTeamMember(team_id="t-eng", user_email="anne@example.com", user_id="anne", role="member", is_active=True))
     db.add(
         RbacRule(
@@ -259,3 +273,85 @@ async def test_error_body_surfaces_in_unavailable(mock_http, client, monkeypatch
     mock_http.responses.append((400, {"code": "exceeded_entity_limit", "message": "cap"}))
     with pytest.raises(OpenFgaUnavailable, match="exceeded_entity_limit"):
         await client.check("user:anne", "tools_read", "tool:all")
+
+
+def test_build_conditions_shape():
+    from mcpgateway.services.openfga_sync import build_conditions
+
+    conditions = build_conditions()
+    grant = conditions["non_expired_grant"]
+    assert grant["expression"] == "current_time < grant_time + grant_duration"
+    assert grant["parameters"]["grant_duration"] == {"type_name": "TYPE_NAME_DURATION"}
+
+
+def test_role_assignee_accepts_conditioned_subjects():
+    types = {t["type"]: t for t in build_type_definitions()}
+    subjects = types["role"]["metadata"]["relations"]["assignee"]["directly_related_user_types"]
+    assert {"type": "user"} in subjects
+    assert {"type": "user", "condition": "non_expired_grant"} in subjects
+
+
+def test_desired_tuples_expiry(db_session):
+    from datetime import datetime, timedelta, timezone
+
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    granted = datetime.now(timezone.utc) - timedelta(days=1)
+    db_session.add(Role(id="r-dev", name="developer", description="", scope="team", permissions=["tools.read"], created_by="admin@example.com", is_system_role=True, is_active=True))
+    db_session.add(UserRole(id="ur-perm", user_email="perm@example.com", user_id="perm", role_id="r-dev", scope="global", granted_by="a@example.com", granted_at=granted, is_active=True))
+    db_session.add(
+        UserRole(id="ur-exp", user_email="exp@example.com", user_id="exp", role_id="r-dev", scope="global", granted_by="a@example.com", granted_at=granted, expires_at=future, is_active=True)
+    )
+    db_session.add(UserRole(id="ur-old", user_email="old@example.com", user_id="old", role_id="r-dev", scope="global", granted_by="a@example.com", granted_at=granted, expires_at=past, is_active=True))
+    db_session.flush()
+
+    tuples = OpenFgaSyncService(db_session, _FakeClient()).desired_tuples()
+
+    perm = ("user:perm@example.com", "assignee", "role:developer")
+    exp = ("user:exp@example.com", "assignee", "role:developer")
+    old = ("user:old@example.com", "assignee", "role:developer")
+    assert tuples[perm] is None
+    assert tuples[old] if old in tuples else True  # expired rows leave the mirror
+    assert old not in tuples
+    condition = tuples[exp]
+    assert condition["name"] == "non_expired_grant"
+    assert condition["context"]["grant_duration"].endswith("s")
+    assert condition["context"]["grant_time"].startswith(granted.strftime("%Y-%m-%d"))
+
+
+async def test_check_supplies_current_time(mock_http, client, monkeypatch):
+    monkeypatch.setattr(settings, "openfga_store_id", "store-1")
+    mock_http.responses.append((200, {"allowed": True}))
+    await client.check("user:anne", "tools_read", "tool:all")
+    body = json.loads(mock_http.requests[-1].content)
+    assert "current_time" in body["context"]
+    assert body["context"]["current_time"].endswith("Z")
+
+
+async def test_write_model_sends_conditions(mock_http, client, monkeypatch):
+    from mcpgateway.services.openfga_sync import build_conditions
+
+    monkeypatch.setattr(settings, "openfga_store_id", "store-1")
+    mock_http.responses.append((201, {"authorization_model_id": "m2"}))
+    model_id = await client.write_model(build_type_definitions(), conditions=build_conditions())
+    assert model_id == "m2"
+    body = json.loads(mock_http.requests[-1].content)
+    assert "non_expired_grant" in body["conditions"]
+
+
+async def test_resync_rewrites_changed_condition_context(db_session):
+    _seed(db_session)
+    desired = OpenFgaSyncService(db_session, _FakeClient()).desired_tuples()
+    conditioned_key = next(k for k, v in desired.items() if v is not None and k[1] == "assignee")
+    stored = [
+        {
+            "user": conditioned_key[0],
+            "relation": conditioned_key[1],
+            "object": conditioned_key[2],
+            "condition": {"name": "non_expired_grant", "context": {"grant_time": "2000-01-01T00:00:00Z", "grant_duration": "1s"}},
+        }
+    ]
+    fake = _FakeClient(stored)
+    await OpenFgaSyncService(db_session, fake).full_resync()
+    rewritten = [w for w in fake.writes if (w["user"], w["relation"], w["object"]) == conditioned_key]
+    assert rewritten and rewritten[0]["condition"]["context"]["grant_duration"].endswith("s")

@@ -24,10 +24,11 @@ sync and the provider.
 
 # Standard
 import logging
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -42,6 +43,45 @@ logger = logging.getLogger(__name__)
 ENTITY_TYPES = ("tool", "resource", "prompt", "server", "gateway", "a2a_agent", "route")
 
 _GRANT_SUBJECTS = [{"type": "user"}, {"type": "team", "relation": "member"}, {"type": "role", "relation": "assignee"}]
+
+# Temporal grant condition: role assignments may expire. Tuples for
+# expiring assignments carry grant_time and grant_duration as condition
+# context; every check supplies current_time. The engine denies the
+# tuple once the window passes, without a write or a resync.
+_NON_EXPIRED_GRANT = "non_expired_grant"
+
+
+def build_conditions() -> dict[str, Any]:
+    """Build the condition definitions for the authorization model.
+
+    Returns:
+        The conditions map in the OpenFGA JSON form.
+    """
+    return {
+        _NON_EXPIRED_GRANT: {
+            "name": _NON_EXPIRED_GRANT,
+            "expression": "current_time < grant_time + grant_duration",
+            "parameters": {
+                "current_time": {"type_name": "TYPE_NAME_TIMESTAMP"},
+                "grant_time": {"type_name": "TYPE_NAME_TIMESTAMP"},
+                "grant_duration": {"type_name": "TYPE_NAME_DURATION"},
+            },
+        }
+    }
+
+
+def _rfc3339(moment: datetime) -> str:
+    """Format a datetime as the RFC 3339 string the engine parses.
+
+    Args:
+        moment: The timestamp; naive values are read as UTC.
+
+    Returns:
+        The RFC 3339 representation.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def relation_for(permission: str) -> str:
@@ -70,7 +110,11 @@ def build_type_definitions() -> list[dict[str, Any]]:
     type_definitions: list[dict[str, Any]] = [
         {"type": "user"},
         {"type": "team", "relations": {"member": {"this": {}}}, "metadata": {"relations": {"member": {"directly_related_user_types": [{"type": "user"}]}}}},
-        {"type": "role", "relations": {"assignee": {"this": {}}}, "metadata": {"relations": {"assignee": {"directly_related_user_types": [{"type": "user"}]}}}},
+        {
+            "type": "role",
+            "relations": {"assignee": {"this": {}}},
+            "metadata": {"relations": {"assignee": {"directly_related_user_types": [{"type": "user"}, {"type": "user", "condition": _NON_EXPIRED_GRANT}]}}},
+        },
     ]
     for entity in ENTITY_TYPES:
         relations: dict[str, Any] = {"blocked": {"this": {}}}
@@ -125,26 +169,41 @@ class OpenFgaSyncService:
         Returns:
             Set of (user, relation, object) tuple keys.
         """
-        tuples: set[tuple[str, str, str]] = set()
+        tuples: dict[tuple[str, str, str], Optional[dict[str, Any]]] = {}
         roles = {role.id: role for role in self._db.execute(select(Role).where(Role.is_active.is_(True))).scalars()}
-        for assignment in self._db.execute(select(UserRole).where(UserRole.is_active.is_(True))).scalars():
+        now = datetime.now(timezone.utc)
+        for assignment in self._db.execute(
+            select(UserRole).where(
+                UserRole.is_active.is_(True),
+                or_(UserRole.expires_at.is_(None), UserRole.expires_at > now),
+            )
+        ).scalars():
             role = roles.get(assignment.role_id)
-            if role is not None:
-                tuples.add((f"user:{assignment.user_email}", "assignee", f"role:{role.name}"))
+            if role is None:
+                continue
+            key = (f"user:{assignment.user_email}", "assignee", f"role:{role.name}")
+            if assignment.expires_at is None:
+                tuples[key] = None
+                continue
+            grant_time = assignment.granted_at or now
+            duration_seconds = max(
+                0, int((assignment.expires_at.replace(tzinfo=assignment.expires_at.tzinfo or timezone.utc) - grant_time.replace(tzinfo=grant_time.tzinfo or timezone.utc)).total_seconds())
+            )
+            tuples[key] = {"name": _NON_EXPIRED_GRANT, "context": {"grant_time": _rfc3339(grant_time), "grant_duration": f"{duration_seconds}s"}}
         for membership in self._db.execute(select(EmailTeamMember).where(EmailTeamMember.is_active.is_(True))).scalars():
-            tuples.add((f"user:{membership.user_email}", "member", f"team:{membership.team_id}"))
+            tuples[(f"user:{membership.user_email}", "member", f"team:{membership.team_id}")] = None
         all_permissions = Permissions.get_all_permissions()
         for role in roles.values():
             granted = all_permissions if "*" in (role.permissions or []) else list(role.permissions or [])
             for permission in granted:
-                tuples.add((f"role:{role.name}#assignee", relation_for(permission), f"{capability_for_permission(permission)}:all"))
+                tuples[(f"role:{role.name}#assignee", relation_for(permission), f"{capability_for_permission(permission)}:all")] = None
         for rule in self._db.execute(select(RbacRule).where(RbacRule.is_active.is_(True), RbacRule.capability_id.is_not(None))).scalars():
             subject = _simple_subject(rule.predicate)
             if subject is None:
                 continue
             relations = [relation_for(rule.permission)] if rule.permission else [relation_for(p) for p in all_permissions if capability_for_permission(p) == rule.capability_type]
             for rel in relations:
-                tuples.add((subject, "blocked" if rule.effect == "deny" else rel, f"{rule.capability_type}:{rule.capability_id}"))
+                tuples[(subject, "blocked" if rule.effect == "deny" else rel, f"{rule.capability_type}:{rule.capability_id}")] = None
         return tuples
 
     async def bootstrap(self) -> None:
@@ -159,8 +218,8 @@ class OpenFgaSyncService:
             settings.openfga_store_id = str(store["id"])
             logger.info("OpenFGA store resolved: id=%s name=%s", settings.openfga_store_id, settings.openfga_store_name)
         latest = await self._client.latest_model()
-        if latest is None or latest.get("type_definitions") != build_type_definitions():
-            model_id = await self._client.write_model(build_type_definitions())
+        if latest is None or latest.get("type_definitions") != build_type_definitions() or latest.get("conditions") != build_conditions():
+            model_id = await self._client.write_model(build_type_definitions(), conditions=build_conditions())
             logger.info("OpenFGA authorization model written: id=%s", model_id)
 
     async def full_resync(self) -> int:
@@ -171,9 +230,28 @@ class OpenFgaSyncService:
         """
         desired = self.desired_tuples()
         stored_raw = await self._client.read_tuples()
-        stored = {(t["user"], t["relation"], t["object"]) for t in stored_raw if isinstance(t, dict) and all(k in t for k in ("user", "relation", "object"))}
-        writes = [{"user": u, "relation": r, "object": o} for (u, r, o) in sorted(desired - stored)]
-        deletes = [{"user": u, "relation": r, "object": o} for (u, r, o) in sorted(stored - desired)]
+        stored: dict[tuple[str, str, str], Optional[dict[str, Any]]] = {}
+        for t in stored_raw:
+            if not isinstance(t, dict) or not all(k in t for k in ("user", "relation", "object")):
+                continue
+            condition = t.get("condition")
+            if isinstance(condition, dict) and condition.get("name"):
+                stored[(t["user"], t["relation"], t["object"])] = {"name": condition["name"], "context": condition.get("context", {})}
+            else:
+                stored[(t["user"], t["relation"], t["object"])] = None
+        writes = []
+        for key in sorted(set(desired) - set(stored)):
+            entry: dict[str, Any] = {"user": key[0], "relation": key[1], "object": key[2]}
+            if desired[key] is not None:
+                entry["condition"] = desired[key]
+            writes.append(entry)
+        changed = [k for k in set(desired) & set(stored) if desired[k] != stored[k]]
+        for key in sorted(changed):
+            entry = {"user": key[0], "relation": key[1], "object": key[2]}
+            if desired[key] is not None:
+                entry["condition"] = desired[key]
+            writes.append(entry)
+        deletes = [{"user": k[0], "relation": k[1], "object": k[2]} for k in sorted(set(stored) - set(desired))]
         await self._client.write_tuples(writes, deletes)
         if writes or deletes:
             logger.info("OpenFGA resync applied: writes=%d deletes=%d", len(writes), len(deletes))
