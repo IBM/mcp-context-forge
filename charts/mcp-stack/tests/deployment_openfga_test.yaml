@@ -1,0 +1,50 @@
+suite: openfga deployment
+templates:
+  - templates/deployment-openfga.yaml
+  - templates/service-openfga.yaml
+  - templates/secret-openfga.yaml
+
+tests:
+  - it: does not render when openfga disabled
+    set:
+      openfga.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders deployment, service, and secret when enabled
+    set:
+      openfga.enabled: true
+      openfga.presharedKey.value: plain-chart-test-value
+    asserts:
+      - isKind:
+          of: Deployment
+
+  - it: passes the preshared key through the secret
+    set:
+      openfga.enabled: true
+      openfga.presharedKey.value: plain-chart-test-value
+    asserts:
+      - equal:
+          path: stringData.OPENFGA_API_TOKEN
+          value: plain-chart-test-value
+
+  - it: skips the secret when an existing secret is named
+    set:
+      openfga.enabled: true
+      openfga.existingSecret: my-managed-secret  # pragma: allowlist secret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: disables the playground and pins JSON logs
+    set:
+      openfga.enabled: true
+      openfga.presharedKey.value: plain-chart-test-value
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-enabled=false
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --log-format=json

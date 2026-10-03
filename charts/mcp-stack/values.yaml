@@ -2128,3 +2128,30 @@ inspector:
     requests:
       cpu: 250m
       memory: 128Mi
+
+openfga:
+  # Layer-2 RBAC engine. Disabled by default; the gateway uses the
+  # database provider unless openfga.enabled is true.
+  enabled: false
+
+  image:
+    repository: openfga/openfga
+    tag: "v1.8.9"
+    pullPolicy: IfNotPresent
+
+  # Preshared key shared by the gateway and the engine.
+  presharedKey:
+    secretKey: OPENFGA_API_TOKEN
+    # Set a value here, or reference an operator-managed secret below.
+    value: ""
+  existingSecret: ""
+
+  # Dedicated datastore; never the gateway database.
+  datastore:
+    uri: "postgres://openfga:openfga@openfga-postgres:5432/openfga?sslmode=disable"  # pragma: allowlist secret
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources: {}
