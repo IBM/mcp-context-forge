@@ -181,7 +181,7 @@ def test_desired_tuples_mirror(db_session):
     tuples = OpenFgaSyncService(db_session, _FakeClient()).desired_tuples()  # type: ignore[arg-type]
     assert ("user:anne@example.com", "assignee", "role:developer") in tuples
     assert ("user:anne@example.com", "member", "team:t-eng") in tuples
-    assert ("role:developer#assignee", "tools_read", "tool:*") in tuples
+    assert ("role:developer#assignee", "tools_read", "tool:all") in tuples
     assert ("role:developer#assignee", "blocked", "tool:tool-42") in tuples
 
 
