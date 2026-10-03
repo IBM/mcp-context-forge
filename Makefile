@@ -1832,6 +1832,20 @@ testing-up-entra:                          ## Start testing stack with the gatew
 
 
 .PHONY: testing-up-openfga
+# Local tag for a branch build of the ContextForge web UI. The
+# testing-up-openfga target prefers it over the pinned release image when
+# the tag exists locally; export WEB_UI_IMAGE to force any other image.
+WEB_UI_BRANCH_IMAGE ?= contextforge-web-ui:openfga-rules
+
+.PHONY: web-ui-openfga-image
+web-ui-openfga-image:                  ## Build the web-ui branch image used by testing-up-openfga (WEB_UI_DIR=<clone path> required)
+	@if [ -z "$(WEB_UI_DIR)" ]; then \
+		echo "❌ WEB_UI_DIR is not set. Point it at a web-ui checkout:"; \
+		echo "   make web-ui-openfga-image WEB_UI_DIR=~/Projects/contextforge-web-ui/.worktrees/openfga-rules"; \
+		exit 1; \
+	fi
+	docker build -t $(WEB_UI_BRANCH_IMAGE) $(WEB_UI_DIR)
+
 testing-up-openfga:                       ## Start testing stack with Layer-2 RBAC enforced by OpenFGA
 	@echo "🧪 Starting OpenFGA rule-provider testing stack..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up-openfga)"
@@ -1855,9 +1869,14 @@ testing-up-openfga:                       ## Start testing stack with Layer-2 RB
 	fi
 	@mkdir -p reports
 	@echo "   Using image $(IMAGE_LOCAL)"
+	@ui_image=$${WEB_UI_IMAGE:-}; \
+	if [ -z "$$ui_image" ] && docker image inspect $(WEB_UI_BRANCH_IMAGE) >/dev/null 2>&1; then \
+		ui_image=$(WEB_UI_BRANCH_IMAGE); \
+		echo "   Web UI: using local branch image $(WEB_UI_BRANCH_IMAGE) (build with: make web-ui-openfga-image WEB_UI_DIR=<path>)"; \
+	fi; \
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	RBAC_RULE_PROVIDER=openfga OPENFGA_API_TOKEN=$$OPENFGA_API_TOKEN \
+	RBAC_RULE_PROVIDER=openfga OPENFGA_API_TOKEN=$$OPENFGA_API_TOKEN WEB_UI_IMAGE=$$ui_image \
 	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.openfga.yml --profile testing --profile inspector --profile openfga up -d --scale gateway=1 --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ OpenFGA testing stack started! Gateway: http://localhost:8080"
