@@ -69,6 +69,18 @@ describe("ToolsTable", () => {
     expect(screen.getByText("Display Name 3")).toBeInTheDocument();
   });
 
+  it("shows a Deprecated badge only for deprecated tools", () => {
+    const tools = [
+      createMockTool(1, { deprecated: true }),
+      createMockTool(2, { deprecated: false }),
+    ];
+    render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
+
+    expect(screen.getByText("Deprecated")).toBeInTheDocument();
+    expect(screen.getByText("Display Name 1").closest("tr")).toHaveTextContent("Deprecated");
+    expect(screen.getByText("Display Name 2").closest("tr")).not.toHaveTextContent("Deprecated");
+  });
+
   it("displays displayName when available", () => {
     const tools = [createMockTool(1, { displayName: "Custom Display Name" })];
     render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
