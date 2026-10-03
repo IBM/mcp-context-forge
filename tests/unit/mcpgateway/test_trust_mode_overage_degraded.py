@@ -157,7 +157,7 @@ async def _drive_overage(monkeypatch: pytest.MonkeyPatch, db, marker: dict):
 
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_token")  # pragma: allowlist secret
     request = SimpleNamespace(state=SimpleNamespace())
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=_overage_payload(marker))):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=_overage_payload(marker))):
         user = await get_current_user(credentials=credentials, request=request)
     return user, request
 
