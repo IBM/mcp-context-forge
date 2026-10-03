@@ -164,7 +164,7 @@ async def _drive_trust_funnel(monkeypatch: pytest.MonkeyPatch, db, groups: list[
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
     request = SimpleNamespace(state=SimpleNamespace())
 
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=jwt_payload)):
         with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
             # No local user record exists for the virtual principal.
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
