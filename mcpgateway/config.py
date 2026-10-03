@@ -420,6 +420,15 @@ class Settings(BaseSettings):
         default=False,
         description="Evaluate both rule providers, enforce the db answer, and log divergence (safe comparison mode before an OpenFGA cutover)",
     )
+    openfga_api_url: str = Field(default="http://localhost:8080", description="OpenFGA HTTP API base URL")
+    openfga_store_id: str = Field(default="", description="OpenFGA store id; empty means bootstrap by store name")
+    openfga_store_name: str = Field(default="contextforge", description="OpenFGA store name used by bootstrap when no store id is pinned")
+    openfga_api_token: SecretStr = Field(default=SecretStr(""), description="OpenFGA preshared key; prefer the token file in production")
+    openfga_api_token_file: str = Field(default="", description="Path to a file holding the OpenFGA preshared key; wins over openfga_api_token when set")
+    openfga_model_id: str = Field(default="", description="Pin an authorization model id; empty uses the store's latest model")
+    openfga_timeout_seconds: float = Field(default=2.0, description="OpenFGA API call timeout in seconds")
+    openfga_cache_ttl_seconds: int = Field(default=30, description="Client-side decision cache TTL in seconds")
+    openfga_reconcile_seconds: int = Field(default=300, description="Full tuple reconciliation interval in seconds")
     jwt_claim_user_id: str = Field(default="sub", description="JWT claim name carrying the user identifier in trust mode")
     jwt_claim_email: str = Field(default="email", description="JWT claim name carrying the user email in trust mode")
     jwt_claim_teams: str = Field(default="teams", description="JWT claim name carrying team memberships in trust mode")
@@ -1048,6 +1057,25 @@ class Settings(BaseSettings):
                 "The allowlist will be ignored. Either disable UAID_ALLOW_ALL_DOMAINS or remove UAID_ALLOWED_DOMAINS."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_openfga_provider_config(self) -> Self:
+        """Validate the OpenFGA rule provider settings.
+
+        Selecting the openfga engine (as the provider or in shadow mode)
+        requires the API URL and a preshared key from the token value or
+        the token file.
+
+        Returns:
+            Self for chaining.
+        """
+        needs_engine = self.rbac_rule_provider == "openfga" or self.rbac_rule_provider_shadow
+        if not needs_engine:
+            return self
+        token_present = bool(self.openfga_api_token.get_secret_value()) or bool(self.openfga_api_token_file)
+        if not self.openfga_api_url or not token_present:
+            raise ValueError("RBAC_RULE_PROVIDER=openfga (or shadow mode) requires OPENFGA_API_URL and OPENFGA_API_TOKEN or OPENFGA_API_TOKEN_FILE")
         return self
 
     # OAuth Configuration
