@@ -118,7 +118,7 @@ async def _drive_trust_funnel(monkeypatch: pytest.MonkeyPatch, db, payload, *, r
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
     request = SimpleNamespace(state=SimpleNamespace())
 
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=payload)):
         with patch("mcpgateway.auth._check_token_revoked_sync", return_value=revoked):
             # Fail the test loudly if the trust path touches the user table
             # through the default-funnel helpers.
@@ -203,7 +203,7 @@ class TestTrustBranchDeny:
         _patch_funnel_sessions(monkeypatch, db)
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt_token")  # pragma: allowlist secret
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=_trust_payload())):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=_trust_payload())):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
