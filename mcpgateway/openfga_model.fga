@@ -4,6 +4,8 @@ model
 # ContextForge Layer-2 mirror. This file documents the authorization
 # model that mcpgateway/services/openfga_sync.py writes mechanically
 # from the Permissions constants; the builder is the source of truth.
+# Type-wide grants target <type>:all marker objects - OpenFGA rejects
+# typed wildcards as tuple objects.
 
 type user
 
@@ -37,6 +39,6 @@ type tool
 # Tuple conventions written by the sync:
 #   (user:<email>, assignee, role:<name>)            role assignments
 #   (user:<email>, member, team:<id>)                team memberships
-#   (role:<name>#assignee, <relation>, <type>:*)     role-permission grants
+#   (role:<name>#assignee, <relation>, <type>:all)    role-permission grants
 #   (<subject>, <relation>, <type>:<id>)             entity-scoped allow rules
 #   (<subject>, blocked, <type>:<id>)                entity-scoped deny rules

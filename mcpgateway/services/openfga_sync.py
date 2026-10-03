@@ -16,7 +16,10 @@ them.
 Authorization model shape: every capability type gains one relation per
 permission verb mapped to it. Each relation is the set of direct
 subjects minus the ``blocked`` deny set. Direct subjects are users,
-team members, and role assignees.
+team members, and role assignees. Type-wide role grants target the
+marker object ``<type>:all``: OpenFGA rejects typed wildcards as tuple
+objects, so the marker is the wire-legal convention shared by this
+sync and the provider.
 """
 
 # Standard
@@ -134,7 +137,7 @@ class OpenFgaSyncService:
         for role in roles.values():
             granted = all_permissions if "*" in (role.permissions or []) else list(role.permissions or [])
             for permission in granted:
-                tuples.add((f"role:{role.name}#assignee", relation_for(permission), f"{capability_for_permission(permission)}:*"))
+                tuples.add((f"role:{role.name}#assignee", relation_for(permission), f"{capability_for_permission(permission)}:all"))
         for rule in self._db.execute(select(RbacRule).where(RbacRule.is_active.is_(True), RbacRule.capability_id.is_not(None))).scalars():
             subject = _simple_subject(rule.predicate)
             if subject is None:
