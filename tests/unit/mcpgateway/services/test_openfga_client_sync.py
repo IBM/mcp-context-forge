@@ -133,7 +133,8 @@ class _FakeClient:
         self.deletes: list[dict] = []
 
     async def read_tuples(self, object_filter: Optional[str] = None) -> list[dict]:
-        return [t for t in self.stored if object_filter is None or t.get("object") == object_filter]
+        keys = [t.get("key", t) for t in self.stored]
+        return [t for t in keys if object_filter is None or t.get("object") == object_filter]
 
     async def write_tuples(self, writes: list[dict], deletes: list[dict]) -> None:
         self.writes = writes
@@ -355,3 +356,37 @@ async def test_resync_rewrites_changed_condition_context(db_session):
     await OpenFgaSyncService(db_session, fake).full_resync()
     rewritten = [w for w in fake.writes if (w["user"], w["relation"], w["object"]) == conditioned_key]
     assert rewritten and rewritten[0]["condition"]["context"]["grant_duration"].endswith("s")
+
+
+async def test_read_tuples_follows_continuation_tokens(mock_http, client, monkeypatch):
+    """A paged read consumes every page before returning."""
+    monkeypatch.setattr(settings, "openfga_store_id", "store-1")
+    mock_http.responses.extend(
+        [
+            (200, {"tuples": [{"key": {"user": "user:a", "relation": "assignee", "object": "role:developer"}}], "continuation_token": "page-2"}),
+            (200, {"tuples": [{"key": {"user": "user:b", "relation": "assignee", "object": "role:viewer"}}], "continuation_token": "page-3"}),
+            (200, {"tuples": [{"key": {"user": "user:c", "relation": "member", "object": "team:eng"}}], "continuation_token": ""}),
+        ]
+    )
+    tuples = await client.read_tuples()
+    assert len(tuples) == 3
+    bodies = [json.loads(r.content) for r in mock_http.requests]
+    assert bodies[1].get("continuation_token") == "page-2"
+    assert bodies[2].get("continuation_token") == "page-3"
+
+
+async def test_resync_does_not_rewrite_existing_tuples(db_session):
+    """Tuples present in the stored set never enter the write batch."""
+    _seed(db_session)
+    service = OpenFgaSyncService(db_session, _FakeClient())
+    desired = service.desired_tuples()
+    stored = []
+    for (u, r, o), condition in sorted(desired.items()):
+        entry: dict = {"user": u, "relation": r, "object": o}
+        if condition is not None:
+            entry["condition"] = condition
+        stored.append({"key": entry})
+    fake = _FakeClient(stored)
+    applied = await OpenFgaSyncService(db_session, fake).full_resync()
+    assert fake.writes == []
+    assert applied == 0
