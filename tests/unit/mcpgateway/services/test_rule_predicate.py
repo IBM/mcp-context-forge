@@ -96,3 +96,29 @@ def test_parse_returns_node_tree():
     node = parse_predicate("role.hr & perm.view_ssn")
     assert isinstance(node, All)
     assert [type(c).__name__ for c in node.children] == ["Truthiness", "Truthiness"]
+
+
+def test_args_truthiness():
+    assert evaluate_predicate("args.customer_id", {"args": {"customer_id": "abc"}}) is True
+    assert evaluate_predicate("args.customer_id", {"args": {}}) is False
+
+
+def test_args_comparison():
+    assert evaluate_predicate("args.tenant == 'acme'", {"args": {"tenant": "acme"}}) is True
+    assert evaluate_predicate("args.level > 5", {"args": {"level": 10}}) is True
+    assert evaluate_predicate("args.level > 5", {"args": {}}) is False
+
+
+def test_args_membership():
+    assert evaluate_predicate("args.region in allowed_regions", {"args": {"region": "us"}, "allowed_regions": ["us", "eu"]}) is True
+
+
+def test_args_exists():
+    assert evaluate_predicate("exists(args.optional)", {"args": {"optional": "x"}}) is True
+    assert evaluate_predicate("exists(args.optional)", {"args": {}}) is False
+
+
+def test_args_combined_with_role():
+    attrs = {"role": {"admin": True}, "args": {"tenant": "prod"}}
+    assert evaluate_predicate("role.admin & args.tenant == 'prod'", attrs) is True
+    assert evaluate_predicate("role.admin & args.tenant == 'dev'", attrs) is False

@@ -309,3 +309,57 @@ class RuleCatalogService:
             inserted += 1
         self._db.flush()
         return inserted
+
+    def argument_parameters_for(self, capability_type: str, capability_id: Optional[str] = None) -> set[str]:
+        """Find the argument names referenced by predicates for one entity.
+
+        Scans the catalog for active rules matching the capability,
+        parses each predicate, and collects the ``args.<name>`` references.
+        The gateway uses this set to annotate ``tools/list`` input schemas
+        with ``x-mcp-header`` so conforming clients mirror the values.
+
+        Args:
+            capability_type: The capability type to match.
+            capability_id: Optional entity id; None scans type-wide rules.
+
+        Returns:
+            The set of argument names referenced in matching predicates.
+        """
+        # First-Party
+        from mcpgateway.services.rule_predicate import Compare, Membership, Truthiness  # pylint: disable=import-outside-toplevel
+
+        stmt = select(RbacRule).where(
+            RbacRule.is_active.is_(True),
+            RbacRule.capability_type == capability_type,
+            RbacRule.capability_id.is_(None) | (RbacRule.capability_id == capability_id),
+        )
+        names: set[str] = set()
+        for rule in self._db.execute(stmt).scalars():
+            try:
+                node = parse_predicate(rule.predicate)
+            except PredicateSyntaxError:
+                continue
+            for sub in ast_walk(node):
+                attr = None
+                if isinstance(sub, (Truthiness, Compare, Membership)):
+                    attr = sub.attr
+                if attr and attr.startswith("args."):
+                    names.add(attr[len("args.") :])
+        return names
+
+
+def ast_walk(node: Any) -> list[Any]:
+    """Yield the node and every child in the predicate tree.
+
+    Args:
+        node: A predicate AST node.
+
+    Returns:
+        A flat list of the node and all descendants.
+    """
+    result = [node]
+    children = getattr(node, "children", None)
+    if children:
+        for child in children:
+            result.extend(ast_walk(child))
+    return result
