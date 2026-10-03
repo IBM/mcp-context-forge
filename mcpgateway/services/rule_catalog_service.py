@@ -22,11 +22,165 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.bootstrap_db import DEFAULT_ROLE_DEFINITIONS
 from mcpgateway.db import RbacRule
 from mcpgateway.services.rule_predicate import PredicateSyntaxError, evaluate_predicate, parse_predicate
 
 logger = logging.getLogger(__name__)
+
+# Default system role matrix. The rule catalog seed and the parity test
+# read this constant; keep it the single source for built-in roles.
+DEFAULT_ROLE_DEFINITIONS = [
+    {"name": "platform_admin", "description": "Platform administrator with all permissions", "scope": "global", "permissions": ["*"], "is_system_role": True},  # All permissions
+    {
+        "name": "team_admin",
+        "description": "Team administrator with team management permissions",
+        "scope": "team",
+        "permissions": [
+            "admin.dashboard",
+            "admin.overview",
+            "gateways.read",
+            "servers.read",
+            "servers.use",
+            "teams.read",
+            "teams.update",
+            "teams.join",
+            "teams.delete",
+            "teams.manage_members",
+            "tools.read",
+            "plugins.read",
+            "tools.execute",
+            "tools.preview",
+            "resources.read",
+            "prompts.read",
+            "llm.read",
+            "llm.invoke",
+            "a2a.read",
+            "gateways.create",
+            "servers.create",
+            "tools.create",
+            "resources.create",
+            "prompts.create",
+            "a2a.create",
+            "gateways.update",
+            "servers.update",
+            "tools.update",
+            "resources.update",
+            "prompts.update",
+            "a2a.update",
+            "gateways.delete",
+            "servers.delete",
+            "tools.delete",
+            "resources.delete",
+            "prompts.delete",
+            "a2a.delete",
+            "a2a.invoke",
+            "tokens.create",
+            "tokens.read",
+            "tokens.update",
+            "tokens.revoke",
+            "tools.manage_plugins",
+        ],
+        "is_system_role": True,
+    },
+    {
+        "name": "developer",
+        "description": "Developer with tool and resource access",
+        "scope": "team",
+        "permissions": [
+            "admin.dashboard",
+            "admin.overview",
+            "gateways.read",
+            "servers.read",
+            "servers.use",
+            "teams.read",
+            "teams.join",
+            "tools.read",
+            "plugins.read",
+            "tools.execute",
+            "tools.preview",
+            "resources.read",
+            "prompts.read",
+            "llm.read",
+            "llm.invoke",
+            "a2a.read",
+            "gateways.create",
+            "servers.create",
+            "tools.create",
+            "resources.create",
+            "prompts.create",
+            "a2a.create",
+            "gateways.update",
+            "servers.update",
+            "tools.update",
+            "resources.update",
+            "prompts.update",
+            "a2a.update",
+            "gateways.delete",
+            "servers.delete",
+            "tools.delete",
+            "resources.delete",
+            "prompts.delete",
+            "a2a.delete",
+            "a2a.invoke",
+            "tokens.create",
+            "tokens.read",
+            "tokens.update",
+            "tokens.revoke",
+        ],
+        "is_system_role": True,
+    },
+    {
+        "name": "viewer",
+        "description": "Read access and tool execution within team scope",
+        "scope": "team",
+        "permissions": [
+            "admin.dashboard",
+            "admin.overview",
+            "gateways.read",
+            "servers.read",
+            "servers.use",
+            "teams.read",
+            "teams.join",
+            "tools.read",
+            "tools.execute",
+            "tools.preview",
+            "resources.read",
+            "prompts.read",
+            "llm.read",
+            "a2a.read",
+            "tokens.create",
+            "tokens.read",
+            "tokens.update",
+            "tokens.revoke",
+        ],
+        "is_system_role": True,
+    },
+    {
+        "name": "platform_viewer",
+        "description": "Read-only access to resources and admin UI",
+        "scope": "global",
+        "permissions": [
+            "admin.dashboard",
+            "admin.overview",
+            "gateways.read",
+            "servers.read",
+            "servers.use",
+            "teams.read",
+            "teams.join",
+            "tools.read",
+            "resources.read",
+            "prompts.read",
+            "llm.read",
+            "a2a.read",
+            "metrics:read",
+            "tokens.create",
+            "tokens.read",
+            "tokens.update",
+            "tokens.revoke",
+        ],
+        "is_system_role": True,
+    },
+]
 
 CAPABILITY_TYPES = ("tool", "resource", "prompt", "server", "gateway", "a2a_agent", "route")
 
@@ -227,18 +381,27 @@ class RuleCatalogService:
             True when a matching allow rule holds, False when a matching
             deny rule holds, None when no active rule matches.
         """
-        capability_type = capability_for_permission(permission)
-        stmt = (
-            select(RbacRule)
-            .where(
-                RbacRule.is_active.is_(True),
-                RbacRule.capability_type == capability_type,
-                RbacRule.capability_id.is_(None) | (RbacRule.capability_id == capability_id),
-                RbacRule.permission.is_(None) | (RbacRule.permission == permission),
+        # The overlay augments the role decision; it must never break it.
+        # An unreadable catalog (fresh session mocks, a database that has
+        # not run the migration) logs loudly and passes the base decision
+        # through. The base role model still enforces fail-closed.
+        try:
+            capability_type = capability_for_permission(permission)
+            stmt = (
+                select(RbacRule)
+                .where(
+                    RbacRule.is_active.is_(True),
+                    RbacRule.capability_type == capability_type,
+                    RbacRule.capability_id.is_(None) | (RbacRule.capability_id == capability_id),
+                    RbacRule.permission.is_(None) | (RbacRule.permission == permission),
+                )
+                .order_by(RbacRule.priority, RbacRule.name)
             )
-            .order_by(RbacRule.priority, RbacRule.name)
-        )
-        for rule in self._db.execute(stmt).scalars():
+            matching = list(self._db.execute(stmt).scalars())
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("Rule catalog overlay unavailable; base decision stands: permission=%s error=%s", permission, exc)
+            return None
+        for rule in matching:
             try:
                 holds = evaluate_predicate(rule.predicate, attributes)
             except PredicateSyntaxError:
