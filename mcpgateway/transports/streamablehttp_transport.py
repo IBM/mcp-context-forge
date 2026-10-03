@@ -92,7 +92,7 @@ from mcpgateway.services.metrics import (
     transport_get_rejected_counter,
 )
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService

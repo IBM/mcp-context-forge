@@ -25,7 +25,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, get_db, Role, UserRole, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
 from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail, should_expose_error_details
 from mcpgateway.utils.trusted_claims import VirtualPrincipal

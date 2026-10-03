@@ -3719,7 +3719,7 @@ class ToolService(BaseService):
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
@@ -3881,7 +3881,7 @@ class ToolService(BaseService):
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
@@ -8173,7 +8173,7 @@ class ToolService(BaseService):
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):

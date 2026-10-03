@@ -30,7 +30,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.role_service import RoleService
 from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
 

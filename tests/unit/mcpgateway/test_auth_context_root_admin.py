@@ -28,7 +28,7 @@ async def test_unrestricted_admin_checks_platform_admin_permission(monkeypatch):
     check = AsyncMock(return_value=True)
     service = MagicMock()
     service.check_platform_admin_permission = check
-    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", lambda db: service)
+    monkeypatch.setattr("mcpgateway.services.rule_provider.DbRuleProvider", lambda db, **_: service)
 
     allowed = await is_unrestricted_platform_admin(_request_with_teams(None), {"email": "admin@example.com"}, MagicMock())
 
@@ -42,7 +42,7 @@ async def test_narrowed_or_public_only_tokens_fail_closed(monkeypatch, token_tea
     check = AsyncMock(return_value=True)
     service = MagicMock()
     service.check_platform_admin_permission = check
-    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", lambda db: service)
+    monkeypatch.setattr("mcpgateway.services.rule_provider.DbRuleProvider", lambda db, **_: service)
 
     allowed = await is_unrestricted_platform_admin(_request_with_teams(token_teams), {"email": "admin@example.com"}, MagicMock())
 
@@ -55,7 +55,7 @@ async def test_missing_identity_or_request_fails_closed(monkeypatch):
     check = AsyncMock(return_value=True)
     service = MagicMock()
     service.check_platform_admin_permission = check
-    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService", lambda db: service)
+    monkeypatch.setattr("mcpgateway.services.rule_provider.DbRuleProvider", lambda db, **_: service)
 
     assert await is_unrestricted_platform_admin(None, {"email": "admin@example.com"}, MagicMock()) is False
     assert await is_unrestricted_platform_admin(_request_with_teams(None), {}, MagicMock()) is False
