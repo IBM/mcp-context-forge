@@ -18,12 +18,15 @@ This keeps every construction site and every test patch target stable
 while routing construction through the flag-aware dispatch.
 """
 
+import logging
 from typing import List, Optional, Protocol, Set, runtime_checkable
 
 from sqlalchemy.orm import Session
 
 from mcpgateway.config import settings
 from mcpgateway.services.permission_service import PermissionService
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -185,6 +188,56 @@ class DbRuleProvider(PermissionService):
         self.clear_user_cache(user_email)
 
 
+class ShadowRuleProvider:
+    """Shadow-mode wrapper: enforce db, evaluate both, log divergence.
+
+    The wrapper delegates every question to the database provider and
+    mirrors ``check_permission`` to the OpenFGA engine. A divergence
+    logs a structured WARNING with both answers and never changes the
+    enforced decision.
+    """
+
+    def __init__(self, db: Session, audit_enabled: Optional[bool] = None) -> None:
+        """Bind both engines.
+
+        Args:
+            db: Database session shared by both providers.
+            audit_enabled: Passed through to the database provider.
+        """
+        from mcpgateway.services.openfga_provider import OpenFgaRuleProvider  # pylint: disable=import-outside-toplevel
+
+        self._db_provider = DbRuleProvider(db, audit_enabled=audit_enabled)
+        self._fga_provider = OpenFgaRuleProvider(db)
+
+    async def check_permission(self, user_email: str, permission: str, **kwargs) -> bool:
+        """Enforce the db answer while evaluating the engine answer.
+
+        Args:
+            user_email: Principal identity.
+            permission: Permission string being checked.
+            **kwargs: Remaining check arguments forwarded to both engines.
+
+        Returns:
+            The database provider's decision.
+        """
+        db_answer = await self._db_provider.check_permission(user_email, permission, **kwargs)
+        fga_answer = await self._fga_provider.check_permission(user_email, permission, **kwargs)
+        if db_answer != fga_answer:
+            logger.warning("RBAC provider divergence: user=%s permission=%s db=%s openfga=%s", user_email, permission, db_answer, fga_answer)
+        return db_answer
+
+    def __getattr__(self, item: str):
+        """Delegate every other member to the database provider.
+
+        Args:
+            item: Attribute name.
+
+        Returns:
+            The database provider's attribute.
+        """
+        return getattr(self._db_provider, item)
+
+
 def get_rule_provider(db: Session, audit_enabled: Optional[bool] = None) -> RuleProvider:
     """Return the rule provider selected by ``Settings.rbac_rule_provider``.
 
@@ -195,12 +248,11 @@ def get_rule_provider(db: Session, audit_enabled: Optional[bool] = None) -> Rule
 
     Returns:
         A provider implementing the :class:`RuleProvider` contract.
-
-    Raises:
-        RuntimeError: When the selected engine is not yet available.
     """
+    if settings.rbac_rule_provider_shadow:
+        return ShadowRuleProvider(db, audit_enabled=audit_enabled)  # type: ignore[return-value]
     if settings.rbac_rule_provider == "openfga":
-        # The OpenFGA engine lands with its provider task; until then the
-        # flag fails closed instead of silently falling back to db.
-        raise RuntimeError("OpenFGA rule provider is not implemented yet; keep RBAC_RULE_PROVIDER=db")
+        from mcpgateway.services.openfga_provider import OpenFgaRuleProvider  # pylint: disable=import-outside-toplevel
+
+        return OpenFgaRuleProvider(db)
     return DbRuleProvider(db, audit_enabled=audit_enabled)
