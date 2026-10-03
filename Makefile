@@ -1842,6 +1842,11 @@ testing-up-openfga:                       ## Start testing stack with Layer-2 RB
 		echo "   The same key authenticates the gateway and the OpenFGA server."; \
 		exit 1; \
 	fi
+	@if [ -z "$$OPENFGA_DB_PASSWORD" ]; then \
+		OPENFGA_DB_PASSWORD=$$(openssl rand -hex 16); \
+		export OPENFGA_DB_PASSWORD; \
+		echo "   OPENFGA_DB_PASSWORD not set. Generated a random datastore password for this run."; \
+	fi
 	@# Fail early if port 8080 is already bound (nginx needs it)
 	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
 		echo "❌ Port 8080 is already in use. Cannot start nginx proxy."; \
