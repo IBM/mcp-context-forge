@@ -22,8 +22,7 @@ the developer permission set resolved via the server-side roles table.
 """
 
 # Standard
-import ast
-import inspect
+import copy
 import logging
 from datetime import datetime, timezone
 from typing import List
@@ -35,7 +34,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-import mcpgateway.bootstrap_db as bootstrap_db
+from mcpgateway.services.rule_catalog_service import DEFAULT_ROLE_DEFINITIONS
 from mcpgateway.config import settings
 from mcpgateway.db import Base, EmailTeam, EmailUser, Permissions, Role, UserRole
 from mcpgateway.services.permission_service import PermissionService
@@ -48,17 +47,13 @@ DEVELOPER_EMAIL = "dev@example.com"
 
 
 def _builtin_role_defs() -> List[dict]:
-    """Extract the literal ``default_roles`` list from ``bootstrap_db``.
+    """Return the shipped built-in role definitions.
 
-    The test matrix must track the shipped built-in roles. Parsing the
-    assignment from source keeps the fixture faithful without copying the
-    permission lists.
+    The test matrix must track the shipped built-in roles. Reading the
+    module constant (the single source since the rule-catalog extraction)
+    keeps the fixture faithful without copying the permission lists.
     """
-    tree = ast.parse(inspect.getsource(bootstrap_db.bootstrap_default_roles))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "default_roles" for target in node.targets):
-            return ast.literal_eval(node.value)
-    raise AssertionError("default_roles assignment not found in bootstrap_default_roles")
+    return copy.deepcopy(DEFAULT_ROLE_DEFINITIONS)
 
 
 def _mapped_claims(*, teams=None, roles=None, is_admin=None) -> dict:
