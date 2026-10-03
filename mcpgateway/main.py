@@ -7641,6 +7641,11 @@ async def register_gateway(
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        # NOTE: Pydantic's ValidationError subclasses ValueError, so it must be tested
+        # first; otherwise schema failures fall into the ValueError branch below and
+        # the response loses the reason.
+        if isinstance(ex, ValidationError):
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -7651,8 +7656,6 @@ async def register_gateway(
             return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
         if isinstance(ex, DataError):
@@ -7781,6 +7784,11 @@ async def update_gateway(
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        # NOTE: Pydantic's ValidationError subclasses ValueError, so it must be tested
+        # first; otherwise schema failures fall into the ValueError branch below and
+        # the response loses the reason.
+        if isinstance(ex, ValidationError):
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -7791,8 +7799,6 @@ async def update_gateway(
             return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
