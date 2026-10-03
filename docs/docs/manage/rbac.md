@@ -712,8 +712,8 @@ token must still carry the permission regardless of the engine.
 | `RBAC_RULE_PROVIDER` | `db` | Layer-2 engine: `db` (role model plus rule catalog) or `openfga` (external engine) |
 | `RBAC_RULE_PROVIDER_SHADOW` | `false` | Evaluate both engines, enforce the `db` answer, log divergence |
 | `OPENFGA_API_URL` | `http://localhost:8080` | OpenFGA HTTP API base URL |
-| `OPENFGA_STORE_ID` | empty | Pin a store; empty bootstraps by `OPENFGA_STORE_NAME` (default `contextforge`) |
-| `OPENFGA_API_TOKEN` / `OPENFGA_API_TOKEN_FILE` | empty | Preshared key; the file wins when both are set |
+| `OPENFGA_STORE_ID` | empty | Pin a store. An empty value bootstraps by `OPENFGA_STORE_NAME` (default `contextforge`) |
+| `OPENFGA_API_TOKEN` / `OPENFGA_API_TOKEN_FILE` | empty | Preshared key. The file wins when both are set |
 | `OPENFGA_CACHE_TTL_SECONDS` | `30` | Client-side decision cache |
 | `OPENFGA_RECONCILE_SECONDS` | `300` | Full tuple reconciliation interval |
 
@@ -727,7 +727,7 @@ The `rbac_rules` catalog holds end-user-editable rules in the CPEX APL
 taxonomy: capability type (`tool`, `resource`, `prompt`, `server`,
 `gateway`, `a2a_agent`, `route`), optional capability id, optional
 permission narrow, phase, predicate, and `allow` or `deny` effect.
-Manage rules through `/rbac/rules`; mutations require the
+Manage rules through `/rbac/rules`. Mutations require the
 `rbac.rules.manage` permission, which `platform_admin` already holds.
 
 ```
@@ -744,7 +744,7 @@ POST /rbac/rules
 Predicate grammar (CPEX APL subset): truthiness (`role.viewer`), the
 comparison operators `==`, `!=`, `>`, `>=`, `<`, `<=` on attribute and
 literal, set membership (`subject.id in allowed`), `exists(...)`, and
-grouping with `&` and `|`. Paths deeper than 2 segments are rejected
+grouping with `&` and `|`. The API rejects paths deeper than 2 segments
 with 422. Missing attributes evaluate false.
 
 The seeded system rows mirror the built-in role matrix with one row per
@@ -755,14 +755,14 @@ of the overlay. Seed rows reject deletion with 409.
 
 ### Failure Modes
 
-- Engine down: every Layer-2 check denies; `openfga` health appears in
-  the reconciliation log. Flipping `RBAC_RULE_PROVIDER=db` restores the
+- Engine down: every Layer-2 check denies. The reconciliation log shows
+  the engine health. Flipping `RBAC_RULE_PROVIDER=db` restores the
   role model immediately.
 - Tuple drift: the reconciliation loop converges stored tuples every
-  `OPENFGA_RECONCILE_SECONDS`; direct tuple writes from operators are
+  `OPENFGA_RECONCILE_SECONDS`. Direct tuple writes from operators stay
   unsupported.
-- Shadow divergence: each mismatch logs a WARNING with both answers;
-  investigate before cutting over.
+- Shadow divergence: each mismatch logs a WARNING with both answers.
+  Investigate before you cut over.
 
 
 ## Best Practices
