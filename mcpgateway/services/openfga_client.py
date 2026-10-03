@@ -188,19 +188,31 @@ class OpenFgaClient:
             await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"deletes": {"tuple_keys": batch}})
 
     async def read_tuples(self, object_filter: Optional[str] = None) -> list[dict[str, Any]]:
-        """Read stored tuples, optionally filtered by object prefix.
+        """Read stored tuples, optionally filtered by object.
+
+        Follows every continuation token: the read endpoint pages its
+        results, and a partial read makes the resync diff re-write
+        existing tuples, which the engine rejects.
 
         Args:
             object_filter: Exact object (``type:id``) to filter by.
 
         Returns:
-            Stored tuple keys with their relations.
+            Stored tuple keys with their relations and conditions.
         """
-        body: dict[str, Any] = {}
-        if object_filter:
-            body = {"tuple_key": {"object": object_filter}}
-        result = await self._request("POST", f"/stores/{settings.openfga_store_id}/read", body)
-        return [item.get("key", item) for item in result.get("tuples", [])]
+        tuples: list[dict[str, Any]] = []
+        continuation: Optional[str] = None
+        while True:
+            body: dict[str, Any] = {}
+            if object_filter:
+                body["tuple_key"] = {"object": object_filter}
+            if continuation:
+                body["continuation_token"] = continuation
+            result = await self._request("POST", f"/stores/{settings.openfga_store_id}/read", body)
+            tuples.extend(item.get("key", item) for item in result.get("tuples", []))
+            continuation = result.get("continuation_token") or None
+            if not continuation:
+                return tuples
 
     async def check(self, user: str, relation: str, obj: str, contextual_tuples: Optional[list[dict[str, str]]] = None, model_id: Optional[str] = None) -> bool:
         """Answer one authorization question.
