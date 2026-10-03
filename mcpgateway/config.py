@@ -412,6 +412,14 @@ class Settings(BaseSettings):
         default="db",
         description="JWT trust mode: 'db' (database-backed user lookup, default) or 'jwt-trust' (trust claims from tokens of trusted external identity providers)",
     )
+    rbac_rule_provider: Literal["db", "openfga"] = Field(
+        default="db",
+        description="Layer-2 RBAC rule provider: 'db' (PermissionService role model, default) or 'openfga' (external OpenFGA engine; requires the OpenFGA settings group)",
+    )
+    rbac_rule_provider_shadow: bool = Field(
+        default=False,
+        description="Evaluate both rule providers, enforce the db answer, and log divergence (safe comparison mode before an OpenFGA cutover)",
+    )
     jwt_claim_user_id: str = Field(default="sub", description="JWT claim name carrying the user identifier in trust mode")
     jwt_claim_email: str = Field(default="email", description="JWT claim name carrying the user email in trust mode")
     jwt_claim_teams: str = Field(default="teams", description="JWT claim name carrying team memberships in trust mode")
