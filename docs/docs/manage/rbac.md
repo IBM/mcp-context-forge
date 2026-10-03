@@ -699,6 +699,72 @@ When `JWT_TRUST_MODE=jwt-trust`, a signed JWT alone proves identity, roles, and 
 
 ---
 
+## Rule Providers and the Rule Catalog
+
+Layer-2 RBAC decisions flow through a rule provider selected at startup.
+Layer-1 token scoping never moves behind the provider: a scoped API
+token must still carry the permission regardless of the engine.
+
+### Provider Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RBAC_RULE_PROVIDER` | `db` | Layer-2 engine: `db` (role model plus rule catalog) or `openfga` (external engine) |
+| `RBAC_RULE_PROVIDER_SHADOW` | `false` | Evaluate both engines, enforce the `db` answer, log divergence |
+| `OPENFGA_API_URL` | `http://localhost:8080` | OpenFGA HTTP API base URL |
+| `OPENFGA_STORE_ID` | empty | Pin a store; empty bootstraps by `OPENFGA_STORE_NAME` (default `contextforge`) |
+| `OPENFGA_API_TOKEN` / `OPENFGA_API_TOKEN_FILE` | empty | Preshared key; the file wins when both are set |
+| `OPENFGA_CACHE_TTL_SECONDS` | `30` | Client-side decision cache |
+| `OPENFGA_RECONCILE_SECONDS` | `300` | Full tuple reconciliation interval |
+
+Selecting the engine (or shadow mode) without the URL and a token fails
+startup validation. An unreachable engine denies every check with an
+ERROR log line: the provider fails closed, never open.
+
+### Editing Rules
+
+The `rbac_rules` catalog holds end-user-editable rules in the CPEX APL
+taxonomy: capability type (`tool`, `resource`, `prompt`, `server`,
+`gateway`, `a2a_agent`, `route`), optional capability id, optional
+permission narrow, phase, predicate, and `allow` or `deny` effect.
+Manage rules through `/rbac/rules`; mutations require the
+`rbac.rules.manage` permission, which `platform_admin` already holds.
+
+```
+POST /rbac/rules
+{
+  "name": "block-one-tool",
+  "capability_type": "tool",
+  "capability_id": "tool-42",
+  "predicate": "role.viewer",
+  "effect": "deny"
+}
+```
+
+Predicate grammar (CPEX APL subset): truthiness (`role.viewer`), the
+comparison operators `==`, `!=`, `>`, `>=`, `<`, `<=` on attribute and
+literal, set membership (`subject.id in allowed`), `exists(...)`, and
+grouping with `&` and `|`. Paths deeper than 2 segments are rejected
+with 422. Missing attributes evaluate false.
+
+The seeded system rows mirror the built-in role matrix with one row per
+role and permission, so an unedited catalog changes no decision. A
+matching deny rule blocks, a matching allow rule grants, and no match
+passes the role decision through. The platform-admin bypass stays ahead
+of the overlay. Seed rows reject deletion with 409.
+
+### Failure Modes
+
+- Engine down: every Layer-2 check denies; `openfga` health appears in
+  the reconciliation log. Flipping `RBAC_RULE_PROVIDER=db` restores the
+  role model immediately.
+- Tuple drift: the reconciliation loop converges stored tuples every
+  `OPENFGA_RECONCILE_SECONDS`; direct tuple writes from operators are
+  unsupported.
+- Shadow divergence: each mismatch logs a WARNING with both answers;
+  investigate before cutting over.
+
+
 ## Best Practices
 
 ### Token Lifecycle

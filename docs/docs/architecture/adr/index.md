@@ -58,5 +58,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0053  | Governed MCP Extension Framework                     | Proposed | Security       | 2026-05-29 |
 | 0054  | Remove Granian HTTP Server (supersedes ADR-0025)     | Accepted  | Performance   | 2026-07-22 |
 | 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24 |
+| 0056  | OpenFGA Rule Provider for Layer-2 RBAC                 | Accepted | Security | 2026-10-03 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
