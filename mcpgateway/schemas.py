@@ -7948,6 +7948,110 @@ class RoleResponse(BaseModel):
     updated_at: datetime = Field(..., description="Update timestamp")
 
 
+class RbacRuleCreateRequest(BaseModel):
+    """Schema for creating a rule catalog rule.
+
+    Attributes:
+        name: Unique rule name
+        description: Optional human-readable description
+        capability_type: One of the capability types
+        capability_id: Optional entity id; empty matches every entity
+        permission: Optional permission string; empty matches every permission
+        phase: pre_invocation or post_invocation
+        predicate: Predicate in the CPEX APL subset
+        effect: allow or deny
+        priority: Lower values evaluate first
+    """
+
+    name: str = Field(..., min_length=1, max_length=100, description="Unique rule name")
+    description: str = Field("", description="Rule description")
+    capability_type: str = Field(..., description="Capability type")
+    capability_id: Optional[str] = Field(None, description="Entity id; empty matches every entity")
+    permission: Optional[str] = Field(None, description="Permission string; empty matches every permission")
+    phase: str = Field("pre_invocation", description="Evaluation phase")
+    predicate: str = Field(..., min_length=1, description="CPEX APL predicate")
+    effect: str = Field(..., description="allow or deny")
+    priority: int = Field(100, ge=0, le=10000, description="Evaluation priority")
+
+
+class RbacRuleUpdateRequest(BaseModel):
+    """Schema for updating a rule catalog rule.
+
+    Attributes:
+        description: Optional human-readable description
+        capability_id: Optional entity id; empty matches every entity
+        permission: Optional permission string; empty matches every permission
+        phase: pre_invocation or post_invocation
+        predicate: Predicate in the CPEX APL subset
+        effect: allow or deny
+        priority: Lower values evaluate first
+        is_active: Whether the rule participates in evaluation
+    """
+
+    description: Optional[str] = Field(None, description="Rule description")
+    capability_id: Optional[str] = Field(None, description="Entity id; empty matches every entity")
+    permission: Optional[str] = Field(None, description="Permission string; empty matches every permission")
+    phase: Optional[str] = Field(None, description="Evaluation phase")
+    predicate: Optional[str] = Field(None, min_length=1, description="CPEX APL predicate")
+    effect: Optional[str] = Field(None, description="allow or deny")
+    priority: Optional[int] = Field(None, ge=0, le=10000, description="Evaluation priority")
+    is_active: Optional[bool] = Field(None, description="Whether the rule participates in evaluation")
+
+
+class RbacRuleResponse(BaseModel):
+    """Schema for a rule catalog rule.
+
+    Attributes:
+        id: Rule identifier
+        name: Unique rule name
+        description: Rule description
+        capability_type: Capability type
+        capability_id: Entity id or null
+        permission: Permission string or null
+        phase: Evaluation phase
+        predicate: CPEX APL predicate
+        effect: allow or deny
+        priority: Evaluation priority
+        is_active: Whether the rule participates in evaluation
+        is_system: Whether the rule is a system seed row
+        created_by: Creator identity
+        created_at: Creation timestamp
+        updated_at: Last update timestamp
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    description: str
+    capability_type: str
+    capability_id: Optional[str]
+    permission: Optional[str]
+    phase: str
+    predicate: str
+    effect: str
+    priority: int
+    is_active: bool
+    is_system: bool
+    created_by: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+
+class EntityRulesSummaryResponse(BaseModel):
+    """Schema for the per-entity rules summary.
+
+    Attributes:
+        rules: Rules scoped to the entity
+        inherited: Rules scoped to the capability type
+        defaults: Built-in permission matrix for the capability type
+    """
+
+    rules: List[RbacRuleResponse]
+    inherited: List[RbacRuleResponse]
+    defaults: Dict[str, List[str]]
+
+
 class UserRoleAssignRequest(BaseModel):
     """Schema for assigning a role to a user.
 

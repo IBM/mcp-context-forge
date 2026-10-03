@@ -18,7 +18,7 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Generator, List
+from typing import Dict, Generator, List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,7 +29,21 @@ from mcpgateway.common.query_params import QueryIdentifierDotted, QueryScopeId, 
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
-from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
+from mcpgateway.schemas import (
+    EntityRulesSummaryResponse,
+    PermissionCheckRequest,
+    PermissionCheckResponse,
+    PermissionListResponse,
+    RbacRuleCreateRequest,
+    RbacRuleResponse,
+    RbacRuleUpdateRequest,
+    RoleCreateRequest,
+    RoleResponse,
+    RoleUpdateRequest,
+    UserRoleAssignRequest,
+    UserRoleResponse,
+)
+from mcpgateway.services.rule_catalog_service import RuleCatalogError, RuleCatalogProtectedError, RuleCatalogService
 from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.role_service import RoleService
 from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
@@ -633,3 +647,177 @@ async def get_my_permissions(
     except Exception as e:
         logger.error(f"Failed to get my permissions for {SecurityValidator.sanitize_log_message(user['email'])}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your permissions")
+
+
+@router.get("/rules", response_model=List[RbacRuleResponse])
+async def list_rules(capability_type: Optional[str] = Query(None), capability_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """List rule catalog rules.
+
+    Args:
+        capability_type: Filter by capability type when given.
+        capability_id: Filter by entity id when given.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        List[RbacRuleResponse]: Rules ordered by priority then name.
+
+    Raises:
+        HTTPException: When the query fails.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        rules = catalog.list_rules(capability_type=capability_type, capability_id=capability_id)
+        db.commit()
+        db.close()
+        return [RbacRuleResponse.model_validate(rule) for rule in rules]
+    except Exception as e:
+        logger.error(f"Failed to list rbac rules: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list rules")
+
+
+@router.get("/rules/entity-summary", response_model=EntityRulesSummaryResponse)
+async def get_entity_rules_summary(capability_type: str = Query(...), capability_id: str = Query(...), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Return the rules that govern one entity.
+
+    Args:
+        capability_type: Capability type of the entity.
+        capability_id: Entity identifier.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        EntityRulesSummaryResponse: Entity rules, type-inherited rules, and
+        the built-in defaults for the capability type.
+
+    Raises:
+        HTTPException: When the capability type is unknown or the query fails.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        inherited = [r for r in catalog.list_rules(capability_type=capability_type) if r.capability_id is None]
+        scoped = [r for r in catalog.list_rules(capability_type=capability_type, capability_id=capability_id) if r.capability_id is not None]
+        defaults: Dict[str, List[str]] = {}
+        from mcpgateway.bootstrap_db import DEFAULT_ROLE_DEFINITIONS  # pylint: disable=import-outside-toplevel
+
+        for role in DEFAULT_ROLE_DEFINITIONS:
+            permissions = [
+                p
+                for p in role.get("permissions", [])
+                if p == "*"
+                or p.replace(":", ".").split(".")[0]
+                == {"tool": "tools", "resource": "resources", "prompt": "prompts", "server": "servers", "gateway": "gateways", "a2a_agent": "a2a", "route": ""}.get(capability_type, "")
+            ]
+            if permissions:
+                defaults[role["name"]] = permissions
+        db.commit()
+        db.close()
+        return EntityRulesSummaryResponse(rules=[RbacRuleResponse.model_validate(r) for r in scoped], inherited=[RbacRuleResponse.model_validate(r) for r in inherited], defaults=defaults)
+    except Exception as e:
+        logger.error(f"Failed to build entity rules summary: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to build entity rules summary")
+
+
+@router.post("/rules", response_model=RbacRuleResponse, status_code=status.HTTP_201_CREATED)
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def create_rule(rule_data: RbacRuleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Create a rule catalog rule.
+
+    Args:
+        rule_data: Rule creation payload.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        RbacRuleResponse: The created rule.
+
+    Raises:
+        HTTPException: When the payload is invalid or the name duplicates.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        rule = catalog.create_rule(
+            name=rule_data.name,
+            description=rule_data.description,
+            capability_type=rule_data.capability_type,
+            capability_id=rule_data.capability_id,
+            permission=rule_data.permission,
+            phase=rule_data.phase,
+            predicate=rule_data.predicate,
+            effect=rule_data.effect,
+            priority=rule_data.priority,
+            created_by=user["email"],
+        )
+        logger.info(f"RBAC rule created: {rule.id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return RbacRuleResponse.model_validate(rule)
+    except RuleCatalogError as e:
+        logger.error("RBAC rule creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except Exception as e:
+        logger.error(f"RBAC rule creation failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create rule")
+
+
+@router.patch("/rules/{rule_id}", response_model=RbacRuleResponse)
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def update_rule(rule_id: str, rule_data: RbacRuleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Update a rule catalog rule.
+
+    Args:
+        rule_id: Rule identifier.
+        rule_data: Rule update payload.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        RbacRuleResponse: The updated rule.
+
+    Raises:
+        HTTPException: When the rule is absent or the payload is invalid.
+    """
+    fields = rule_data.model_dump(exclude_unset=True)
+    try:
+        catalog = RuleCatalogService(db)
+        rule = catalog.update_rule(rule_id, **fields)
+        logger.info(f"RBAC rule updated: {rule_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return RbacRuleResponse.model_validate(rule)
+    except RuleCatalogError as e:
+        message = str(e)
+        code = status.HTTP_404_NOT_FOUND if "not found" in message else status.HTTP_422_UNPROCESSABLE_ENTITY
+        logger.error("RBAC rule update error: %s", SecurityValidator.sanitize_log_message(message))
+        raise HTTPException(status_code=code, detail=message)
+    except Exception as e:
+        logger.error(f"RBAC rule update failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update rule")
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def delete_rule(rule_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Delete a rule catalog rule.
+
+    Args:
+        rule_id: Rule identifier.
+        user: Current authenticated user.
+        db: Database session.
+
+    Raises:
+        HTTPException: When the rule is absent or protected.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        catalog.delete_rule(rule_id)
+        logger.info(f"RBAC rule deleted: {rule_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+    except RuleCatalogProtectedError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except RuleCatalogError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"RBAC rule deletion failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete rule")
