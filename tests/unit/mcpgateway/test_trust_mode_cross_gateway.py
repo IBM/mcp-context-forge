@@ -195,7 +195,7 @@ async def _authenticate_on_gateway(monkeypatch: pytest.MonkeyPatch, gateway_db, 
 
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="forwarded_jwt")  # pragma: allowlist secret
     request = SimpleNamespace(state=SimpleNamespace())
-    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+    with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=payload)):
         user = await get_current_user(credentials=credentials, request=request)
     return user, request
 
