@@ -203,8 +203,8 @@ def test_desired_tuples_mirror(db_session):
 async def test_full_resync_diffs_and_applies(db_session):
     _seed(db_session)
     desired = OpenFgaSyncService(db_session, _FakeClient()).desired_tuples()  # type: ignore[arg-type]
-    stored = [{"user": u, "relation": r, "object": o} for (u, r, o) in sorted(desired)[:2]]
-    stored.append({"user": "user:ghost@example.com", "relation": "assignee", "object": "role:developer"})
+    stored = [{"key": {"user": u, "relation": r, "object": o}} for (u, r, o) in sorted(desired)[:2]]
+    stored.append({"key": {"user": "user:ghost@example.com", "relation": "assignee", "object": "role:developer"}})
     fake = _FakeClient(stored)
     applied = await OpenFgaSyncService(db_session, fake).full_resync()  # type: ignore[arg-type]
     assert applied == len(desired) - 2 + 1
