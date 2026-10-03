@@ -1,0 +1,25 @@
+# OpenFGA live override for the gateway service.
+#
+# Apply on top of the base compose file together with the openfga and
+# testing profiles (see `make testing-up-openfga`):
+#
+#   OPENFGA_API_TOKEN=... docker compose -f docker-compose.yml \
+#     -f docker-compose.openfga.yml --profile testing --profile openfga up -d
+#
+# Boots the OpenFGA authorization engine (see the base compose file,
+# profile `openfga`) and points Layer-2 RBAC at it. The gateway
+# database stays the source of truth; OpenFGA receives synced tuples.
+#
+# RBAC_RULE_PROVIDER still defaults to db so this overlay alone does
+# not flip enforcement; `make testing-up-openfga` exports the flip.
+services:
+  gateway:
+    depends_on:
+      openfga:
+        condition: service_healthy
+    environment:
+      - RBAC_RULE_PROVIDER=${RBAC_RULE_PROVIDER:-db}
+      - OPENFGA_API_URL=http://openfga:8080
+      - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-contextforge}
+      - OPENFGA_API_TOKEN=${OPENFGA_API_TOKEN:-}
+      - OPENFGA_API_TOKEN_FILE=${OPENFGA_API_TOKEN_FILE:-}
