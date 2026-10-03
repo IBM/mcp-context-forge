@@ -102,10 +102,17 @@ class TestTrustTokenBearerForwarding:
 
         mock_client.post = AsyncMock(side_effect=_post)
 
-        async def _get_http_client():
-            return mock_client
+        class _ClientContext:
+            async def __aenter__(self):
+                return mock_client
 
-        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", _get_http_client)
+            async def __aexit__(self, *_exc):
+                return None
+
+        def _isolated_factory(**_kwargs):
+            return _ClientContext()
+
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", _isolated_factory)
         monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
     async def test_trust_token_forwarded_verbatim(self, service, monkeypatch):
