@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from sqlalchemy.pool import StaticPool
 
 REVISION = "f7a8b9c0d1e2"  # pragma: allowlist secret
-DOWN_REVISION = "e5f6a7b8c9d0"  # pragma: allowlist secret
+DOWN_REVISION = "b7c8d9e0f1a2"  # pragma: allowlist secret
 MODULE_NAME = f"mcpgateway.alembic.versions.{REVISION}_relax_revoked_by_fk"
 TABLE_NAME = "token_revocations"
 FK_NAME = "token_revocations_revoked_by_fkey"

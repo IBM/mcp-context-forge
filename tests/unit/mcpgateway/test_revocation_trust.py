@@ -145,7 +145,7 @@ class TestTrustModeLogoutRevocation:
 
         # NOTE: _check_token_revoked_sync is deliberately NOT patched — the
         # real check must find the persisted row.
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=payload)):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=request)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
@@ -172,7 +172,7 @@ class TestIdleTimeoutRevocation:
         }
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="idle_session_token")  # pragma: allowlist secret
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=payload)):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=SimpleNamespace(state=SimpleNamespace()))
 
