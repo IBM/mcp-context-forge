@@ -14,6 +14,7 @@ closed with one exception type.
 
 # Standard
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,6 +32,15 @@ _MAX_TUPLES_PER_WRITE = 100  # engine cap per write request (exceeded_entity_lim
 
 class OpenFgaUnavailable(Exception):
     """Raised when the OpenFGA API cannot answer a request."""
+
+
+def _utcnow_rfc3339() -> str:
+    """Return the current UTC time as an RFC 3339 string.
+
+    Returns:
+        The timestamp the engine compares in temporal conditions.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def resolve_openfga_token() -> str:
@@ -141,17 +151,18 @@ class OpenFgaClient:
         models = body.get("authorization_models", [])
         return models[0] if models else None
 
-    async def write_model(self, type_definitions: list[dict[str, Any]]) -> str:
+    async def write_model(self, type_definitions: list[dict[str, Any]], conditions: Optional[dict[str, Any]] = None) -> str:
         """Write an authorization model to the configured store.
 
         Args:
             type_definitions: Type definitions in the OpenFGA JSON form.
+            conditions: Condition definitions in the OpenFGA JSON form.
 
         Returns:
             The new authorization model id.
         """
         store = settings.openfga_store_id
-        body = await self._request("POST", f"/stores/{store}/authorization-models", {"schema_version": "1.1", "type_definitions": type_definitions, "conditions": {}})
+        body = await self._request("POST", f"/stores/{store}/authorization-models", {"schema_version": "1.1", "type_definitions": type_definitions, "conditions": conditions or {}})
         return str(body["authorization_model_id"])
 
     async def write_tuples(self, writes: list[dict[str, str]], deletes: list[dict[str, str]]) -> None:
@@ -204,7 +215,7 @@ class OpenFgaClient:
         Returns:
             True when OpenFGA allows the relationship.
         """
-        payload: dict[str, Any] = {"tuple_key": {"user": user, "relation": relation, "object": obj}}
+        payload: dict[str, Any] = {"tuple_key": {"user": user, "relation": relation, "object": obj}, "context": {"current_time": _utcnow_rfc3339()}}
         if contextual_tuples:
             payload["contextual_tuples"] = {"tuple_keys": contextual_tuples}
         if model_id or settings.openfga_model_id:
@@ -223,7 +234,7 @@ class OpenFgaClient:
         Returns:
             Object references the user holds the relation on.
         """
-        payload = {"user": user, "relation": relation, "type": object_type}
+        payload = {"user": user, "relation": relation, "type": object_type, "context": {"current_time": _utcnow_rfc3339()}}
         if settings.openfga_model_id:
             payload["authorization_model_id"] = settings.openfga_model_id
         body = await self._request("POST", f"/stores/{settings.openfga_store_id}/list-objects", payload)
