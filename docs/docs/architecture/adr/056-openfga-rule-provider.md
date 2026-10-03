@@ -9,8 +9,8 @@
 Layer-2 RBAC lived inline: route decorators called
 `PermissionService` from 14 modules through 28 construction sites, and
 the rule set existed only as role rows. Operators could not edit rules
-at the capability level, and no alternate decision engine could be
-evaluated without forking the enforcement path.
+at the capability level, and no alternate decision engine could run
+without a fork of the enforcement path.
 
 ## Decision
 
@@ -27,7 +27,7 @@ evaluated without forking the enforcement path.
    with an explicit permission per row, so an unedited catalog changes
    no decision. `/rbac/rules` CRUD sits behind `rbac.rules.manage`.
 3. **OpenFGA as engine, database as source of truth.** The gateway
-   database owns identity and rules; `openfga_sync` mirrors them as
+   database owns identity and rules. `openfga_sync` mirrors them as
    tuples (role assignments, memberships, role-permission grants on
    type wildcards, simple entity rules as grants or blocked tuples) and
    a reconciliation loop repairs SQL-level drift. Predicates richer
@@ -44,10 +44,10 @@ evaluated without forking the enforcement path.
 - The OpenFGA provider keeps `PermissionAuditLog` parity so Admin UI
   audit views survive the engine swap.
 - Ownership and team-scoped admin semantics remain on the database
-  fallback in the engine provider; the mirrored model carries no
+  fallback in the engine provider. The mirrored model carries no
   ownership edges.
-- Both providers ship indefinitely. Nothing is deprecated; the flag is
-  the cutover control.
+- Both providers ship indefinitely. Nothing deprecates. The flag controls
+  the cutover.
 
 ## Alternatives considered
 
@@ -55,8 +55,8 @@ evaluated without forking the enforcement path.
   patches and 28 sites would churn, and Layer 1 would blur into the
   engine.
 - **OpenFGA as the source of truth.** Rejected: alembic data
-  migrations and admin tooling write SQL directly; reconciliation from
+  migrations and admin tooling write SQL directly. Reconciliation from
   the gateway database keeps one authority.
 - **Full predicate compilation to OpenFGA conditions.** Deferred: the
-  APL subset covers seeded rules; conditions would couple the grammar
+  APL subset covers seeded rules. Conditions would couple the grammar
   to the engine version.
