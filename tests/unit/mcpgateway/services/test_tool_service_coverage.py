@@ -1041,7 +1041,7 @@ class TestGetToolDeleteTool:
         mock_ps = AsyncMock()
         mock_ps.check_resource_ownership.return_value = False
 
-        with patch("mcpgateway.services.permission_service.PermissionService", return_value=mock_ps):
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider", return_value=mock_ps):
             with pytest.raises(PermissionError, match="Only the owner"):
                 await tool_service.delete_tool(db, "tool-1", user_email="notowner@x.com")
 
@@ -1144,7 +1144,7 @@ class TestSetToolState:
         mock_ps.check_resource_ownership.return_value = False
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
-            with patch("mcpgateway.services.permission_service.PermissionService", return_value=mock_ps):
+            with patch("mcpgateway.services.rule_provider.DbRuleProvider", return_value=mock_ps):
                 with pytest.raises(PermissionError):
                     await tool_service.set_tool_state(db, "tool-1", activate=True, reachable=True, user_email="nope@x.com")
 
@@ -1402,7 +1402,7 @@ class TestUpdateTool:
         mock_ps.check_resource_ownership.return_value = False
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
-            with patch("mcpgateway.services.permission_service.PermissionService", return_value=mock_ps):
+            with patch("mcpgateway.services.rule_provider.DbRuleProvider", return_value=mock_ps):
                 with pytest.raises(PermissionError):
                     await tool_service.update_tool(db, "tool-1", tool_update, user_email="nope@x.com")
 
@@ -4064,7 +4064,7 @@ class TestSetToolStateLockAndPermission:
         mock_tool.name = "test_tool"
         mock_tool.enabled = False
 
-        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -4080,7 +4080,7 @@ class TestSetToolStateLockAndPermission:
         mock_tool.name = "test_tool"
         mock_tool.enabled = True
 
-        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -4116,7 +4116,7 @@ class TestDeleteToolPermissionAndPurge:
 
         db.get.return_value = mock_tool
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -5460,7 +5460,7 @@ class TestDeleteToolPermissionCheck:
         db = MagicMock()
         db.get = MagicMock(return_value=tool)
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_ps:
             mock_svc = MagicMock()
             mock_svc.check_resource_ownership = AsyncMock(return_value=False)
             mock_ps.return_value = mock_svc
@@ -5480,7 +5480,7 @@ class TestSetToolStatePermissionCheck:
         tool.reachable = True
         db = MagicMock()
 
-        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_ps:
             mock_svc = MagicMock()
             mock_svc.check_resource_ownership = AsyncMock(return_value=False)
             mock_ps.return_value = mock_svc
@@ -6285,7 +6285,7 @@ class TestUpdateToolBranches:
         tool_update.title = None
 
         db = MagicMock()
-        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_ps:
             mock_svc = MagicMock()
             mock_svc.check_resource_ownership = AsyncMock(return_value=False)
             mock_ps.return_value = mock_svc
