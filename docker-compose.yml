@@ -883,7 +883,10 @@ services:
     networks: [mcpnet]
     environment:
       - POSTGRES_USER=openfga
-      - POSTGRES_PASSWORD=${OPENFGA_DB_PASSWORD:-openfga}  # pragma: allowlist secret
+      # No default credential: an empty password makes the postgres image
+      # refuse to start (fail-closed). Set OPENFGA_DB_PASSWORD, or use
+      # make testing-up-openfga, which generates one when unset.
+      - POSTGRES_PASSWORD=${OPENFGA_DB_PASSWORD:-}
       - POSTGRES_DB=openfga
     volumes:
       - openfgapgdata:/var/lib/postgresql
@@ -906,7 +909,7 @@ services:
         "--datastore-engine",
         "postgres",
         "--datastore-uri",
-        "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga}@openfga-postgres:5432/openfga?sslmode=disable",  # pragma: allowlist secret
+        "postgres://openfga:${OPENFGA_DB_PASSWORD:-}@openfga-postgres:5432/openfga?sslmode=disable",  # pragma: allowlist secret
       ]
     depends_on:
       openfga-postgres:
@@ -925,7 +928,7 @@ services:
         "--datastore-engine",
         "postgres",
         "--datastore-uri",
-        "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga}@openfga-postgres:5432/openfga?sslmode=disable",  # pragma: allowlist secret
+        "postgres://openfga:${OPENFGA_DB_PASSWORD:-}@openfga-postgres:5432/openfga?sslmode=disable",  # pragma: allowlist secret
         "--playground-enabled=false",
         "--log-format=json",
       ]
