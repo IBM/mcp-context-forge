@@ -1986,6 +1986,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         elif settings.metrics_aggregation_enabled:
             logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
 
+        # First-Party
+        from mcpgateway.services.openfga_sync import openfga_reconciliation_loop, openfga_sync_enabled  # pylint: disable=import-outside-toplevel
+
+        if openfga_sync_enabled():
+            asyncio.create_task(openfga_reconciliation_loop())
+            logger.info("OpenFGA reconciliation loop started (interval=%ss)", settings.openfga_reconcile_seconds)
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
