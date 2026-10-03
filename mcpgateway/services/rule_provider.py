@@ -111,6 +111,7 @@ class DbRuleProvider(PermissionService):
         check_any_team: bool = False,
         token_is_admin: bool = False,
         token_roles: Optional[List[str]] = None,
+        args: Optional[dict] = None,
     ) -> bool:
         """Answer the permission question with the catalog overlay applied.
 
@@ -127,6 +128,7 @@ class DbRuleProvider(PermissionService):
             check_any_team: Grant when the permission holds in any team.
             token_is_admin: Admin flag from the token, when present.
             token_roles: Role names from the token, when present.
+            args: Tool arguments from Mcp-Param-* headers (SEP-2243).
 
         Returns:
             bool: The overlaid decision.
@@ -148,7 +150,7 @@ class DbRuleProvider(PermissionService):
             token_roles=token_roles,
         )
         catalog = RuleCatalogService(self.db)
-        overlay = catalog.evaluate_overlay(permission, self._overlay_attributes(user_email, token_teams, token_is_admin, token_roles), capability_id=resource_id)
+        overlay = catalog.evaluate_overlay(permission, self._overlay_attributes(user_email, token_teams, token_is_admin, token_roles, args=args), capability_id=resource_id)
         if overlay is None:
             return base
         if overlay:
@@ -157,7 +159,7 @@ class DbRuleProvider(PermissionService):
             return True
         return False
 
-    def _overlay_attributes(self, user_email: str, token_teams: Optional[List[str]], token_is_admin: bool, token_roles: Optional[List[str]]) -> dict:
+    def _overlay_attributes(self, user_email: str, token_teams: Optional[List[str]], token_is_admin: bool, token_roles: Optional[List[str]], args: Optional[dict] = None) -> dict:
         """Build predicate attributes for the overlay evaluation.
 
         Args:
@@ -165,11 +167,16 @@ class DbRuleProvider(PermissionService):
             token_teams: Layer-1 narrowed team list, when present.
             token_is_admin: Admin flag from the token, when present.
             token_roles: Role names from the token, when present.
+            args: Tool invocation arguments extracted from Mcp-Param-*
+                headers (SEP-2243). Each key is the parameter name;
+                the value is the header string. Absent when the caller
+                has no tool context or the client did not mirror the
+                annotated parameters.
 
         Returns:
             Nested attribute mapping for the predicate evaluator.
         """
-        attributes: dict = {"authenticated": True, "subject": {"id": user_email}, "token": {"is_admin": token_is_admin}, "role": {}, "team": {}}
+        attributes: dict = {"authenticated": True, "subject": {"id": user_email}, "token": {"is_admin": token_is_admin}, "role": {}, "team": {}, "args": args or {}}
         for name in token_roles or []:
             attributes["role"][name] = True
         for name in token_teams or []:

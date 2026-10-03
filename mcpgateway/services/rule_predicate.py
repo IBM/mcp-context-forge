@@ -18,10 +18,15 @@ forms (https://contextforge-org.github.io/cpex/docs/apl/):
   denies only when every argument is false
 
 Attribute paths resolve against a mapping the caller builds from the
-user context (``role.*``, ``perm.*``, ``team.*``, ``subject.id``,
-``authenticated``, ``token.is_admin``). Paths deeper than 2 segments are
-rejected. Missing attributes evaluate to false; an existence check is the
-only form that can distinguish a missing attribute from a false one.
+user context and the tool invocation. Identity families: ``role.*``,
+``perm.*``, ``team.*``, ``subject.id``, ``authenticated``,
+``token.is_admin``. Tool arguments: ``args.<name>`` — the gateway
+populates these from ``Mcp-Param-<name>`` headers that conforming
+MCP 2026-07-28 clients mirror per SEP-2243 (``x-mcp-header``).
+Paths deeper than 2 segments are rejected. Missing attributes evaluate
+to false; an existence check is the only form that can distinguish a
+missing attribute from a false one. A predicate referencing ``args.*``
+that arrives without the corresponding header denies fail-closed.
 """
 
 # Standard

@@ -351,9 +351,89 @@ def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
     return types.Tool.model_validate({key: value for key, value in payload.items() if value is not None})
 
 
+def _extract_mcp_param_headers(request_headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Extract ``Mcp-Param-*`` headers for rule predicate evaluation.
+
+    Conforming MCP 2026-07-28 clients mirror tool parameters annotated
+    with ``x-mcp-header`` into ``Mcp-Param-<name>`` headers on
+    ``tools/call`` (SEP-2243). The gateway reads them here so the rule
+    overlay can evaluate ``args.<name>`` predicates without parsing the
+    JSON-RPC body.
+
+    Args:
+        request_headers: Headers from the inbound HTTP request.
+
+    Returns:
+        A mapping of parameter name to header value. Empty when no
+        ``Mcp-Param-*`` headers are present.
+    """
+    if not request_headers:
+        return {}
+    params: Dict[str, str] = {}
+    prefix = "mcp-param-"
+    for key, value in request_headers.items():
+        lower = key.lower()
+        if lower.startswith(prefix):
+            params[lower[len(prefix) :]] = value
+    return params
+
+
+def _annotate_tools_with_rule_params(tools: List[types.Tool]) -> List[types.Tool]:
+    """Inject ``x-mcp-header`` annotations from the rule catalog.
+
+    The rule catalog may reference ``args.<name>`` in predicates scoped
+    to a tool (by capability_id) or to all tools (type-wide). Conforming
+    MCP 2026-07-28 clients read these annotations from ``tools/list``
+    and mirror the parameter values into ``Mcp-Param-<name>`` headers on
+    ``tools/call`` (SEP-2243). The gateway reads those headers during
+    enforcement.
+
+    This function is best-effort: a database error or an absent catalog
+    leaves the tool definitions unchanged. The MCP SDK Tool model is
+    frozen, so annotated tools are rebuilt via ``model_validate``.
+
+    Args:
+        tools: The serialized tool list.
+
+    Returns:
+        The same list with ``x-mcp-header`` annotations injected into
+        matching ``inputSchema.properties`` entries.
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.rule_catalog_service import RuleCatalogService  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            catalog = RuleCatalogService(db)
+            for i, tool in enumerate(tools):
+                arg_names = catalog.argument_parameters_for("tool", tool.name)
+                if not arg_names:
+                    arg_names = catalog.argument_parameters_for("tool")
+                if not arg_names:
+                    continue
+                schema = dict(tool.input_schema) if tool.input_schema else {}
+                props = schema.get("properties")
+                if not isinstance(props, dict):
+                    continue
+                changed = False
+                new_props = dict(props)
+                for param_name in arg_names:
+                    if param_name in new_props and isinstance(new_props[param_name], dict) and "x-mcp-header" not in new_props[param_name]:
+                        new_props[param_name] = {**new_props[param_name], "x-mcp-header": param_name}
+                        changed = True
+                if changed:
+                    schema["properties"] = new_props
+                    tools[i] = tool.model_copy(update={"input_schema": schema})
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.debug("Rule parameter annotation skipped (catalog unavailable)", exc_info=True)
+    return tools
+
+
 def _tools_for_client(tools: Iterable[Any]) -> List[types.Tool]:
-    """Serialize model-facing tools/list without exposing app-only helpers."""
-    return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+    """Serialize model-facing tools/list, then annotate rule parameters."""
+    serialized = [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+    return _annotate_tools_with_rule_params(serialized)
 
 
 def _to_mcp_resource(resource: Any) -> types.Resource:
@@ -1344,6 +1424,7 @@ async def _check_streamable_permission(
     permission: str,
     allow_admin_bypass: bool = True,
     check_any_team: bool = False,
+    args: Optional[Dict[str, str]] = None,
 ) -> bool:
     """Evaluate RBAC permission for a Streamable HTTP request context.
 
@@ -1352,6 +1433,7 @@ async def _check_streamable_permission(
         permission: Permission name to evaluate (for example ``tools.execute``).
         allow_admin_bypass: Whether unrestricted admin tokens can bypass team checks.
         check_any_team: Whether any matching team grants permission.
+        args: Tool arguments from Mcp-Param-* headers, when present.
 
     Returns:
         bool: ``True`` when the caller is authorized for ``permission``.
@@ -1373,6 +1455,7 @@ async def _check_streamable_permission(
                 check_any_team=check_any_team,
                 token_is_admin=bool(is_trusted and user_context.get("is_admin")),
                 token_roles=list(user_context.get("roles") or []) if is_trusted else None,
+                args=args,
             )
             if not granted:
                 logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
@@ -2009,6 +2092,7 @@ async def call_tool(
             user_context=user_context,
             permission="tools.execute",
             check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
+            args=_extract_mcp_param_headers(request_headers),
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)

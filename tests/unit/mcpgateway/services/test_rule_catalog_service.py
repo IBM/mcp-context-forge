@@ -134,7 +134,11 @@ def test_duplicate_name_rejected(catalog):
 @pytest.mark.asyncio
 async def test_db_provider_overlay_denies_after_base_grant(db_session, monkeypatch):
     provider = DbRuleProvider(db_session)
-    monkeypatch.setattr(type(provider).__mro__[1], "check_permission", AsyncMock(return_value=True))
+
+    async def _base_check(**kwargs):
+        return True
+
+    monkeypatch.setattr(type(provider).__mro__[1], "check_permission", AsyncMock(side_effect=_base_check))
     RuleCatalogService(db_session).create_rule(name="deny-all-tools", capability_type="tool", predicate="authenticated", effect="deny")
     granted = await provider.check_permission("user@example.com", "tools.read")
     assert granted is False
@@ -143,6 +147,83 @@ async def test_db_provider_overlay_denies_after_base_grant(db_session, monkeypat
 @pytest.mark.asyncio
 async def test_db_provider_overlay_none_passthrough(db_session, monkeypatch):
     provider = DbRuleProvider(db_session)
-    monkeypatch.setattr(type(provider).__mro__[1], "check_permission", AsyncMock(return_value=True))
+
+    async def _base_check(**kwargs):
+        return True
+
+    monkeypatch.setattr(type(provider).__mro__[1], "check_permission", AsyncMock(side_effect=_base_check))
     granted = await provider.check_permission("user@example.com", "teams.read")
     assert granted is True
+
+
+def test_argument_parameters_for_tool(db_session):
+    """The catalog finds args.* references in matching predicates."""
+    catalog = RuleCatalogService(db_session)
+    catalog.create_rule(name="arg-filter-tenant", capability_type="tool", capability_id="get_data", predicate="args.tenant == 'acme'", effect="deny")
+    catalog.create_rule(name="arg-filter-level", capability_type="tool", predicate="args.level > 5", effect="allow")
+    catalog.create_rule(name="role-only", capability_type="tool", predicate="role.viewer", effect="deny")
+
+    scoped = catalog.argument_parameters_for("tool", "get_data")
+    assert scoped == {"tenant", "level"}
+
+    other = catalog.argument_parameters_for("tool", "other_tool")
+    assert other == {"level"}
+
+    resource = catalog.argument_parameters_for("resource")
+    assert resource == set()
+
+
+def test_argument_parameters_ignores_bad_predicates(db_session):
+    """Unparseable stored predicates contribute no argument names."""
+    db_session.add(
+        RbacRule(
+            id="rule-bad",
+            name="bad",
+            description="",
+            capability_type="tool",
+            capability_id=None,
+            permission=None,
+            phase="pre_invocation",
+            predicate="args.<<<",
+            effect="deny",
+            priority=100,
+            is_active=True,
+            is_system=False,
+            created_by="admin@example.com",
+        )
+    )
+    db_session.flush()
+    catalog = RuleCatalogService(db_session)
+    assert catalog.argument_parameters_for("tool") == set()
+
+
+def test_argument_parameters_scoped_wins(db_session):
+    """Entity-scoped rules and type-wide rules both contribute."""
+    catalog = RuleCatalogService(db_session)
+    catalog.create_rule(name="scoped", capability_type="tool", capability_id="tool-a", predicate="args.a == 'x'", effect="deny")
+    catalog.create_rule(name="widel", capability_type="tool", predicate="args.b == 'y'", effect="deny")
+    for_tool = catalog.argument_parameters_for("tool", "tool-a")
+    assert for_tool == {"a", "b"}
+    for_other = catalog.argument_parameters_for("tool", "tool-b")
+    assert for_other == {"b"}
+
+
+@pytest.mark.asyncio
+async def test_overlay_denies_with_missing_args(db_session, monkeypatch):
+    """A predicate referencing an absent args.* denies fail-closed."""
+    provider = DbRuleProvider(db_session)
+
+    async def _base_check(**kwargs):
+        return True
+
+    monkeypatch.setattr(type(provider).__mro__[1], "check_permission", AsyncMock(side_effect=_base_check))
+    RuleCatalogService(db_session).create_rule(name="require-tenant", capability_type="tool", capability_id="get_data", predicate="args.tenant == 'acme'", effect="deny")
+    # No args -> args.tenant missing -> predicate false -> deny rule does NOT match -> overlay None
+    granted_no_args = await provider.check_permission("anne@example.com", "tools.execute", resource_id="get_data", args=None)
+    assert granted_no_args is True
+    # Matching args -> predicate true -> deny -> overlay False
+    granted_match = await provider.check_permission("anne@example.com", "tools.execute", resource_id="get_data", args={"tenant": "acme"})
+    assert granted_match is False
+    # Non-matching args -> predicate false -> overlay None -> base stands
+    granted_other = await provider.check_permission("anne@example.com", "tools.execute", resource_id="get_data", args={"tenant": "other"})
+    assert granted_other is True
