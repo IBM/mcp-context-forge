@@ -237,3 +237,25 @@ async def test_hook_runs_and_swallows_engine_failure(db_session, monkeypatch):
     monkeypatch.setattr(sync_mod, "OpenFgaSyncService", lambda db, client: _Exploding())
     monkeypatch.setattr(sync_mod, "OpenFgaClient", lambda: None)
     await sync_mod.openfga_sync_after_commit(db_session, "role assigned")  # must not raise
+
+
+async def test_write_tuples_chunks_past_engine_cap(mock_http, client, monkeypatch):
+    """A 250-tuple write splits into 3 batched requests."""
+    import json as _json
+
+    monkeypatch.setattr(settings, "openfga_store_id", "store-1")
+    mock_http.responses.extend([(200, {}), (200, {}), (200, {})])
+    tuples = [{"user": f"user:p{i}", "relation": "assignee", "object": "role:developer"} for i in range(250)]
+    await client.write_tuples(tuples, [])
+    writes = [r for r in mock_http.requests if r.url.path.endswith("/write")]
+    assert len(writes) == 3
+    sizes = [len(_json.loads(r.content)["writes"]["tuple_keys"]) for r in writes]
+    assert sizes == [100, 100, 50]
+
+
+async def test_error_body_surfaces_in_unavailable(mock_http, client, monkeypatch):
+    """A 400 carries the engine message into OpenFgaUnavailable."""
+    monkeypatch.setattr(settings, "openfga_store_id", "store-1")
+    mock_http.responses.append((400, {"code": "exceeded_entity_limit", "message": "cap"}))
+    with pytest.raises(OpenFgaUnavailable, match="exceeded_entity_limit"):
+        await client.check("user:anne", "tools_read", "tool:all")
