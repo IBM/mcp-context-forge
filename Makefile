@@ -419,6 +419,29 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
 	@echo "    For local dev:    make install-dev && make dev"
 	@echo "    For Docker stack: make compose-up"
 
+# help: token                - Print a dev admin JWT for admin@example.com, signed with the gateway JWT settings (override: make token USERNAME=x EXP=60)
+# USERNAME applies only from the make command line. Windows and many Linux
+# desktop sessions export USERNAME as the OS login name, and that name must
+# not become the token subject. EXP applies from the command line or the
+# environment. The CLI loads JWT_SECRET_KEY and JWT_ALGORITHM through
+# Settings (environment, then .env), so the secret stays out of argv. Keep
+# stdout limited to the token: export MCPGATEWAY_BEARER_TOKEN=$(make -s token)
+TOKEN_USERNAME = $(if $(filter command line,$(origin USERNAME)),$(USERNAME),admin@example.com)
+TOKEN_EXP      = $(if $(filter command line environment,$(origin EXP)),$(EXP),10080)
+
+.PHONY: token
+token:                          ## 🔑 Print a dev admin JWT signed with the gateway JWT settings (environment, then .env)
+	@if [ ! -f .env ]; then \
+		echo "❌  .env not found. Run: make setup" >&2; \
+		exit 1; \
+	fi
+	@if [ ! -x "$(VENV_DIR)/bin/python" ]; then \
+		echo "❌  $(VENV_DIR)/bin/python not found. Run: make install-dev" >&2; \
+		exit 1; \
+	fi
+	@LOG_LEVEL="$${LOG_LEVEL:-WARNING}" "$(VENV_DIR)/bin/python" -m mcpgateway.utils.create_jwt_token \
+		--username "$(TOKEN_USERNAME)" --admin --exp "$(TOKEN_EXP)"
+
 # =============================================================================
 # ▶️ SERVE
 # =============================================================================
@@ -1904,8 +1927,7 @@ inspector-up:                              ## Start MCP Inspector (interactive M
 	@echo "      3. Add header — Authorization: Bearer <token>"
 	@echo ""
 	@echo "   Generate a JWT token:"
-	@echo "      python -m mcpgateway.utils.create_jwt_token \\"
-	@echo "        --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256"
+	@echo "      make token"
 	@echo ""
 
 inspector-down:                            ## Stop MCP Inspector

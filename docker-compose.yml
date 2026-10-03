@@ -2543,10 +2543,8 @@ services:
 #    2. URL: http://nginx:80/servers/9779b6698cbd4b4995ee04a4fab38737/mcp
 #    3. Add header:  Authorization: Bearer <your-jwt-token>
 #
-#  Generate a JWT token (JWT_SECRET_KEY must be set in .env — see make install-dev):
-#    python -m mcpgateway.utils.create_jwt_token \
-#      --username admin@example.com --exp 10080 \
-#      --secret ${JWT_SECRET_KEY} --algo HS256
+#  Generate a JWT token (needs .env and the venv — see make setup, make install-dev):
+#    make token
 ###############################################################################
 
   mcp_inspector:
