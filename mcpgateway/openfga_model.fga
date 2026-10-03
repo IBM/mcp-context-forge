@@ -1,0 +1,42 @@
+model
+  schema 1.1
+
+# ContextForge Layer-2 mirror. This file documents the authorization
+# model that mcpgateway/services/openfga_sync.py writes mechanically
+# from the Permissions constants; the builder is the source of truth.
+
+type user
+
+type team
+  relations
+    define member: [user]
+
+type role
+  relations
+    define assignee: [user]
+
+# One block per capability type. Every permission verb mapped to the
+# type becomes a relation, direct-granted to users, team members, and
+# role assignees, minus the blocked deny set. Example for tool:
+
+type tool
+  relations
+    define blocked: [user, team#member, role#assignee]
+    define tools_create: [user, team#member, role#assignee] but not blocked
+    define tools_read: [user, team#member, role#assignee] but not blocked
+    define tools_update: [user, team#member, role#assignee] but not blocked
+    define tools_delete: [user, team#member, role#assignee] but not blocked
+    define tools_execute: [user, team#member, role#assignee] but not blocked
+    define tools_preview: [user, team#member, role#assignee] but not blocked
+    define tools_manage_plugins: [user, team#member, role#assignee] but not blocked
+
+# The same shape repeats for: resource, prompt, server, gateway,
+# a2a_agent, and route (route carries every permission category that is
+# not an entity: teams.*, users.*, admin.*, security:read, ...).
+
+# Tuple conventions written by the sync:
+#   (user:<email>, assignee, role:<name>)            role assignments
+#   (user:<email>, member, team:<id>)                team memberships
+#   (role:<name>#assignee, <relation>, <type>:*)     role-permission grants
+#   (<subject>, <relation>, <type>:<id>)             entity-scoped allow rules
+#   (<subject>, blocked, <type>:<id>)                entity-scoped deny rules
