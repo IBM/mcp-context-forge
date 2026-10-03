@@ -699,7 +699,7 @@ async def get_entity_rules_summary(capability_type: str = Query(...), capability
         inherited = [r for r in catalog.list_rules(capability_type=capability_type) if r.capability_id is None]
         scoped = [r for r in catalog.list_rules(capability_type=capability_type, capability_id=capability_id) if r.capability_id is not None]
         defaults: Dict[str, List[str]] = {}
-        from mcpgateway.bootstrap_db import DEFAULT_ROLE_DEFINITIONS  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.rule_catalog_service import DEFAULT_ROLE_DEFINITIONS  # pylint: disable=import-outside-toplevel
 
         for role in DEFAULT_ROLE_DEFINITIONS:
             permissions = [
