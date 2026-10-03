@@ -1466,6 +1466,8 @@ class Permissions:
     TAGS_CREATE = "tags.create"
     TAGS_UPDATE = "tags.update"
     TAGS_DELETE = "tags.delete"
+    # Rule catalog permissions
+    RBAC_RULES_MANAGE = "rbac.rules.manage"
 
     # Special permissions
     ALL_PERMISSIONS = "*"  # Wildcard for all permissions
