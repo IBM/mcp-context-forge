@@ -923,3 +923,57 @@ async def test_handle_streamable_http_rejects_non_hex_server_id_via_defense_in_d
     assert len(events) == 2
     assert events[0]["status"] == 404
     assert b"Invalid server identifier" in events[1]["body"]
+
+
+# ---------------------------------------------------------------------------
+# Origin/Host gate coverage for RustMCPRuntimeProxy
+# ---------------------------------------------------------------------------
+# Origin/Host enforcement was moved to MCPOriginHostGate (main.py /mcp mount).
+# RustMCPRuntimeProxy no longer has its own gate; these tests verify that the
+# proxy does not reject requests itself (gate coverage lives in
+# test_mcp_origin_validation.py::MCPOriginHostGate integration tests).
+
+
+@pytest.mark.asyncio
+async def test_rust_proxy_does_not_reject_unapproved_origin(monkeypatch):
+    """RustMCPRuntimeProxy does not gate on Origin — MCPOriginHostGate at the /mcp mount does.
+
+    A request with an unapproved Origin must pass through the proxy itself
+    (to the Rust runtime or fallback). The 403 for bad origins is emitted by
+    MCPOriginHostGate before the proxy is ever called.
+    """
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+    monkeypatch.setattr(proxy_mod.settings, "mcp_allowed_origins", {"https://trusted.example.com"})
+
+    # ConnectError: the proxy attempts the Rust call — it did not short-circuit on Origin.
+    get_http_client_mock = AsyncMock(side_effect=httpx.ConnectError("no runtime"))
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", get_http_client_mock)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context", lambda: None)
+
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+    events = []
+
+    async def send(message):
+        events.append(message)
+
+    await proxy.handle_streamable_http(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "modified_path": "/mcp",
+            "query_string": b"",
+            "client": ("10.0.0.1", 51234),
+            "headers": [
+                (b"origin", b"https://attacker.invalid"),
+                (b"content-type", b"application/json"),
+            ],
+        },
+        _make_receive(b"{}"),
+        send,
+    )
+
+    # A 502 (Rust unavailable) means the proxy proceeded; a 403 would mean it gated.
+    origin_403 = any(m.get("status") == 403 for m in events if m.get("type") == "http.response.start")
+    assert not origin_403, f"Proxy must not emit 403 for Origin — gate is at mount level, got {events}"

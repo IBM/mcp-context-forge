@@ -78,6 +78,7 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+.integration/
 .playwright-mcp/
 output
 htmlcov

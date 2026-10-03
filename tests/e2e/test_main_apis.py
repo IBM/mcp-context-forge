@@ -1488,10 +1488,6 @@ class TestGatewayAPIs:
         assert response.status_code == 422
         assert "exceeds maximum length" in str(response.json())
 
-    @pytest.mark.skip(reason="Requires external gateway connectivity")
-    async def test_register_gateway(self, client: AsyncClient, mock_auth):
-        """Test POST /gateways - would require mocking external connections."""
-
     async def test_set_gateway_state(self, client: AsyncClient, mock_auth):
         """Test POST /gateways/{gateway_id}/state."""
         # Mock a gateway for testing

@@ -26,6 +26,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 
 # Initialize router
 router = APIRouter(prefix="/v1/tools", tags=["Tools"])
@@ -111,6 +112,9 @@ async def generate_schemas_from_openapi(
             content={"message": "An unexpected error occurred while processing the OpenAPI spec", "success": False},
             status_code=500,
         )
+
+    warn_unprovable_patterns(input_schema, source=f"openapi:{spec_url}")
+    warn_unprovable_patterns(output_schema, source=f"openapi:{spec_url}")
 
     return ORJSONResponse(
         content={

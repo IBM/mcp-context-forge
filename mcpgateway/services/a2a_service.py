@@ -33,7 +33,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update
+from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -54,6 +54,7 @@ from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filte
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Cache import (lazy to avoid circular dependencies)
@@ -1798,7 +1799,15 @@ class A2AAgentService(BaseService):
                         await cache.invalidate_tools()
                         tool_lookup_cache = _get_tool_lookup_cache()
                         if agent.tool and agent.tool.name:
-                            await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
+                            affected_server_ids: tuple[str, ...] = ()
+                            if not agent.tool.gateway_id:
+                                server_ids = db.execute(select(server_tool_association.c.server_id).where(server_tool_association.c.tool_id == agent.tool_id)).scalars().all()
+                                affected_server_ids = tuple(str(server_id) for server_id in server_ids)
+                            await tool_lookup_cache.invalidate(
+                                agent.tool.name,
+                                gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None,
+                                affected_server_ids=affected_server_ids,
+                            )
 
                 status = "activated" if activate else "deactivated"
                 logger.info("A2A agent %s: %s (ID: %s)", status, agent.name, agent.id)
@@ -2775,11 +2784,6 @@ class A2AAgentService(BaseService):
                 "interaction_type": interaction_type,
             }
 
-            # Make HTTP request using shared client
-            # First-Party
-            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
-
-            client = await get_http_client()
             # Stamp the outbound hop count so the receiving gateway can
             # enforce `uaid_max_federation_hops` and break recursion —
             # covers both A→B→A pingpong and self-referential
@@ -2870,7 +2874,22 @@ class A2AAgentService(BaseService):
             )
 
             # Make request
-            http_response = await client.post(url, json=request_data, headers=headers, timeout=30.0)
+            try:
+                pinned_target = await resolve_pinned_target(url, "Cross-gateway URL")
+            except ValueError as pin_exc:
+                raise A2AAgentError(f"Cross-gateway URL blocked by URL policy: {pin_exc}") from pin_exc
+
+            # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
+            # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
+            # would reuse a connection whose certificate was verified for that other name.
+            async with get_isolated_http_client(follow_redirects=False) as client:
+                http_response = await client.post(
+                    pinned_target.pin(url),
+                    json=request_data,
+                    headers=pinned_target.apply_headers(headers),
+                    timeout=30.0,
+                    extensions=pinned_target.extensions,
+                )
             call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
             # Any 2xx is success.  Restricting to status 200 would

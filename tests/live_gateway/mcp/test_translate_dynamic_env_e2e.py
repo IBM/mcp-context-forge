@@ -245,7 +245,7 @@ if __name__ == "__main__":
                                 continue
             except httpx.ReadTimeout:
                 pytest.skip("SSE stream timeout - server may be overloaded")
-            except Exception as e:
+            except httpx.HTTPError as e:
                 pytest.skip(f"SSE connection failed: {e}")
 
     @pytest.mark.skip(reason="Translate server fails to start - environment-specific issue")
@@ -325,7 +325,7 @@ if __name__ == "__main__":
                                 continue
             except httpx.ReadTimeout:
                 pytest.skip("SSE stream timeout - server may be overloaded")
-            except Exception as e:
+            except httpx.HTTPError as e:
                 pytest.skip(f"SSE connection failed: {e}")
 
     @pytest.mark.skip(reason="Translate server fails to start - environment-specific issue")
@@ -377,7 +377,7 @@ if __name__ == "__main__":
                                 continue
             except httpx.ReadTimeout:
                 pytest.skip("SSE stream timeout - server may be overloaded")
-            except Exception as e:
+            except httpx.HTTPError as e:
                 pytest.skip(f"SSE connection failed: {e}")
 
     @pytest.mark.skip(reason="Translate server fails to start - environment-specific issue")

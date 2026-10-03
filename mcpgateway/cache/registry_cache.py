@@ -872,7 +872,10 @@ class CacheInvalidationSubscriber:
     Message formats handled:
         - registry:{cache_type} - Invalidate registry cache (tools, prompts, etc.)
         - tool_lookup:{name} - Invalidate specific tool lookup
+        - tool_lookup:key:{cache_key} - Invalidate one exact scoped lookup key
         - tool_lookup:gateway:{gateway_id} - Invalidate all tools for a gateway
+        - tool_lookup:server:{server_id} - Invalidate all tools scoped to a virtual server
+        - tool_lookup:scoped - Invalidate all virtual-server-scoped tool lookups
         - admin:{prefix} - Invalidate admin stats cache
         - user:{email} - Invalidate auth user cache
         - revoke:{jti} - Invalidate auth revocation cache
@@ -1061,6 +1064,50 @@ class CacheInvalidationSubscriber:
                         cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local registry:%s cache (%d keys)", cache_type, len(keys_to_remove))
 
+            elif message.startswith("tool_lookup:key:"):
+                # Handle one exact internal tool lookup key. This distinct
+                # prefix avoids confusing a key beginning with ``server:``
+                # with the whole-server invalidation message below.
+                cache_key = message[len("tool_lookup:key:") :]
+                # First-Party
+                from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+                with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    tool_lookup_cache._cache.pop(cache_key, None)  # pyright: ignore[reportPrivateUsage]
+                    tool_name = cache_key.split(":", 2)[2] if cache_key.startswith("server:") else cache_key
+                    negative_keys = [
+                        key
+                        for key in tool_lookup_cache._cache  # pyright: ignore[reportPrivateUsage]
+                        if tool_lookup_cache._negative_key_matches_name(key, tool_name)  # pyright: ignore[reportPrivateUsage]
+                    ]
+                    for negative_key in negative_keys:
+                        tool_lookup_cache._cache.pop(negative_key, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup key %s", cache_key)
+
+            elif message == "tool_lookup:scoped":
+                # Handle all virtual-server-scoped tool lookup invalidation
+                # First-Party
+                from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+                with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    to_remove = [name for name in tool_lookup_cache._cache if name.startswith("server:")]  # pyright: ignore[reportPrivateUsage]
+                    for name in to_remove:
+                        tool_lookup_cache._cache.pop(name, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared all local scoped tool lookups (%d keys)", len(to_remove))
+
+            elif message.startswith("tool_lookup:server:"):
+                # Handle virtual-server-scoped tool lookup invalidation
+                server_id = message[len("tool_lookup:server:") :]
+                # First-Party
+                from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+                key_prefix = tool_lookup_cache._cache_key("", server_id)  # pyright: ignore[reportPrivateUsage]
+                with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    to_remove = [name for name in tool_lookup_cache._cache if name.startswith(key_prefix)]  # pyright: ignore[reportPrivateUsage]
+                    for name in to_remove:
+                        tool_lookup_cache._cache.pop(name, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup for server %s (%d keys)", server_id, len(to_remove))
+
             elif message.startswith("tool_lookup:gateway:"):
                 # Handle gateway-wide tool lookup invalidation
                 gateway_id = message[len("tool_lookup:gateway:") :]
@@ -1069,7 +1116,11 @@ class CacheInvalidationSubscriber:
 
                 # Only clear local L1 cache
                 with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
-                    to_remove = [name for name, entry in tool_lookup_cache._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id]  # pyright: ignore[reportPrivateUsage]
+                    to_remove = [
+                        name
+                        for name, entry in tool_lookup_cache._cache.items()  # pyright: ignore[reportPrivateUsage]
+                        if entry.value.get("tool", {}).get("gateway_id") == gateway_id or entry.value.get("gateway_id") == gateway_id
+                    ]
                     for name in to_remove:
                         tool_lookup_cache._cache.pop(name, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup for gateway %s (%d keys)", gateway_id, len(to_remove))

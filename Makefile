@@ -856,7 +856,7 @@ clean:
 # help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
 # help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
-# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
+# help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
 # help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -928,6 +928,16 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
+.PHONY: bats
+bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
+	@command -v bats >/dev/null 2>&1 || { echo "❌ bats not found - install with 'brew install bats-core' or see https://bats-core.readthedocs.io"; exit 1; }
+	@echo "🦇 Running bats shell tests..."
+	@files=$$(find tests -type f -name '*.bats' | sort); \
+	if [ -z "$$files" ]; then echo "ℹ️  No .bats files found under tests/"; exit 0; fi; \
+	echo "$$files" | sed 's/^/   /'; \
+	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
+	@echo "✅ bats tests passed!"
+
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
@@ -948,16 +958,7 @@ test-mcp-cli: test-e2e
 	$(call deprecated_target,test-mcp-cli,make test-e2e,1.3.0)
 
 .PHONY: test-bats
-test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
-	@command -v bats >/dev/null 2>&1 || { \
-		echo "❌  bats not found - install it to run tests/bash:"; \
-		echo "    macOS:          brew install bats-core"; \
-		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
-		echo "    npm:            npm install -g bats"; \
-		exit 1; \
-	}
-	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
-	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
+test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
 # deprecated: test-mcp-rbac - Use "make test-e2e" instead (v1.3.0)
 test-mcp-rbac: test-e2e
@@ -1769,6 +1770,9 @@ TESTING_LOCUST_WORKERS ?= 1
 # can write reports to ./reports on bind mounts without EACCES.
 HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
+# Profiles that bring up the testing stack. Also used to resolve the web_ui
+# host port for the startup summary, so both paths see the same services.
+TESTING_COMPOSE_PROFILES := --profile testing --profile inspector --profile sso
 
 .PHONY: testing-up
 testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
@@ -1784,13 +1788,15 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
 	@echo "Service              URL                           Purpose"
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@WEB_UI_PUBLISHED_PORT=$$(COMPOSE_CMD='$(COMPOSE_CMD_MONITOR)' COMPOSE_PROFILES='$(TESTING_COMPOSE_PROFILES)' scripts/testing-web-ui-port.sh); \
+		echo "ContextForge Web UI  http://localhost:$$WEB_UI_PUBLISHED_PORT         Gateway Supported UX"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
 	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
@@ -4496,7 +4502,6 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	  -not -path './.venv/*' \
 	  -not -path './.cache/*' \
 	  -not -path './.venv/*' \
-	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
 
@@ -5053,6 +5058,11 @@ container-build-rust-lite:
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
+
+.PHONY: container-bump-image-versions
+container-bump-image-versions: ## Bump pinned UBI image tags in Containerfiles to latest within their minor line
+	@echo "🔄 Checking Red Hat Catalog for newer UBI image tags..."
+	@bash scripts/container-bump-image-versions.sh
 
 container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
 	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
@@ -5679,7 +5689,8 @@ endef
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
 compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
-	embedded-up embedded-down embedded-clean embedded-status embedded-logs
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
+	compose-ui-config-check
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5696,6 +5707,22 @@ compose-validate:
 	fi
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
+
+# Config-only smoke test for the supported 'ui' profile (contextforge-web-ui BFF)
+# Catches profile, variable-interpolation, and Compose-schema regressions without
+# starting any containers. See docs/docs/development/release-management.md #6.4.
+compose-ui-config-check:
+	@echo "🔍 Validating 'ui' profile compose config..."
+	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
+		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile ui config --quiet
+	@echo "✅ 'ui' profile compose config is valid"
 
 compose-upgrade-pg18: compose-validate
 	@echo "⚠️  This will upgrade Postgres 17 -> 18"
@@ -8762,3 +8789,45 @@ linting-workflow-commitlint:         ## 📝  Conventional Commits linting (togg
 .PHONY: conc-01-gateways
 conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh
+
+# Published full-stack MCP conformance harness.
+CF_INTEGRATION ?= cf-integration
+CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
+CF_CONTROLPLANE_REPO ?= $(CURDIR)
+CF_CONTROLPLANE_REF ?= $(shell git -C "$(CF_CONTROLPLANE_REPO)" rev-parse HEAD)
+CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
+CF_CONTROLPLANE_PULL_POLICY ?= never
+CF_COMPOSE_BUILD ?= true
+CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+
+# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
+# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+.PHONY: conformance conformance-bless
+
+# Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
+conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+# Exercise only the 2025-11-25 client against a legacy fixture.
+conformance conformance-bless:
+	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git -C "$(CF_CONTROLPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
+		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
+		exit 1; \
+	fi
+	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+	"$(CF_INTEGRATION)" conformance run \
+		--client-version 2025-11-25 \
+		--server-era legacy \
+		--lane builtin \
+		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+		$(if $(filter conformance-bless,$@),--bless)

@@ -16,7 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.schemas import ToolCreate
-from mcpgateway.services.gateway_service import GatewayNameConflictError
+from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayToolNameConflictError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportError, ImportService, ImportStatus, ImportValidationError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
@@ -2159,6 +2159,49 @@ async def test_process_gateway_update_exception(import_service, mock_db):
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
     assert status.skipped_entities >= 1
+
+
+@pytest.mark.asyncio
+async def test_process_gateway_tool_name_collision_is_sanitized(import_service, mock_db):
+    """Gateway imports report only generic tool collision text."""
+    gateway_data = {"name": "sensitive-gateway", "url": "https://gw.example.com", "description": "desc", "transport": "SSE"}
+    import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"gateways": [gateway_data]}}
+    import_service.gateway_service.register_gateway.side_effect = GatewayToolNameConflictError("prod-api-search")
+
+    status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
+
+    assert status.failed_entities == 1
+    assert status.errors == ["Gateway tool name conflicts with an existing tool"]
+    assert "sensitive-gateway" not in status.errors[0]
+    assert "prod-api-search" not in status.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_process_gateway_update_tool_name_collision_is_sanitized(import_service, mock_db):
+    """Gateway import update strategy preserves generic collision text."""
+    gateway_data = {"name": "sensitive-gateway", "url": "https://gw.example.com", "description": "desc", "transport": "SSE"}
+    import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"gateways": [gateway_data]}}
+    import_service.gateway_service.register_gateway.side_effect = GatewayNameConflictError("sensitive-gateway")
+    import_service.gateway_service.list_gateways.return_value = ([SimpleNamespace(id="existing", name="sensitive-gateway")], None)
+    import_service.gateway_service.update_gateway.side_effect = GatewayToolNameConflictError("prod-api-search")
+
+    status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
+
+    assert status.failed_entities == 1
+    assert status.errors == ["Gateway tool name conflicts with an existing tool"]
+
+
+@pytest.mark.asyncio
+async def test_process_gateway_rename_tool_name_collision_is_sanitized(import_service, mock_db):
+    """Gateway import rename strategy preserves generic collision text."""
+    gateway_data = {"name": "sensitive-gateway", "url": "https://gw.example.com", "description": "desc", "transport": "SSE"}
+    import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"gateways": [gateway_data]}}
+    import_service.gateway_service.register_gateway.side_effect = [GatewayNameConflictError("sensitive-gateway"), GatewayToolNameConflictError("prod-api-search")]
+
+    status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.RENAME, imported_by="test_user")
+
+    assert status.failed_entities == 1
+    assert status.errors == ["Gateway tool name conflicts with an existing tool"]
 
 
 @pytest.mark.asyncio

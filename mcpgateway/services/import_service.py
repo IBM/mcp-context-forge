@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
-from mcpgateway.services.gateway_service import GatewayNameConflictError
+from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayToolNameConflictError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
 from mcpgateway.services.root_service import RootServiceValidationError
@@ -525,6 +525,10 @@ class ImportService:
                 try:
                     await self._process_single_entity(db, entity_type, entity_data, conflict_strategy, dry_run, status, imported_by)
                     status.processed_entities += 1
+                except GatewayToolNameConflictError as e:
+                    status.failed_entities += 1
+                    status.errors.append(str(e))
+                    logger.warning("Gateway import rejected because a tool name conflicts")
                 except Exception as e:
                     status.failed_entities += 1
                     status.errors.append(f"Failed to process {entity_type} entity: {str(e)}")
@@ -662,6 +666,8 @@ class ImportService:
             elif entity_type == "roots":
                 await self._process_root(entity_data, conflict_strategy, dry_run, status)
 
+        except GatewayToolNameConflictError:
+            raise
         except Exception as e:
             raise ImportError(f"Failed to process {entity_type}: {str(e)}")
 
@@ -779,6 +785,8 @@ class ImportService:
                         else:
                             status.warnings.append(f"Could not find existing gateway to update: {gateway_name}")
                             status.skipped_entities += 1
+                    except GatewayToolNameConflictError:
+                        raise
                     except Exception as update_error:
                         logger.warning("Failed to update gateway %s: %s", gateway_name, str(update_error))
                         status.warnings.append(f"Could not update gateway {gateway_name}: {str(update_error)}")
@@ -792,6 +800,8 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.FAIL:
                     raise ImportConflictError(f"Gateway name conflict: {gateway_name}")
 
+        except GatewayToolNameConflictError:
+            raise
         except Exception as e:
             raise ImportError(f"Failed to process gateway {gateway_name}: {str(e)}")
 
@@ -1521,6 +1531,7 @@ class ImportService:
         Returns:
             ResourceCreate schema object
         """
+        # Naming provenance is export metadata; name remains the literal import value.
         return ResourceCreate(
             uri=resource_data["uri"],
             name=resource_data["name"],
@@ -1539,6 +1550,7 @@ class ImportService:
         Returns:
             ResourceUpdate schema object
         """
+        # As with creation, do not restore the exported upstream/base provenance.
         return ResourceUpdate(
             name=resource_data.get("name"), description=resource_data.get("description"), mime_type=resource_data.get("mime_type"), content=resource_data.get("content"), tags=resource_data.get("tags")
         )

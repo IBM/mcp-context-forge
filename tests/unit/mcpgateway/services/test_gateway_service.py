@@ -4,8 +4,8 @@ Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Unit-tests for the GatewayService implementation.
-These tests use only MagicMock / AsyncMock - no real network access
-and no real database needed.  Where the service relies on Pydantic
+These tests use MagicMock / AsyncMock for network access, with selected
+catalog regressions using the test database. Where the service relies on Pydantic
 models or SQLAlchemy Result objects, we monkey-patch or fake just
 enough behaviour to satisfy the code paths under test.
 """
@@ -16,15 +16,18 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from uuid import uuid4
 
 # Third-Party
 import httpx
 from pydantic import ValidationError
 import pytest
+from sqlalchemy import Delete, delete, select
 from url_normalize import url_normalize
 
 # First-Party
@@ -35,10 +38,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import set_custom_name_and_slug
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate, ToolCreate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
+    GatewayCatalogSyncResult,
     GatewayConnectionError,
     GatewayCredentialError,
     GatewayDuplicateConflictError,
@@ -47,9 +52,13 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
+    MCP_SYNC_CREATED_VIA_VALUES,
+    GatewayToolNameConflictError,
     OAuthToolValidationError,
+    _build_gateway_tool_invocation_name,
 )
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth
 
 # ---------------------------------------------------------------------------
@@ -85,6 +94,340 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     result.scalars.return_value = scalars_proxy
     result.rowcount = rowcount
     return result
+
+
+class TestGatewayToolNameCollisions:
+    """Gateway catalog tool-name collision guards."""
+
+    @pytest.mark.parametrize("separator", ["-", "--", "_", "."])
+    def test_candidate_name_uses_gateway_orm_format(self, monkeypatch, separator):
+        """Candidate names use configured separator and same slug normalization as ORM."""
+        monkeypatch.setattr(settings, "gateway_tool_name_separator", separator)
+        tool = SimpleNamespace(
+            original_name="API Search",
+            custom_name="API Search",
+            custom_name_slug="",
+            display_name=None,
+            gateway=SimpleNamespace(name="Prod API"),
+            gateway_id="gateway-id",
+            name="",
+        )
+
+        set_custom_name_and_slug(None, None, tool)
+
+        assert _build_gateway_tool_invocation_name("Prod API", "API Search") == tool.name
+
+    def test_public_collision_is_rejected(self):
+        """Public tool namespace ignores owner identity."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+
+        with pytest.raises(GatewayToolNameConflictError, match="Gateway tool name conflicts with an existing tool") as error:
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[SimpleNamespace(name="api-search")],
+            )
+
+        assert error.value.invocation_name == "prod-api-search"
+
+    def test_team_collision_requires_same_team(self):
+        """Same tool name remains allowed across different team namespaces."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="team", team_id="team-two", owner_email="other@example.com", gateway_id="other")]
+        )
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id=None,
+            gateway_team_id="team-one",
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="team",
+            tools=[SimpleNamespace(name="api-search")],
+        )
+
+    def test_team_collision_in_same_team_is_rejected(self):
+        """Team tool names conflict inside one team namespace."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="team", team_id="team-one", owner_email="other@example.com", gateway_id="other")]
+        )
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id="team-one",
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="team",
+                tools=[SimpleNamespace(name="api-search")],
+            )
+
+    def test_private_collision_for_same_owner_is_rejected(self):
+        """Private tool names conflict inside one owner namespace."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="private", team_id=None, owner_email="owner@example.com", gateway_id="other")]
+        )
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="private",
+                tools=[SimpleNamespace(name="api-search")],
+            )
+
+    def test_current_gateway_and_other_names_are_ignored(self):
+        """Validation ignores current-gateway rows and unrelated invocation names."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[
+                SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="owner@example.com", gateway_id="current"),
+                SimpleNamespace(name="other-search", visibility="public", team_id=None, owner_email="owner@example.com", gateway_id="other"),
+            ]
+        )
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="public",
+            tools=[SimpleNamespace(name="search")],
+        )
+
+    @pytest.mark.parametrize(
+        "visibility,existing_team,existing_owner,conflicts",
+        [
+            ("public", None, None, True),
+            ("team", "team-one", "other@example.com", True),
+            ("team", "team-two", "owner@example.com", False),
+            ("private", "team-two", "owner@example.com", True),
+            ("private", "team-one", "other@example.com", False),
+        ],
+    )
+    def test_retained_gateway_alias_respects_visibility_scope(self, visibility, existing_team, existing_owner, conflicts):
+        """Retained local aliases use the same namespace rules as external tools."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(original_name="local_lookup", name="prod-search", visibility=visibility, team_id=existing_team, owner_email=existing_owner, gateway_id="current")]
+        )
+        kwargs = {
+            "gateway_name": "prod",
+            "gateway_id": "current",
+            "gateway_team_id": "team-one",
+            "gateway_owner_email": "owner@example.com",
+            "gateway_visibility": visibility,
+            "tools": [SimpleNamespace(name="search")],
+            "retained_tool_original_names": {"local_lookup"},
+        }
+        if conflicts:
+            with pytest.raises(GatewayToolNameConflictError):
+                service._validate_tool_name_collisions(db, **kwargs)
+        else:
+            service._validate_tool_name_collisions(db, **kwargs)
+
+    def test_ordinary_refresh_ignores_historical_external_collision(self):
+        """Unchanged gateway tools do not block refresh because of legacy duplicates."""
+        service = GatewayService()
+        db = MagicMock()
+        existing_tool = SimpleNamespace(
+            original_name="search",
+            name="prod-search",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+        )
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="public",
+            tools=[SimpleNamespace(name="search")],
+            existing_tools_by_original_name={"search": existing_tool},
+        )
+
+        db.execute.assert_not_called()
+
+    def test_new_refresh_tool_still_rejects_external_collision(self):
+        """New discovery tools still reject existing namespace collisions."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        existing_tool = SimpleNamespace(
+            original_name="search",
+            name="prod-search",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+        )
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id="current",
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[SimpleNamespace(name="search"), SimpleNamespace(name="api-search")],
+                existing_tools_by_original_name={"search": existing_tool},
+            )
+
+    @pytest.mark.parametrize(
+        ("visibility", "scope_field"),
+        [("team", "team_id"), ("private", "owner_email")],
+    )
+    def test_missing_scope_identity_does_not_match_null_existing_scope(self, visibility, scope_field):
+        """Missing team or owner identity does not form a collision namespace."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility=visibility, team_id=None, owner_email=None, gateway_id="other")]
+        )
+        gateway_team_id = None if scope_field == "team_id" else "team-one"
+        gateway_owner_email = None if scope_field == "owner_email" else "owner@example.com"
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id=None,
+            gateway_team_id=gateway_team_id,
+            gateway_owner_email=gateway_owner_email,
+            gateway_visibility=visibility,
+            tools=[SimpleNamespace(name="api-search")],
+        )
+
+    def test_incoming_normalized_duplicates_are_rejected_before_query(self):
+        """One incoming gateway catalog cannot expose duplicate invocation names."""
+        service = GatewayService()
+        db = MagicMock()
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[SimpleNamespace(name="api-search"), SimpleNamespace(name="api search")],
+            )
+
+        db.execute.assert_not_called()
+
+    def test_private_to_public_projection_rejects_public_collision(self):
+        """Inherited tool visibility uses final gateway visibility before mutation."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "private"
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id="current",
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[tool],
+                existing_tools_by_original_name={"search": tool},
+                project_gateway_visibility=True,
+                original_gateway_visibility="private",
+            )
+
+    def test_public_to_private_projection_ignores_public_collision(self):
+        """Final private scope does not retain stale public collision semantics."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "public"
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="private",
+            tools=[tool],
+            existing_tools_by_original_name={"search": tool},
+            project_gateway_visibility=True,
+            original_gateway_visibility="public",
+        )
+
+    def test_gateway_visibility_projection_preserves_tool_override(self):
+        """Gateway visibility changes preserve explicit per-tool visibility."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "team"
+        tool.team_id = "team-one"
+        tool.owner_email = "owner@example.com"
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id="current",
+            gateway_team_id=None,
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="private",
+            tools=[tool],
+            existing_tools_by_original_name={"search": tool},
+            project_gateway_visibility=True,
+            original_gateway_visibility="public",
+        )
 
 
 def _make_gateway(**overrides):
@@ -253,6 +596,7 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
+                _make_execute_result(scalars_list=[]),  # federated tool collision check
                 _make_execute_result(scalars_list=[]),  # tool lookup
             ]
         )
@@ -311,6 +655,33 @@ class TestGatewayService:
         assert result.url == expected_url
         assert result.description == "A test gateway"
         mock_model.url = expected_url
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_tool_collision_runs_real_validator_and_rolls_back(self, gateway_service, test_db):
+        """Registration propagates a real projected-name collision before persistence."""
+        existing_tool = SimpleNamespace(name="prod-api-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[existing_tool]),
+            ]
+        )
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
+        test_db.add = Mock()
+        test_db.rollback = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="api-search")], [], [], []))
+
+        with pytest.raises(GatewayToolNameConflictError) as error:
+            await gateway_service.register_gateway(
+                test_db,
+                GatewayCreate(name="prod", url="http://example.com/gateway"),
+                owner_email="owner@example.com",
+                visibility="public",
+            )
+
+        assert error.value.invocation_name == "prod-api-search"
+        test_db.rollback.assert_called_once()
+        test_db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_register_gateway_async_enabled_returns_pending(self, gateway_service, test_db, monkeypatch):
@@ -512,6 +883,7 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
+                _make_execute_result(scalars_list=[]),  # federated tool collision check
                 _make_execute_result(scalars_list=[]),  # tool lookup
             ]
         )
@@ -1623,8 +1995,8 @@ class TestGatewayService:
         mock_gateway.visibility = "public"
         mock_gateway.team_id = 1  # Ensure team_id is a real value
         conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", slug="existing-gateway", visibility="public", is_active=True)
-        # First call returns the gateway to update (with selectinload), second returns the conflicting one
-        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=conflicting)]
+        # Gateway rename now first validates projected linked tool names, then checks gateway slug conflicts.
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalars_list=[]), _make_execute_result(scalar=conflicting)]
         test_db.execute = Mock(side_effect=execute_results)
         test_db.rollback = Mock()
 
@@ -1635,6 +2007,25 @@ class TestGatewayService:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert "Public Gateway already exists with name" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_catalog_collision_re_raises_and_rolls_back(self, gateway_service, mock_gateway, test_db):
+        """Catalog collision escapes update reinitialization and reaches outer rollback."""
+        mock_gateway.team_id = 1
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="search")], [], [], []))
+        gateway_service._sync_gateway_catalog = MagicMock(side_effect=GatewayToolNameConflictError("prod-search"))
+
+        with pytest.raises(GatewayToolNameConflictError, match="Gateway tool name conflicts"):
+            await gateway_service.update_gateway(test_db, mock_gateway.id, GatewayUpdate(description="updated"))
+
+        test_db.rollback.assert_called_once()
+        test_db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_with_auth_update(self, gateway_service, mock_gateway, test_db):
@@ -1931,6 +2322,44 @@ class TestGatewayService:
         assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
         # Visibility changes must be persisted
         test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_visibility_collision_rolls_back_before_init(self, gateway_service, mock_gateway, test_db):
+        """Visibility-only update validates final tool scope before mutation."""
+        tool = MagicMock(spec=DbTool)
+        tool.original_name = "search"
+        tool.name = "prod-search"
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.visibility = "private"
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+        tool.gateway_id = "current"
+        mock_gateway.id = "current"
+        mock_gateway.name = "prod"
+        mock_gateway.visibility = "private"
+        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.team_id = None
+        mock_gateway.tools = [tool]
+        conflict = SimpleNamespace(name="prod-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(scalars_list=[conflict]),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        gateway_service._initialize_gateway = AsyncMock()
+
+        with pytest.raises(GatewayToolNameConflictError):
+            await gateway_service.update_gateway(test_db, "current", GatewayUpdate(visibility="public"))
+
+        assert mock_gateway.visibility == "private"
+        assert tool.visibility == "private"
+        gateway_service._initialize_gateway.assert_not_awaited()
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_rejects_nonexistent_team(self, gateway_service, mock_gateway, test_db):
@@ -2797,27 +3226,18 @@ class TestGatewayService:
             "populated": {"resources": {"listChanged": True}, "prompts": {"listChanged": True}},
         }
         capabilities = capabilities_by_state[advertised]
+        # mcp v2: mcp_proxy_client yields an auto-initialised Client exposing server_capabilities.
         client = AsyncMock()
-        initialized = MagicMock()
-        initialized.capabilities.model_dump.return_value = capabilities
-        client.initialize.return_value = initialized
+        client.server_capabilities = MagicMock()
+        client.server_capabilities.model_dump = MagicMock(return_value=capabilities)
         client.list_tools.return_value = SimpleNamespace(tools=[])
         client.list_resources.return_value = SimpleNamespace(resources=[MagicMock(model_dump=MagicMock(return_value={"uri": "test://static-text", "name": "static-text"}))])
-        client.list_resource_templates.return_value = SimpleNamespace(resourceTemplates=[])
+        client.list_resource_templates.return_value = SimpleNamespace(resource_templates=[])
         client.list_prompts.return_value = SimpleNamespace(prompts=[MagicMock(model_dump=MagicMock(return_value={"name": "simple-prompt"}))])
         proxy = AsyncMock()
         proxy.__aenter__.return_value = client
 
-        sse = AsyncMock()
-        sse.__aenter__.return_value = (MagicMock(), MagicMock())
-        streamable = AsyncMock()
-        streamable.__aenter__.return_value = (MagicMock(), MagicMock(), MagicMock())
-
-        with (
-            patch("mcpgateway.services.gateway_service.ClientSession", return_value=proxy),
-            patch("mcpgateway.services.gateway_service.sse_client", return_value=sse),
-            patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=streamable),
-        ):
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=proxy):
             _, _, resources, prompts, _ = await getattr(gateway_service, connector)("https://test.example.com/mcp")
 
         if advertised != "omitted":
@@ -2837,27 +3257,18 @@ class TestGatewayService:
     @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
     async def test_catalog_discovery_list_resources_exception_returns_empty_list(self, gateway_service, connector):
         """Resource discovery failures remain isolated from prompt discovery."""
+        # mcp v2: mcp_proxy_client yields an auto-initialised Client exposing server_capabilities.
         client = AsyncMock()
-        initialized = MagicMock()
-        initialized.capabilities.model_dump.return_value = {"resources": {}, "prompts": {}}
-        client.initialize.return_value = initialized
+        client.server_capabilities = MagicMock()
+        client.server_capabilities.model_dump = MagicMock(return_value={"resources": {}, "prompts": {}})
         client.list_tools.return_value = SimpleNamespace(tools=[])
         client.list_resources.side_effect = RuntimeError("resource discovery failed")
-        client.list_resource_templates.return_value = SimpleNamespace(resourceTemplates=[])
+        client.list_resource_templates.return_value = SimpleNamespace(resource_templates=[])
         client.list_prompts.return_value = SimpleNamespace(prompts=[MagicMock(model_dump=MagicMock(return_value={"name": "simple-prompt"}))])
         proxy = AsyncMock()
         proxy.__aenter__.return_value = client
 
-        sse = AsyncMock()
-        sse.__aenter__.return_value = (MagicMock(), MagicMock())
-        streamable = AsyncMock()
-        streamable.__aenter__.return_value = (MagicMock(), MagicMock(), MagicMock())
-
-        with (
-            patch("mcpgateway.services.gateway_service.ClientSession", return_value=proxy),
-            patch("mcpgateway.services.gateway_service.sse_client", return_value=sse),
-            patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=streamable),
-        ):
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=proxy):
             _, _, resources, prompts, _ = await getattr(gateway_service, connector)("https://test.example.com/mcp")
 
         assert resources == []
@@ -2870,52 +3281,45 @@ class TestGatewayService:
     async def test_initialize_gateway_with_resources_and_prompts(self, gateway_service):
         """Test _initialize_gateway with full resources and prompts support."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities
+            mock_client.server_capabilities.model_dump = MagicMock(
+                return_value={"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
+            )
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(next_cursor=None)
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {"type": "object"}}
             mock_tools_response.tools = [mock_tool]
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock resources response with URI handling
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(next_cursor=None)
             mock_resource = MagicMock()
             mock_resource.model_dump.return_value = {"uri": "file://test.txt", "name": "test_resource", "description": "Test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
-            mock_session_instance.list_resources.return_value = mock_resources_response
+            mock_client.list_resources = AsyncMock(return_value=mock_resources_response)
+            mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(next_cursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "Test prompt"}
             mock_prompts_response.prompts = [mock_prompt]
-            mock_session_instance.list_prompts.return_value = mock_prompts_response
+            mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Execute
             capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -2934,39 +3338,29 @@ class TestGatewayService:
     async def test_initialize_gateway_resource_validation_error(self, gateway_service):
         """Test _initialize_gateway with resource validation error fallback."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with resources support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"resources": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with resources support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(next_cursor=None)
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock resources response with complex URI object
-            mock_resources_response = MagicMock()
+            mock_resources_response = MagicMock(next_cursor=None)
             mock_resource = MagicMock()
 
             # Create a complex URI object that has unicode_string attribute
@@ -2975,7 +3369,8 @@ class TestGatewayService:
 
             mock_resource.model_dump.return_value = {"uri": mock_uri, "name": "complex_resource", "description": "Complex resource"}
             mock_resources_response.resources = [mock_resource]
-            mock_session_instance.list_resources.return_value = mock_resources_response
+            mock_client.list_resources = AsyncMock(return_value=mock_resources_response)
+            mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
             # Mock ResourceCreate.model_validate to raise exception first time
             with patch("mcpgateway.services.gateway_service.ResourceCreate") as mock_resource_create:
@@ -2993,43 +3388,33 @@ class TestGatewayService:
     async def test_initialize_gateway_prompt_validation_error(self, gateway_service):
         """Test _initialize_gateway with prompt validation error fallback."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with prompts support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with prompts support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"prompts": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(next_cursor=None)
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock prompts response
-            mock_prompts_response = MagicMock()
+            mock_prompts_response = MagicMock(next_cursor=None)
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "complex_prompt", "description": "Complex prompt"}
             mock_prompts_response.prompts = [mock_prompt]
-            mock_session_instance.list_prompts.return_value = mock_prompts_response
+            mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Mock PromptCreate.model_validate to raise exception first time
             with patch("mcpgateway.services.gateway_service.PromptCreate") as mock_prompt_create:
@@ -3047,39 +3432,29 @@ class TestGatewayService:
     async def test_initialize_gateway_resource_fetch_failure(self, gateway_service):
         """Test _initialize_gateway when resource fetching fails."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with resources support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"resources": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with resources support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(next_cursor=None)
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Make list_resources fail
-            mock_session_instance.list_resources.side_effect = Exception("Resource fetch failed")
+            mock_client.list_resources = AsyncMock(side_effect=Exception("Resource fetch failed"))
 
             # Execute
             capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -3092,39 +3467,29 @@ class TestGatewayService:
     async def test_initialize_gateway_prompt_fetch_failure(self, gateway_service):
         """Test _initialize_gateway when prompt fetching fails."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with prompts support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with prompts support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"prompts": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
-            mock_tools_response = MagicMock()
+            mock_tools_response = MagicMock(next_cursor=None)
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Make list_prompts fail
-            mock_session_instance.list_prompts.side_effect = Exception("Prompt fetch failed")
+            mock_client.list_prompts = AsyncMock(side_effect=Exception("Prompt fetch failed"))
 
             # Execute
             capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -3468,7 +3833,7 @@ class TestGatewayRefresh:
         # Mock fresh_db_session to return our mock session
         with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
             # Mock _initialize_gateway to return new data
-            new_tools = [MagicMock(name="tool1")]
+            new_tools = [SimpleNamespace(name="tool1")]
             new_resources = [MagicMock(uri="res1")]
             new_prompts = [MagicMock(name="prompt1")]
 
@@ -3803,25 +4168,20 @@ class TestGatewayRefresh:
         # so we need the valid tool to exercise the partial-failure path.
         # Capabilities are intentionally empty so resources/prompts fetches are skipped.
         mock_session = AsyncMock()
-        mock_init = MagicMock()
-        mock_init.capabilities.model_dump.return_value = {}
-        mock_session.initialize.return_value = mock_init
+        mock_session.server_capabilities = MagicMock()
+        mock_session.server_capabilities.model_dump = MagicMock(return_value={})
 
         valid_tool = MagicMock()
         valid_tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
         long_name_tool = MagicMock()
         long_name_tool.model_dump.return_value = {"name": long_name, "inputSchema": {}}
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(next_cursor=None)
         mock_list_tools.tools = [valid_tool, long_name_tool]
-        mock_session.list_tools.return_value = mock_list_tools
+        mock_session.list_tools = AsyncMock(return_value=mock_list_tools)
 
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
-
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_session
+        mock_proxy_cm.__aexit__.return_value = None
 
         gateway_service._notify_gateway_added = AsyncMock()
 
@@ -3833,9 +4193,8 @@ class TestGatewayRefresh:
         db.refresh = MagicMock()
         db.commit = MagicMock()
 
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                result = await gateway_service.register_gateway(db, gateway_data, created_by="test@example.com")
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            result = await gateway_service.register_gateway(db, gateway_data, created_by="test@example.com")
 
         assert result.skipped_tools == [f"{long_name}: Tool name exceeds MCP spec limit of 128 characters (got 129)"]
 
@@ -3847,13 +4206,12 @@ class TestGatewayRefresh:
         resource and a resource template that each carry only the deprecated flat key.
         """
         mock_session = AsyncMock()
-        mock_init = MagicMock()
-        mock_init.capabilities.model_dump.return_value = {"resources": {"subscribe": False}}
-        mock_session.initialize.return_value = mock_init
+        mock_session.server_capabilities = MagicMock()
+        mock_session.server_capabilities.model_dump = MagicMock(return_value={"resources": {"subscribe": False}})
 
         tool = MagicMock()
         tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(next_cursor=None)
         mock_list_tools.tools = [tool]
         mock_session.list_tools.return_value = mock_list_tools
 
@@ -3863,7 +4221,7 @@ class TestGatewayRefresh:
             "name": "customer_data",
             "_meta": {"ui/resourceUri": "ui://widgets/customer-search"},
         }
-        mock_list_resources = MagicMock()
+        mock_list_resources = MagicMock(next_cursor=None)
         mock_list_resources.resources = [resource]
         mock_session.list_resources.return_value = mock_list_resources
 
@@ -3873,23 +4231,16 @@ class TestGatewayRefresh:
             "name": "customer_record",
             "_meta": {"ui/resourceUri": "ui://widgets/customer-record"},
         }
-        mock_list_templates = MagicMock()
-        mock_list_templates.resourceTemplates = [template]
+        mock_list_templates = MagicMock(next_cursor=None)
+        mock_list_templates.resource_templates = [template]
         mock_session.list_resource_templates.return_value = mock_list_templates
 
-        mock_session.list_prompts.return_value = MagicMock(prompts=[])
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_session
+        mock_proxy_cm.__aexit__.return_value = None
 
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
-
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
-
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
 
         by_name = {resource.name: resource for resource in resources}
         assert by_name["customer_data"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-search"}}
@@ -3940,83 +4291,68 @@ class TestGatewayRefresh:
     async def test_connect_to_sse_server_without_validation_success(self, gateway_service):
         """Test successful connection without URL validation."""
 
-        # Mock dependencies
-        mock_session = AsyncMock()
+        # Mock the MCP client (auto-initialized by mcp_proxy_client)
+        mock_client = AsyncMock()
+        mock_client.server_capabilities = MagicMock()
+        mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": True, "prompts": True})
 
-        # Mock responses
-        mock_init_response = MagicMock()
-        mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
-        mock_session.initialize.return_value = mock_init_response
-
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(next_cursor=None)
         mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
-        mock_session.list_tools.return_value = mock_list_tools
+        mock_client.list_tools = AsyncMock(return_value=mock_list_tools)
 
-        mock_list_resources = MagicMock()
+        mock_list_resources = MagicMock(next_cursor=None)
         mock_list_resources.resources = [MagicMock(model_dump=MagicMock(return_value={"uri": "res1", "name": "res1"}))]
-        mock_session.list_resources.return_value = mock_list_resources
-        mock_session.list_resource_templates.return_value = MagicMock(resourceTemplates=[])
+        mock_client.list_resources = AsyncMock(return_value=mock_list_resources)
+        mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
-        mock_list_prompts = MagicMock()
+        mock_list_prompts = MagicMock(next_cursor=None)
         mock_list_prompts.prompts = [MagicMock(model_dump=MagicMock(return_value={"name": "prompt1"}))]
-        mock_session.list_prompts.return_value = mock_list_prompts
+        mock_client.list_prompts = AsyncMock(return_value=mock_list_prompts)
 
-        # Context managers
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
+        # Context manager
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_client
+        mock_proxy_cm.__aexit__.return_value = None
 
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            # Execute
+            capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
 
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                # Execute
-                capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
-
-                assert len(tools) == 1
-                assert len(resources) == 1
-                assert len(prompts) == 1
-                assert capabilities["resources"] is True
+            assert len(tools) == 1
+            assert len(resources) == 1
+            assert len(prompts) == 1
+            assert capabilities["resources"] is True
 
     @pytest.mark.asyncio
     async def test_connect_to_sse_server_without_validation_fetch_errors(self, gateway_service):
         """Test resilience when resource/prompt fetch fails."""
 
-        # Mock dependencies
-        mock_session = AsyncMock()
-        # Mock responses
-        mock_init_response = MagicMock()
-        mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
-        mock_session.initialize.return_value = mock_init_response
+        # Mock the MCP client (auto-initialized by mcp_proxy_client)
+        mock_client = AsyncMock()
+        mock_client.server_capabilities = MagicMock()
+        mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": True, "prompts": True})
 
-        mock_list_tools = MagicMock()
+        mock_list_tools = MagicMock(next_cursor=None)
         mock_list_tools.tools = []
-        mock_session.list_tools.return_value = mock_list_tools
+        mock_client.list_tools = AsyncMock(return_value=mock_list_tools)
 
         # Simulate failures
-        mock_session.list_resources.side_effect = Exception("Resource fetch failed")
-        mock_session.list_prompts.side_effect = Exception("Prompt fetch failed")
+        mock_client.list_resources = AsyncMock(side_effect=Exception("Resource fetch failed"))
+        mock_client.list_prompts = AsyncMock(side_effect=Exception("Prompt fetch failed"))
 
-        # Context managers
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
+        # Context manager
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_client
+        mock_proxy_cm.__aexit__.return_value = None
 
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            # Execute
+            capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
 
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                # Execute
-                capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
-
-                # Should return empty lists for failed parts, not raise exception
-                assert len(resources) == 0
-                assert len(prompts) == 0
-                assert capabilities["resources"] is True
+            # Should return empty lists for failed parts, not raise exception
+            assert len(resources) == 0
+            assert len(prompts) == 0
+            assert capabilities["resources"] is True
 
 
 class TestGatewayHealth:
@@ -4500,7 +4836,9 @@ async def test_register_gateway_query_param_timeout(gateway_service, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch):
+@pytest.mark.parametrize("base,expected_base", [("old-resource", "resource"), ("chosen", "chosen"), ("", "")])
+async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch, base, expected_base):
+    """Adoption follows upstream identity while preserving an operator's base."""
     # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
@@ -4515,6 +4853,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     prompt = PromptCreate(name="Prompt", title="Prompt Title", description="Test prompt", template="Hello")
 
     existing = MagicMock()
+    existing.name = "old-gateway-old-resource"
+    existing.original_name = "Old Resource"
+    existing.custom_name_slug = base
     existing.gateway_id = None
     existing.team_id = "team-1"
     existing.owner_email = "owner@example.com"
@@ -4570,6 +4911,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     assert existing.text_content is None
     assert existing.binary_content is None
     assert existing.size is None
+    assert existing.original_name == "Resource"
+    assert existing.custom_name_slug == expected_base
+    assert existing.name == "old-gateway-old-resource"
     assert existing_prompt in added_gateway.prompts
     assert existing_prompt.title == "Prompt Title"
 
@@ -4692,15 +5036,8 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             return {"name": "bad-prompt"}
 
     class DummySession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def initialize(self):
-            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
-            return DummyResponse(capabilities=capabilities)
+        # MCP v2 Client exposes server_capabilities directly
+        server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
 
         async def list_tools(self):
             return DummyResponse(tools=[DummyTool()])
@@ -4709,14 +5046,16 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             return DummyResponse(resources=[DummyResource()])
 
         async def list_resource_templates(self):
-            return DummyResponse(resourceTemplates=[DummyTemplate()])
+            return DummyResponse(resource_templates=[DummyTemplate()])
 
         async def list_prompts(self):
             return DummyResponse(prompts=[DummyPrompt()])
 
-    class DummySSE:
+    class DummyClientCM:
+        """Mock for mcp_proxy_client — yields DummySession as the MCP Client."""
+
         async def __aenter__(self):
-            return ("recv", "send")
+            return DummySession()
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -4734,8 +5073,7 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             raise ValueError("boom")
         return real_prompt_validate(data)
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
     monkeypatch.setattr("mcpgateway.services.gateway_service.PromptCreate.model_validate", _prompt_validate)
 
@@ -4751,14 +5089,14 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
 async def test_connect_to_sse_server_without_validation_error(monkeypatch):
     service = GatewayService()
 
-    class DummySSE:
+    class DummyClientCM:
         async def __aenter__(self):
             raise RuntimeError("boom")
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
 
     with pytest.raises(GatewayConnectionError):
         await service._connect_to_sse_server_without_validation("http://server")
@@ -4807,9 +5145,8 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def initialize(self):
-            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
-            return DummyResponse(capabilities=capabilities)
+        # MCP v2 Client exposes server_capabilities directly
+        server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
 
         async def list_tools(self):
             return DummyResponse(tools=[DummyTool()])
@@ -4818,19 +5155,21 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
             return DummyResponse(resources=[DummyResource()])
 
         async def list_resource_templates(self):
-            return DummyResponse(resourceTemplates=[DummyTemplate()])
+            return DummyResponse(resource_templates=[DummyTemplate()])
 
         async def list_prompts(self):
             return DummyResponse(prompts=[DummyPrompt()])
 
     class DummyStreamable:
+        """Mock for mcp_proxy_client — yields DummySession as the MCP Client."""
+
         def __init__(self, **kwargs):
             factory = kwargs.get("httpx_client_factory")
             if factory:
                 factory()
 
         async def __aenter__(self):
-            return ("read", "write", lambda: "session")
+            return DummySession()  # acts as MCP Client
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -4844,10 +5183,9 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.httpx.AsyncClient", lambda **_kw: SimpleNamespace())
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_default_verify", lambda: None)
-    monkeypatch.setattr("mcpgateway.services.gateway_service.get_http_timeout", lambda: None)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_httpx2_timeout", lambda: None)
     monkeypatch.setattr(service, "create_ssl_context", MagicMock(return_value="ctx"))
-    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **kw: DummyStreamable(**kw))
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **kw: DummyStreamable(**kw))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
 
     capabilities, tools, resources, prompts, validation_errors = await service.connect_to_streamablehttp_server("http://server", ca_certificate=b"cert")
@@ -4871,13 +5209,12 @@ async def test_connect_to_streamablehttp_server_error_path(monkeypatch):
 
     class DummyStreamable:
         async def __aenter__(self):
-            return ("read", "write", lambda: "session")
+            return ("read", "write")
 
         async def __aexit__(self, exc_type, exc, tb):
             return True
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **_kw: DummyStreamable())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyStreamable())
 
     with pytest.raises(GatewayConnectionError):
         await service.connect_to_streamablehttp_server("http://server")
@@ -4919,15 +5256,8 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             return {"name": "bad-prompt"}
 
     class DummySession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def initialize(self):
-            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
-            return DummyResponse(capabilities=capabilities)
+        # MCP v2 Client exposes server_capabilities directly
+        server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
 
         async def list_tools(self):
             return DummyResponse(tools=[DummyTool()])
@@ -4936,14 +5266,16 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             return DummyResponse(resources=[DummyResource()])
 
         async def list_resource_templates(self):
-            return DummyResponse(resourceTemplates=[DummyTemplate()])
+            return DummyResponse(resource_templates=[DummyTemplate()])
 
         async def list_prompts(self):
             return DummyResponse(prompts=[DummyPrompt()])
 
-    class DummySSE:
+    class DummyClientCM:
+        """Mock for mcp_proxy_client — yields DummySession as the MCP Client."""
+
         async def __aenter__(self):
-            return ("recv", "send")
+            return DummySession()
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -4961,8 +5293,7 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             raise ValueError("boom")
         return real_prompt_validate(data)
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
     monkeypatch.setattr("mcpgateway.services.gateway_service.PromptCreate.model_validate", _prompt_validate)
 
@@ -4978,22 +5309,19 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
 async def test_connect_to_sse_server_error_path(monkeypatch):
     service = GatewayService()
 
-    class DummySession:
-        async def __aenter__(self):
+    class DummyClient:
+        @property
+        def server_capabilities(self):
             raise RuntimeError("boom")
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class DummySSE:
+    class DummyClientCM:
         async def __aenter__(self):
-            return ("recv", "send")
+            return DummyClient()
 
         async def __aexit__(self, exc_type, exc, tb):
             return True
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
 
     with pytest.raises(GatewayConnectionError):
         await service.connect_to_sse_server("http://server")
@@ -5253,18 +5581,220 @@ async def test_fetch_tools_after_oauth_streamablehttp(gateway_service, monkeypat
     assert "capabilities" in result_data
 
 
+@pytest.fixture
+def oauth_catalog_db(gateway_service, test_db, monkeypatch):
+    """Use real catalog persistence while isolating remote OAuth and cache calls."""
+    gateway = DbGateway(
+        name=f"oauth-catalog-{uuid4().hex}",
+        url="https://example.com/mcp",
+        transport="streamablehttp",
+        oauth_config={"grant_type": "authorization_code"},
+        visibility="public",
+        capabilities={},
+    )
+    test_db.add(gateway)
+    test_db.commit()
+    gateway_id = gateway.id
+    token_storage = SimpleNamespace(get_user_token=AsyncMock(return_value="token"), get_user_learned_audience=AsyncMock(return_value=(None, None)))
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", Mock(return_value=token_storage))
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service._get_registry_cache", lambda: SimpleNamespace(invalidate_tools=AsyncMock(), invalidate_resources=AsyncMock(), invalidate_prompts=AsyncMock())
+    )
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: SimpleNamespace(invalidate_gateway=AsyncMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", Mock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    def add_tool(original_name="local_lookup", created_via="ui", visibility="public"):
+        tool = gateway_service._create_db_tool(ToolCreate(name=original_name, description="original", input_schema={"type": "object"}), gateway)
+        tool.gateway = gateway
+        tool.custom_name = "search"
+        tool.custom_name_slug = "search"
+        tool.created_via = created_via
+        tool.visibility = visibility
+        test_db.add(tool)
+        test_db.commit()
+        return tool
+
+    yield test_db, gateway, add_tool
+    test_db.rollback()
+    test_db.execute(delete(DbTool).where(DbTool.gateway_id == gateway_id))
+    test_db.execute(delete(DbGateway).where(DbGateway.id == gateway_id))
+    test_db.commit()
+
+
 @pytest.mark.asyncio
-async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch):
+@pytest.mark.parametrize("created_via", ["ui", "api", None], ids=["ui", "api", "legacy"])
+async def test_fetch_tools_after_oauth_rejects_retained_alias_collision(gateway_service, oauth_catalog_db, created_via):
+    db, gateway, add_tool = oauth_catalog_db
+    retained = add_tool(created_via=created_via)
+    retained_id = retained.id
+    incoming = ToolCreate(name="search", description="discovered", input_schema={"type": "object"})
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [incoming], [], [], []))
+    db.commit = Mock(wraps=db.commit)
+    db.rollback = Mock(wraps=db.rollback)
+
+    with pytest.raises(GatewayToolNameConflictError):
+        await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
+    persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
+    assert [(tool.id, tool.original_name, tool.description, tool.created_via) for tool in persisted] == [(retained_id, "local_lookup", "original", created_via)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("created_via", ["oauth", "notification_service"])
+async def test_fetch_tools_after_oauth_replaces_stale_discovered_alias(gateway_service, oauth_catalog_db, created_via):
+    db, gateway, add_tool = oauth_catalog_db
+    stale = add_tool(created_via=created_via)
+    stale_id, invocation_name = stale.id, stale.name
+    incoming = ToolCreate(name="search", description="discovered", input_schema={"type": "object"})
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [incoming], [], [], []))
+
+    await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
+    assert len(persisted) == 1
+    assert persisted[0].id != stale_id
+    assert (persisted[0].original_name, persisted[0].name, persisted[0].created_via) == ("search", invocation_name, "oauth")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("incoming_name,retained_visibility", [("local_lookup", "public"), ("fresh", "public"), ("search", "private")], ids=["same-original", "different-name", "different-scope"])
+async def test_fetch_tools_after_oauth_keeps_nonconflicting_local_tools(gateway_service, oauth_catalog_db, incoming_name, retained_visibility):
+    db, gateway, add_tool = oauth_catalog_db
+    retained = add_tool(visibility=retained_visibility)
+    retained_id = retained.id
+    incoming = ToolCreate(name=incoming_name, description="discovered", input_schema={"type": "object"})
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [incoming], [], [], []))
+
+    await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    persisted = db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()
+    assert {tool.original_name for tool in persisted} == {"local_lookup", incoming_name}
+    assert db.get(DbTool, retained_id).created_via == "ui"
+    assert db.get(DbTool, retained_id).description == ("discovered" if incoming_name == "local_lookup" else "original")
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_empty_catalog_keeps_existing_aliases(gateway_service, oauth_catalog_db):
+    db, gateway, add_tool = oauth_catalog_db
+    first = add_tool()
+    second = add_tool(original_name="another_local", created_via="api")
+    retained_ids = {first.id, second.id}
+    assert first.name == second.name
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({}, [], [], [], []))
+
+    await gateway_service.fetch_tools_after_oauth(db, gateway.id, "user@example.com")
+
+    assert {tool.id for tool in db.execute(select(DbTool).where(DbTool.gateway_id == gateway.id)).scalars().all()} == retained_ids
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_empty_catalog_preserves_existing_items(gateway_service, monkeypatch, caplog):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "streamablehttp"
+    gateway.tools = [SimpleNamespace(id=1, original_name="existing-tool", created_via="oauth")]
+    gateway.resources = [SimpleNamespace(id=2, uri="existing://resource", created_via="oauth")]
+    gateway.prompts = [SimpleNamespace(id=3, original_name="existing-prompt", created_via="oauth")]
+
+    db = MagicMock()
+    # Mock the EmailUser lookup used to build user_context for token storage
+    mock_user = MagicMock()
+    mock_user.is_admin = False
+
+    gateway_result = MagicMock()
+    gateway_result.scalar_one_or_none.return_value = gateway
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = mock_user
+
+    # Record every statement so the test can assert that no DELETE is issued.
+    executed_statements = []
+    lookup_results = [gateway_result, user_result]
+
+    def mock_execute(statement, *args, **kwargs):
+        executed_statements.append(statement)
+        if len(executed_statements) <= len(lookup_results):
+            return lookup_results[len(executed_statements) - 1]
+        # Any further statement would be part of the stale cleanup this guard prevents
+        return MagicMock()
+
+    db.execute.side_effect = mock_execute
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
+
+    class DummyTokenStorage:
+        def __init__(self, _db, user_context=None):
+            self.db = _db
+            self.user_context = user_context
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "token"
+
+        async def get_user_learned_audience(self, _gateway_id, _email):
+            return (None, None)
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({}, [], [], [], []))
+    gateway_service._update_or_create_tools = MagicMock(return_value=[])
+    gateway_service._update_or_create_resources = MagicMock(return_value=[])
+    gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+    registry_cache = SimpleNamespace(
+        invalidate_tools=AsyncMock(),
+        invalidate_resources=AsyncMock(),
+        invalidate_prompts=AsyncMock(),
+    )
+    tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    with caplog.at_level(logging.WARNING):
+        await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+    assert gateway.tools[0].original_name == "existing-tool"
+    assert gateway.resources[0].uri == "existing://resource"
+    assert gateway.prompts[0].original_name == "existing-prompt"
+    assert [statement for statement in executed_statements if isinstance(statement, Delete)] == []
+    assert "preserving existing items" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial_catalog", [False, True], ids=["full-catalog", "tools-only-catalog"])
+async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch, caplog, partial_catalog):
     gateway = MagicMock(spec=DbGateway)
     gateway.id = "gw-1"
     gateway.name = "gw"
     gateway.oauth_config = {"grant_type": "authorization_code"}
     gateway.transport = "sse"
-    gateway.tools = [SimpleNamespace(id=1, original_name="old-tool"), SimpleNamespace(id=2, original_name="keep-tool")]
-    gateway.resources = [SimpleNamespace(id=3, uri="old://res"), SimpleNamespace(id=4, uri="keep://res")]
-    gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt"), SimpleNamespace(id=6, original_name="keep-prompt")]
+    gateway.tools = [
+        SimpleNamespace(id=1, original_name="old-tool", created_via="oauth", name="gw-old-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=2, original_name="keep-tool", created_via="oauth", name="gw-keep-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=7, original_name="ui-tool", created_via="ui", name="gw-ui-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=10, original_name="notify-tool", created_via="notification_service", name="gw-notify-tool", visibility="public", team_id=None, owner_email=None),
+    ]
+    gateway.resources = [
+        SimpleNamespace(id=3, uri="old://res", created_via="oauth"),
+        SimpleNamespace(id=4, uri="keep://res", created_via="oauth"),
+        SimpleNamespace(id=8, uri="api://res", created_via="api"),
+    ]
+    gateway.prompts = [
+        SimpleNamespace(id=5, original_name="old-prompt", created_via="oauth"),
+        SimpleNamespace(id=6, original_name="keep-prompt", created_via="oauth"),
+        SimpleNamespace(id=9, original_name="ui-prompt", created_via="ui"),
+    ]
     gateway.capabilities = {}
     gateway.last_seen = None
+    gateway.visibility = "public"
+    gateway.team_id = None
+    gateway.owner_email = None
 
     db = MagicMock()
     # Mock EmailUser and EmailTeamMember queries for user_context building
@@ -5313,7 +5843,13 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
 
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
     gateway_service._connect_to_sse_server_without_validation = AsyncMock(
-        return_value=({"resources": True, "prompts": True}, [SimpleNamespace(name="keep-tool")], [SimpleNamespace(uri="keep://res")], [SimpleNamespace(name="keep-prompt")], [])
+        return_value=(
+            {"resources": True, "prompts": True},
+            [SimpleNamespace(name="keep-tool")],
+            [] if partial_catalog else [SimpleNamespace(uri="keep://res")],
+            [] if partial_catalog else [SimpleNamespace(name="keep-prompt")],
+            [],
+        )
     )
     gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
     gateway_service._update_or_create_resources = MagicMock(return_value=[MagicMock()])
@@ -5330,12 +5866,23 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
     monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
-    result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+    with caplog.at_level(logging.WARNING):
+        result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
 
     assert result_data["capabilities"]["resources"] is True
-    assert len(gateway.tools) == 1
-    assert len(gateway.resources) == 1
-    assert len(gateway.prompts) == 1
+    assert {tool.original_name for tool in gateway.tools} == {"keep-tool", "ui-tool"}
+    assert {resource.uri for resource in gateway.resources} == ({"api://res"} if partial_catalog else {"keep://res", "api://res"})
+    assert {prompt.original_name for prompt in gateway.prompts} == ({"ui-prompt"} if partial_catalog else {"keep-prompt", "ui-prompt"})
+    assert "preserving existing items" not in caplog.text
+
+    deletes = [call.args[0] for call in db.execute.call_args_list if isinstance(call.args[0], Delete)]
+    deleted_ids = {statement.table.name: set(next(iter(statement.compile().params.values()))) for statement in deletes}
+    # notify-tool carries created_via="notification_service", which MCP_SYNC_CREATED_VIA_VALUES
+    # treats as MCP-discovered, so a stale one is pruned like any other discovered entry.
+    assert deleted_ids[DbTool.__tablename__] == {1, 10}
+    assert deleted_ids[DbResource.__tablename__] == ({3, 4} if partial_catalog else {3})
+    assert deleted_ids[DbPrompt.__tablename__] == ({5, 6} if partial_catalog else {5})
+    assert set().union(*deleted_ids.values()) == ({1, 3, 4, 5, 6, 10} if partial_catalog else {1, 3, 5, 10})
 
 
 # ---------------------------------------------------------------------------
@@ -5773,7 +6320,9 @@ class TestUpdateOrCreateResources:
         result = gateway_service._update_or_create_resources(MagicMock(), [], mock_gateway, "test")
         assert result == []
 
-    def test_new_resource_created(self, gateway_service, mock_gateway):
+    def test_new_resource_created(self, gateway_service):
+        """New resources carry a real gateway relationship before persistence."""
+        mock_gateway = DbGateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
@@ -5792,6 +6341,8 @@ class TestUpdateOrCreateResources:
         existing = MagicMock()
         existing.uri = "file:///res"
         existing.name = "old-name"
+        existing.original_name = "old-name"
+        existing.custom_name_slug = "old-name"
         existing.description = "old"
         existing.mime_type = "text/plain"
         existing.uri_template = None
@@ -5808,7 +6359,9 @@ class TestUpdateOrCreateResources:
         mock_gateway.visibility = "public"
         result = gateway_service._update_or_create_resources(db, [resource], mock_gateway, "update")
         assert result == []
-        assert existing.name == "new-name"
+        assert existing.original_name == "new-name"
+        assert existing.custom_name_slug == "new-name"
+        assert existing.name == "old-name"  # Recomposition is owned by the ORM listener.
         assert existing.mime_type == "text/html"
 
     def test_existing_resource_title_updated(self, gateway_service, mock_gateway):
@@ -5816,6 +6369,8 @@ class TestUpdateOrCreateResources:
         existing = SimpleNamespace(
             uri="file:///res",
             name="res",
+            original_name="res",
+            custom_name_slug="res",
             description="desc",
             mime_type="text/plain",
             uri_template=None,
@@ -5837,7 +6392,9 @@ class TestUpdateOrCreateResources:
         assert result == []
         assert existing.title == "new title"
 
-    def test_none_resource_skipped(self, gateway_service, mock_gateway):
+    def test_none_resource_skipped(self, gateway_service):
+        """An invalid catalog entry does not discard valid resource entries."""
+        mock_gateway = DbGateway(id="gw-1", name="gateway", slug="gateway", url="https://example.com", capabilities={})
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         resource = SimpleNamespace(
@@ -6196,6 +6753,72 @@ class TestSetGatewayState:
         # Should still activate even if initialization fails (logs warning)
         result = await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
         assert gw.enabled is True
+
+    @pytest.mark.asyncio
+    async def test_reactivation_collision_removes_provisional_active_gateway(self, gateway_service, _mock_caches):
+        """Failed reactivation removes URL added before catalog validation."""
+        gw = _make_gateway(
+            id="gw-1",
+            name="prod",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="prod",
+            auth_type=None,
+            auth_query_params=None,
+            oauth_config=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._active_gateways = set()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="search")], [], [], []))
+        gateway_service._sync_gateway_catalog = MagicMock(side_effect=GatewayToolNameConflictError("prod-search"))
+
+        with pytest.raises(GatewayToolNameConflictError):
+            await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
+
+        assert gw.url not in gateway_service._active_gateways
+        db.rollback.assert_called_once()
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_collision_rolls_back_and_preserves_existing_active_entry(self, gateway_service, _mock_caches):
+        """Outer collision handler rolls back without removing pre-existing active URL."""
+        gw = _make_gateway(
+            id="gw-1",
+            name="prod",
+            url="http://example.com",
+            enabled=False,
+            reachable=False,
+            capabilities={},
+            tools=[],
+            resources=[],
+            prompts=[],
+            updated_at=datetime.now(timezone.utc),
+            team_id=None,
+            slug="prod",
+            auth_type=None,
+            auth_query_params=None,
+            oauth_config=None,
+            version=1,
+        )
+        db = self._make_db_for_state(gw)
+        gateway_service._active_gateways = {gw.url}
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="search")], [], [], []))
+        gateway_service._sync_gateway_catalog = MagicMock(side_effect=GatewayToolNameConflictError("prod-search"))
+
+        with pytest.raises(GatewayToolNameConflictError):
+            await gateway_service.set_gateway_state(db, "gw-1", activate=True, reachable=True)
+
+        assert gw.url in gateway_service._active_gateways
+        db.rollback.assert_called_once()
+        db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_generic_exception_raises_gateway_error(self, gateway_service, _mock_caches):
@@ -6574,6 +7197,47 @@ class TestHandleGatewayFailureThreshold:
 
 
 class TestMarkGatewayReachableErrorCleanup:
+    @pytest.mark.asyncio
+    async def test_catalog_conflict_recovers_reachability_without_failure_handling(self, gateway_service, monkeypatch):
+        """Healthy gateway remains reachable when catalog rediscovery finds a collision."""
+        status_db = MagicMock()
+        status_db.__enter__ = MagicMock(return_value=status_db)
+        status_db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=status_db))
+        gateway_service.set_gateway_state = AsyncMock(side_effect=GatewayToolNameConflictError("prod-search"))
+        gateway_service._recover_gateway_reachability_after_catalog_conflict = AsyncMock()
+
+        await gateway_service._mark_gateway_reachable("gw-1", "prod", True, False)
+
+        gateway_service._recover_gateway_reachability_after_catalog_conflict.assert_awaited_once_with("gw-1", "prod")
+
+    @pytest.mark.asyncio
+    async def test_catalog_conflict_recovery_marks_existing_catalog_reachable(self, gateway_service, monkeypatch):
+        """Fallback restores gateway and existing tool reachability without catalog sync."""
+        recovered = SimpleNamespace(id="gw-1", url="https://prod.example", enabled=True, reachable=False, last_seen=None, last_error="outage", updated_at=None)
+        recovery_db = MagicMock()
+        recovery_db.__enter__ = MagicMock(return_value=recovery_db)
+        recovery_db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=recovery_db))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", Mock(return_value=recovered))
+        cache = MagicMock()
+        cache.invalidate_gateways = AsyncMock()
+        cache.invalidate_tools = AsyncMock()
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", Mock(return_value=cache))
+        tool_cache = MagicMock()
+        tool_cache.invalidate_gateway = AsyncMock()
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", Mock(return_value=tool_cache))
+
+        await gateway_service._recover_gateway_reachability_after_catalog_conflict("gw-1", "prod")
+
+        assert recovered.reachable is True
+        assert recovered.last_error is None
+        assert "https://prod.example" in gateway_service._active_gateways
+        recovery_db.commit.assert_called_once()
+        cache.invalidate_gateways.assert_awaited_once()
+        cache.invalidate_tools.assert_awaited_once()
+        tool_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
+
     @pytest.mark.asyncio
     async def test_recovery_clears_last_error_for_enabled_gateway(self, gateway_service, monkeypatch):
         """A successful probe of an enabled gateway removes the previous outage reason."""
@@ -9674,7 +10338,7 @@ class TestMtlsDecryptExceptionBranches:
 
 def test_resolve_tool_title():
     # Third-Party
-    from mcp.types import Tool as MCPTool
+    from mcp_types import Tool as MCPTool
 
     # First-Party
     from mcpgateway.services.gateway_service import _resolve_tool_title
@@ -10176,7 +10840,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         # Third-Party
         import jwt as pyjwt  # pylint: disable=import-outside-toplevel
 
-        return pyjwt.encode(claims, "test-key", algorithm="HS256")
+        return pyjwt.encode(claims, "unit-test-signing-key-0123456789abcdef", algorithm="HS256")  # pragma: allowlist secret
 
     @staticmethod
     def _mock_gateway(oauth_config: dict, url: str = "https://mcp.example.com/deep/path") -> MagicMock:
@@ -10350,6 +11014,44 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
             mock_connect.assert_not_awaited()
 
 
+class TestStaleCatalogPruning:
+    """Prune safelist: rows created by automated MCP sync paths are removable, user-created rows are not."""
+
+    def test_notification_service_rows_are_prunable(self):
+        """A stale tool ingested via a change notification must be pruned; user-created rows must survive."""
+        assert "notification_service" in MCP_SYNC_CREATED_VIA_VALUES
+        assert "api" not in MCP_SYNC_CREATED_VIA_VALUES
+        assert "ui" not in MCP_SYNC_CREATED_VIA_VALUES
+
+        stale_notif = MagicMock(id="t-notif", original_name="gone_tool", created_via="notification_service")
+        user_made = MagicMock(id="t-ui", original_name="user_tool", created_via="ui")
+        gateway = MagicMock()
+        gateway.tools = [stale_notif, user_made]
+        gateway.resources = []
+        gateway.prompts = []
+
+        catalog_sync = GatewayCatalogSyncResult(
+            new_tool_names=[],  # the server no longer offers any of these tools
+            new_resource_uris=None,
+            new_prompt_names=None,
+            tools_to_add=[],
+            resources_to_add=[],
+            prompts_to_add=[],
+        )
+
+        service = GatewayService()
+        result = service._reconcile_gateway_catalog(
+            MagicMock(),
+            gateway=gateway,
+            catalog_sync=catalog_sync,
+            log_context="unit test",
+            stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+        )
+
+        assert result.tools_removed == 1
+        assert gateway.tools == [user_made]  # ui-created row survives the prune
+
+
 class TestGatewayImpactPreviewTeamResolution:
     """Regression tests for impact-preview team-membership resolution."""
 
@@ -10409,3 +11111,81 @@ class TestGatewayImpactPreviewTeamResolution:
         assert len(result.servers) == 1
         mock_team_service.assert_not_called()
         mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)
+
+
+# ---------------------------------------------------------------------------
+# test_gateway_handshake: legacy-mode discover skip (finding #4)
+# ---------------------------------------------------------------------------
+
+
+class TestGatewayHandshakeLegacyDiscoverSkip:
+    """Verify server/discover probe is skipped when MCP_CLIENT_CONNECT_MODE=legacy."""
+
+    _FAKE_TARGET = {
+        "validated_base_url": "http://example.com",
+        "validated_hostname": "example.com",
+        "pinned_base_url": "http://127.0.0.1",
+        "resolved_ip": "127.0.0.1",
+        "original_authority": "example.com",
+    }
+
+    @pytest.mark.asyncio
+    async def test_legacy_mode_skips_discover_probe(self, monkeypatch):
+        """ResilientHttpClient must NOT be entered for discover when mode is legacy."""
+        from mcpgateway.schemas import GatewayHandshakeRequest  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.gateway_service import test_gateway_handshake  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr("mcpgateway.config.settings.mcp_client_connect_mode", "legacy")
+
+        with (
+            patch("mcpgateway.services.gateway_service._validate_gateway_test_target", new=AsyncMock(return_value=self._FAKE_TARGET)),
+            patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_resilient,
+            # Let the SDK fallback path raise so we don't need full session mocking
+            patch("mcpgateway.services.gateway_service.streamable_http_client", side_effect=ConnectionError("expected")),
+        ):
+            db = MagicMock()
+            db.execute.return_value.scalars.return_value.first.return_value = None
+
+            result = await test_gateway_handshake(
+                request=GatewayHandshakeRequest(base_url="http://example.com"),
+                team_id=None,
+                user={"email": "test@example.com"},
+                db=db,
+            )
+
+        # Discover probe uses ResilientHttpClient — must not be instantiated in legacy mode
+        mock_resilient.assert_not_called()
+        assert result.success is False  # SDK fallback failed as expected
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_attempts_discover_probe(self, monkeypatch):
+        """ResilientHttpClient MUST be entered for discover when mode is auto."""
+        from mcpgateway.schemas import GatewayHandshakeRequest  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.gateway_service import test_gateway_handshake  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr("mcpgateway.config.settings.mcp_client_connect_mode", "auto")
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(side_effect=httpx.ConnectError("expected"))
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.services.gateway_service._validate_gateway_test_target", new=AsyncMock(return_value=self._FAKE_TARGET)),
+            patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_ctx) as mock_resilient,
+            # SDK fallback also fails — we just need to confirm discover was tried
+            patch("mcpgateway.services.gateway_service.streamable_http_client", side_effect=ConnectionError("expected")),
+        ):
+            db = MagicMock()
+            db.execute.return_value.scalars.return_value.first.return_value = None
+
+            result = await test_gateway_handshake(
+                request=GatewayHandshakeRequest(base_url="http://example.com"),
+                team_id=None,
+                user={"email": "test@example.com"},
+                db=db,
+            )
+
+        # Discover probe was attempted (ResilientHttpClient was instantiated)
+        mock_resilient.assert_called_once()
