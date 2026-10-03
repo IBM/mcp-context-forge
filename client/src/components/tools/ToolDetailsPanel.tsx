@@ -205,9 +205,12 @@ export function ToolDetailsPanel({
               {selectedTool && (
                 <>
                   <div className="border-b border-border p-4 pt-8">
-                    <h3 className="mb-7 text-sm font-semibold text-foreground">
-                      {intl.formatMessage({ id: "tools.details.componentDetails" })}
-                    </h3>
+                    <div className="mb-7 flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">
+                        {intl.formatMessage({ id: "tools.details.componentDetails" })}
+                      </h3>
+                      {selectedTool.deprecated && <Badge variant="secondary">Deprecated</Badge>}
+                    </div>
 
                     <dl className="space-y-4">
                       <DetailRow label={intl.formatMessage({ id: "tools.details.label.status" })}>

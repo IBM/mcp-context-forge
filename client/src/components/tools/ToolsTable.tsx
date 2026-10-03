@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useIntl } from "react-intl";
 import { Copy, MoreHorizontal } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -81,7 +82,10 @@ export function ToolsTable({
               className="cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
             >
               <TableCell className="px-4 py-3 text-sm text-foreground">
-                <span className="line-clamp-1">{tool.displayName || tool.title || tool.name}</span>
+                <div className="flex items-center gap-2">
+                  <span className="line-clamp-1">{tool.displayName || tool.title || tool.name}</span>
+                  {tool.deprecated && <Badge variant="secondary">Deprecated</Badge>}
+                </div>
               </TableCell>
 
               <TableCell className="px-4 py-3">
