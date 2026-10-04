@@ -191,14 +191,30 @@ class OpenFgaRuleProvider(DbRuleProvider):
         try:
             allowed = await self._client.check(user, relation, f"{capability}:all", contextual_tuples=contextual or None)
         except OpenFgaUnavailable as exc:
-            logger.error("OpenFGA check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, exc)
-            allowed = False
+            if "400" in str(exc) and contextual:
+                logger.debug("Contextual tuples rejected (model mismatch); retrying without: %s", exc)
+                try:
+                    allowed = await self._client.check(user, relation, f"{capability}:all")
+                except OpenFgaUnavailable as retry_exc:
+                    logger.error("OpenFGA check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, retry_exc)
+                    allowed = False
+            else:
+                logger.error("OpenFGA check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, exc)
+                allowed = False
         if not allowed and resource_id:
             try:
                 allowed = await self._client.check(user, relation, f"{capability}:{resource_id}", contextual_tuples=contextual or None)
             except OpenFgaUnavailable as exc:
-                logger.error("OpenFGA entity check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, exc)
-                allowed = False
+                if "400" in str(exc) and contextual:
+                    logger.debug("Contextual tuples rejected on entity check; retrying without: %s", exc)
+                    try:
+                        allowed = await self._client.check(user, relation, f"{capability}:{resource_id}")
+                    except OpenFgaUnavailable as retry_exc:
+                        logger.error("OpenFGA entity check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, retry_exc)
+                        allowed = False
+                else:
+                    logger.error("OpenFGA entity check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, exc)
+                    allowed = False
         if allowed and resource_id:
             blocked = await self._check(user, "blocked", f"{capability}:{resource_id}")
             if blocked:
