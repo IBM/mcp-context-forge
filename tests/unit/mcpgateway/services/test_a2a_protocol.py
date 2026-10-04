@@ -258,6 +258,22 @@ class TestNormalizeTaskState:
         assert _normalize_task_state("TASK_STATE_COMPLETED", "0.3") == "completed"
         assert _normalize_task_state("TASK_STATE_WORKING", "0.3") == "working"
 
+    def test_v1_to_legacy_uses_hyphenated_v03_values(self):
+        assert _normalize_task_state("TASK_STATE_INPUT_REQUIRED", "0.3") == "input-required"
+        assert _normalize_task_state("TASK_STATE_AUTH_REQUIRED", "0.3") == "auth-required"
+
+    @pytest.mark.parametrize(
+        "legacy_state",
+        ["submitted", "working", "input-required", "completed", "canceled", "failed", "rejected", "auth-required"],
+    )
+    def test_v03_state_round_trips(self, legacy_state):
+        v1_state = _normalize_task_state(legacy_state, "1.0")
+        assert _normalize_task_state(v1_state, "0.3") == legacy_state
+
+    def test_underscore_spellings_still_accepted_on_input(self):
+        assert _normalize_task_state("input_required", "1.0") == "TASK_STATE_INPUT_REQUIRED"
+        assert _normalize_task_state("auth_required", "1.0") == "TASK_STATE_AUTH_REQUIRED"
+
     def test_unknown_state_passes_through(self):
         assert _normalize_task_state("custom_state", "1.0") == "custom_state"
 
