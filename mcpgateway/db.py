@@ -3382,6 +3382,7 @@ class Tool(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
@@ -3764,6 +3765,7 @@ class Resource(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
@@ -4164,6 +4166,7 @@ class Prompt(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
@@ -4493,6 +4496,12 @@ class Server(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    # Tool parameters the operator forces into x-mcp-header annotations
+    # for every tool served through this virtual server, regardless of
+    # whether the originating tool schema marks them. The gateway unions
+    # these with rule-catalog args.* references when annotating tools/list.
+    forced_header_params: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
@@ -4791,6 +4800,12 @@ class Gateway(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    # Tool parameters the operator forces into x-mcp-header annotations
+    # for every tool served through this virtual server, regardless of
+    # whether the originating tool schema marks them. The gateway unions
+    # these with rule-catalog args.* references when annotating tools/list.
+    forced_header_params: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
@@ -5057,6 +5072,7 @@ class A2AAgent(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
@@ -5422,6 +5438,7 @@ class GrpcService(Base):
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
