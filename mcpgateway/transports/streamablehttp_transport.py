@@ -1443,6 +1443,7 @@ async def _check_streamable_permission(
     allow_admin_bypass: bool = True,
     check_any_team: bool = False,
     args: Optional[Dict[str, str]] = None,
+    resource_id: Optional[str] = None,
 ) -> bool:
     """Evaluate RBAC permission for a Streamable HTTP request context.
 
@@ -1452,6 +1453,7 @@ async def _check_streamable_permission(
         allow_admin_bypass: Whether unrestricted admin tokens can bypass team checks.
         check_any_team: Whether any matching team grants permission.
         args: Tool arguments from Mcp-Param-* headers, when present.
+        resource_id: The tool name for entity-scoped rules, when present.
 
     Returns:
         bool: ``True`` when the caller is authorized for ``permission``.
@@ -1474,6 +1476,7 @@ async def _check_streamable_permission(
                 token_is_admin=bool(is_trusted and user_context.get("is_admin")),
                 token_roles=list(user_context.get("roles") or []) if is_trusted else None,
                 args=args,
+                resource_id=resource_id,
             )
             if not granted:
                 logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
