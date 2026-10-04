@@ -449,7 +449,6 @@ class TestRelationshipModel:
         session = sessionmaker(bind=engine)()
         session.add(EmailTeam(id="t-eng", name="engineering", slug="engineering", created_by="admin@example.com"))
         session.add(EmailTeamMember(team_id="t-eng", user_email="anne@example.com", user_id="anne", role="owner", is_active=True))
-        session.add(EmailTeamMember(team_id="t-eng", user_email="bob@example.com", user_id="bob", role="member", is_active=True))
         session.flush()
 
         svc = RelationshipSyncService(session, _FakeClient())

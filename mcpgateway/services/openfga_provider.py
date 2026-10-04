@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
 from mcpgateway.services.openfga_client import OpenFgaClient, OpenFgaUnavailable
-from mcpgateway.services.openfga_sync import relation_for
+from mcpgateway.services.openfga_sync import build_contextual_domain_tuples, relation_for
 from mcpgateway.services.rule_catalog_service import capability_for_permission
 from mcpgateway.services.rule_provider import DbRuleProvider
 
@@ -177,9 +177,28 @@ class OpenFgaRuleProvider(DbRuleProvider):
             return bool(cached)
 
         user = f"user:{user_email}"
-        allowed = await self._check(user, relation, f"{capability}:all")
+
+        # Build contextual domain tuples from JWT claims or the database
+        # fallback. The relationship model consumes them through
+        # tupleToUserset; the flat model ignores them.
+        contextual = build_contextual_domain_tuples(
+            self.db,
+            user_email,
+            token_teams=token_teams,
+            token_roles=token_roles,
+        )
+
+        try:
+            allowed = await self._client.check(user, relation, f"{capability}:all", contextual_tuples=contextual or None)
+        except OpenFgaUnavailable as exc:
+            logger.error("OpenFGA check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, exc)
+            allowed = False
         if not allowed and resource_id:
-            allowed = await self._check(user, relation, f"{capability}:{resource_id}")
+            try:
+                allowed = await self._client.check(user, relation, f"{capability}:{resource_id}", contextual_tuples=contextual or None)
+            except OpenFgaUnavailable as exc:
+                logger.error("OpenFGA entity check failed (fail-closed deny): user=%s relation=%s error=%s", user, relation, exc)
+                allowed = False
         if allowed and resource_id:
             blocked = await self._check(user, "blocked", f"{capability}:{resource_id}")
             if blocked:
