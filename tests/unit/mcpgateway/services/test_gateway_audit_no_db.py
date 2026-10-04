@@ -109,6 +109,54 @@ class TestGatewayAuditNoDb:
                 await gateway_service.register_gateway(db, GatewayCreate(name="g", url="https://example.com", transport="SSE"))
             db.commit.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_register_gateway_async_lifecycle_audit_trail(self, gateway_service, db):
+        """Async gateway creation (pending) must also log an audit trail entry."""
+        with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger"):
+            mock_audit.log_action = MagicMock(return_value=None)
+            db.execute = Mock(return_value=_make_execute_result(scalar=None))
+            db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock(); db.add_all = Mock()
+            monkeypatch = pytest.MonkeyPatch()
+            monkeypatch.setattr("mcpgateway.services.gateway_service.settings.gateway_async_lifecycle_enabled", True)
+            gateway_service._prepare_gateway_registration = AsyncMock(
+                return_value=MagicMock(
+                    slug_name="g",
+                    normalized_url="https://example.com",
+                    auth_type=None,
+                    auth_value=None,
+                    authentication_headers=None,
+                    auth_query_params_encrypted=None,
+                    auth_query_params_decrypted=None,
+                    init_url="https://example.com",
+                    oauth_config=None,
+                    ca_certificate=None,
+                    init_client_cert=None,
+                    init_client_key=None,
+                    gateway_mode="cache",
+                )
+            )
+            gateway_service._encrypt_client_key = AsyncMock(return_value=None)
+            gateway_service.convert_gateway_to_read = MagicMock(return_value=MagicMock(skipped_tools=[]))
+            try:
+                await gateway_service.register_gateway(
+                    db,
+                    GatewayCreate(name="g", url="https://example.com", transport="SSE"),
+                    created_by="test-user",
+                    created_from_ip="127.0.0.1",
+                    created_via="api",
+                    created_user_agent="test-agent",
+                )
+                mock_audit.log_action.assert_called_once()
+                call_kwargs = mock_audit.log_action.call_args.kwargs
+                assert call_kwargs.get("action") == "create_gateway"
+                assert call_kwargs.get("resource_type") == "gateway"
+                assert call_kwargs.get("user_id") == "test-user"
+                assert call_kwargs.get("client_ip") == "127.0.0.1"
+                assert call_kwargs.get("user_agent") == "test-agent"
+                _assert_no_db_passed(mock_audit, expected_action="create_gateway", resource_type="gateway")
+            finally:
+                monkeypatch.undo()
+
     @pytest.mark.parametrize("async_lifecycle", [False, True])
     @pytest.mark.asyncio
     async def test_update_gateway(self, gateway_service, db, gateway_db, monkeypatch, async_lifecycle):

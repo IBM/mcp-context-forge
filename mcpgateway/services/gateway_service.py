@@ -1752,6 +1752,30 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         await admin_stats_cache.invalidate_tags()
 
         logger.info(f"Accepted gateway registration for async initialization: {SecurityValidator.sanitize_log_message(gateway.name)}")
+
+        # Structured logging: Audit trail for async gateway creation
+        audit_trail.log_action(
+            user_id=created_by or "system",
+            action="create_gateway",
+            resource_type="gateway",
+            resource_id=str(db_gateway.id),
+            resource_name=db_gateway.name,
+            user_email=owner_email,
+            team_id=team_id,
+            client_ip=created_from_ip,
+            user_agent=created_user_agent,
+            new_values={
+                "name": db_gateway.name,
+                "url": db_gateway.url,
+                "visibility": visibility,
+                "transport": db_gateway.transport,
+                "status": "pending",
+            },
+            context={
+                "created_via": created_via,
+            },
+        )
+
         return self.convert_gateway_to_read(db_gateway)
 
     async def register_gateway(
