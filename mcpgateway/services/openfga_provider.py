@@ -141,6 +141,7 @@ class OpenFgaRuleProvider(DbRuleProvider):
         check_any_team: bool = False,
         token_is_admin: bool = False,
         token_roles: Optional[List[str]] = None,
+        args: Optional[dict] = None,
     ) -> bool:
         """Answer the permission question through the engine.
 
@@ -162,6 +163,7 @@ class OpenFgaRuleProvider(DbRuleProvider):
             check_any_team: Unused by the engine path.
             token_is_admin: Admin flag from the token, when present.
             token_roles: Role names from the token, when present.
+            args: Tool arguments from Mcp-Param-* headers (SEP-2243).
 
         Returns:
             bool: The engine decision, or False when unreachable.
