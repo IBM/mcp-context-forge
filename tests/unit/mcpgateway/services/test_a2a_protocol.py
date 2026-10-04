@@ -209,6 +209,54 @@ class TestNormalizePart:
         result = _normalize_part(part, "1.0")
         assert result == {"data": "abc"}
 
+    def test_v0_3_file_bytes_to_v1(self):
+        part = {"kind": "file", "file": {"bytes": "AQI=", "mimeType": "image/png", "name": "a.png"}}
+        result = _normalize_part(part, "1.0")
+        assert result == {"raw": "AQI=", "mediaType": "image/png", "filename": "a.png"}
+
+    def test_v0_3_file_uri_to_v1(self):
+        part = {"kind": "file", "file": {"uri": "s3://bucket/a.png", "mimeType": "image/png", "name": "a.png"}}
+        result = _normalize_part(part, "1.0")
+        assert result == {"url": "s3://bucket/a.png", "mediaType": "image/png", "filename": "a.png"}
+
+    def test_v0_3_file_metadata_to_v1(self):
+        part = {
+            "kind": "file",
+            "file": {"bytes": "AQI=", "mimeType": "image/png", "name": "a.png"},
+            "metadata": {"source": "camera"},
+        }
+        result = _normalize_part(part, "1.0")
+        assert result == {
+            "raw": "AQI=",
+            "mediaType": "image/png",
+            "filename": "a.png",
+            "metadata": {"source": "camera"},
+        }
+
+    def test_v1_raw_file_to_v0_3(self):
+        part = {"raw": "AQI=", "mediaType": "image/png", "filename": "a.png"}
+        result = _normalize_part(part, "0.3")
+        assert result == {"kind": "file", "file": {"bytes": "AQI=", "mimeType": "image/png", "name": "a.png"}}
+
+    def test_v1_file_metadata_to_v0_3(self):
+        part = {
+            "raw": "AQI=",
+            "mediaType": "image/png",
+            "filename": "a.png",
+            "metadata": {"source": "camera"},
+        }
+        result = _normalize_part(part, "0.3")
+        assert result == {
+            "kind": "file",
+            "file": {"bytes": "AQI=", "mimeType": "image/png", "name": "a.png"},
+            "metadata": {"source": "camera"},
+        }
+
+    def test_v1_url_file_to_v0_3(self):
+        part = {"url": "s3://bucket/a.png", "mediaType": "image/png", "filename": "a.png", "kind": "file"}
+        result = _normalize_part(part, "0.3")
+        assert result == {"kind": "file", "file": {"uri": "s3://bucket/a.png", "mimeType": "image/png", "name": "a.png"}}
+
     def test_legacy_adds_kind_from_discriminator(self):
         part = {"kind": "text", "text": "hello"}
         result = _normalize_part(part, "0.3")
@@ -239,7 +287,16 @@ class TestNormalizePart:
         result = _normalize_part(part, "0.3")
         assert "kind" not in result
 
+    def test_v1_media_metadata_without_file_content_does_not_become_file(self):
+        part = {
+            "data": "example",
+            "mediaType": "text/plain",
+            "filename": "example.txt",
+        }
 
+        result = _normalize_part(part, "0.3")
+
+        assert result["kind"] == "data"
 # ── _normalize_task_state ────────────────────────────────────────────────────
 
 
@@ -403,6 +460,31 @@ class TestNormalizeA2AParams:
         params = {"status": "completed"}
         result = normalize_a2a_params(params, "1.0")
         assert result["status"] == "TASK_STATE_COMPLETED"
+
+    def test_message_file_part_normalizes(self):
+        params = {
+            "message": {
+                "messageId": "m",
+                "role": "user",
+                "parts": [{"kind": "file", "file": {"bytes": "AQI=", "mimeType": "image/png", "name": "a.png"}}],
+            }
+        }
+        result = normalize_a2a_params(params, "1.0")
+        assert result["message"]["parts"][0] == {"raw": "AQI=", "mediaType": "image/png", "filename": "a.png"}
+
+    def test_message_v1_file_part_normalizes_to_v0_3(self):
+        params = {
+            "message": {
+                "messageId": "m",
+                "role": "user",
+                "parts": [{"raw": "AQI=", "mediaType": "image/png", "filename": "a.png"}],
+            }
+        }
+        result = normalize_a2a_params(params, "0.3")
+        assert result["message"]["parts"][0] == {
+            "kind": "file",
+            "file": {"bytes": "AQI=", "mimeType": "image/png", "name": "a.png"},
+        }
 
     def test_other_keys_passed_through(self):
         params = {"foo": "bar", "count": 5}
