@@ -390,3 +390,69 @@ async def test_resync_does_not_rewrite_existing_tuples(db_session):
     applied = await OpenFgaSyncService(db_session, fake).full_resync()
     assert fake.writes == []
     assert applied == 0
+
+
+class TestRelationshipModel:
+    """Tests for the relationship-based OpenFGA model."""
+
+    def test_domain_type_exists(self):
+        from mcpgateway.services.openfga_relationship_model import build_relationship_type_definitions
+
+        types = {t["type"]: t for t in build_relationship_type_definitions()}
+        assert "domain" in types
+        assert "member" in types["domain"]["relations"]
+        assert "admin" in types["domain"]["relations"]
+
+    def test_capability_types_have_parent(self):
+        from mcpgateway.services.openfga_relationship_model import build_relationship_type_definitions, ENTITY_TYPES
+
+        types = {t["type"]: t for t in build_relationship_type_definitions()}
+        for entity in ENTITY_TYPES:
+            assert entity in types, f"{entity} missing"
+            assert "parent" in types[entity]["relations"], f"{entity} lacks parent"
+            parent_subjects = types[entity]["metadata"]["relations"]["parent"]["directly_related_user_types"]
+            assert {"type": "domain"} in parent_subjects
+
+    def test_read_permissions_traverse_member(self):
+        """Read relations traverse parent → domain → member."""
+        from mcpgateway.services.openfga_relationship_model import build_relationship_type_definitions
+
+        types = {t["type"]: t for t in build_relationship_type_definitions()}
+        server = types["server"]
+        read_rel = server["relations"]["servers_read"]
+        assert "union" in read_rel
+        traversals = [c for c in read_rel["union"]["child"] if "tupleToUserset" in c]
+        assert len(traversals) == 1
+        assert traversals[0]["tupleToUserset"]["computedUserset"]["relation"] == "member"
+
+    def test_write_permissions_traverse_admin(self):
+        """Write relations traverse parent → domain → admin."""
+        from mcpgateway.services.openfga_relationship_model import build_relationship_type_definitions
+
+        types = {t["type"]: t for t in build_relationship_type_definitions()}
+        server = types["server"]
+        create_rel = server["relations"]["servers_create"]
+        assert "union" in create_rel
+        traversals = [c for c in create_rel["union"]["child"] if "tupleToUserset" in c]
+        assert len(traversals) == 1
+        assert traversals[0]["tupleToUserset"]["computedUserset"]["relation"] == "admin"
+
+    def test_relationship_sync_produces_domain_tuples(self):
+        """The sync maps team memberships to domain member/admin tuples."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from mcpgateway.db import Base, EmailTeam, EmailTeamMember
+        from mcpgateway.services.openfga_sync import RelationshipSyncService
+
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        session = sessionmaker(bind=engine)()
+        session.add(EmailTeam(id="t-eng", name="engineering", slug="engineering", created_by="admin@example.com"))
+        session.add(EmailTeamMember(team_id="t-eng", user_email="anne@example.com", user_id="anne", role="owner", is_active=True))
+        session.add(EmailTeamMember(team_id="t-eng", user_email="bob@example.com", user_id="bob", role="member", is_active=True))
+        session.flush()
+
+        svc = RelationshipSyncService(session, _FakeClient())
+        tuples = svc.desired_tuples()
+        assert ("user:anne@example.com", "admin", "domain:engineering") in tuples
+        assert ("user:bob@example.com", "member", "domain:engineering") in tuples
