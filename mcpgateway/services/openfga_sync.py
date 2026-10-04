@@ -315,3 +315,73 @@ async def openfga_reconciliation_loop() -> None:
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.error("OpenFGA reconciliation failed: %s", exc)
         await asyncio.sleep(settings.openfga_reconcile_seconds)
+
+
+class RelationshipSyncService(OpenFgaSyncService):
+    """Mirrors ContextForge state into the relationship-based OpenFGA model.
+
+    Extends the flat sync with domain hierarchy: team memberships become
+    member/admin relations on domain objects; resource-to-team assignments
+    become parent relations on capability objects. The flat model's
+    role-permission grants remain for global (platform-admin) checks.
+
+    The domain concept is deliberately abstract: it maps identically to
+    ContextForge teams (``email_teams``), Entra groups, or KeyCloak roles.
+    """
+
+    def desired_tuples(self) -> dict[tuple[str, str, str], Optional[dict[str, Any]]]:
+        """Compute the full desired tuple set including domain hierarchy.
+
+        Returns:
+            Set of (user, relation, object) tuple keys mapped to optional
+            condition payloads. Includes:
+            - Domain member/admin tuples (from email_team_members + user_roles)
+            - Resource parent tuples (from server/tool/etc team assignments)
+            - The flat model's role assignments and permission grants
+        """
+        tuples = super().desired_tuples()
+
+        # First-Party
+        from mcpgateway.db import EmailTeam, EmailTeamMember, Server, Tool  # pylint: disable=import-outside-toplevel
+
+        # Map team id → team name for domain references
+        teams = {t.id: t.name for t in self._db.execute(select(EmailTeam)).scalars()}
+
+        # Domain member tuples from email_team_members
+        for membership in self._db.execute(select(EmailTeamMember).where(EmailTeamMember.is_active.is_(True))).scalars():
+            team_name = teams.get(membership.team_id)
+            if not team_name:
+                continue
+            # member role → member relation; owner role → admin relation
+            relation = "admin" if membership.role == "owner" else "member"
+            tuples[(f"user:{membership.user_email}", relation, f"domain:{team_name}")] = None
+
+        # Domain admin tuples from user_roles with team scope and admin-level roles
+        now = datetime.now(timezone.utc)
+        for assignment in self._db.execute(
+            select(UserRole).where(
+                UserRole.is_active.is_(True),
+                or_(UserRole.expires_at.is_(None), UserRole.expires_at > now),
+                UserRole.scope == "team",
+                UserRole.scope_id.isnot(None),
+            )
+        ).scalars():
+            role = self._db.get(Role, assignment.role_id)
+            if role is None or role.name not in ("team_admin", "platform_admin"):
+                continue
+            team_name = teams.get(assignment.scope_id)
+            if not team_name:
+                continue
+            tuples[(f"user:{assignment.user_email}", "admin", f"domain:{team_name}")] = None
+
+        # Resource parent tuples: servers belong to teams
+        for server in self._db.execute(select(Server).where(Server.enabled.is_(True))).scalars():
+            if server.team_id and server.team_id in teams:
+                tuples[(f"server:{server.name}", "parent", f"domain:{teams[server.team_id]}")] = None
+
+        # Resource parent tuples: tools belong to teams (if assigned)
+        for tool in self._db.execute(select(Tool).where(Tool.enabled.is_(True))).scalars():
+            if tool.team_id and tool.team_id in teams:
+                tuples[(f"tool:{tool.name}", "parent", f"domain:{teams[tool.team_id]}")] = None
+
+        return tuples
