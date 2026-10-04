@@ -873,12 +873,16 @@ async def get_tool_attributes(
             from mcpgateway.db import Gateway as GatewayModel  # pylint: disable=import-outside-toplevel
 
             gw = db.get(GatewayModel, gateway_id)
+            if gw is None:
+                gw = db.execute(select(GatewayModel).where((GatewayModel.slug == gateway_id) | (GatewayModel.name == gateway_id))).scalar_one_or_none()
             if gw and isinstance(gw.forced_header_params, list):
                 forced_attrs.update(str(p) for p in gw.forced_header_params if p)
         if server_id:
             from mcpgateway.db import Server as ServerModel  # pylint: disable=import-outside-toplevel
 
             sv = db.get(ServerModel, server_id)
+            if sv is None:
+                sv = db.execute(select(ServerModel).where(ServerModel.name == server_id)).scalar_one_or_none()
             if sv and isinstance(sv.forced_header_params, list):
                 forced_attrs.update(str(p) for p in sv.forced_header_params if p)
 
@@ -916,6 +920,8 @@ async def set_gateway_forced_params(gateway_id: str, params: List[str], user=Dep
 
     gw = db.get(GatewayModel, gateway_id)
     if gw is None:
+        gw = db.execute(select(GatewayModel).where((GatewayModel.slug == gateway_id) | (GatewayModel.name == gateway_id))).scalar_one_or_none()
+    if gw is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gateway not found: {gateway_id}")
     gw.forced_header_params = sorted(set(params))
     db.commit()
@@ -943,6 +949,8 @@ async def set_server_forced_params(server_id: str, params: List[str], user=Depen
     from mcpgateway.db import Server as ServerModel  # pylint: disable=import-outside-toplevel
 
     sv = db.get(ServerModel, server_id)
+    if sv is None:
+        sv = db.execute(select(ServerModel).where(ServerModel.name == server_id)).scalar_one_or_none()
     if sv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Server not found: {server_id}")
     sv.forced_header_params = sorted(set(params))
