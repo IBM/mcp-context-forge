@@ -235,8 +235,8 @@ async def test_mcpclient_connect_disconnect_get_tools(monkeypatch):
     mock_instance.disconnect = AsyncMock(return_value=None)
     mock_instance.list_tools = AsyncMock(return_value=["ToolA"])
 
-    # Patch MultiServerMCPClient creation to return our async mock instance
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_instance))
+    # Patch the MCP tool source creation to return our async mock instance
+    monkeypatch.setattr(svc, "_MCPToolSource", MagicMock(return_value=mock_instance))
 
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
@@ -257,16 +257,18 @@ async def test_mcpclient_connect_disconnect_get_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcpclient_connect_logs_missing_dependencies_when_multiserver_client_missing(monkeypatch, patch_logger):
-    monkeypatch.setattr(svc, "MultiServerMCPClient", None)
+async def test_mcpclient_connect_reports_the_llmchat_import_error(monkeypatch, patch_logger):
+    import_error = ImportError("cannot import name 'RequestContext' from 'mcp.shared.context'")
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
+    monkeypatch.setattr(svc, "_LLMCHAT_IMPORT_ERROR", import_error)
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(ConnectionError, match="RequestContext"):
         await client.connect()
 
     assert client.is_connected is False
-    patch_logger.error.assert_any_call("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
+    patch_logger.error.assert_any_call("LLM chat dependencies could not be imported (%s). Install them with: pip install '.[llmchat]'", import_error)
 
 
 @pytest.mark.asyncio
@@ -342,7 +344,7 @@ async def test_mcpchatservice_initialize_success_and_idempotent(monkeypatch, pat
 
 @pytest.mark.asyncio
 async def test_mcpchatservice_initialize_and_chat(monkeypatch):
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock())
+    monkeypatch.setattr(svc, "_MCPToolSource", MagicMock())
     mcpcfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://s", transport="sse"),
         llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")),
@@ -1447,7 +1449,7 @@ async def test_initialize_raises_when_llmchat_unavailable(monkeypatch, patch_log
     service = svc.MCPChatService(cfg, user_id="u1")
     monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
 
-    with pytest.raises(ImportError, match="LLM chat dependencies are missing"):
+    with pytest.raises(ImportError, match="LLM chat dependencies could not be imported"):
         await service.initialize()
 
     assert service.is_initialized is False
@@ -1464,5 +1466,5 @@ async def test_reload_tools_raises_when_llmchat_unavailable(monkeypatch, patch_l
     service._initialized = True
     monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
 
-    with pytest.raises(ImportError, match="LLM chat dependencies are missing"):
+    with pytest.raises(ImportError, match="LLM chat dependencies could not be imported"):
         await service.reload_tools()

@@ -144,7 +144,7 @@ async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
     mock_client.connect = AsyncMock()
     mock_client.disconnect = AsyncMock()
     mock_client.list_tools = AsyncMock(return_value=["tool_1"])
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(svc, "_MCPToolSource", MagicMock(return_value=mock_client))
 
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
@@ -164,7 +164,7 @@ async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcpchatservice_initialize_and_valid_chat(monkeypatch):
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock())
+    monkeypatch.setattr(svc, "_MCPToolSource", MagicMock())
     chatcfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"),
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4")),  # pragma: allowlist secret
@@ -593,7 +593,7 @@ async def test_mcpclient_connect_with_headers(monkeypatch):
         captured.update(config)
         return AsyncMock()
 
-    monkeypatch.setattr(svc, "MultiServerMCPClient", _client_factory)
+    monkeypatch.setattr(svc, "_MCPToolSource", _client_factory)
     await client.connect()
     assert captured["default"]["headers"] == {"x-test": "1"}
 
@@ -609,7 +609,7 @@ async def test_mcpclient_connect_stdio_args(monkeypatch):
         captured.update(config)
         return AsyncMock()
 
-    monkeypatch.setattr(svc, "MultiServerMCPClient", _client_factory)
+    monkeypatch.setattr(svc, "_MCPToolSource", _client_factory)
     await client.connect()
     assert captured["default"]["command"] == "python"
     assert captured["default"]["args"] == ["server.py"]
@@ -623,7 +623,7 @@ async def test_mcpclient_connect_error(monkeypatch):
     def _client_factory(_config):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(svc, "MultiServerMCPClient", _client_factory)
+    monkeypatch.setattr(svc, "_MCPToolSource", _client_factory)
     with pytest.raises(ConnectionError):
         await client.connect()
     assert client.is_connected is False
@@ -894,7 +894,7 @@ async def test_trim_messages_and_clear(monkeypatch):
 async def test_mcpclient_double_connect(monkeypatch):
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock()
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(svc, "_MCPToolSource", MagicMock(return_value=mock_client))
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     c = svc.MCPClient(cfg)
     await c.connect()
@@ -906,7 +906,7 @@ async def test_mcpclient_double_connect(monkeypatch):
 async def test_mcpclient_tools_cache(monkeypatch):
     mock_client = AsyncMock()
     mock_client.list_tools = AsyncMock(return_value=["Tool"])
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(svc, "_MCPToolSource", MagicMock(return_value=mock_client))
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     c = svc.MCPClient(cfg)
     c._client = mock_client
@@ -968,8 +968,6 @@ def test_optional_langchain_import_block_executes():
         "langchain_core.language_models",
         "langchain_core.messages",
         "langchain_core.tools",
-        "langchain_mcp_adapters",
-        "langchain_mcp_adapters.client",
         "langchain_ollama",
         "langchain_openai",
         "langgraph",
@@ -988,15 +986,11 @@ def test_optional_langchain_import_block_executes():
         langchain_core_messages.BaseMessage = object
         langchain_core_messages.HumanMessage = object
         langchain_core_tools.BaseTool = object
+        langchain_core_tools.StructuredTool = object
+        langchain_core_tools.ToolException = Exception
         langchain_core.language_models = langchain_core_language_models
         langchain_core.messages = langchain_core_messages
         langchain_core.tools = langchain_core_tools
-
-        langchain_mcp_adapters = types.ModuleType("langchain_mcp_adapters")
-        langchain_mcp_adapters.__path__ = []
-        langchain_mcp_client = types.ModuleType("langchain_mcp_adapters.client")
-        langchain_mcp_client.MultiServerMCPClient = object
-        langchain_mcp_adapters.client = langchain_mcp_client
 
         langchain_ollama = types.ModuleType("langchain_ollama")
         langchain_ollama.ChatOllama = object
@@ -1020,8 +1014,6 @@ def test_optional_langchain_import_block_executes():
                 "langchain_core.language_models": langchain_core_language_models,
                 "langchain_core.messages": langchain_core_messages,
                 "langchain_core.tools": langchain_core_tools,
-                "langchain_mcp_adapters": langchain_mcp_adapters,
-                "langchain_mcp_adapters.client": langchain_mcp_client,
                 "langchain_ollama": langchain_ollama,
                 "langchain_openai": langchain_openai,
                 "langgraph": langgraph,
