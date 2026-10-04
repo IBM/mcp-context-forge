@@ -17,7 +17,7 @@ import logging
 from typing import Any, Optional
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -330,6 +330,7 @@ class RuleCatalogService:
 
         stmt = select(RbacRule).where(
             RbacRule.is_active.is_(True),
+            or_(RbacRule.expires_at.is_(None), RbacRule.expires_at > func.now()),
             RbacRule.capability_type == capability_type,
             RbacRule.capability_id.is_(None) | (RbacRule.capability_id == capability_id),
         )
