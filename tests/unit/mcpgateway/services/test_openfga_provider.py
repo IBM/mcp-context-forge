@@ -33,13 +33,16 @@ def provider():
 
 
 async def test_check_permission_maps_to_engine(provider):
-    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj: obj == "tool:all")
+    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj, **kwargs: obj == "tool:all")
     assert await provider.check_permission("anne@example.com", "tools.read") is True
-    provider._client.check.assert_any_call("user:anne@example.com", "tools_read", "tool:all")
+    assert any(
+        call.args[0] == "user:anne@example.com" and call.args[1] == "tools_read" and call.args[2] == "tool:all"
+        for call in provider._client.check.call_args_list
+    )
 
 
 async def test_entity_deny_blocks_wildcard_grant(provider):
-    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj: obj == "tool:all" or relation == "blocked")
+    provider._client.check = AsyncMock(side_effect=lambda user, relation, obj, **kwargs: obj == "tool:all" or relation == "blocked")
     assert await provider.check_permission("anne@example.com", "tools.execute", resource_id="tool-42") is False
 
 
@@ -58,14 +61,16 @@ async def test_invalidate_user_clears_cache(provider):
     assert provider._client.check.await_count == 2
 
 
-async def test_fail_closed_on_500(provider):
+async def test_fail_closed_on_500(provider, monkeypatch):
+    monkeypatch.setattr("mcpgateway.services.openfga_provider.build_contextual_domain_tuples", lambda *a, **kw: [])
     provider._client.check = AsyncMock(side_effect=OpenFgaUnavailable("500"))
     assert await provider.check_permission("anne@example.com", "tools.read") is False
 
 
-async def test_fail_closed_on_timeout(provider):
+async def test_fail_closed_on_timeout(provider, monkeypatch):
     import httpx
 
+    monkeypatch.setattr("mcpgateway.services.openfga_provider.build_contextual_domain_tuples", lambda *a, **kw: [])
     provider._client.check = AsyncMock(side_effect=httpx.ReadTimeout("t"))
     with pytest.raises(httpx.ReadTimeout):
         # The client maps httpx errors to OpenFgaUnavailable before the
