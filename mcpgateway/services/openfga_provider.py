@@ -221,6 +221,30 @@ class OpenFgaRuleProvider(DbRuleProvider):
             blocked = await self._check(user, "blocked", f"{capability}:{resource_id}")
             if blocked:
                 allowed = False
+
+        if not allowed:
+            # Fall back to the database provider when the engine denies.
+            # Recently created users may not have tuples in the engine
+            # yet; the db check bridges the sync gap.
+            try:
+                allowed = await super().check_permission(
+                    user_email=user_email,
+                    permission=permission,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    team_id=team_id,
+                    token_teams=token_teams,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    allow_admin_bypass=allow_admin_bypass,
+                    check_any_team=check_any_team,
+                    token_is_admin=token_is_admin,
+                    token_roles=token_roles,
+                    args=args,
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.debug("DB fallback check failed for %s / %s", user_email, permission, exc_info=True)
+
         self._store(key, allowed)
 
         if self.audit_enabled:
