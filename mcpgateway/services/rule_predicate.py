@@ -115,6 +115,62 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _coerce_number(value: Any) -> Optional[float]:
+    """Coerce a value to a number for ordered comparison.
+
+    Mcp-Param headers deliver integers and booleans as strings per the
+    MCP 2026-07-28 Value Encoding rules. This helper converts them back
+    so ordered comparisons (``>``, ``<``) work against the predicate
+    literal.
+
+    Args:
+        value: The resolved attribute value.
+
+    Returns:
+        The numeric value, or None when not coercible.
+    """
+    if _is_number(value):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_compare(left: Any, right: Any, op) -> bool:
+    """Compare two values with string-to-primitive coercion.
+
+    Booleans arrive as ``"true"``/``"false"`` strings; integers as
+    decimal strings. Compare after best-effort coercion so
+    ``args.flag == true`` matches a header value of ``"true"``.
+
+    Args:
+        left: The resolved attribute value.
+        right: The predicate literal.
+        op: The comparison callable.
+
+    Returns:
+        The comparison result.
+    """
+    if type(left) is type(right):
+        return op(left, right)
+    # Boolean coercion: "true"/"false" ↔ True/False
+    if isinstance(right, bool) and isinstance(left, str):
+        if left.lower() == "true":
+            return op(True, right)
+        if left.lower() == "false":
+            return op(False, right)
+    # Number coercion: "42" ↔ 42
+    left_num = _coerce_number(left)
+    right_num = _coerce_number(right)
+    if left_num is not None and right_num is not None:
+        return op(left_num, right_num)
+    # String comparison as fallback
+    return op(str(left), str(right))
+
+
 def evaluate(node: Node, attributes: Mapping[str, Any]) -> bool:
     """Evaluate a parsed predicate node against the attributes.
 
@@ -135,18 +191,21 @@ def evaluate(node: Node, attributes: Mapping[str, Any]) -> bool:
         if value is _MISSING:
             return False
         if node.op == "==":
-            return value == node.literal
+            return _coerce_compare(value, node.literal, lambda a, b: a == b)
         if node.op == "!=":
-            return value != node.literal
-        if not _is_number(value) or not _is_number(node.literal):
+            return _coerce_compare(value, node.literal, lambda a, b: a != b)
+        if not _is_number(node.literal):
+            return False
+        numeric = _coerce_number(value)
+        if numeric is None:
             return False
         if node.op == ">":
-            return value > node.literal
+            return numeric > node.literal
         if node.op == ">=":
-            return value >= node.literal
+            return numeric >= node.literal
         if node.op == "<":
-            return value < node.literal
-        return value <= node.literal
+            return numeric < node.literal
+        return numeric <= node.literal
     if isinstance(node, Membership):
         member = _resolve(attributes, node.attr)
         collection = _resolve(attributes, node.collection_attr)
@@ -329,8 +388,8 @@ class _Parser:
     def _literal(self) -> Union[bool, float, int, str]:
         """Parse a comparison literal."""
         token = self._next()
-        if token in ("True", "False"):
-            return token == "True"
+        if token in ("True", "False", "true", "false"):
+            return token in ("True", "true")
         if token.startswith("'") and token.endswith("'") and len(token) >= 2:
             return token[1:-1]
         try:

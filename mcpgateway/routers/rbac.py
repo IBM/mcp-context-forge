@@ -21,6 +21,7 @@ import logging
 from typing import Dict, Generator, List, Optional
 
 # Third-Party
+from sqlalchemy import select
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -821,3 +822,130 @@ async def delete_rule(rule_id: str, user=Depends(get_current_user_with_permissio
     except Exception as e:
         logger.error(f"RBAC rule deletion failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete rule")
+
+
+@router.get("/rules/tool-attributes")
+async def get_tool_attributes(
+    tool_name: Optional[str] = Query(None),
+    gateway_id: Optional[str] = Query(None),
+    server_id: Optional[str] = Query(None),
+    user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Return the attribute names available for args.* predicates.
+
+    Unions three sources: rule-catalog references, the tool's own
+    inputSchema properties, and forced_header_params from the owning
+    gateway and virtual servers. The web UI uses this to populate the
+    predicate builder's attribute dropdown.
+
+    Args:
+        tool_name: Tool name for tool-scoped lookup.
+        gateway_id: Gateway id to read its forced params.
+        server_id: Virtual server id to read its forced params.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        dict: A mapping with ``rule_attributes``, ``schema_attributes``,
+        ``forced_attributes``, and ``all_attributes`` lists.
+
+    Raises:
+        HTTPException: When the query fails.
+    """
+    try:
+        catalog = RuleCatalogService(db)
+        rule_attrs = set(catalog.argument_parameters_for("tool", tool_name))
+        rule_attrs |= set(catalog.argument_parameters_for("tool"))
+
+        schema_attrs: set[str] = set()
+        if tool_name:
+            from mcpgateway.db import Tool  # pylint: disable=import-outside-toplevel
+
+            tool = db.execute(select(Tool).where(Tool.name == tool_name)).scalar_one_or_none()
+            if tool and isinstance(tool.input_schema, dict):
+                props = tool.input_schema.get("properties", {})
+                if isinstance(props, dict):
+                    schema_attrs = set(props.keys())
+
+        forced_attrs: set[str] = set()
+        if gateway_id:
+            from mcpgateway.db import Gateway as GatewayModel  # pylint: disable=import-outside-toplevel
+
+            gw = db.get(GatewayModel, gateway_id)
+            if gw and isinstance(gw.forced_header_params, list):
+                forced_attrs.update(str(p) for p in gw.forced_header_params if p)
+        if server_id:
+            from mcpgateway.db import Server as ServerModel  # pylint: disable=import-outside-toplevel
+
+            sv = db.get(ServerModel, server_id)
+            if sv and isinstance(sv.forced_header_params, list):
+                forced_attrs.update(str(p) for p in sv.forced_header_params if p)
+
+        db.commit()
+        db.close()
+        return {
+            "rule_attributes": sorted(rule_attrs),
+            "schema_attributes": sorted(schema_attrs),
+            "forced_attributes": sorted(forced_attrs),
+            "all_attributes": sorted(rule_attrs | schema_attrs | forced_attrs),
+        }
+    except Exception as e:
+        logger.error(f"Failed to build tool attributes: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to build tool attributes")
+
+
+@router.patch("/rules/gateway/{gateway_id}/forced-params")
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def set_gateway_forced_params(gateway_id: str, params: List[str], user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Set the forced header parameters for a gateway.
+
+    Args:
+        gateway_id: Gateway identifier.
+        params: List of parameter names to force into x-mcp-header.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        dict: The updated parameter list.
+
+    Raises:
+        HTTPException: When the gateway is absent.
+    """
+    from mcpgateway.db import Gateway as GatewayModel  # pylint: disable=import-outside-toplevel
+
+    gw = db.get(GatewayModel, gateway_id)
+    if gw is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gateway not found: {gateway_id}")
+    gw.forced_header_params = sorted(set(params))
+    db.commit()
+    logger.info(f"Forced header params set for gateway {gateway_id}: {gw.forced_header_params}")
+    return {"forced_header_params": gw.forced_header_params}
+
+
+@router.patch("/rules/server/{server_id}/forced-params")
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def set_server_forced_params(server_id: str, params: List[str], user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Set the forced header parameters for a virtual server.
+
+    Args:
+        server_id: Virtual server identifier.
+        params: List of parameter names to force into x-mcp-header.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        dict: The updated parameter list.
+
+    Raises:
+        HTTPException: When the server is absent.
+    """
+    from mcpgateway.db import Server as ServerModel  # pylint: disable=import-outside-toplevel
+
+    sv = db.get(ServerModel, server_id)
+    if sv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Server not found: {server_id}")
+    sv.forced_header_params = sorted(set(params))
+    db.commit()
+    logger.info(f"Forced header params set for server {server_id}: {sv.forced_header_params}")
+    return {"forced_header_params": sv.forced_header_params}

@@ -16,6 +16,9 @@ Key components include:
 Examples:
     >>> # Test module imports
     >>> from mcpgateway.transports.streamablehttp_transport import (
+
+# Third-Party
+from sqlalchemy import select as sa_select
     ...     EventEntry, StreamBuffer, InMemoryEventStore, SessionManagerWrapper
     ... )
     >>>
@@ -352,81 +355,74 @@ def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
 
 
 def _extract_mcp_param_headers(request_headers: Optional[Dict[str, str]]) -> Dict[str, str]:
-    """Extract ``Mcp-Param-*`` headers for rule predicate evaluation.
+    """Extract and decode ``Mcp-Param-*`` headers for rule predicates.
 
     Conforming MCP 2026-07-28 clients mirror tool parameters annotated
     with ``x-mcp-header`` into ``Mcp-Param-<name>`` headers on
-    ``tools/call`` (SEP-2243). The gateway reads them here so the rule
-    overlay can evaluate ``args.<name>`` predicates without parsing the
-    JSON-RPC body.
+    ``tools/call`` (SEP-2243). Values that cannot be represented as
+    plain ASCII arrive Base64-encoded with a sentinel prefix.
+
+    Decoding per the spec's Value Encoding rules:
+    - ``=?base64?<data>?=`` → decode the Base64 UTF-8 payload
+    - otherwise use the value as-is (already a string representation)
 
     Args:
         request_headers: Headers from the inbound HTTP request.
 
     Returns:
-        A mapping of parameter name to header value. Empty when no
-        ``Mcp-Param-*`` headers are present.
+        A mapping of parameter name to decoded header value.
     """
     if not request_headers:
         return {}
     params: Dict[str, str] = {}
     prefix = "mcp-param-"
+    sentinel = "=?base64?"
     for key, value in request_headers.items():
         lower = key.lower()
-        if lower.startswith(prefix):
-            params[lower[len(prefix) :]] = value
+        if not lower.startswith(prefix):
+            continue
+        name = lower[len(prefix) :]
+        if value.startswith(sentinel) and value.endswith("?="):
+            import base64  # pylint: disable=import-outside-toplevel
+
+            try:
+                encoded = value[len(sentinel) : -2]
+                params[name] = base64.b64decode(encoded).decode("utf-8")
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.warning("Failed to decode Base64 Mcp-Param-%s header", name)
+        else:
+            params[name] = value
     return params
 
 
 def _annotate_tools_with_rule_params(tools: List[types.Tool]) -> List[types.Tool]:
-    """Inject ``x-mcp-header`` annotations from the rule catalog.
+    """Inject x-mcp-header annotations per tool from the shared module.
 
-    The rule catalog may reference ``args.<name>`` in predicates scoped
-    to a tool (by capability_id) or to all tools (type-wide). Conforming
-    MCP 2026-07-28 clients read these annotations from ``tools/list``
-    and mirror the parameter values into ``Mcp-Param-<name>`` headers on
-    ``tools/call`` (SEP-2243). The gateway reads those headers during
-    enforcement.
-
-    This function is best-effort: a database error or an absent catalog
-    leaves the tool definitions unchanged. The MCP SDK Tool model is
-    frozen, so annotated tools are rebuilt via ``model_validate``.
+    Delegates to
+    :func:`mcpgateway.services.tool_header_annotation.annotate_schema`
+    and the per-tool collector. Spec compliance (primitive types only,
+    RFC 9110 token) is enforced in the shared module.
 
     Args:
         tools: The serialized tool list.
 
     Returns:
-        The same list with ``x-mcp-header`` annotations injected into
-        matching ``inputSchema.properties`` entries.
+        The same list with x-mcp-header annotations injected.
     """
     try:
-        # First-Party
         from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.rule_catalog_service import RuleCatalogService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.tool_header_annotation import annotate_schema, collect_params_for_tool  # pylint: disable=import-outside-toplevel
 
         with SessionLocal() as db:
-            catalog = RuleCatalogService(db)
             for i, tool in enumerate(tools):
-                arg_names = catalog.argument_parameters_for("tool", tool.name)
-                if not arg_names:
-                    arg_names = catalog.argument_parameters_for("tool")
-                if not arg_names:
+                names = collect_params_for_tool(db, tool.name)
+                if not names:
                     continue
-                schema = dict(tool.input_schema) if tool.input_schema else {}
-                props = schema.get("properties")
-                if not isinstance(props, dict):
-                    continue
-                changed = False
-                new_props = dict(props)
-                for param_name in arg_names:
-                    if param_name in new_props and isinstance(new_props[param_name], dict) and "x-mcp-header" not in new_props[param_name]:
-                        new_props[param_name] = {**new_props[param_name], "x-mcp-header": param_name}
-                        changed = True
-                if changed:
-                    schema["properties"] = new_props
-                    tools[i] = tool.model_copy(update={"input_schema": schema})
+                annotated = annotate_schema(tool.input_schema, names)
+                if annotated is not tool.input_schema:
+                    tools[i] = tool.model_copy(update={"input_schema": annotated})
     except Exception:  # pylint: disable=broad-exception-caught
-        logger.debug("Rule parameter annotation skipped (catalog unavailable)", exc_info=True)
+        logger.debug("Rule parameter annotation skipped", exc_info=True)
     return tools
 
 
