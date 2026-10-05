@@ -133,20 +133,22 @@ bob_cmd() { # bob_cmd USER -> the container command line for one chat
 
 # Each pane runs its container as the pane process: no shell, no
 # send-keys race, and closing the pane stops the container.
+# Titles bind to the stable pane_id at creation. Tiled relayouts renumber
+# pane indices by position, so titling by index scrambles which label sits
+# over which container.
+tmux set-option -g allow-rename off >/dev/null 2>&1 || true
 tmux new-session -d -s "${SESSION}" -n "bob-chat" "$(bob_cmd "${USERS[0]}")"
 tmux select-pane -t "${SESSION}:0.0" -T "${USERS[0]}"
+echo "bob-chat: pane 0 -> bob-${USERS[0]}"
 for i in 1 2 3; do
-    tmux split-window -t "${SESSION}" -d "$(bob_cmd "${USERS[$i]}")"
+    PANE=$(tmux split-window -t "${SESSION}" -d -P -F '#{pane_id}' "$(bob_cmd "${USERS[$i]}")")
     tmux select-layout -t "${SESSION}" tiled
-    echo "bob-chat: pane ${i} -> bob-${USERS[$i]}"
-done
-for i in 0 1 2 3; do
-    tmux select-pane -t "${SESSION}:0.${i}" -T "${USERS[$i]}"
+    tmux select-pane -t "${PANE}" -T "${USERS[$i]}"
+    echo "bob-chat: pane ${PANE} -> bob-${USERS[$i]}"
 done
 # Show the pane titles as a labeled top border on every pane.
 tmux set-option -t "${SESSION}" pane-border-status top
-tmux set-option -t "${SESSION}" pane-border-format " #{pane_index} · #{pane_title} "
-echo "bob-chat: pane 0 -> bob-${USERS[0]}"
+tmux set-option -t "${SESSION}" pane-border-format " #{pane_title} "
 
 if [ -t 0 ] && [ -t 1 ]; then
     echo "bob-chat: session '${SESSION}' ready with 4 chats. Attaching (detach: Ctrl-b d)."
