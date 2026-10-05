@@ -25,7 +25,7 @@ _write_env_files() {
     printf 'IBMCLOUD_IMG_PROD=ns/img\n'          >> .env.ce
     printf 'IBMCLOUD_CPU=1\n'                    >> .env.ce
     printf 'IBMCLOUD_MEMORY=4G\n'                >> .env.ce
-    printf 'IBMCLOUD_REGISTRY_SECRET=my-regcred\n' >> .env.ce
+    printf 'IBMCLOUD_REGISTRY_SECRET=my-regcred\n' >> .env.ce  # pragma: allowlist secret
     printf 'IBMCLOUD_ICR_API_KEY=fake-icr-key\n' >> .env.ce  # pragma: allowlist secret
 }
 

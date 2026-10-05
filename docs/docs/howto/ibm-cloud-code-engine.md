@@ -105,7 +105,7 @@ IBMCLOUD_IMG_PROD=mcpgateway/mcpgateway                  # local tag produced by
 
 # Authentication
 IBMCLOUD_API_KEY=***your-api-key***    # leave blank to use SSO flow at login
-IBMCLOUD_ICR_API_KEY=***icr-api-key*** # long-lived key for the ICR pull secret; required for SSO users
+IBMCLOUD_ICR_API_KEY=***icr-api-key*** # long-lived key for the ICR pull secret; required for SSO users  # pragma: allowlist secret
 
 # Resource combo - see https://cloud.ibm.com/docs/codeengine?topic=codeengine-mem-cpu-combo
 IBMCLOUD_CPU=1                         # vCPU for the container
@@ -204,7 +204,7 @@ make ibmcloud-deploy
         --roles Reader --service-name container-registry
     ibmcloud iam service-api-key-create icr-reader-key contextforge-icr-reader \
         --output json | jq -r .apikey
-    # Export the printed key: export IBMCLOUD_ICR_API_KEY=<printed-value>
+    # Export the printed key: export IBMCLOUD_ICR_API_KEY=<printed-value>  # pragma: allowlist secret
     # then re-run the secret create command above
     ```
 
