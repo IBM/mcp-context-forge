@@ -1924,6 +1924,83 @@ class TestTokenCatalogServiceEdgeCases:
             await token_service.create_token(user_email="test@example.com", name="Zero Expiry Token", expires_in_days=0)
 
     @pytest.mark.asyncio
+    async def test_create_token_at_max_expiry_cap(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token accepts expires_in_days equal to MAX_TOKEN_EXPIRY_DAYS."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "max_token_expiry_days", 90)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "jwt_token"
+            await token_service.create_token(user_email="test@example.com", name="Capped Token", expires_in_days=90)
+
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.expires_at is not None
+
+    @pytest.mark.asyncio
+    async def test_create_token_over_max_expiry_cap(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token rejects expires_in_days above MAX_TOKEN_EXPIRY_DAYS."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "max_token_expiry_days", 90)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="exceeds the server maximum of 90 days"):
+            await token_service.create_token(user_email="test@example.com", name="Long Token", expires_in_days=91)
+
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_token_no_expiry_rejected_when_cap_set(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token rejects a missing expiry when MAX_TOKEN_EXPIRY_DAYS is set, even if REQUIRE_TOKEN_EXPIRATION=false."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", False)
+        monkeypatch.setattr(config.settings, "max_token_expiry_days", 90)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="MAX_TOKEN_EXPIRY_DAYS=90"):
+            await token_service.create_token(user_email="test@example.com", name="No Expiry Token", expires_in_days=None)
+
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_token_long_expiry_allowed_when_cap_disabled(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token keeps current behavior when MAX_TOKEN_EXPIRY_DAYS=0."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "max_token_expiry_days", 0)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "jwt_token"
+            await token_service.create_token(user_email="test@example.com", name="Long Token", expires_in_days=3650)
+
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.expires_at is not None
+
+    @pytest.mark.asyncio
     async def test_generate_token_settings_values(self, token_service):
         """Test _generate_token delegates to create_jwt_token correctly."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create:

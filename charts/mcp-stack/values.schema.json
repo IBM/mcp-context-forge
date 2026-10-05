@@ -1984,6 +1984,9 @@
             "MAX_TEAMS_PER_USER": {
               "type": "string"
             },
+            "MAX_TOKEN_EXPIRY_DAYS": {
+              "type": "string"
+            },
             "MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED": {
               "type": "string"
             },
