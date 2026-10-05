@@ -81,31 +81,36 @@ _DISCOVER_SUCCESS_BODY = json.dumps(
 ).encode()
 
 
-class _MCPDiscoverHandler(BaseHTTPRequestHandler):
-    """Serve a valid server/discover response and record every request received.
+def _make_recording_handler() -> tuple[type, list]:
+    """Return a fresh (handler_class, requests_list) pair for one upstream stub.
 
-    Class-level ``requests`` list accumulates ``(method, path, headers_dict)``
-    tuples so tests can assert which headers the gateway forwarded to the upstream.
+    Each call produces a *new* handler subclass with its own ``requests`` list so
+    that tests never share state even when they run sequentially in the same worker.
+    The list is passed by reference: the caller holds it and reads it after the
+    upstream shuts down.
     """
+    recorded: list = []
 
-    requests: list = []
+    class _Handler(BaseHTTPRequestHandler):
+        """Serve a valid server/discover response and record every received request."""
 
-    def do_POST(self):  # noqa: N802
-        """Accept any POST and return a successful server/discover JSON-RPC result."""
-        # Record the method, path, and a snapshot of all request headers.
-        self.requests.append((self.command, self.path, dict(self.headers)))
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(_DISCOVER_SUCCESS_BODY)
+        def do_POST(self):  # noqa: N802
+            """Accept any POST and return a successful server/discover JSON-RPC result."""
+            recorded.append((self.command, self.path, dict(self.headers)))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(_DISCOVER_SUCCESS_BODY)
 
-    def do_GET(self):  # noqa: N802
-        """Accept health probes."""
-        self.send_response(200)
-        self.end_headers()
+        def do_GET(self):  # noqa: N802
+            """Accept health probes."""
+            self.send_response(200)
+            self.end_headers()
 
-    def log_message(self, format, *args):  # noqa: A002
-        """Suppress per-request log lines."""
+        def log_message(self, format, *args):  # noqa: A002
+            """Suppress per-request log lines."""
+
+    return _Handler, recorded
 
 
 # ---------------------------------------------------------------------------
@@ -219,19 +224,22 @@ def isolated_gateway(tmp_path):
 def _isolated_upstream():
     """Start an ephemeral ThreadingHTTPServer acting as an upstream MCP server.
 
+    Each call creates a *fresh* handler class and requests list via
+    ``_make_recording_handler()``, so sequential tests in the same worker
+    never share recorded state.
+
     Yields:
-        ``(url: str, handler_cls: type)`` — the full base URL and handler class
-        so callers can inspect ``handler_cls.requests`` after the call.
+        ``(url: str, requests: list)`` — the full base URL and the per-call
+        list that accumulates ``(method, path, headers_dict)`` tuples.
     """
-    _MCPDiscoverHandler.requests = []
-    # Bind to localhost (hostname, not IP) so the gateway subprocess can reach
-    # it with ssrf_allow_localhost=true, which exempts the "localhost" hostname
-    # before any IP-range block is applied.
-    upstream = ThreadingHTTPServer(("localhost", 0), _MCPDiscoverHandler)
+    handler_cls, recorded = _make_recording_handler()
+    # Bind to localhost so ssrf_allow_localhost=true exempts the hostname
+    # from the SSRF loopback check before the IP-range block is reached.
+    upstream = ThreadingHTTPServer(("localhost", 0), handler_cls)
     worker = threading.Thread(target=upstream.serve_forever, daemon=True)
     worker.start()
     try:
-        yield f"http://localhost:{upstream.server_address[1]}", _MCPDiscoverHandler
+        yield f"http://localhost:{upstream.server_address[1]}", recorded
     finally:
         upstream.shutdown()
         upstream.server_close()
@@ -276,7 +284,9 @@ def _register_gateway(
     assert resp.status_code in (200, 201, 202), f"POST /gateways failed {resp.status_code}: {resp.text[:500]}"
     body = resp.json()
     # 200/201 sync path → id at top level; 202 async path → id nested under "gateway"
-    return body.get("id") or body["gateway"]["id"]
+    gw_id = body.get("id") or (body.get("gateway") or {}).get("id")
+    assert gw_id, f"Could not extract gateway id from POST /gateways response: {body}"
+    return gw_id
 
 
 def _delete_gateway(client: httpx.Client, gateway_id: str) -> None:
@@ -315,7 +325,7 @@ class TestCandidateCredentialHandshake:
         """
         client, _token, _base_url, _secret = isolated_gateway
 
-        with _isolated_upstream() as (upstream_url, handler):
+        with _isolated_upstream() as (upstream_url, recorded):
             gw_name = f"{_GW_PREFIX}-success-{uuid.uuid4().hex[:8]}"
             gw_id = _register_gateway(
                 client,
@@ -338,11 +348,11 @@ class TestCandidateCredentialHandshake:
                 body = resp.json()
                 assert body["success"] is True, f"Handshake failed: {body.get('error')}"
                 assert body["credentialSource"] == "form", f"Expected credentialSource=form (candidate_only must suppress stored headers), got {body['credentialSource']!r}"
-                # Upstream stub must have been contacted exactly once.
-                assert len(handler.requests) >= 1, "Upstream was never contacted"
+                # Upstream stub must have been contacted at least once.
+                assert len(recorded) >= 1, "Upstream was never contacted"
                 # The upstream must NOT have received the stored credential header —
                 # only the candidate header supplied in the request should appear.
-                upstream_headers = handler.requests[0][2]  # (method, path, headers_dict)
+                upstream_headers = recorded[0][2]  # (method, path, headers_dict)
                 forwarded_keys = {k.lower() for k in upstream_headers}
                 assert "x-stored-key" not in forwarded_keys, f"Stored credential was forwarded to upstream in candidate_only mode: {upstream_headers}"
                 assert "x-candidate" in forwarded_keys, f"Candidate header was not forwarded to upstream: {upstream_headers}"
@@ -360,7 +370,7 @@ class TestCandidateCredentialHandshake:
         """
         client, _token, _base_url, signing_key = isolated_gateway
 
-        with _isolated_upstream() as (upstream_url, handler):
+        with _isolated_upstream() as (upstream_url, recorded):
             # Create team-B via the API.
             team_b_name = f"{_GW_PREFIX}-team-b-{uuid.uuid4().hex[:8]}"
             team_resp = client.post(
@@ -409,7 +419,7 @@ class TestCandidateCredentialHandshake:
                 assert body["success"] is False, "Team-A token must not access team-B gateway — expected success=false"
                 assert body.get("failureClass") == "transport", f"Expected failureClass=transport, got {body.get('failureClass')!r}"
                 # The upstream stub must NOT have been contacted.
-                assert handler.requests == [], f"Upstream was probed despite denied gateway: {handler.requests}"
+                assert recorded == [], f"Upstream was probed despite denied gateway: {recorded}"
             finally:
                 _delete_gateway(client, gw_id)
                 with contextlib.suppress(Exception):
@@ -424,7 +434,7 @@ class TestCandidateCredentialHandshake:
         """
         client, _token, _base_url, _secret = isolated_gateway
 
-        with _isolated_upstream() as (upstream_url, handler):
+        with _isolated_upstream() as (upstream_url, recorded):
             gw_name = f"{_GW_PREFIX}-mismatch-{uuid.uuid4().hex[:8]}"
             # Register gateway at the real upstream URL.
             gw_id = _register_gateway(
@@ -449,6 +459,6 @@ class TestCandidateCredentialHandshake:
                 assert body["success"] is False, "URL mismatch must be rejected — expected success=false"
                 assert body.get("failureClass") == "transport", f"Expected failureClass=transport for URL mismatch, got {body.get('failureClass')!r}"
                 # The upstream stub must NOT have been contacted.
-                assert handler.requests == [], f"Upstream was probed despite URL mismatch: {handler.requests}"
+                assert recorded == [], f"Upstream was probed despite URL mismatch: {recorded}"
             finally:
                 _delete_gateway(client, gw_id)
