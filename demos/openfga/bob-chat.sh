@@ -90,8 +90,11 @@ for user in "${USERS[@]}"; do
     KEY="$(api POST /tokens "{\"name\":\"bobshell-demo-${STAMP}\",\"expires_in_days\":1,\"team_id\":\"${TEAM_ID}\",\"scope\":{\"permissions\":[\"tools.read\",\"tools.execute\"]}}" "${USER_TOKEN}" | jq -r '.access_token // empty')"
     [ -n "${KEY}" ] || die "key mint failed for ${user}"
     mkdir -p "${WORKDIR}/${user}"
+    # Entry schema for bob 2.0.5: the session layer requires type+url.
+    # The httpURL shape (used by the bobshell example's sample config) is
+    # accepted by "bob mcp list" but never reaches the session hub.
     jq -n --arg url "${GATEWAY_URL}/servers/${SERVER_ID}/mcp/" --arg key "${KEY}" \
-        '{mcpServers: {fast_time: {httpURL: $url, headers: {Authorization: ("Bearer " + $key)}, disabled: false}}}' \
+        '{mcpServers: {fast_time: {type: "http", url: $url, headers: {Authorization: ("Bearer " + $key)}, disabled: false}}}' \
         > "${WORKDIR}/${user}/mcp.json"
     echo "bob-chat: ${user} key bobshell-demo-${STAMP} -> ${WORKDIR}/${user}/mcp.json"
 done
