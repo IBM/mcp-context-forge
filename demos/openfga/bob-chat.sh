@@ -118,6 +118,9 @@ done
 for i in 0 1 2 3; do
     tmux select-pane -t "${SESSION}:0.${i}" -T "${USERS[$i]}"
 done
+# Show the pane titles as a labeled top border on every pane.
+tmux set-option -t "${SESSION}" pane-border-status top
+tmux set-option -t "${SESSION}" pane-border-format " #{pane_index} · #{pane_title} "
 echo "bob-chat: pane 0 -> bob-${USERS[0]}"
 
 if [ -t 0 ] && [ -t 1 ]; then

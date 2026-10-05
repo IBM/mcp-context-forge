@@ -99,8 +99,9 @@ The launcher:
 1. Logs in as each demo user and mints a fresh team-scoped API key
 2. Writes one bobshell `mcp.json` per user (workspace under `~/.cache/bob-demo.*`)
 3. Stops any leftover `bob-*` containers from an earlier run
-4. Opens a tmux session (`bob-demo`) with four panes; each pane runs its
-   container as the pane process, so closing a pane stops that container
+4. Opens a tmux session (`bob-demo`) with four panes labeled with each
+   user's name on the pane's top border; each pane runs its container as
+   the pane process, so closing a pane stops that container
 
 Detach from tmux with `Ctrl-b d`; reattach with `tmux attach -t bob-demo`.
 Ask a chat something like *"call fast-time-get-system-time for UTC"* to see a
