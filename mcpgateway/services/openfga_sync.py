@@ -23,9 +23,11 @@ sync and the provider.
 """
 
 # Standard
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
+
 
 # Third-Party
 from sqlalchemy import or_, select
@@ -37,10 +39,40 @@ from mcpgateway.db import EmailTeamMember, Permissions, RbacRule, Role, SessionL
 from mcpgateway.services.openfga_client import OpenFgaClient, OpenFgaUnavailable
 from mcpgateway.services.rule_catalog_service import capability_for_permission
 from mcpgateway.services.rule_predicate import Truthiness, parse_predicate
+from mcpgateway.utils.create_slug import slugify
 
 logger = logging.getLogger(__name__)
 
 ENTITY_TYPES = ("tool", "resource", "prompt", "server", "gateway", "a2a_agent", "route")
+
+
+def domain_object_id(value: str) -> str:
+    """Canonical engine-safe domain identifier for a team name or claim.
+
+    Domain identifiers back ``domain:`` tuple objects in the
+    relationship model. The engine grammar for object ids rejects
+    whitespace and caps length at 256 characters, so raw team names
+    like ``RBAC Test anne's Team`` cannot serve directly. Every site
+    that builds a ``domain:`` reference must pass through this
+    function: the sync writes parent tuples with it, and the
+    check-time builders derive contextual member tuples with it.
+    A team name and its claim value must produce the same identifier
+    for the ``tupleToUserset`` traversal to connect.
+
+    Args:
+        value: Team name or claim-carried team identifier.
+
+    Returns:
+        A slug of at most 256 characters without whitespace. Inputs
+        that slugify to fewer than 2 characters fall back to a
+        digest of the input.
+    """
+    slug = slugify(value or "")[:256]
+    if len(slug) < 2:
+        digest = hashlib.sha256((value or "").encode("utf-8")).hexdigest()[:16]
+        slug = f"domain-{digest}"
+    return slug
+
 
 _GRANT_SUBJECTS = [{"type": "user"}, {"type": "team", "relation": "member"}, {"type": "role", "relation": "assignee"}]
 
@@ -345,7 +377,7 @@ class RelationshipSyncService(OpenFgaSyncService):
         # First-Party
         from mcpgateway.db import EmailTeam, Server, Tool  # pylint: disable=import-outside-toplevel
 
-        teams = {t.id: t.name for t in self._db.execute(select(EmailTeam)).scalars()}
+        teams = {t.id: domain_object_id(t.name) for t in self._db.execute(select(EmailTeam)).scalars()}
 
         # Resource parent tuples: servers belong to teams
         for server in self._db.execute(select(Server).where(Server.enabled.is_(True))).scalars():
@@ -394,13 +426,13 @@ def build_contextual_domain_tuples(
         # also carries an admin-level role claim.
         for team in token_teams:
             relation = "admin" if token_roles and any(r in admin_role_names for r in token_roles) else "member"
-            tuples.append({"user": f"user:{user_email}", "relation": relation, "object": f"domain:{team}"})
+            tuples.append({"user": f"user:{user_email}", "relation": relation, "object": f"domain:{domain_object_id(team)}"})
         return tuples
 
     # Fallback: read email_team_members and user_roles from the database.
     from mcpgateway.db import EmailTeam, EmailTeamMember, UserRole  # pylint: disable=import-outside-toplevel
 
-    teams = {t.id: t.name for t in db.execute(select(EmailTeam)).scalars()}
+    teams = {t.id: domain_object_id(t.name) for t in db.execute(select(EmailTeam)).scalars()}
     for membership in db.execute(
         select(EmailTeamMember).where(
             EmailTeamMember.user_email == user_email,
