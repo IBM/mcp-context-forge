@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import json
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, call, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, call, MagicMock, patch
 from urllib.parse import urlparse
 
 # Third-Party
@@ -32,6 +32,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
+from mcpgateway.transports.context import request_headers_var
 
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
@@ -11206,3 +11207,71 @@ class TestInvokeToolMcpStreamableHttpProcessSignalPropagates:
             # and is then wrapped by the outer invoke_tool BaseException handler.
             with pytest.raises(ToolInvocationError):
                 await tool_service.invoke_tool(db, "test_tool", {})
+
+
+class TestXMcpHeaderMirroring:
+    """Before every upstream call, the gateway seeds the SDK session with the tool's argument-to-header map from the stored schema."""
+
+    annotated_schema = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}, "query": {"type": "string"}}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_type", ["SSE", "StreamableHTTP"])
+    @pytest.mark.parametrize("pooled", [False, True], ids=["per-call-session", "pooled-session"])
+    async def test_upstream_call_seeds_the_session_header_map_from_the_stored_schema(self, tool_service, request_type, pooled):
+        tool_payload = _make_tool_payload(integration_type="MCP", request_type=request_type, gateway_id="gw-uuid-1", jsonpath_filter="")
+        tool_payload["input_schema"] = self.annotated_schema
+        gateway_payload = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+        arguments = {"region": "us-west1", "query": "hi"}
+
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        session._x_mcp_header_maps = {}
+        # What invoke_tool opens with "async with": the proxy client (per-call) or the pool entry (pooled), each exposing .session.
+        connected = MagicMock()
+        connected.__aenter__.return_value = SimpleNamespace(session=session)
+        registry = MagicMock()
+        registry.acquire = MagicMock(return_value=connected)
+
+        # A downstream Mcp-Session-Id is what makes invoke_tool take the pooled path.
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-xyz"} if pooled else {})
+        try:
+            with (
+                _setup_cache_for_invoke(tool_payload, gateway_payload),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=connected),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+            ):
+                result = await tool_service.invoke_tool(MagicMock(), "test_tool", arguments)
+        finally:
+            request_headers_var.reset(headers_token)
+
+        assert result is not None
+        assert registry.acquire.called is pooled
+        upstream_name = tool_payload["original_name"]
+        assert session._x_mcp_header_maps == {upstream_name: {("region",): "Region"}}
+        session.call_tool.assert_awaited_once_with(upstream_name, arguments, meta=ANY, progress_callback=ANY, allow_input_required=True, input_responses=None, request_state=None)
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_call_is_refused_before_upstream(self, tool_service):
+        """caller denied by _check_tool_access never derives headers or opens an upstream session."""
+        tool_payload = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        tool_payload["input_schema"] = self.annotated_schema
+        proxy_client = MagicMock()
+        registry = MagicMock()
+        call_upstream = AsyncMock()
+
+        with (
+            _setup_cache_for_invoke(tool_payload, _make_gateway_payload()),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=False)) as check_access,
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", proxy_client),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+            patch("mcpgateway.services.tool_service._call_upstream_tool", call_upstream),
+        ):
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(MagicMock(), "test_tool", {"region": "us-west1"}, user_email="outsider@test.com", token_teams=["other-team"])
+
+        check_access.assert_awaited()
+        call_upstream.assert_not_awaited()
+        proxy_client.assert_not_called()
+        registry.acquire.assert_not_called()
