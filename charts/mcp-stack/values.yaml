@@ -856,6 +856,7 @@ mcpContextForge:
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
     TOKEN_EXPIRY: "1440"                   # JWT validity (minutes); max allowed: 1440 = 24 hours
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
+    MAX_TOKEN_EXPIRY_DAYS: "0"             # max lifetime (days) for new API tokens; 0 = no cap
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
     AUTH_ENCRYPTION_SECRET: ""             # REQUIRED: passphrase to derive AES key for secure storage — must be set before deploying; generate with: make init-secrets-patch-env

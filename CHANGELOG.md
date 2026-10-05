@@ -22,6 +22,7 @@
 
 - **Modern MCP protocol negotiation is on by default** - `MCP_CLIENT_CONNECT_MODE` and `MCP_INBOUND_PROTOCOL_MODE` now default to `auto` instead of `legacy`. Outbound upstream connections probe `server/discover` and negotiate the 2026-07-28 revision, with transparent fallback to the legacy `initialize` handshake. Inbound clients may send `mcp-protocol-version: 2026-07-28` instead of receiving a 400. Set either variable to `legacy` to restore the previous behaviour.
 - **`mcp-servers/` directory removed** - The unsupported sample/test MCP servers, the Go/Python scaffolding templates, and the `mcp-url-to-markdown-tests` workflow leave the repository. The six Python servers now live in [IBM/contextforge-examples](https://github.com/IBM/contextforge-examples) under `mcp-servers/python/`; the scaffolding templates are deleted without migration. The performance compose generator and benchmark docs now use the published `ghcr.io/ibm/cfex-mcp-fast-time-server` and `ghcr.io/ibm/cfex-mcp-benchmark-server` images. The `/v1/mcp-servers` REST API is unchanged: it remains the product-language alias for the gateways API.
+- **Maximum API token lifetime** ([#6238](https://github.com/IBM/mcp-context-forge/issues/6238)) - New `MAX_TOKEN_EXPIRY_DAYS` setting caps `expires_in_days` for newly created API tokens on `POST /tokens` and `POST /tokens/teams/{team_id}`. Requests above the cap, or without an expiry while the cap is set, are rejected with HTTP 400. Default `0` disables the cap and keeps the previous behaviour. Existing tokens are not affected.
 
 ## [Unreleased]
 

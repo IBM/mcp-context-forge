@@ -395,6 +395,7 @@ class Settings(BaseSettings):
     token_blocklist_cleanup_hours: int = Field(default=24, ge=1, le=168, description="Hours to retain expired tokens in blocklist before cleanup (1-168).")
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
+    max_token_expiry_days: int = Field(default=0, ge=0, description="Maximum lifetime in days for newly created API tokens (0 = no cap)")
     require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
     require_user_in_db: bool = Field(
         default=True,

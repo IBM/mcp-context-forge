@@ -442,6 +442,7 @@ class TokenCatalogService:
                 - The `team_id` is missing or the user is not an active member of the specified team.
                 - A token with the same name already exists for the given user and team.
                 - Invalid token configuration (e.g., invalid expiration date).
+                - `expires_in_days` is missing or exceeds `MAX_TOKEN_EXPIRY_DAYS` when that cap is set.
 
         Examples:
             >>> # This method requires database operations, shown for reference
@@ -525,6 +526,14 @@ class TokenCatalogService:
         # Enforce expiration requirement if configured
         if settings.require_token_expiration and not expires_at:
             raise ValueError("Token expiration is required by server policy (REQUIRE_TOKEN_EXPIRATION=true). Please specify an expiration date for the token.")
+
+        # Enforce maximum token lifetime if configured
+        max_expiry_days = settings.max_token_expiry_days
+        if max_expiry_days:
+            if not expires_in_days:
+                raise ValueError(f"Token expiration is required by server policy (MAX_TOKEN_EXPIRY_DAYS={max_expiry_days}). Please specify expires_in_days of {max_expiry_days} or less.")
+            if expires_in_days > max_expiry_days:
+                raise ValueError(f"Token expiration of {expires_in_days} days exceeds the server maximum of {max_expiry_days} days (MAX_TOKEN_EXPIRY_DAYS).")
 
         jti = str(uuid.uuid4())  # Unique JWT ID
         # Generate JWT token with all necessary claims
