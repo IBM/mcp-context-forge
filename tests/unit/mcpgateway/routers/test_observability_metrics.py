@@ -293,8 +293,8 @@ def test_postgres_buckets_normalized_to_utc():
     assert percentiles["p50"] == [100.0]
 
 
-def test_execution_timeseries_python_and_postgresql_paths_match(db_session):
-    """PostgreSQL and Python paths return the same aligned status counts."""
+def test_execution_timeseries_postgresql_row_mapping_matches_python_contract(db_session):
+    """PostgreSQL row mapping uses the same aligned contract as the Python path."""
     make_trace(db_session, offset_seconds=300, status="ok")
     make_trace(db_session, offset_seconds=600, status="error")
     make_trace(db_session, offset_seconds=900, status="unset")
