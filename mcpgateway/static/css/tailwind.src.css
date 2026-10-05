@@ -1,3 +1,41 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Dark mode via .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Custom animations (previously in tailwind.config.js theme.extend) */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50%       { transform: translateY(-20px); }
+}
+
+@keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.8; }
+}
+
+@keyframes slide-up {
+    0%   { transform: translateY(30px); opacity: 0; }
+    100% { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes fade-in {
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+@utility animate-float {
+    animation: float 6s ease-in-out infinite;
+}
+
+@utility animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+}
+
+@utility animate-slide-up {
+    animation: slide-up 0.8s ease-out;
+}
+
+@utility animate-fade-in {
+    animation: fade-in 1s ease-out;
+}
