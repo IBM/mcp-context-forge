@@ -2080,7 +2080,7 @@ async def call_tool(
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "tools.execute"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
         # Session tokens have no explicit team_id; check across all team-scoped roles.
         # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
@@ -2091,7 +2091,7 @@ async def call_tool(
             args=_extract_mcp_param_headers(request_headers),
         )
         if not has_execute_permission:
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -2799,7 +2799,7 @@ async def list_tools() -> List[types.Tool]:
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2899,7 +2899,7 @@ async def list_prompts() -> List[types.Prompt]:
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2969,7 +2969,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3055,7 +3055,7 @@ async def list_resources() -> List[types.Resource]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3162,7 +3162,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3298,7 +3298,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3371,7 +3371,7 @@ async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") ->
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "admin.system_config"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
         has_permission = await _check_streamable_permission(
             user_context=user_context,
@@ -3379,7 +3379,7 @@ async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") ->
             check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_permission:
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     try:
         # Convert MCP logging level to our LogLevel enum
@@ -3435,7 +3435,7 @@ async def complete(
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
