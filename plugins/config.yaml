@@ -454,14 +454,14 @@ plugins:
   # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
-    version: "0.3.7"
+    version: "0.3.11"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "disabled"
     priority: 170
     conditions: []
     config:
-      max_retries: 2
+      max_retries: 3
       backoff_base_ms: 200
       max_backoff_ms: 5000
       retry_on_status: [429, 500, 502, 503, 504]
