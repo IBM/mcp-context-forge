@@ -1339,7 +1339,12 @@ class SecurityValidator:
             raise UrlPolicyError("url_invalid_syntax", f"{field_name} exceeds maximum length of {cls.MAX_URL_LENGTH}")
 
         # Single-pass decode + double-encoding rejection (centralised in _decode_strict).
-        decoded_value = _decode_strict(value, field_name)
+        # _decode_strict is shared with non-URL validators, so it raises a plain ValueError;
+        # code it here so every URL rejection carries a reason code into the sanitized log.
+        try:
+            decoded_value = _decode_strict(value, field_name)
+        except ValueError as exc:
+            raise UrlPolicyError("url_invalid_syntax", str(exc)) from exc
 
         # Reject IIS-style `%uXXXX` escapes that urllib does not decode.
         # Check both original (`%uXXXX`) and decoded (`%25u003c` → `%u003c`) forms
@@ -1418,10 +1423,9 @@ class SecurityValidator:
                 if settings.ssrf_protection_enabled and not skip_ssrf:
                     cls._validate_ssrf(decoded_hostname, field_name)
 
-            # Validate port number
-            if result.port is not None:
-                if result.port < 1 or result.port > 65535:
-                    raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains invalid port number")
+            # `urlsplit.port` already raises ValueError outside 1-65535, so only 0 reaches here.
+            if result.port == 0:
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains invalid port number")
 
             # Credentials: `result.username`/`password` catches literal `user:pass@`;
             # `@` in decoded_netloc catches percent-encoded userinfo (e.g. `user%3Apass@`).
@@ -1435,10 +1439,10 @@ class SecurityValidator:
             if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
                 raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains script patterns that may cause security issues")
 
-        except ValueError:
-            # Re-raise ValueError as-is
+        except UrlPolicyError:
             raise
         except Exception:
+            # Includes the ValueError `result.port` raises for an out-of-range port.
             raise UrlPolicyError("url_invalid_syntax", f"{field_name} is not a valid URL")
 
         return value

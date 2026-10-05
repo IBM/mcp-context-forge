@@ -1610,6 +1610,23 @@ class TestValidateSsrf:
         assert failed.value.reason_code == "url_dns_resolution_failed"
         assert empty.value.reason_code == "url_dns_no_addresses"
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%253Cscript%253E",  # double-encoded, rejected by _decode_strict
+            "https://example.com:99999/x",  # out-of-range port, rejected by urlsplit.port
+        ],
+    )
+    def test_syntax_rejection_carries_reason_code(self, ssrf_settings, url):
+        """Decoding and parser rejections reach the caller coded, not as a bare ValueError."""
+        ssrf_settings.ssrf_protection_enabled = False
+        ssrf_settings.validation_allowed_url_schemes = ["http://", "https://"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(UrlPolicyError) as excinfo:
+                SecurityValidator.validate_url(url, "URL")
+
+        assert excinfo.value.reason_code == "url_invalid_syntax"
+
     def test_invalid_cidr_logged(self, ssrf_settings):
         ssrf_settings.ssrf_blocked_networks = ["invalid-cidr"]
         ssrf_settings.ssrf_allow_localhost = True
