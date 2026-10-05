@@ -9,7 +9,7 @@ Tests for the /rbac/rules management API.
 # Standard
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -125,3 +125,26 @@ def test_rules_routes_require_manage_permission_for_mutations():
     """Mutations carry the rbac.rules.manage permission attribute."""
     mutation_paths = {(route.path, method) for route in rbac_router.router.routes for method in route.methods if route.path.startswith("/rbac/rules") and method in ("POST", "PATCH", "DELETE")}
     assert {("/rbac/rules", "POST"), ("/rbac/rules/{rule_id}", "PATCH"), ("/rbac/rules/{rule_id}", "DELETE")} <= mutation_paths
+
+
+@pytest.mark.asyncio
+async def test_reconcile_db_provider_reports_noop(monkeypatch):
+    """The reconcile endpoint answers without mirroring on the db provider."""
+    monkeypatch.setattr("mcpgateway.config.settings.rbac_rule_provider", "db", raising=False)
+    result = await rbac_router.reconcile_rule_provider(user={"email": "admin@example.com"}, db=MagicMock())
+    assert result == {"provider": "db", "applied": 0, "detail": "provider keeps no mirror to reconcile"}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_openfga_forces_sync(monkeypatch):
+    """The reconcile endpoint mirrors tuples and clears the decision cache."""
+    monkeypatch.setattr("mcpgateway.config.settings.rbac_rule_provider", "openfga", raising=False)
+    sync = MagicMock()
+    sync.sync_now = AsyncMock(return_value=7)
+    monkeypatch.setattr("mcpgateway.services.openfga_sync.OpenFgaSyncService", lambda db, client: sync)
+    cleared = []
+    monkeypatch.setattr("mcpgateway.services.openfga_provider.clear_decision_cache", lambda: cleared.append(True))
+    result = await rbac_router.reconcile_rule_provider(user={"email": "david@demo.example.com"}, db=MagicMock())
+    assert result == {"provider": "openfga", "applied": 7}
+    sync.sync_now.assert_awaited_once()
+    assert cleared == [True]

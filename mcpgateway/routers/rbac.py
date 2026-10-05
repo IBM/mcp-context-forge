@@ -949,3 +949,37 @@ async def set_server_forced_params(server_id: str, params: List[str], user=Depen
     db.commit()
     logger.info(f"Forced header params set for server {server_id}: {sv.forced_header_params}")
     return {"forced_header_params": sv.forced_header_params}
+
+
+@router.post("/rules/reconcile")
+@require_permission(Permissions.RBAC_RULES_MANAGE)
+async def reconcile_rule_provider(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Force the rule provider to converge instead of waiting for the interval.
+
+    With the openfga provider, role and rule mutations land in the database
+    immediately while the engine's tuples converge on the reconciliation
+    loop (OPENFGA_RECONCILE_SECONDS). This endpoint runs the mirror now
+    and reports the applied writes and deletes, so a policy change is
+    enforceable on the very next call.
+
+    Args:
+        user: Current authenticated user (needs rbac.rules.manage).
+        db: Database session, used read-only for the mirror query.
+
+    Returns:
+        dict: Provider name and the number of tuple operations applied.
+    """
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    provider = settings.rbac_rule_provider
+    if provider != "openfga":
+        return {"provider": provider, "applied": 0, "detail": "provider keeps no mirror to reconcile"}
+    from mcpgateway.services.openfga_sync import OpenFgaSyncService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.openfga_client import OpenFgaClient  # pylint: disable=import-outside-toplevel
+
+    applied = await OpenFgaSyncService(db, OpenFgaClient()).sync_now("api: rules reconcile")
+    from mcpgateway.services.openfga_provider import clear_decision_cache  # pylint: disable=import-outside-toplevel
+
+    clear_decision_cache()
+    logger.info("OpenFGA reconciliation forced via API by %s: applied=%s", user.get("email"), applied)
+    return {"provider": provider, "applied": applied}
