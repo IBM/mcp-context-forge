@@ -850,6 +850,7 @@ class TestSessionRefreshAndValidate:
         external = AsyncMock()
         monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", False)
         monkeypatch.setattr(vc, "verify_external_idp_token", external)
+        monkeypatch.setattr(vc, "_has_trusted_providers", lambda _db: True)
         monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")))
 
         with pytest.raises(HTTPException) as exc_info:

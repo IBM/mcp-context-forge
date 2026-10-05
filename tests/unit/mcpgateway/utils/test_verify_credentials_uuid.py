@@ -1045,6 +1045,38 @@ async def test_verify_oauth_access_token_jwks_uri_override_skips_discovery(monke
 
 
 @pytest.mark.asyncio
+async def test_verify_oauth_access_token_jwks_uri_override_bad_signature_returns_none(monkeypatch):
+    """A token not signed by a key from the jwks_uri_override JWKS is rejected."""
+    from mcpgateway.utils import verify_credentials as vc
+    from unittest.mock import AsyncMock
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import jwt
+
+    signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwks_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com", "aud": "my-api", "exp": 9999999999}, signing_key, algorithm="RS256")
+
+    class FakeJWKSClient:
+        def __init__(self, uri):
+            self.uri = uri
+
+        def get_signing_key_from_jwt(self, _token):
+            return MagicMock(key=jwks_key.public_key())
+
+    discover = AsyncMock()
+    monkeypatch.setattr(vc, "_discover_oidc_metadata", discover)
+    monkeypatch.setattr(vc, "_oauth_jwks_client_cache", {})
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKSClient)
+
+    result = await vc.verify_oauth_access_token(
+        token, ["https://auth.example.com"], expected_audience="my-api", jwks_uri_override="http://keycloak:8080/realms/m/protocol/openid-connect/certs"
+    )
+
+    assert result is None
+    discover.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_verify_oauth_access_token_jwks_uri_override_does_not_bypass_issuer_allowlist(monkeypatch):
     """jwks_uri_override never admits a token whose issuer is outside the allowlist."""
     from mcpgateway.utils import verify_credentials as vc

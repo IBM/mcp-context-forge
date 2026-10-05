@@ -405,7 +405,6 @@ services:
       - SSO_API_TOKEN_AUTH_ENABLED=${SSO_API_TOKEN_AUTH_ENABLED:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
       - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
-      - SSO_API_TOKEN_AUTH_ENABLED=${SSO_API_TOKEN_AUTH_ENABLED:-false}
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
