@@ -58,6 +58,14 @@ without a fork of the enforcement path.
    The bridge covers principals whose tuples have not reconciled
    yet. Bridged answers never enter the decision cache: they track
    live role rows and heal as the engine converges.
+9. **Canonical domain identifiers.** `domain_object_id()` in
+   `openfga_sync` slugifies every team name or claim value before it
+   becomes a `domain:` object. The slug strips whitespace and
+   apostrophes, caps length at the engine's 256-character maximum,
+   and falls back to a digest when the input slugifies to fewer
+   than 2 characters. The sync, the claims builder, and the database
+   fallback all derive domain identifiers through this one function,
+   so stored parentage and contextual membership connect.
 
 ## Consequences
 
@@ -74,10 +82,11 @@ without a fork of the enforcement path.
   success, so concurrent workers converge without batch failures.
   Deletes apply before writes so a tuple with a changed condition is
   rewritten in one pass.
-- Domain objects in contextual tuples must satisfy the engine's
-  object-id grammar. Team names with spaces or apostrophes are
-  rejected at check time and the engine retries without contextual
-  tuples. Domain identifiers must use engine-safe characters.
+- Slugified domain identifiers can collide when 2 distinct team names
+  or claim values slugify to the same slug. Colliding names share 1
+  domain and its traversal. Deployment naming that keeps team names
+  distinct after slugification avoids the merge. The retry without
+  contextual tuples stays as defense for any engine-side rejection.
 - Both providers ship indefinitely. Nothing deprecates. The flag controls
   the cutover.
 

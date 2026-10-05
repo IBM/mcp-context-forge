@@ -771,10 +771,12 @@ The JWT `roles` claim elevates membership to `admin` when it carries
 back to `email_team_members` reads, so local session users keep
 domain traversal.
 
-Domain identifiers must satisfy the engine's object-id grammar.
-Use letters, digits, hyphens, and underscores in team names that
-back domains. A check with an invalid domain identifier retries
-without contextual tuples and logs the rejection.
+Domain identifiers are slugified team names. A name with spaces or
+apostrophes, like ``RBAC Test anne's Team``, becomes the identifier
+``rbac-test-annes-team`` automatically. The engine receives a valid
+object id without naming restrictions on teams. Two team names that
+slugify to the same identifier share one domain: keep team names
+distinct after slugification to avoid merging their traversal.
 
 ### Failure Modes
 
