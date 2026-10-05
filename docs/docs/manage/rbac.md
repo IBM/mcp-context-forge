@@ -714,12 +714,13 @@ token must still carry the permission regardless of the engine.
 | `OPENFGA_API_URL` | `http://localhost:8080` | OpenFGA HTTP API base URL |
 | `OPENFGA_STORE_ID` | empty | Pin a store. An empty value bootstraps by `OPENFGA_STORE_NAME` (default `contextforge`) |
 | `OPENFGA_API_TOKEN` / `OPENFGA_API_TOKEN_FILE` | empty | Preshared key. The file wins when both are set |
-| `OPENFGA_CACHE_TTL_SECONDS` | `30` | Client-side decision cache |
+| `OPENFGA_CACHE_TTL_SECONDS` | `30` | Client-side decision cache. Engine answers only. Database-bridged answers skip the cache |
 | `OPENFGA_RECONCILE_SECONDS` | `300` | Full tuple reconciliation interval |
 
 Selecting the engine (or shadow mode) without the URL and a token fails
-startup validation. An unreachable engine denies every check with an
-ERROR log line: the provider fails closed, never open.
+startup validation. An unreachable engine logs an ERROR line and the
+database provider answers the check. A denial requires both authorities
+to deny: the provider never fails open.
 
 ### Editing Rules
 
@@ -753,14 +754,41 @@ matching deny rule blocks, a matching allow rule grants, and no match
 passes the role decision through. The platform-admin bypass stays ahead
 of the overlay. Seed rows reject deletion with 409.
 
+### Domain Hierarchy and JWT Claims
+
+The engine authorization model carries a `domain` type with `member`
+and `admin` relations. Servers, tools, resources, prompts, and
+gateways parent to a domain. A permission check traverses from the
+resource to its domain to the caller's membership.
+
+A domain abstracts the tenant concept. A ContextForge team, an Entra
+group, or a Keycloak role can back a domain without model changes.
+
+Membership comes from the token, not from stored tuples. Each check
+carries contextual domain tuples built from the JWT `teams` claim.
+The JWT `roles` claim elevates membership to `admin` when it carries
+`team_admin` or `platform_admin`. Tokens without team claims fall
+back to `email_team_members` reads, so local session users keep
+domain traversal.
+
+Domain identifiers must satisfy the engine's object-id grammar.
+Use letters, digits, hyphens, and underscores in team names that
+back domains. A check with an invalid domain identifier retries
+without contextual tuples and logs the rejection.
+
 ### Failure Modes
 
-- Engine down: every Layer-2 check denies. The reconciliation log shows
-  the engine health. Flipping `RBAC_RULE_PROVIDER=db` restores the
-  role model immediately.
+- Engine down: checks fall through to the database provider. The
+  gateway keeps serving with role-model decisions. The reconciliation
+  log shows the engine health. Flipping `RBAC_RULE_PROVIDER=db`
+  removes the engine dependency entirely.
 - Tuple drift: the reconciliation loop converges stored tuples every
-  `OPENFGA_RECONCILE_SECONDS`. Direct tuple writes from operators stay
-  unsupported.
+  `OPENFGA_RECONCILE_SECONDS`. Workers that lose a concurrent write
+  race treat the reply as success and converge on the next pass.
+  Direct tuple writes from operators stay unsupported.
+- New principals: a user created after the last reconciliation has no
+  engine tuples yet. The database bridge answers for them until the
+  loop mirrors their assignments.
 - Shadow divergence: each mismatch logs a WARNING with both answers.
   Investigate before you cut over.
 
