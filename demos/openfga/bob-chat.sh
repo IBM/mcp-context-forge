@@ -108,8 +108,9 @@ for user in "${USERS[@]}"; do
     mkdir -p "${WORKDIR}/${user}/workspace"
     if [ "${user}" = "david" ]; then
         printf '%s' "${KEY}" > "${WORKDIR}/${user}/workspace/.contextforge-api-key"
-        mkdir -p "${WORKDIR}/${user}/workspace/.bob/skills"
+        mkdir -p "${WORKDIR}/${user}/workspace/.bob/skills" "${WORKDIR}/${user}/global-skills"
         cp -R "$(dirname "$0")/david-skill/contextforge-policy" "${WORKDIR}/${user}/workspace/.bob/skills/"
+        cp -R "$(dirname "$0")/david-skill/contextforge-policy" "${WORKDIR}/${user}/global-skills/"
     fi
     echo "bob-chat: ${user} key bobshell-demo-${STAMP} -> ${WORKDIR}/${user}/mcp.json"
 done
@@ -121,7 +122,13 @@ for user in "${USERS[@]}"; do
 done
 tmux kill-session -t "${SESSION}" 2>/dev/null || true
 bob_cmd() { # bob_cmd USER -> the container command line for one chat
-    echo "docker run --rm -it --name bob-$1 --add-host=host.docker.internal:host-gateway -e BOB_API_KEY='${BOBSHELL_API_KEY}' -v '${WORKDIR}/$1:/etc/bob:ro' -v '${WORKDIR}/$1/workspace:/workspace' ${BOBSHELL_IMAGE}"
+    local extra=""
+    # David's skill installs at both roots: the workspace root and the
+    # user-global root, which bob treats like its packaged skills.
+    if [ "$1" = "david" ]; then
+        extra=" -v '${WORKDIR}/$1/global-skills/contextforge-policy:/opt/app-root/src/.bob/skills/contextforge-policy:ro'"
+    fi
+    echo "docker run --rm -it --name bob-$1 --add-host=host.docker.internal:host-gateway -e BOB_API_KEY='${BOBSHELL_API_KEY}' -v '${WORKDIR}/$1:/etc/bob:ro' -v '${WORKDIR}/$1/workspace:/workspace'${extra} ${BOBSHELL_IMAGE}"
 }
 
 # Each pane runs its container as the pane process: no shell, no
