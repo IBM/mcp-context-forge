@@ -292,6 +292,24 @@ class OpenFgaRuleProvider(DbRuleProvider):
             return {Permissions.ALL_PERMISSIONS}
         granted: set[str] = set()
         user = f"user:{user_email}"
+        # One read answers whether the engine holds any tuple for this
+        # principal. The per-permission enumeration below issues one
+        # list-objects call per permission; for principals the
+        # reconciliation has not mirrored yet that costs seconds and
+        # yields nothing. Bridge first, enumerate only when the engine
+        # actually knows the principal.
+        try:
+            known = await self._client.read_tuples(user_filter=user)
+        except OpenFgaUnavailable as exc:
+            logger.error("OpenFGA user-tuple read failed (fail-closed bridge): user=%s error=%s", user, exc)
+            known = []
+        if not known:
+            # The engine holds no tuples for this principal. Users whose
+            # tuples have not been reconciled yet must not read as
+            # no-roles: bridge to the database provider, mirroring the
+            # check_permission fallback. Do not cache the bridged answer;
+            # it tracks live role rows and heals as the engine converges.
+            return set(await super().get_user_permissions(user_email, team_id, include_all_teams=include_all_teams, token_teams=token_teams, token_roles=token_roles))
         for permission in Permissions.get_all_permissions():
             relation = relation_for(permission)
             try:
@@ -301,13 +319,6 @@ class OpenFgaRuleProvider(DbRuleProvider):
                 continue
             if objects:
                 granted.add(permission)
-        if not granted:
-            # The engine enumerated nothing for this principal. Users whose
-            # tuples have not been reconciled yet must not read as
-            # no-roles: bridge to the database provider, mirroring the
-            # check_permission fallback. Do not cache the bridged answer;
-            # it tracks live role rows and heals as the engine converges.
-            return set(await super().get_user_permissions(user_email, team_id, include_all_teams=include_all_teams, token_teams=token_teams, token_roles=token_roles))
         self._store(key, frozenset(granted))
         return granted
 

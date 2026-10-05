@@ -7,7 +7,7 @@ Tests for the OpenFGA rule provider and shadow mode.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -123,3 +123,31 @@ async def test_get_user_permissions_platform_admin_wildcard(provider):
     provider._client.check = AsyncMock(return_value=True)  # assignee role:platform_admin
     result = await provider.get_user_permissions("root@example.com")
     assert "*" in result
+
+
+async def test_get_user_permissions_bridges_without_enumeration(provider):
+    """A principal with no engine tuples bridges without per-permission calls."""
+    provider._client.check = AsyncMock(return_value=False)  # not platform admin
+    provider._client.read_tuples = AsyncMock(return_value=[])
+    provider._client.list_objects = AsyncMock(side_effect=AssertionError("enumeration must be skipped"))
+    with patch.object(DbRuleProvider, "get_user_permissions", new=AsyncMock(return_value={"tools.read"})) as db_get:
+        result = await provider.get_user_permissions("new@example.com")
+    assert result == {"tools.read"}
+    provider._client.read_tuples.assert_awaited_once_with(user_filter="user:new@example.com")
+    provider._client.list_objects.assert_not_awaited()
+    db_get.assert_awaited_once()
+
+
+async def test_get_user_permissions_enumerates_known_principal(provider):
+    """A principal with engine tuples answers from the enumeration."""
+    provider._client.check = AsyncMock(return_value=False)
+    provider._client.read_tuples = AsyncMock(return_value=[{"key": {"user": "user:anne@example.com", "relation": "assignee", "object": "role:viewer"}}])
+
+    async def fake_list_objects(user, relation, capability):
+        return ["route:all"]
+
+    provider._client.list_objects = AsyncMock(side_effect=fake_list_objects)
+    with patch.object(DbRuleProvider, "get_user_permissions", new=AsyncMock(side_effect=AssertionError("bridge must not run"))):
+        result = await provider.get_user_permissions("anne@example.com")
+    assert result  # enumeration produced the granted set
+    provider._client.list_objects.assert_awaited()
