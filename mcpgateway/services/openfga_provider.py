@@ -253,6 +253,20 @@ class OpenFgaRuleProvider(DbRuleProvider):
             # the whole decision-cache TTL.
             self._store(key, allowed)
 
+        if allowed and args:
+            # The engine granted, but rule predicates may reference
+            # Mcp-Param-* mirrored arguments (SEP-2243) that tuples
+            # cannot express. Evaluate the catalog overlay with the
+            # argument values so a matching deny still blocks the
+            # call; platform admins keep their bypass.
+            from mcpgateway.services.rule_catalog_service import RuleCatalogService  # pylint: disable=import-outside-toplevel
+
+            attributes = self._overlay_attributes(user_email, token_teams, token_is_admin, token_roles, args=args)
+            overlay = RuleCatalogService(self.db).evaluate_overlay(permission, attributes, capability_id=resource_id)
+            if overlay is False and not (allow_admin_bypass and (token_is_admin or await self.check_platform_admin_permission(user_email))):
+                logger.info("Rule catalog deny on engine grant: user=%s permission=%s", user_email, permission)
+                return False
+
         if self.audit_enabled:
             await self._log_permission_check(
                 user_email=user_email,
