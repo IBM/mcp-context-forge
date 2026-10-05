@@ -4933,6 +4933,8 @@ class SessionManagerWrapper:
                     "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                     "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                 }
+                # Carry SEP-2243 mirrored tool arguments across the loopback.
+                rpc_headers.update({k: v for k, v in headers.items() if k.lower().startswith("mcp-param-")})
                 # Preserve the inbound gateway auth header (default: Authorization,
                 # or AUTH_HEADER_NAME when customized) so the CSRF bearer short-circuit
                 # keys on it. The trusted endpoint itself authenticates via the encoded
@@ -5132,6 +5134,10 @@ class SessionManagerWrapper:
                             "content-type": "application/json",
                             "x-mcp-session-id": mcp_session_id,
                         }
+                        # Carry SEP-2243 mirrored tool arguments across the
+                        # loopback so rule predicates can evaluate them on
+                        # the serving side (Mcp-Param-<name> headers).
+                        rpc_headers.update({k: v for k, v in headers.items() if k.lower().startswith("mcp-param-")})
                         # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
                         # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
                         # the configured header, so a custom header would otherwise be dropped.

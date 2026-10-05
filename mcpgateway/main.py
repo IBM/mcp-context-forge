@@ -223,6 +223,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
+    _extract_mcp_param_headers,
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
     MCPOriginHostGate,
@@ -836,7 +837,7 @@ def _is_permission_admin_user(user) -> bool:
     return False
 
 
-async def _ensure_rpc_permission(user, db: Session, permission: str, method: str, request: Request | None = None) -> None:
+async def _ensure_rpc_permission(user, db: Session, permission: str, method: str, request: Request | None = None, *, args: dict | None = None, resource_id: str | None = None) -> None:
     """Require a specific RPC permission for a method branch.
 
     Enforces both layers:
@@ -849,6 +850,9 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         permission: Permission required for the method.
         method: JSON-RPC method name being authorized.
         request: Optional FastAPI request for extracting token scopes.
+        args: Mirrored Mcp-Param-* argument values (SEP-2243) for rule
+            predicates; the plain checker runs when omitted.
+        resource_id: Tool name for entity-scoped rules.
 
     Raises:
         JSONRPCError: If the requester lacks the required permission.
@@ -889,6 +893,29 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     if not await checker.has_permission(permission, check_any_team=check_any_team, team_id=team_id):
         logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
+
+    if args:
+        # Rule predicates may reference Mcp-Param-* mirrored arguments
+        # (SEP-2243). The base check above passed; evaluate the catalog
+        # overlay with the argument values so deny rules on tool
+        # parameters can still block the call.
+        from mcpgateway.services.rule_provider import get_rule_provider  # pylint: disable=import-outside-toplevel
+
+        provider = get_rule_provider(db)
+        granted = await provider.check_permission(
+            user_email=user.get("email", "") if isinstance(user, dict) else "",
+            permission=permission,
+            resource_id=resource_id,
+            team_id=team_id,
+            ip_address=(request.client.host if request and request.client else None),
+            allow_admin_bypass=True,
+            check_any_team=check_any_team,
+            token_is_admin=bool(user.get("is_admin")) if isinstance(user, dict) else False,
+            args=args,
+        )
+        if not granted:
+            logger.warning("RPC permission denied (RBAC rule): method=%s, required=%s", method, permission)
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
 def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
@@ -11172,7 +11199,15 @@ async def handle_internal_mcp_tools_call(request: Request):
             return forwarded_response
 
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
-            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
+            await _ensure_rpc_permission(
+                user,
+                db,
+                "tools.execute",
+                "tools/call",
+                request=request,
+                args=_extract_mcp_param_headers({k.lower(): v for k, v in request.headers.items()} if request else None),
+                resource_id=params.get("name"),
+            )
 
         # Trust the pre-invoke-ran marker only on this internal endpoint
         # (authenticated via x-contextforge-mcp-runtime-auth shared secret).
@@ -11290,7 +11325,15 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             _enforce_internal_mcp_server_scope(request, server_id)
 
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
-            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
+            await _ensure_rpc_permission(
+                user,
+                db,
+                "tools.execute",
+                "tools/call",
+                request=request,
+                args=_extract_mcp_param_headers({k.lower(): v for k, v in request.headers.items()} if request else None),
+                resource_id=params.get("name"),
+            )
 
         # Layer-1 exception: tool-execution authorization, not resource visibility.
         # Centralizing here would widen admin execution scope to their own private tools.
@@ -11864,7 +11907,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Per the MCP spec, a ping returns an empty result.
             result = {}
         elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
-            await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
+            await _ensure_rpc_permission(
+                user, db, "tools.execute", method, request=request, args=_extract_mcp_param_headers(dict(request.headers) if request else None), resource_id=params.get("name")
+            )
             # Note: Multi-worker session affinity forwarding is handled earlier
             # (before method routing) to apply to ALL methods, not just tools/call
             try:
