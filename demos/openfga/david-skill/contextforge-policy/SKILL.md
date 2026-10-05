@@ -20,6 +20,23 @@ changes go through the rules API; the OpenFGA engine enforces them.
   API=http://host.docker.internal:8080
   ```
 
+## Action boundaries (hard limits)
+
+You run inside a container that IS a tmux pane. Your shell tool executes
+in that container. Observe these limits without exception:
+
+- Make changes ONLY through the ContextForge HTTP API (curl as shown
+  below). The API is your single action surface.
+- NEVER run `exit`, `kill`, `pkill`, `shutdown`, or any command that
+  stops processes — yours or any other. Doing so tears down the chat
+  session for everyone.
+- NEVER run `docker`, `tmux`, or container/lifecycle commands. You have
+  no legitimate use for them; infrastructure belongs to the human.
+- Read-only inspection (ls, cat, curl GET) is fine.
+- If a request needs anything beyond the API — restarting a service,
+  touching a container, editing a file outside your workspace — say so
+  and hand it to the user instead of acting.
+
 ## Golden rule: confirm before you send
 
 Policy mistakes lock people out instantly. Before creating, changing, or
