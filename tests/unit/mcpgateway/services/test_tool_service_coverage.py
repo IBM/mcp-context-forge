@@ -11251,3 +11251,27 @@ class TestXMcpHeaderMirroring:
         upstream_name = tool_payload["original_name"]
         assert session._x_mcp_header_maps == {upstream_name: {("region",): "Region"}}
         session.call_tool.assert_awaited_once_with(upstream_name, arguments, meta=ANY, progress_callback=ANY, allow_input_required=True, input_responses=None, request_state=None)
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_call_is_refused_before_upstream(self, tool_service):
+        """caller denied by _check_tool_access never derives headers or opens an upstream session."""
+        tool_payload = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        tool_payload["input_schema"] = self.annotated_schema
+        proxy_client = MagicMock()
+        registry = MagicMock()
+        call_upstream = AsyncMock()
+
+        with (
+            _setup_cache_for_invoke(tool_payload, _make_gateway_payload()),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=False)) as check_access,
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", proxy_client),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=registry),
+            patch("mcpgateway.services.tool_service._call_upstream_tool", call_upstream),
+        ):
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(MagicMock(), "test_tool", {"region": "us-west1"}, user_email="outsider@test.com", token_teams=["other-team"])
+
+        check_access.assert_awaited()
+        call_upstream.assert_not_awaited()
+        proxy_client.assert_not_called()
+        registry.acquire.assert_not_called()
