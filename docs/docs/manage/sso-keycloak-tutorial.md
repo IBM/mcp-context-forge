@@ -19,6 +19,11 @@ docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up 
 
 Preconfigured local endpoints and credentials:
 
+> **Dev/test only -- never use these values in production.** The admin password, client
+> secret, and test-user passwords below are fixed, plaintext, and public (committed in
+> `infra/keycloak/realm-export.json`). Change every one of them before this stack, or any
+> client registered against it, is anywhere near a real deployment.
+
 - Gateway UI: `http://localhost:8080/admin/login`
 - Keycloak admin console: `http://localhost:8180` (`admin` / `changeme`)
 - Keycloak realm: `mcp-gateway`
@@ -30,6 +35,96 @@ Preconfigured local endpoints and credentials:
   - `developer@example.com`
   - `viewer@example.com`
   - `newuser@example.com`
+
+### How the Keycloak container seeds its realm
+
+Keycloak boots this stack with `--import-realm`, which only imports
+`infra/keycloak/realm-export.json` into an **empty** Keycloak database. On every later
+`make compose-sso`, Keycloak sees its existing data volume and skips the import entirely --
+editing `realm-export.json` (a new client, a new mapper, a new test user) has no effect on
+an already-running stack.
+
+To pick up a realm-export.json change, wipe the volume and reimport:
+
+```bash
+make compose-sso-clean   # stops the stack AND deletes the Keycloak + gateway volumes
+make compose-sso
+make compose-sso-seed-audience
+```
+
+`compose-sso-clean` is destructive by design (any realm edits made by hand through the
+admin console, extra test users, etc. are lost with it) -- that is also how you get back to
+a known-good state if the stack has drifted from manual admin-console tinkering. This stack
+is dev/test only: `realm-export.json` ships a fixed admin password and client secrets in
+plain text, so never point `docker-compose.sso.yml` at a real deployment. For production,
+follow the manual setup in Steps 1-10 below against your own Keycloak instance instead.
+
+### Web UI (BFF) SSO client
+
+`infra/keycloak/realm-export.json` seeds a **second** client, `contextforge-web-ui`, alongside
+the gateway's own `mcp-gateway` client. It's for
+[contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui), a separate
+BFF that runs its own OIDC Authorization Code + PKCE flow against this same Keycloak realm,
+then presents the resulting Keycloak access token to this gateway as a bearer token.
+
+Seeded client settings (confidential, PKCE-required):
+
+> **Dev/test only -- never use these values in production.** `contextforge-web-ui-dev-secret`
+> is a fixed, plaintext, public secret (committed in `infra/keycloak/realm-export.json`), and
+> `mcp-gateway-api` is a convenience default, not a secret -- rotate the client secret and
+> pick your own audience value before registering this client against a real Keycloak.
+
+- Client ID: `contextforge-web-ui` / secret: `contextforge-web-ui-dev-secret`
+- Redirect URI: `http://localhost:3001/auth/sso/callback`
+- Web origin: `http://localhost:3001`
+- Direct access grants / service accounts: both disabled (this client only ever does the
+  browser Authorization Code flow, never password or client-credentials grants)
+- An **Audience** protocol mapper stamping `aud: mcp-gateway-api` into its access tokens
+
+That last point matters: `trusted_for_api_auth`/`api_audience` (the gateway-side settings
+that decide whether an external Keycloak token is accepted as a bearer credential) have no
+env-var bootstrap -- they only exist as fields on the SSOProvider row, set once via the
+admin API. Run this after the gateway is healthy:
+
+```bash
+make compose-sso-seed-audience
+```
+
+It mints a short-lived admin JWT, finds the SSO provider matching the `mcp-gateway` realm,
+and `PUT`s `{trusted_for_api_auth: true, api_audience: "mcp-gateway-api"}` onto it -- safe to
+re-run. Override the gateway URL, realm, or audience value with `SSO_SEED_GATEWAY_URL`,
+`SSO_SEED_REALM`, `SSO_SEED_API_AUDIENCE` (see `.env.example` for valid/suggested values and
+how to set them -- they're `make` variables, not read from `.env` automatically).
+
+#### Adding this client to an existing Keycloak instance by hand
+
+If you already have a running Keycloak (not the compose-sso stack) and want to register a
+BFF client against it the same way, repeat [Step 2](#step-2-create-client-in-keycloak)
+below for a second client, with these BFF-specific values instead of the gateway's own:
+
+1. **Client ID**: `contextforge-web-ui` (or whatever the BFF's `SSO_KEYCLOAK_CLIENT_ID` is
+   configured to), **Client authentication**: On (confidential client).
+2. **Valid redirect URIs**: `https://<bff-origin>/auth/sso/callback` -- exact match, no
+   wildcard (the BFF's own callback route, not the gateway's `/auth/sso/callback/keycloak`).
+3. **Web origins**: `<bff-origin>`.
+4. **Advanced tab -> Proof Key for Code Exchange Code Challenge Method**: `S256`.
+5. **Capability config**: Standard flow **on**; Direct access grants and Service accounts
+   **off** (this client never does a password or client-credentials grant).
+6. Under **Client scopes -> `contextforge-web-ui-dedicated` -> Mappers -> Add mapper -> By
+   configuration -> Audience**: set **Included Custom Audience** (not *Included Client
+   Audience* -- that ties the claim to a specific client object instead of a portable
+   string) to a shared resource identifier, e.g. `mcp-gateway-api`, with **Add to access
+   token** on. This is required: Keycloak does not stamp a client's own ID into `aud` by
+   default, and the gateway's token verification hard-requires the claim to be present.
+7. On the gateway side, set that same string as the `api_audience` on the Keycloak
+   SSOProvider row (the admin-API call `compose-sso-seed-audience` automates for the local
+   stack -- see `mcpgateway/routers/sso.py`'s `PUT /auth/sso/admin/providers/{id}` for the
+   equivalent call against a real deployment).
+
+Use **Included Custom Audience** rather than pointing the mapper at the gateway's own client
+object: a custom string isn't tied to that client's continued existence in Keycloak, and it
+lets any future client (another frontend, a CLI) reuse the same `api_audience` without the
+gateway's SSOProvider config ever needing to change again.
 
 ## Prerequisites
 
