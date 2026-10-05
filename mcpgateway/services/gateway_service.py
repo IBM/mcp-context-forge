@@ -596,8 +596,9 @@ class GatewayConnectionError(GatewayError):
 def classify_connection_failure(exc: BaseException) -> str:
     """Map a transport exception to a stable gateway reason code.
 
-    Walks the ``__cause__``/``__context__`` chain because httpx wraps a TLS failure in a
-    transport error, which would otherwise read as a plain connection failure.
+    Walks the ``__cause__``/``__context__`` chain and every ``ExceptionGroup`` member:
+    httpx wraps a TLS failure in a transport error, and the MCP SDK task group wraps that
+    again, both of which would otherwise read as a plain initialization failure.
 
     Args:
         exc: The exception raised while connecting to or initializing a gateway.
@@ -612,18 +613,31 @@ def classify_connection_failure(exc: BaseException) -> str:
         'gateway_connection_failed'
         >>> classify_connection_failure(ValueError("bad payload"))
         'gateway_initialization_failed'
+        >>> classify_connection_failure(ExceptionGroup("tg", [ssl.SSLError("handshake failed")]))
+        'gateway_tls_failed'
+        >>> classify_connection_failure(ExceptionGroup("tg", [OSError("refused")]))
+        'gateway_connection_failed'
     """
+    transport_errors = (httpx.TransportError, httpx2.TransportError, OSError, TimeoutError, asyncio.TimeoutError)
     seen: Set[int] = set()
-    current: Optional[BaseException] = exc
-    while current is not None and id(current) not in seen:
+    pending: List[Optional[BaseException]] = [exc]
+    transport_seen = False
+
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
         seen.add(id(current))
         if isinstance(current, ssl.SSLError):
             return "gateway_tls_failed"
-        current = current.__cause__ or current.__context__
+        if isinstance(current, transport_errors):
+            transport_seen = True
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        pending.append(current.__cause__)
+        pending.append(current.__context__)
 
-    if isinstance(exc, (httpx.TransportError, httpx2.TransportError, OSError, TimeoutError, asyncio.TimeoutError)):
-        return "gateway_connection_failed"
-    return "gateway_initialization_failed"
+    return "gateway_connection_failed" if transport_seen else "gateway_initialization_failed"
 
 
 class GatewayCredentialError(GatewayError):
@@ -2654,7 +2668,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.rollback()
             # Surface validation or depth-related failures directly to the user
             logger.error("GatewayConnectionError during OAuth fetch for %s: %s", SecurityValidator.sanitize_log_message(gateway_id), gce)
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}", gce.reason_code)
         except Exception as e:
             db.rollback()
             # Extract actual error from TaskGroup or ExceptionGroup if present
@@ -2671,7 +2685,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 type(actual_error).__name__,
                 exc_info=True,  # Include full traceback
             )
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}", classify_connection_failure(e))
 
     async def list_gateways(
         self,
@@ -5732,7 +5746,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
                 raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
 
-            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}", classify_connection_failure(root_cause)) from root_cause
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}", classify_connection_failure(e)) from root_cause
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
