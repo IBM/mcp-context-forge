@@ -222,10 +222,12 @@ class OpenFgaRuleProvider(DbRuleProvider):
             if blocked:
                 allowed = False
 
+        from_fallback = False
         if not allowed:
             # Fall back to the database provider when the engine denies.
             # Recently created users may not have tuples in the engine
             # yet; the db check bridges the sync gap.
+            from_fallback = True
             try:
                 allowed = await super().check_permission(
                     user_email=user_email,
@@ -245,7 +247,11 @@ class OpenFgaRuleProvider(DbRuleProvider):
             except Exception:  # pylint: disable=broad-exception-caught
                 logger.debug("DB fallback check failed for %s / %s", user_email, permission, exc_info=True)
 
-        self._store(key, allowed)
+        if not from_fallback:
+            # Cache engine answers only. The database fallback tracks
+            # live role rows; caching it would pin a stale denial for
+            # the whole decision-cache TTL.
+            self._store(key, allowed)
 
         if self.audit_enabled:
             await self._log_permission_check(
@@ -282,19 +288,26 @@ class OpenFgaRuleProvider(DbRuleProvider):
         if cached is not None and not isinstance(cached, bool):
             return set(cached)
         if await self.check_platform_admin_permission(user_email):
-            granted = {Permissions.ALL_PERMISSIONS}
-        else:
-            granted = set()
-            user = f"user:{user_email}"
-            for permission in Permissions.get_all_permissions():
-                relation = relation_for(permission)
-                try:
-                    objects = await self._client.list_objects(user, relation, capability_for_permission(permission))
-                except OpenFgaUnavailable as exc:
-                    logger.error("OpenFGA list-objects failed (fail-closed skip): user=%s relation=%s error=%s", user, relation, exc)
-                    continue
-                if objects:
-                    granted.add(permission)
+            self._store(key, frozenset({Permissions.ALL_PERMISSIONS}))
+            return {Permissions.ALL_PERMISSIONS}
+        granted: set[str] = set()
+        user = f"user:{user_email}"
+        for permission in Permissions.get_all_permissions():
+            relation = relation_for(permission)
+            try:
+                objects = await self._client.list_objects(user, relation, capability_for_permission(permission))
+            except OpenFgaUnavailable as exc:
+                logger.error("OpenFGA list-objects failed (fail-closed skip): user=%s relation=%s error=%s", user, relation, exc)
+                continue
+            if objects:
+                granted.add(permission)
+        if not granted:
+            # The engine enumerated nothing for this principal. Users whose
+            # tuples have not been reconciled yet must not read as
+            # no-roles: bridge to the database provider, mirroring the
+            # check_permission fallback. Do not cache the bridged answer;
+            # it tracks live role rows and heals as the engine converges.
+            return set(await super().get_user_permissions(user_email, team_id, include_all_teams=include_all_teams, token_teams=token_teams, token_roles=token_roles))
         self._store(key, frozenset(granted))
         return granted
 
