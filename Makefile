@@ -6182,8 +6182,7 @@ ibmcloud-check-env:
 		missing=0; \
 		for var in IBMCLOUD_REGION IBMCLOUD_PROJECT IBMCLOUD_RESOURCE_GROUP \
 		           IBMCLOUD_CODE_ENGINE_APP IBMCLOUD_IMAGE_NAME IBMCLOUD_IMG_PROD \
-		           IBMCLOUD_CPU IBMCLOUD_MEMORY IBMCLOUD_REGISTRY_SECRET \
-		           IBMCLOUD_ICR_API_KEY; do \
+		           IBMCLOUD_CPU IBMCLOUD_MEMORY IBMCLOUD_REGISTRY_SECRET; do \
 			if [ -z "$${!var}" ]; then \
 				echo "❌  Missing: $$var"; \
 				missing=1; \
