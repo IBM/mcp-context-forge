@@ -865,7 +865,12 @@ def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int
 
 
 class TimeseriesResponse(BaseModel):
-    """Index-aligned execution and status counts bucketed over time."""
+    """Index-aligned execution and status counts.
+
+    ``values`` counts every trace. ``success_count`` and ``error_count`` count
+    only explicit ``ok`` and ``error`` statuses. Other statuses, including
+    ``unset``, are included only in ``values``.
+    """
 
     buckets: list[str]
     values: list[int]
