@@ -168,7 +168,7 @@ class TestPersonalTeamService:
             mock_team.id = "special-team-id"
             MockTeam.return_value = mock_team
 
-            result = await service.create_personal_team(user)
+            await service.create_personal_team(user)
 
             # Verify slug generation with default empty prefix uses slugify(team_name)
             MockTeam.assert_called_once()
@@ -476,11 +476,9 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_concurrent_team_creation_handling(self, service, mock_db, mock_user):
         """Test handling of concurrent team creation attempts."""
-        # Simulate race condition: first check shows no team, but creation fails due to concurrent creation
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            None,  # Initial check in create_personal_team
-            MagicMock(id="existing-team"),  # After failed creation attempt
-        ]
+        # Simulate race condition: no existing team, no orphaned slug holder,
+        # but the commit fails due to a concurrent creation winning the insert.
+        mock_db.query.return_value.filter.return_value.first.side_effect = [None] * 8
 
         with patch("mcpgateway.services.personal_team_service.EmailTeam"), patch("mcpgateway.services.personal_team_service.EmailTeamMember"):
             mock_db.commit.side_effect = Exception("UNIQUE constraint failed")
@@ -489,6 +487,18 @@ class TestPersonalTeamService:
                 await service.create_personal_team(mock_user)
 
             mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_personal_team_adopts_orphaned_slug(self, service, mock_db, mock_user):
+        """A prior lifecycle's inactive team holding the slug is adopted."""
+        orphaned = MagicMock(id="orphaned-team", slug="personal-testuser-example-com")
+        mock_db.query.return_value.filter.return_value.first.side_effect = [None, orphaned] + [None] * 8
+
+        result = await service.create_personal_team(mock_user)
+
+        assert result is orphaned
+        assert orphaned.is_active is True
+        mock_db.commit.assert_called_once()
 
 
 class TestPersonalTeamDualWrite:
