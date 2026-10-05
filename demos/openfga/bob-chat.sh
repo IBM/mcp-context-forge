@@ -84,10 +84,19 @@ echo "bob-chat: virtual server ${SERVER_NAME} = ${SERVER_ID}; team ${TEAM_NAME} 
 
 STAMP="$(date +%H%M%S)"
 
+# David administers the demo: his key also carries the policy-rules and
+# server-administration permissions from the demo-server-admin role.
+declare -A USER_SCOPE=(
+    [alice]='["tools.read","tools.execute"]'
+    [becky]='["tools.read","tools.execute"]'
+    [carol]='["tools.read","tools.execute"]'
+    [david]='["tools.read","tools.execute","servers.read","servers.use","servers.create","servers.update","servers.delete","rbac.rules.manage"]'
+)
+
 for user in "${USERS[@]}"; do
     USER_TOKEN="$(login "${user}@demo.example.com" "${DEMO_USER_PASSWORD}")"
     [ -n "${USER_TOKEN}" ] || die "login failed for ${user}@demo.example.com (run demo-seed, check DEMO_USER_PASSWORD)"
-    KEY="$(api POST /tokens "{\"name\":\"bobshell-demo-${STAMP}\",\"expires_in_days\":1,\"team_id\":\"${TEAM_ID}\",\"scope\":{\"permissions\":[\"tools.read\",\"tools.execute\"]}}" "${USER_TOKEN}" | jq -r '.access_token // empty')"
+    KEY="$(api POST /tokens "{\"name\":\"bobshell-demo-${STAMP}\",\"expires_in_days\":1,\"team_id\":\"${TEAM_ID}\",\"scope\":{\"permissions\":${USER_SCOPE[$user]}}}" "${USER_TOKEN}" | jq -r '.access_token // empty')"
     [ -n "${KEY}" ] || die "key mint failed for ${user}"
     mkdir -p "${WORKDIR}/${user}"
     # Entry schema for bob 2.0.5: the session layer requires type+url.
@@ -96,6 +105,12 @@ for user in "${USERS[@]}"; do
     jq -n --arg url "${GATEWAY_URL}/servers/${SERVER_ID}/mcp/" --arg key "${KEY}" \
         '{mcpServers: {fast_time: {type: "http", url: $url, headers: {Authorization: ("Bearer " + $key)}, disabled: false}}}' \
         > "${WORKDIR}/${user}/mcp.json"
+    mkdir -p "${WORKDIR}/${user}/workspace"
+    if [ "${user}" = "david" ]; then
+        printf '%s' "${KEY}" > "${WORKDIR}/${user}/workspace/.contextforge-api-key"
+        mkdir -p "${WORKDIR}/${user}/workspace/.bob/skills"
+        cp -R "$(dirname "$0")/david-skill/contextforge-policy" "${WORKDIR}/${user}/workspace/.bob/skills/"
+    fi
     echo "bob-chat: ${user} key bobshell-demo-${STAMP} -> ${WORKDIR}/${user}/mcp.json"
 done
 
@@ -106,7 +121,7 @@ for user in "${USERS[@]}"; do
 done
 tmux kill-session -t "${SESSION}" 2>/dev/null || true
 bob_cmd() { # bob_cmd USER -> the container command line for one chat
-    echo "docker run --rm -it --name bob-$1 --add-host=host.docker.internal:host-gateway -e BOB_API_KEY='${BOBSHELL_API_KEY}' -v '${WORKDIR}/$1:/etc/bob:ro' ${BOBSHELL_IMAGE}"
+    echo "docker run --rm -it --name bob-$1 --add-host=host.docker.internal:host-gateway -e BOB_API_KEY='${BOBSHELL_API_KEY}' -v '${WORKDIR}/$1:/etc/bob:ro' -v '${WORKDIR}/$1/workspace:/workspace' ${BOBSHELL_IMAGE}"
 }
 
 # Each pane runs its container as the pane process: no shell, no
