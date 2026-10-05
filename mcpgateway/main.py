@@ -943,9 +943,48 @@ def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
         tools: Iterable of tool-like records to serialize.
 
     Returns:
-        List of MCP-compatible tool definitions.
+        List of MCP-compatible tool definitions with rule-parameter
+        x-mcp-header annotations applied (SEP-2243), mirroring the
+        streamable-transport serialization.
     """
-    return [_serialize_mcp_tool_definition(tool) for tool in filter_model_visible_tools(tools)]
+    payloads = [_serialize_mcp_tool_definition(tool) for tool in filter_model_visible_tools(tools)]
+    return _annotate_rule_params_on_payloads(payloads)
+
+
+def _annotate_rule_params_on_payloads(payloads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Apply rule-parameter x-mcp-header annotations to serialized tools.
+
+    The JSON-RPC tools/list path serializes straight from tool records,
+    so the annotation the streamable transport injects never ran here.
+    Reuse the same collector and annotator for parity (SEP-2243).
+
+    Args:
+        payloads: Serialized MCP tool definition payloads.
+
+    Returns:
+        The same list with x-mcp-header annotations injected.
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.tool_header_annotation import annotate_schema, collect_params_for_tool  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            for payload in payloads:
+                name = payload.get("name")
+                if not name:
+                    continue
+                names = collect_params_for_tool(db, name)
+                if not names:
+                    continue
+                schema = payload.get("inputSchema")
+                if isinstance(schema, dict):
+                    annotated = annotate_schema(schema, list(names))
+                    if annotated is not schema:
+                        payload["inputSchema"] = annotated
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.debug("Rule parameter annotation skipped on RPC tools/list", exc_info=True)
+    return payloads
 
 
 def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
