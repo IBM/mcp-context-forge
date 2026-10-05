@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Optional
 
 import httpx
 
@@ -150,6 +151,72 @@ def ensure_membership(client: httpx.Client, headers: dict[str, str], team_id: st
         raise SystemExit(f"team membership failed for {email}: {response.status_code} {response.text[:200]}")
 
 
+DEMO_ADMIN_ROLE = "demo-server-admin"
+ADMIN_PERMISSIONS = [
+    "servers.read",
+    "servers.use",
+    "servers.create",
+    "servers.update",
+    "servers.delete",
+    "rbac.rules.manage",
+    "tools.read",
+    "tools.execute",
+]
+
+
+def assign_role(client: httpx.Client, headers: dict[str, str], email: str, role_id: str, team_id: str) -> None:
+    """Grant one team-scoped role, skipping an assignment that exists.
+
+    Args:
+        client: HTTP client bound to the gateway.
+        headers: Authorization headers for an admin session.
+        email: User receiving the role.
+        role_id: Role to assign.
+        team_id: Team that scopes the assignment.
+    """
+    existing = client.get(f"/rbac/users/{email}/roles", headers=headers)
+    if existing.status_code == 200:
+        for row in existing.json():
+            if str(row.get("role_id")) == role_id and row.get("scope") == "team" and str(row.get("scope_id")) == team_id:
+                return
+    assignment = client.post(f"/rbac/users/{email}/roles", headers=headers, json={"role_id": role_id, "scope": "team", "scope_id": team_id})
+    if assignment.status_code not in (200, 201, 409):
+        raise SystemExit(f"role assignment failed for {email}: {assignment.status_code} {assignment.text[:200]}")
+
+
+def ensure_admin_role(client: httpx.Client, headers: dict[str, str]) -> Optional[str]:
+    """Create the demo server-administrator role for policy management.
+
+    Args:
+        client: HTTP client bound to the gateway.
+        headers: Authorization headers for an admin session.
+
+    Returns:
+        The role id, or None when the catalog already carries the role.
+    """
+    roles = client.get("/rbac/roles", headers=headers).json()
+    for role in roles:
+        if role.get("name") == DEMO_ADMIN_ROLE and role.get("scope") == "team":
+            log(f"admin role present: {DEMO_ADMIN_ROLE} ({role['id']})")
+            return None
+    response = client.post(
+        "/rbac/roles",
+        headers=headers,
+        json={"name": DEMO_ADMIN_ROLE, "description": "Demo server administrator: servers.* plus the policy rules API", "scope": "team", "permissions": ADMIN_PERMISSIONS},
+    )
+    if response.status_code not in (200, 201):
+        raise SystemExit(f"admin role creation failed: {response.status_code} {response.text[:200]}")
+    role_id = str(response.json()["id"])
+    log(f"admin role created: {DEMO_ADMIN_ROLE} ({role_id})")
+    return role_id
+
+
+def ensure_admin_user(client: httpx.Client, headers: dict[str, str], email: str, admin_role_id: str, team_id: str) -> None:
+    """Grant the demo administrator role to one user."""
+    assign_role(client, headers, email, admin_role_id, team_id)
+    log(f"role assigned: {DEMO_ADMIN_ROLE} -> {email}")
+
+
 def ensure_user(client: httpx.Client, headers: dict[str, str], name: str, role_id: str, team_id: str) -> None:
     """Create one non-administrative demo user with tool execution.
 
@@ -175,9 +242,7 @@ def ensure_user(client: httpx.Client, headers: dict[str, str], name: str, role_i
         raise SystemExit(f"user creation failed for {email}: {response.status_code} {response.text[:200]}")
     log(f"user ready: {email} (non-admin)")
     ensure_membership(client, headers, team_id, email)
-    assignment = client.post(f"/rbac/users/{email}/roles", headers=headers, json={"role_id": role_id, "scope": "team", "scope_id": team_id})
-    if assignment.status_code not in (200, 201, 409):
-        raise SystemExit(f"role assignment failed for {email}: {assignment.status_code} {assignment.text[:200]}")
+    assign_role(client, headers, email, role_id, team_id)
     log(f"role assigned: developer (team) -> {email}")
 
 
@@ -197,6 +262,9 @@ def main() -> None:
     team_id = ensure_demo_team(client, headers)
     for name in USERS:
         ensure_user(client, headers, name, role_id, team_id)
+    admin_role_id = ensure_admin_role(client, headers)
+    if admin_role_id:
+        ensure_admin_user(client, headers, "david@demo.example.com", admin_role_id, team_id)
 
     print("[demo-seed] summary")
     print(f"[demo-seed]   gateway url      {GATEWAY_URL}")
