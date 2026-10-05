@@ -7589,10 +7589,11 @@ class TokenScopeRequest(BaseModel):
         if not v:
             return v
 
-        # Permission pattern: resource.action or resource:action (alphanumeric with underscores).
-        # Colon form covers the handful of Permissions constants (audit:read, security:read,
-        # logs:read, metrics:read) that predate the dot-form convention.
-        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*[.:][a-zA-Z][a-zA-Z0-9_]*$")
+        # Permission pattern: resource.action, resource:action, or deeper
+        # dotted forms (rbac.rules.manage). Colon form covers the handful
+        # of Permissions constants (audit:read, security:read, logs:read,
+        # metrics:read) that predate the dot-form convention.
+        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(?:[.:][a-zA-Z][a-zA-Z0-9_]*)+$")
 
         validated = []
         for perm in v:
@@ -8033,6 +8034,7 @@ class RbacRuleResponse(BaseModel):
     priority: int
     is_active: bool
     is_system: bool
+    expires_at: Optional[datetime] = None
     created_by: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]

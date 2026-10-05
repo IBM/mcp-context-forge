@@ -140,6 +140,15 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    # RBAC admin API (rbac router, prefix="/rbac"). The rules endpoints
+    # (rules CRUD, forced-params, reconcile) require rbac.rules.manage; the
+    # role and user-assignment endpoints require admin.user_management. Map
+    # the paths so scoped API tokens hit the same gate the decorators set.
+    ("GET", re.compile(r"^/rbac/rules(?:$|/)"), Permissions.RBAC_RULES_MANAGE),
+    ("POST", re.compile(r"^/rbac/rules(?:$|/)"), Permissions.RBAC_RULES_MANAGE),
+    ("PATCH", re.compile(r"^/rbac/rules(?:$|/)"), Permissions.RBAC_RULES_MANAGE),
+    ("DELETE", re.compile(r"^/rbac/rules(?:$|/)"), Permissions.RBAC_RULES_MANAGE),
+    ("*", re.compile(r"^/rbac/(?:roles|users)(?:$|/)"), "admin.user_management"),
     # Vault OAuth authorize — initiates Authorization Code flow via virtual server ID.
     # Router is registered only when OAUTH_TOKEN_BACKEND=vault (see main.py); this
     # pattern is harmless when the router is absent (no matching route exists).
