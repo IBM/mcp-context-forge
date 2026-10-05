@@ -4408,17 +4408,29 @@ class TestSchemaRegexReDoS:
             # interpret. Matches the except/_unwrap_exception_group pattern used above at
             # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
             start = time.perf_counter()
+            rejection_text = ""
             try:
                 result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
+                rejection_text = (result.content[0].text if result.content and result.content[0].text else "") if result.isError else ""
+                assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
             except (McpError, ExceptionGroup) as exc:
-                elapsed = time.perf_counter() - start
+                # Invalid tool arguments surface as a JSON-RPC error, not an
+                # isError result: the gateway maps ToolInvocationError to a
+                # -32000 protocol error, which the client raises as McpError.
+                # A timeout that never arrives (a ReadTimeout leaf) is the
+                # regression signal -- the sandbox stopped bounding the
+                # pattern. Any other leaf carrying the bounded phrase is the
+                # rejection we want.
                 leaf = _unwrap_exception_group(exc)[0]
-                pytest.fail(
+                leaf_repr = repr(leaf)
+                assert not isinstance(leaf, TimeoutError) and "ReadTimeout" not in leaf_repr, (
                     f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
-                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
-                    "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
-                    "env var to rule out the latter before treating this as a regression."
+                    f"(waited {time.perf_counter() - start:.1f}s): {leaf_repr}. Either the sandbox stopped "
+                    "bounding the catastrophic pattern, or this CI box is slow enough to exceed "
+                    "MCP_E2E_CLIENT_TIMEOUT -- raise that env var to rule out the latter before "
+                    "treating this as a regression."
                 )
+                rejection_text = str(leaf)
             elapsed = time.perf_counter() - start
             # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
             # session opens, then initialize() and call_tool() each make their own bounded
@@ -4428,9 +4440,7 @@ class TestSchemaRegexReDoS:
             # adds more round trips to this path.
             assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
             print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
-            assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
-            text = result.content[0].text if result.content else ""
-            assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
+            assert _REDOS_BOUNDED_PHRASE in rejection_text, f"the timeout must be what stopped it; got: {rejection_text!r}"
 
             # Load-bearing: the vulnerability was one hostile request freezing the
             # worker for every other tenant. This must succeed immediately, not

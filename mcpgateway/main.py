@@ -12166,6 +12166,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
+    except ToolError as e:
+        # Tool-level failures (invocation errors, name conflicts, lock
+        # conflicts) carry a client-actionable message: surface it on
+        # -32000 like the /rpc and AppBridge handlers do, instead of the
+        # generic -32603 below, which drops the message.
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(e)}, "id": req_id}
     except Exception as e:
         logger.error(f"RPC error: {str(e)}")
         return {
