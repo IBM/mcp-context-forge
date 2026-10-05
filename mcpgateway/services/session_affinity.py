@@ -1401,6 +1401,10 @@ class SessionAffinity:
                 rpc_headers[auth_header_name] = original_auth
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+            # Carry SEP-2243 mirrored tool arguments (Mcp-Param-<name>) across
+            # the trusted-internal dispatch so rule predicates on the owner
+            # worker evaluate the same values the edge worker received.
+            rpc_headers.update({k: v for k, v in headers.items() if k.lower().startswith("mcp-param-")})
 
             # Dispatch IN-PROCESS to the trusted internal endpoint via the shared helper.
             # Attach the envelope's trace context so the dispatch nests in the caller's trace.
