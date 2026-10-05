@@ -246,12 +246,14 @@ class OpenFgaSyncService:
                 entry["condition"] = desired[key]
             writes.append(entry)
         changed = [k for k in set(desired) & set(stored) if desired[k] != stored[k]]
+        deletes: list[dict[str, str]] = [{"user": k[0], "relation": k[1], "object": k[2]} for k in sorted(set(stored) - set(desired))]
         for key in sorted(changed):
             entry = {"user": key[0], "relation": key[1], "object": key[2]}
             if desired[key] is not None:
                 entry["condition"] = desired[key]
             writes.append(entry)
-        deletes = [{"user": k[0], "relation": k[1], "object": k[2]} for k in sorted(set(stored) - set(desired))]
+            # The engine rejects condition updates on an existing tuple; delete the stored version first.
+            deletes.append({"user": key[0], "relation": key[1], "object": key[2]})
         await self._client.write_tuples(writes, deletes)
         if writes or deletes:
             logger.info("OpenFGA resync applied: writes=%d deletes=%d", len(writes), len(deletes))
