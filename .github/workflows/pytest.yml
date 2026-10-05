@@ -178,6 +178,55 @@ jobs:
               sys.exit(1)
           "
 
+  # -----------------------------------------------------------
+  # 3b  Observability-extra tests (SDK-gated assertions)
+  #
+  # The main job installs only the `plugins` extra, so SDK-dependent
+  # tests skip there by design. This job installs the `observability`
+  # extra and executes the modules that carry those assertions,
+  # including the self-contained live gateway trace-context suite.
+  # -----------------------------------------------------------
+  test-observability:
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    name: pytest (observability extra)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      JWT_SECRET_KEY: "ci-test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
+      AUTH_ENCRYPTION_SECRET: "ci-test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
+      PLATFORM_ADMIN_PASSWORD: "ci-test-admin-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
+      DEFAULT_USER_PASSWORD: "ci-test-user-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
+
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: 🐍  Setup Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: ⚡ Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.10.11"
+          python-version: "3.12"
+
+      - name: 🧪  Run observability-dependent tests
+        run: |
+          uv run --extra plugins --extra observability pytest \
+            tests/unit/mcpgateway/test_observability.py \
+            tests/unit/mcpgateway/services/test_a2a_service.py \
+            tests/live_gateway/a2a/test_a2a_trace_context_e2e.py \
+            -v --tb=short
+
     # -----------------------------------------------------------
     # 4️⃣  Upload coverage artifacts (XML + HTML)
     #       --- keep disabled unless you need them ---

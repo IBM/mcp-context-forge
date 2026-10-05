@@ -7,7 +7,6 @@ Tests for observability module.
 """
 
 # Standard
-import importlib
 import inspect
 import logging
 import os
@@ -420,6 +419,184 @@ class TestObservability:
         """Test inject_trace_context_headers handles None headers."""
         result = inject_trace_context_headers(None)
         assert isinstance(result, dict)
+
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("/a2a/invoke", True),
+            ("/a2a/invoke/", True),
+            ("/a2a/example-agent/invoke", True),
+            ("/a2a/example-agent/invoke/", True),
+            ("/a2a/example-agent/jsonrpc", True),
+            ("/a2a/example-agent/jsonrpc/", True),
+            ("/a2a", False),
+            ("/a2a/example-agent", False),
+            ("/a2a/example-agent/card/invoke", False),
+            ("/a2a/example-agent/invoke/extra", False),
+            ("/unrelated/invoke", False),
+        ],
+    )
+    def test_should_trace_only_a2a_invoke_paths(self, path, expected):
+        """Trace only the two supported A2A invocation route shapes."""
+        assert observability._should_trace_request_path(path) is expected
+
+    @pytest.fixture
+    def real_api_propagator(self, monkeypatch):
+        """Wire the real opentelemetry-api propagator into the observability module globals.
+
+        The API package is a transitive core dependency (via ``mcp``), so these
+        tests exercise the genuine composite propagator without the SDK extra.
+        """
+        otel_trace_api = pytest.importorskip("opentelemetry.trace")
+        # Third-Party
+        from opentelemetry import baggage as otel_baggage_api
+        from opentelemetry.propagate import inject as real_inject
+
+        monkeypatch.setattr(observability, "OTEL_AVAILABLE", True)
+        monkeypatch.setattr(observability, "trace", otel_trace_api)
+        monkeypatch.setattr(observability, "otel_inject", real_inject)
+        monkeypatch.setattr(observability, "otel_baggage", otel_baggage_api)
+        return otel_trace_api
+
+    @pytest.mark.parametrize(
+        ("baggage_enabled", "propagate_external", "expect_baggage"),
+        [
+            (False, False, False),
+            (True, False, False),
+            (False, True, False),
+            (True, True, True),
+        ],
+    )
+    def test_inject_gates_context_baggage_on_propagation_policy(self, monkeypatch, real_api_propagator, baggage_enabled, propagate_external, expect_baggage):
+        """Context baggage reaches outbound headers only when both baggage settings allow it."""
+        # Third-Party
+        from opentelemetry import baggage as otel_baggage_api
+        from opentelemetry import context as otel_context_api
+        from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+        span_context = SpanContext(trace_id=0x0AF7651916CD43DD8448EB211C80319C, span_id=0x00F067AA0BA902B7, is_remote=False, trace_flags=TraceFlags(0x01))  # pragma: allowlist secret
+        mock_settings = MagicMock()
+        mock_settings.otel_baggage_enabled = baggage_enabled
+        mock_settings.otel_baggage_propagate_to_external = propagate_external
+        monkeypatch.setattr(observability, "get_settings", lambda: mock_settings)
+
+        context_token = otel_context_api.attach(otel_baggage_api.set_baggage("review-marker", "internal"))
+        try:
+            with real_api_propagator.use_span(NonRecordingSpan(span_context)):
+                result = inject_trace_context_headers({"Authorization": "Bearer keep"})
+        finally:
+            otel_context_api.detach(context_token)
+
+        assert result["traceparent"] == "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"  # pragma: allowlist secret
+        assert result["Authorization"] == "Bearer keep"
+        assert ("baggage" in result) is expect_baggage
+        if expect_baggage:
+            assert "review-marker=internal" in result["baggage"]
+
+    def test_inject_replaces_stale_propagation_headers_case_insensitively(self, monkeypatch, real_api_propagator):
+        """Prepared mixed-case propagation headers are replaced by the active span context."""
+        # Third-Party
+        from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+        span_context = SpanContext(trace_id=0x0AF7651916CD43DD8448EB211C80319C, span_id=0x00F067AA0BA902B7, is_remote=False, trace_flags=TraceFlags(0x01))  # pragma: allowlist secret
+        mock_settings = MagicMock()
+        mock_settings.otel_baggage_enabled = False
+        mock_settings.otel_baggage_propagate_to_external = False
+        monkeypatch.setattr(observability, "get_settings", lambda: mock_settings)
+
+        prepared = {
+            "Traceparent": "00-11111111111111111111111111111111-2222222222222222-01",  # pragma: allowlist secret
+            "TraceState": "stale=yes",
+            "Baggage": "stale=baggage",
+            "Authorization": "Bearer keep",
+        }
+        with real_api_propagator.use_span(NonRecordingSpan(span_context)):
+            result = inject_trace_context_headers(prepared)
+
+        lowered = {}
+        for key, value in result.items():
+            assert key.lower() not in lowered, f"conflicting duplicate header casing: {key}"
+            lowered[key.lower()] = value
+        assert lowered["traceparent"] == "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"  # pragma: allowlist secret
+        assert "tracestate" not in lowered
+        assert "baggage" not in lowered
+        assert result["Authorization"] == "Bearer keep"
+
+    @pytest.mark.asyncio
+    async def test_a2a_request_adopts_incoming_w3c_parent(self, monkeypatch):
+        """The request and A2A spans remain children in the incoming W3C trace."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("a2a-trace-test"))
+
+        async def app(_scope, _receive, send):
+            with create_span("a2a.invoke"):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+        incoming_trace_id = "0af7651916cd43dd8448eb211c80319c"  # pragma: allowlist secret
+        incoming_span_id = "b7ad6b7169203331"  # pragma: allowlist secret
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/a2a/example-agent/invoke",
+            "headers": [(b"traceparent", f"00-{incoming_trace_id}-{incoming_span_id}-01".encode())],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        await middleware(scope, receive, send)
+
+        spans = {span.name: span for span in exporter.get_finished_spans()}
+        request_span = spans["POST /a2a/example-agent/invoke"]
+        invoke_span = spans["a2a.invoke"]
+        assert f"{request_span.context.trace_id:032x}" == incoming_trace_id
+        assert f"{request_span.parent.span_id:016x}" == incoming_span_id
+        assert invoke_span.context.trace_id == request_span.context.trace_id
+        assert invoke_span.parent.span_id == request_span.context.span_id
+        assert invoke_span.context.span_id != request_span.context.span_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("incoming_headers", [[], [(b"traceparent", b"malformed")]])
+    async def test_a2a_request_handles_missing_or_malformed_context(self, monkeypatch, incoming_headers):
+        """Missing or malformed W3C context safely creates a new root span."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("a2a-safe-context-test"))
+
+        async def app(_scope, _receive, send):
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+        scope = {"type": "http", "method": "POST", "path": "/a2a/invoke", "headers": incoming_headers}
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        await middleware(scope, receive, send)
+
+        (request_span,) = exporter.get_finished_spans()
+        assert request_span.context.is_valid
+        assert request_span.parent is None
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")

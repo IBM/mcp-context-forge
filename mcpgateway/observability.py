@@ -749,6 +749,12 @@ def otel_context_active() -> bool:
         return False
 
 
+# W3C propagation header names owned by trace-context injection. Pre-existing
+# occurrences (any casing) are replaced when the active span is injected, so
+# prepared headers from auth mappings or plugins cannot conflict with it.
+_PROPAGATION_HEADER_NAMES = frozenset({"traceparent", "tracestate", "baggage"})
+
+
 def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
     """Return a header carrier populated with the active W3C trace context and baggage.
 
@@ -762,10 +768,21 @@ def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) ->
     carrier = {str(key): str(value) for key, value in (headers or {}).items() if key and value}
     if not otel_context_active() or otel_inject is None:
         return carrier
+
+    # Replace prepared propagation headers case-insensitively: retaining a
+    # stale variant under a different casing would send conflicting
+    # traceparent values, and a stale tracestate would survive even when the
+    # active span context carries none.
+    carrier = {key: value for key, value in carrier.items() if key.lower() not in _PROPAGATION_HEADER_NAMES}
     try:
         otel_inject(carrier=carrier)
     except Exception as exc:
         logger.debug("Failed to inject W3C trace context into outbound headers: %s", exc)
+
+    # The global propagator can inject raw context baggage before settings are
+    # consulted. Remove it unconditionally: baggage crosses the trust boundary
+    # only through the policy-gated, sanitized path below (CWE-200).
+    carrier.pop("baggage", None)
 
     # Inject baggage if propagation is enabled
     try:
@@ -822,6 +839,9 @@ def _should_trace_request_path(path: str) -> bool:
 
     normalized = path.rstrip("/") or "/"
     if normalized in {"/rpc", "/mcp", "/mcp/sse", "/mcp/message", "/message", "/sse"}:
+        return True
+    path_parts = normalized.split("/")
+    if normalized == "/a2a/invoke" or (len(path_parts) == 4 and path_parts[1] == "a2a" and path_parts[2] and path_parts[3] in {"invoke", "jsonrpc"}):
         return True
     if normalized.startswith("/servers/") and (normalized.endswith("/mcp") or normalized.endswith("/message") or normalized.endswith("/sse")):
         return True

@@ -652,12 +652,25 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
+        def inject_active_trace(headers):
+            assert mock_span_context.__enter__.called
+            return {**headers, "traceparent": "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"}  # pragma: allowlist secret
+
         # Execute
-        result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+        with (
+            patch("mcpgateway.services.a2a_service.create_span") as mock_create_span,
+            patch("mcpgateway.services.a2a_service.inject_trace_context_headers", side_effect=inject_active_trace) as mock_inject,
+        ):
+            mock_span_context = mock_create_span.return_value
+            result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
         # Verify
         assert result["response"] == "Test response"
         mock_client.post.assert_called_once()
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+        assert outbound_headers["traceparent"].endswith("-00f067aa0ba902b7-01")
+        assert outbound_headers["Content-Type"] == "application/json"
+        mock_inject.assert_called_once()
         # Metrics recorded via buffer service
         mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
         # last_interaction updated via fresh_db_session
@@ -5361,6 +5374,40 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert result == {"result": "success"}
+
+    async def test_invoke_remote_agent_injects_trace_context(self, service, monkeypatch):
+        """Cross-gateway forwarding injects the active trace context and keeps hop/auth headers."""
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        def fake_inject(headers):
+            return {**headers, "traceparent": "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"}  # pragma: allowlist secret
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.inject_trace_context_headers", fake_inject)
+
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+            hop_count=2,
+        )
+
+        assert result == {"result": "success"}
+        sent_headers = mock_client.post.call_args.kwargs.get("headers") or {}
+        assert sent_headers["traceparent"] == "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"  # pragma: allowlist secret
+        assert sent_headers["X-Contextforge-UAID-Hop"] == "3"
+        assert sent_headers["Content-Type"] == "application/json"
 
     async def test_invoke_remote_agent_with_mcp_protocol(self, service, monkeypatch):
         """Test _invoke_remote_agent with MCP protocol."""
