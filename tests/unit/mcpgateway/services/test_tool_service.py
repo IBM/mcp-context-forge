@@ -25,7 +25,9 @@ from cpex.framework.models import PluginResult
 import jsonschema
 import orjson
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
@@ -34,6 +36,7 @@ from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import Base, Server as DbServer, server_tool_association
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _build_pinned_rest_http_client,
@@ -11187,6 +11190,65 @@ async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
     attrs = mock_create_span.call_args[0][1]
     assert attrs["mcp.definition_mode"] is True
     assert attrs["team.scope"] == "team-1"
+
+
+class TestPythonMcpToolDefinitions:
+    """Verify server-scoped definitions against real visibility queries."""
+
+    @pytest.fixture
+    def definitions_db(self):
+        """Provide isolated public, team, private, and disabled tool definitions."""
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(DbServer(id="definitions-server", name="definitions-server"))
+            for name, visibility, team_id, owner, enabled in [
+                ("public-tool", "public", None, None, True),
+                ("team-tool", "team", "team-a", "owner@example.com", True),
+                ("private-tool", "private", None, "owner@example.com", True),
+                ("disabled-tool", "public", None, None, False),
+            ]:
+                db.add(
+                    DbTool(
+                        id=name,
+                        name=name,
+                        original_name=name,
+                        url="http://example.com/tool",
+                        description=name,
+                        integration_type="REST",
+                        request_type="POST",
+                        input_schema={"type": "object"},
+                        output_schema={"type": "object"} if name == "team-tool" else None,
+                        visibility=visibility,
+                        team_id=team_id,
+                        owner_email=owner,
+                        enabled=enabled,
+                    )
+                )
+            db.flush()
+            db.execute(server_tool_association.insert(), [{"server_id": "definitions-server", "tool_id": name} for name in ["public-tool", "team-tool", "private-tool", "disabled-tool"]])
+            db.commit()
+            yield db
+        engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_public_only_excludes_owned_private_and_team_tools(self, tool_service, definitions_db):
+        """Public-only scope excludes team and private rows, including caller-owned rows."""
+        payload = await tool_service.list_server_mcp_tool_definitions(definitions_db, "definitions-server", user_email="owner@example.com", token_teams=[])
+        assert [tool["name"] for tool in payload] == ["public-tool"]
+        assert payload[0]["inputSchema"] == {"type": "object"}
+        assert payload[0]["annotations"] == {}
+        assert "outputSchema" not in payload[0]
+
+    @pytest.mark.asyncio
+    async def test_team_scope_preserves_output_schema_and_inactive_option(self, tool_service, definitions_db):
+        """Team scope includes matching tools and preserves optional output schemas."""
+        payload = await tool_service.list_server_mcp_tool_definitions(definitions_db, "definitions-server", user_email="member@example.com", token_teams=["team-a"])
+        by_name = {tool["name"]: tool for tool in payload}
+        assert set(by_name) == {"public-tool", "team-tool"}
+        assert by_name["team-tool"]["outputSchema"] == {"type": "object"}
+        payload = await tool_service.list_server_mcp_tool_definitions(definitions_db, "definitions-server", token_teams=[], include_inactive=True)
+        assert {tool["name"] for tool in payload} == {"public-tool", "disabled-tool"}
 
 
 class TestGrpcToolInvocation:

@@ -228,6 +228,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
+    MCPOriginHostGate,
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
@@ -13100,7 +13101,7 @@ def _build_mcp_transport_app():
 mcp_transport_app = _build_mcp_transport_app()
 
 # Streamable http Mount
-app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
+app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:
