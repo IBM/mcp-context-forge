@@ -9810,7 +9810,12 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
+        # Gateway _meta translation: even with no inbound meta, the synthesised
+        # protocol keys are always present in the outbound call (MCP 2026-07-28).
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        assert call_kwargs["name"] == "remote_tool"
+        assert call_kwargs["arguments"] == {"key": "value"}
+        assert "io.modelcontextprotocol/protocolVersion" in call_kwargs.get("meta", {})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):
@@ -9846,7 +9851,13 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
+        # synthesise_meta_for_modern_upstream merges protocol keys into the existing meta.
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        assert call_kwargs["name"] == "remote_tool"
+        assert call_kwargs["arguments"] == {"arg": "val"}
+        forwarded_meta = call_kwargs.get("meta", {})
+        assert forwarded_meta["request_id"] == "abc-123"
+        assert "io.modelcontextprotocol/protocolVersion" in forwarded_meta
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_syncs_meta_traceparent(self, tool_service, mock_direct_gateway):
@@ -9894,14 +9905,12 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         assert captured_headers["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"
-        session_mock.call_tool.assert_awaited_once_with(
-            name="remote_tool",
-            arguments={"arg": "val"},
-            meta={
-                "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
-                "request_id": "abc-123",
-            },
-        )
+        # synthesise_meta_for_modern_upstream adds protocol keys; check original values are preserved.
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        forwarded_meta = call_kwargs.get("meta", {})
+        assert forwarded_meta["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"
+        assert forwarded_meta["request_id"] == "abc-123"
+        assert "io.modelcontextprotocol/protocolVersion" in forwarded_meta
         assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
 
     @pytest.mark.asyncio
@@ -10117,8 +10126,12 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        # The remote call should use the original_name, not the slugified prefixed name
-        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"})
+        # The remote call should use the original_name, not the slugified prefixed name.
+        # synthesise_meta_for_modern_upstream adds protocol keys; check name and arguments only.
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        assert call_kwargs["name"] == "get_system_time"
+        assert call_kwargs["arguments"] == {"timezone": "UTC"}
+        assert "io.modelcontextprotocol/protocolVersion" in call_kwargs.get("meta", {})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_slug_fallback_when_not_in_db(self, tool_service, mock_direct_gateway):
@@ -10152,8 +10165,12 @@ class TestInvokeToolDirect:
             )
 
         assert result == expected_result
-        # Fallback: strip slug prefix "direct-gateway-" → "my-tool"
-        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={})
+        # Fallback: strip slug prefix "direct-gateway-" → "my-tool".
+        # synthesise_meta_for_modern_upstream adds protocol keys.
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        assert call_kwargs["name"] == "my-tool"
+        assert call_kwargs["arguments"] == {}
+        assert "io.modelcontextprotocol/protocolVersion" in call_kwargs.get("meta", {})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_feature_flag_disabled(self, tool_service, mock_direct_gateway):

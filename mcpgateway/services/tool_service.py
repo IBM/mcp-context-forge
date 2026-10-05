@@ -61,6 +61,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
+from mcpgateway import __version__ as _mcpgateway_version
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
@@ -106,6 +107,7 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.meta_protocol import is_modern_meta, synthesise_meta_for_modern_upstream
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -4216,7 +4218,19 @@ class ToolService(BaseService):
                         },
                     ):
                         request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)  # noqa: F841 -- used in call_tool below
-                        # Call tool with meta if provided
+                        # Gateway _meta translation (MCP 2026-07-28): when the inbound request
+                        # carries no protocol keys (legacy client), synthesise them before
+                        # forwarding so a modern upstream server receives a valid _meta block.
+                        # Legacy upstream servers ignore unknown _meta keys per spec.
+                        if not is_modern_meta(request_meta_data):
+                            request_meta_data = synthesise_meta_for_modern_upstream(
+                                request_meta_data,
+                                None,  # session capabilities not available at this call depth
+                                "2026-07-28",
+                                settings.app_name,
+                                _mcpgateway_version,
+                            )
+                        # Call tool with meta
                         if request_meta_data:
                             logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
                             tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
