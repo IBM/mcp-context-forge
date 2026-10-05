@@ -24,7 +24,8 @@ are derived at check time from the token's team claim.
 | Federation gateway | `fast_time` | Points at the `fast_time_server` upstream |
 | Virtual server | `fast-time-demo` | Public server carrying the 8 fast-time tools |
 | Team | `OpenFGA Demo Team` | Anchors the role grants and the token team scope |
-| Users | `alice@demo.example.com`, `becky@…`, `carol@…`, `david@…` | Non-admin, `developer` role on the demo team |
+| Users | `alice@demo.example.com`, `becky@…`, `carol@…` | Non-admin, `developer` role on the demo team |
+| David | `david@demo.example.com` | Server administrator: `demo-server-admin` role (servers + policy) and a `contextforge-policy` skill in his chat workspace |
 | API keys | `bobshell-demo-<timestamp>` | One per user per launcher run, 1-day expiry |
 
 ## Prerequisites
@@ -123,13 +124,30 @@ curl -X DELETE http://localhost:8080/tokens/admin/<token-id> \
 
 Rerun `bob-chat.sh` to mint fresh keys and bring her chat back.
 
-**Eventual: role changes.** With `RBAC_RULE_PROVIDER=openfga` the engine
-answers first, and its tuples mirror the database on the reconciliation loop
-(`OPENFGA_RECONCILE_SECONDS`, default 300). Revoking a user's `developer`
-role denies `tools.execute` only after the engine converges — expect up to
-the full interval. The catalog overlay rules under `/rbac/rules` apply on the
-`db` provider path; the openfga provider consults them only when a check
-falls back to the database.
+**Immediate for policy: forced reconciliation.** Any holder of
+`rbac.rules.manage` (david) can converge the engine at once:
+
+```bash
+curl -X POST http://localhost:8080/rbac/rules/reconcile \
+  -H "Authorization: Bearer $DAVID_KEY"
+# -> {"provider":"openfga","applied":N}
+```
+
+The response counts tuple writes and deletes applied. Role and rule changes
+become enforceable on the very next call instead of waiting for
+`OPENFGA_RECONCILE_SECONDS`. The catalog overlay rules under `/rbac/rules`
+apply on the `db` provider path; the openfga provider consults them only
+when a check falls back to the database.
+
+**David's chat is the policy console.** His workspace carries the
+`contextforge-policy` skill: rule CRUD, tool-argument predicates
+(`args.message == 'secret'`), forced MCP header parameters on the virtual
+server, expiring rules (`expires_at`), and forced reconciliation. The skill
+directs him to show the exact rule JSON and get an explicit go-ahead before
+sending anything to ContextForge. Note: bob lists only its packaged skills
+when asked what skills it has — user skills surface when used. Ask david to
+use the contextforge-policy skill, or just describe the policy change; he
+invokes it via `use_skill`.
 
 The engine's raw state is inspectable at the OpenFGA API on
 `http://localhost:18080` with `Authorization: Bearer $OPENFGA_API_TOKEN` —
