@@ -4833,7 +4833,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
 
-    async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
+    async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None, *, cycle_started_at: Optional[datetime] = None) -> bool:
         """Check health of a batch of gateways.
 
         Performs an asynchronous health-check for each gateway in `gateways` using
@@ -4857,6 +4857,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 stored OAuth tokens for gateways using the
                 "authorization_code" grant type. If not provided, authorization
                 code flows that require a user token will be treated as failed.
+            cycle_started_at: Timestamp of the health-check cycle that triggered
+                this batch. Forwarded to each per-gateway check so the refresh
+                throttle and last_refresh_at write use the same clock value.
 
         Returns:
             bool: True when the health-check batch completes. This return
@@ -4915,7 +4918,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             async with semaphore:
                 try:
                     await asyncio.wait_for(
-                        self._check_single_gateway_health(gateway, user_email),
+                        self._check_single_gateway_health(gateway, user_email, cycle_started_at=cycle_started_at),
                         timeout=settings.gateway_health_check_timeout,
                     )
                 except asyncio.TimeoutError:
@@ -5017,7 +5020,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         await tool_lookup_cache.invalidate_gateway(str(gateway_id))
         logger.warning("Gateway %s recovered, but catalog refresh was rejected because of a tool-name collision", SecurityValidator.sanitize_log_message(gateway_name))
 
-    async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None) -> None:
+    async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None, *, cycle_started_at: Optional[datetime] = None) -> None:
         """Check health of a single gateway.
 
         NOTE: This method intentionally does NOT take a db parameter.
@@ -5027,6 +5030,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         Args:
             gateway: Gateway to check (may be detached from session)
             user_email: Optional user email for OAuth token lookup
+            cycle_started_at: Cycle timestamp forwarded from the maintenance loop; used as the
+                reference point for the refresh throttle and last_refresh_at to keep both
+                sides of the comparison on the same clock.
         """
         # Extract gateway data upfront (gateway may be detached from session)
         gateway_id = gateway.id
@@ -5301,7 +5307,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if gateway.refresh_interval_seconds is not None:
                                     refresh_interval = gateway.refresh_interval_seconds
 
-                                time_since_refresh = (datetime.now(timezone.utc) - last_refresh).total_seconds()
+                                # Use cycle_started_at so the throttle comparison matches the last_refresh_at write below.
+                                ref_now = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
+                                time_since_refresh = (ref_now - last_refresh).total_seconds()
 
                                 if time_since_refresh < refresh_interval:
                                     refresh_needed = False
@@ -5319,6 +5327,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             created_via="health_check",
                                             pre_auth_headers=headers if headers else None,
                                             gateway=gateway,
+                                            cycle_started_at=cycle_started_at,
                                         )
                                         # mark_poll_completed is called inside _refresh_gateway_tools_resources_prompts
                                 else:
@@ -5841,10 +5850,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             health_due = now >= next_health_check_at
 
             if health_due:
+                cycle_started_at = datetime.now(timezone.utc)
                 gateways = await asyncio.to_thread(self._get_gateways)
                 if gateways:
-                    await self.check_health_of_gateways(gateways, user_email)
-                next_health_check_at = now + max(self._health_check_interval, 0)
+                    await self.check_health_of_gateways(gateways, user_email, cycle_started_at=cycle_started_at)
+                # Advance by interval (not re-base on now) to keep ticks on a fixed grid.
+                next_health_check_at += max(self._health_check_interval, 0)
+                if next_health_check_at < now:
+                    next_health_check_at = now + max(self._health_check_interval, 0)
 
             if require_leader is not None and not await require_leader():
                 return
@@ -6927,6 +6940,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_resources: bool = True,
         include_prompts: bool = True,
         user_context: Optional[Dict[str, Any]] = None,
+        cycle_started_at: Optional[datetime] = None,
     ) -> Dict[str, int]:
         """Refresh tools, resources, and prompts for a gateway from the background health
         check, a manual API-triggered refresh, or the notification service.
@@ -6952,6 +6966,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to include prompts in the refresh
             user_context: Optional user context dict (email, teams, is_admin) forwarded to
                 token storage for Vault path selection on authorization_code gateways.
+            cycle_started_at: Cycle timestamp from the maintenance loop; written as last_refresh_at
+                so the throttle comparison uses the same reference time on both sides.
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
@@ -7211,7 +7227,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["resources_added"] = reconcile_result.resources_added
             result["prompts_added"] = reconcile_result.prompts_added
 
-            gateway.last_refresh_at = datetime.now(timezone.utc)
+            # Anchor to the cycle timestamp so the throttle comparison is symmetric.
+            gateway.last_refresh_at = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
 
             total_changes = (
                 result["tools_added"]

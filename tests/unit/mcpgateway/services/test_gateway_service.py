@@ -4650,6 +4650,148 @@ class TestGatewayHealth:
                     gateway_service._refresh_gateway_tools_resources_prompts.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_cycle_started_at_passed_to_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
+        """cycle_started_at from the maintenance loop reaches _refresh_gateway_tools_resources_prompts."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock.return_value = lock
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        cycle_ts = datetime.now(timezone.utc)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = 300
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    mock_db_session.__enter__().execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=cycle_ts)
+
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_awaited_once()
+                    _, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
+                    assert kwargs["cycle_started_at"] == cycle_ts
+
+    @pytest.mark.asyncio
+    async def test_equal_intervals_refresh_every_cycle(self, gateway_service, mock_gateway_health, mock_db_session):
+        """When HEALTH_CHECK_INTERVAL == GATEWAY_AUTO_REFRESH_INTERVAL, refresh fires on every cycle.
+
+        Regression test for issue #7095: refresh was skipping every other cycle because
+        last_refresh_at was written after the batch finished while the throttle measured
+        from datetime.now(), making the gap always 1s short of the interval.
+        """
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock.return_value = lock
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        interval = 60
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = interval
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    mock_db_session.__enter__().execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    base = datetime.now(timezone.utc)
+                    mock_gateway_health.last_refresh_at = None
+                    mock_gateway_health.refresh_interval_seconds = None  # use the global interval
+
+                    # Simulate three consecutive health cycles, each exactly `interval` seconds apart.
+                    for i in range(3):
+                        cycle_ts = base + timedelta(seconds=interval * i)
+
+                        async def side_effect(*_a, cycle_started_at=None, **_kw):
+                            mock_gateway_health.last_refresh_at = cycle_started_at
+
+                        gateway_service._refresh_gateway_tools_resources_prompts.side_effect = side_effect
+                        await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=cycle_ts)
+
+                    assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_unequal_intervals_throttle_still_suppresses_early_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
+        """When GATEWAY_AUTO_REFRESH_INTERVAL > HEALTH_CHECK_INTERVAL, refresh is suppressed until due."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock.return_value = lock
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        health_interval = 30
+        refresh_interval = 90
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = refresh_interval
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    mock_db_session.__enter__().execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    base = datetime.now(timezone.utc)
+                    mock_gateway_health.refresh_interval_seconds = None  # use the global interval
+
+                    # Cycle 0: first ever refresh — no last_refresh_at, fires.
+                    mock_gateway_health.last_refresh_at = None
+                    await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=base)
+                    mock_gateway_health.last_refresh_at = base
+                    assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 1
+
+                    # Cycle 1 (+30s): too early, suppressed.
+                    cycle1 = base + timedelta(seconds=health_interval)
+                    await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=cycle1)
+                    assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 1
+
+                    # Cycle 2 (+60s): still too early (60 < 90), suppressed.
+                    cycle2 = base + timedelta(seconds=health_interval * 2)
+                    await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=cycle2)
+                    assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 1
+
+                    # Cycle 3 (+90s): exactly at the refresh interval, fires.
+                    cycle3 = base + timedelta(seconds=refresh_interval)
+                    await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=cycle3)
+                    assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
         # First-Party
         import mcpgateway.services.gateway_service as gs
