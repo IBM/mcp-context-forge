@@ -437,8 +437,8 @@ class TestRelationshipModel:
         assert len(traversals) == 1
         assert traversals[0]["tupleToUserset"]["computedUserset"]["relation"] == "admin"
 
-    def test_relationship_sync_produces_domain_tuples(self):
-        """The sync maps team memberships to domain member/admin tuples."""
+    def test_relationship_sync_no_user_domain_tuples(self):
+        """The sync stores NO user-to-domain tuples (contextual at check time)."""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from mcpgateway.db import Base, EmailTeam, EmailTeamMember
@@ -454,5 +454,82 @@ class TestRelationshipModel:
 
         svc = RelationshipSyncService(session, _FakeClient())
         tuples = svc.desired_tuples()
-        assert ("user:anne@example.com", "admin", "domain:engineering") in tuples
-        assert ("user:bob@example.com", "member", "domain:engineering") in tuples
+        # No user-to-domain tuples in the stored set
+        assert not any(t[1] in ("member", "admin") and t[2].startswith("domain:") for t in tuples)
+
+    def test_contextual_domain_tuples_from_claims(self):
+        """build_contextual_domain_tuples uses JWT claims when present."""
+        from mcpgateway.services.openfga_sync import build_contextual_domain_tuples
+
+        tuples = build_contextual_domain_tuples(None, "anne@example.com", token_teams=["eng", "sales"], token_roles=["team_admin"])
+        assert {"user": "user:anne@example.com", "relation": "admin", "object": "domain:eng"} in tuples
+        assert {"user": "user:anne@example.com", "relation": "admin", "object": "domain:sales"} in tuples
+
+    def test_contextual_domain_tuples_member_without_admin_role(self):
+        """Without an admin role claim, teams map to member tuples."""
+        from mcpgateway.services.openfga_sync import build_contextual_domain_tuples
+
+        tuples = build_contextual_domain_tuples(None, "bob@example.com", token_teams=["eng"], token_roles=["developer"])
+        assert tuples == [{"user": "user:bob@example.com", "relation": "member", "object": "domain:eng"}]
+
+
+class TestDomainObjectId:
+    """Tests for the canonical domain identifier."""
+
+    def test_slugifies_spaces_and_apostrophes(self):
+        """Team names with whitespace and apostrophes produce engine-safe ids."""
+        from mcpgateway.services.openfga_sync import domain_object_id
+
+        assert domain_object_id("RBAC Test anne's Team") == "rbac-test-annes-team"
+
+    def test_short_and_empty_inputs_fall_back_to_digest(self):
+        """Inputs that slugify under 2 characters get a digest-based id."""
+        from mcpgateway.services.openfga_sync import domain_object_id
+
+        assert domain_object_id("a") != "a"
+        assert domain_object_id("---") != ""
+        assert len(domain_object_id("")) >= 2
+        assert domain_object_id("---").startswith("domain-")
+
+    def test_caps_length_at_engine_maximum(self):
+        """Identifiers never exceed the engine's 256-character cap."""
+        from mcpgateway.services.openfga_sync import domain_object_id
+
+        assert len(domain_object_id("x" * 300)) == 256
+
+    def test_claim_value_and_team_name_agree(self):
+        """A team name and its identical claim value yield one identifier."""
+        from mcpgateway.services.openfga_sync import domain_object_id
+
+        assert domain_object_id("Platform Engineering") == domain_object_id("Platform Engineering")
+
+    def test_contextual_tuples_slugify_claim_values(self):
+        """Claims with whitespace still build engine-safe domain objects."""
+        from mcpgateway.services.openfga_sync import build_contextual_domain_tuples
+
+        tuples = build_contextual_domain_tuples(None, "anne@example.com", token_teams=["Platform Engineering"], token_roles=["developer"])
+        assert tuples == [{"user": "user:anne@example.com", "relation": "member", "object": "domain:platform-engineering"}]
+
+    def test_db_fallback_and_sync_parent_agree(self):
+        """Fallback member tuples and sync parent tuples share one domain id."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from mcpgateway.db import Base, EmailTeam, EmailTeamMember, Server
+        from mcpgateway.services.openfga_sync import RelationshipSyncService, build_contextual_domain_tuples, domain_object_id
+
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        session = sessionmaker(bind=engine)()
+        session.add(EmailTeam(id="t-1", name="RBAC Test anne's Team", slug="rbac-test", created_by="admin@example.com"))
+        session.add(EmailTeamMember(team_id="t-1", user_email="anne@example.com", user_id="anne", role="member", is_active=True))
+        session.add(Server(id="s-1", name="api-server", team_id="t-1", enabled=True))
+        session.flush()
+
+        team_name = "RBAC Test anne's Team"
+        expected = f"domain:{domain_object_id(team_name)}"
+        svc = RelationshipSyncService(session, _FakeClient())
+        tuples = svc.desired_tuples()
+        assert ("server:api-server", "parent", expected) in tuples
+
+        fallback = build_contextual_domain_tuples(session, "anne@example.com")
+        assert {"user": "user:anne@example.com", "relation": "member", "object": expected} in fallback
