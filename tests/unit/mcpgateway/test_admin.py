@@ -286,7 +286,7 @@ from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
-from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
+from mcpgateway.services.root_service import RootService, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
@@ -3839,7 +3839,7 @@ class TestAdminRootRoutes:
 
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
     async def test_admin_add_root_error_handlers(self, mock_add_root, mock_request, mock_db):
-        """Cover RootServiceError and generic exception branches in admin_add_root."""
+        """Cover RootServiceValidationError, RootServiceError and generic exception branches in admin_add_root."""
         # Standard
         from urllib.parse import unquote
 
@@ -3851,6 +3851,7 @@ class TestAdminRootRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         cases = [
+            (RootServiceValidationError("bad uri"), "error=invalid_uri"),
             (RootServiceError("bad uri"), "error=invalid_uri"),
             (Exception("boom"), "error=create_failed"),
         ]
@@ -3883,6 +3884,19 @@ class TestAdminRootRoutes:
             await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
 
         assert "Root is in use" in str(excinfo.value)
+
+    @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
+    async def test_admin_delete_root_validation_error_redirects_with_code(self, mock_remove_root, mock_request, mock_db):
+        """A RootServiceValidationError redirects with the invalid_uri code, not the exception text."""
+        mock_remove_root.side_effect = RootServiceValidationError("scheme_not_allowed")
+        mock_request.scope = {"root_path": ""}
+        mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
+
+        response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
+        assert isinstance(response, RedirectResponse)
+        assert response.status_code == 303
+        assert "error=invalid_uri" in response.headers["location"]
+        assert "scheme_not_allowed" not in response.headers["location"]
 
     @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
     async def test_admin_delete_root_redirects(self, mock_remove_root, mock_request, mock_db):
@@ -21205,6 +21219,20 @@ class TestRootManagement:
         with pytest.raises(HTTPException) as exc_info:
             await admin_update_root("file:///missing", request, user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_update_root_validation_error_redirects_with_code(self, monkeypatch, allow_permission):
+        monkeypatch.setattr("mcpgateway.admin.root_service.update_root", AsyncMock(side_effect=RootServiceValidationError("scheme_not_allowed")))
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value=FakeForm({"name": "Updated", "is_inactive_checked": "false"}))
+
+        result = await admin_update_root("file:///test", request, user={"email": "admin@test.com"})
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert "error=invalid_uri" in result.headers["location"]
+        assert "scheme_not_allowed" not in result.headers["location"]
 
     @pytest.mark.asyncio
     async def test_admin_update_root_generic_exception_is_reraised(self, monkeypatch, allow_permission):

@@ -12128,6 +12128,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const cleanUrl = new URL(window.location);
         cleanUrl.searchParams.delete('error');
         cleanUrl.searchParams.delete('message');
+        cleanUrl.searchParams.delete('success');
         try {
           window.history.replaceState({}, '', cleanUrl);
         } catch (e) {

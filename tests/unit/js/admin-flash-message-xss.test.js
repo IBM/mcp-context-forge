@@ -77,7 +77,7 @@ describe("admin.html flash message — code allowlist", () => {
   );
 
   test("removes the flash parameters from the URL and keeps the rest", () => {
-    const win = renderWith("error=delete_failed&team_id=t1");
+    const win = renderWith("error=delete_failed&success=stale&team_id=t1");
 
     expect(win.location.search).toBe("?team_id=t1");
     expect(win.location.hash).toBe("#tools");
