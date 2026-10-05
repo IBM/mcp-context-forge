@@ -168,24 +168,40 @@ class OpenFgaClient:
     async def write_tuples(self, writes: list[dict[str, str]], deletes: list[dict[str, str]]) -> None:
         """Apply tuple writes and deletes in capped batches.
 
-        The engine rejects more than 100 write operations per request
-        (exceeded_entity_limit), so both directions ship in chunks of
-        100. Batches apply sequentially: a later failure leaves earlier
+        Deletes apply before writes so a tuple whose condition changed
+        can be removed and rewritten in one call. Both directions ship
+        in chunks of 100 (the engine's exceeded_entity_limit cap).
+        Batches apply sequentially: a later failure leaves earlier
         batches applied, which the reconciliation loop converges.
+        Multiple gateway workers reconcile concurrently and can compute
+        the same diff. A worker that loses the write race receives
+        ``write_failed_due_to_invalid_input`` naming a tuple that the
+        winner already wrote. That outcome satisfies the reconciliation
+        goal, so this method treats it as success and proceeds.
 
         Args:
             writes: Tuple keys to write.
             deletes: Tuple keys to delete.
 
         Raises:
-            OpenFgaUnavailable: When a batch is rejected.
+            OpenFgaUnavailable: When a batch is rejected for any other reason.
         """
-        for start in range(0, len(writes), _MAX_TUPLES_PER_WRITE):
-            batch = writes[start : start + _MAX_TUPLES_PER_WRITE]
-            await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"writes": {"tuple_keys": batch}})
         for start in range(0, len(deletes), _MAX_TUPLES_PER_WRITE):
             batch = deletes[start : start + _MAX_TUPLES_PER_WRITE]
-            await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"deletes": {"tuple_keys": batch}})
+            try:
+                await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"deletes": {"tuple_keys": batch}})
+            except OpenFgaUnavailable as exc:
+                if "already exists" not in str(exc) and "Invalid tuple delete" not in str(exc):
+                    raise
+                logger.info("OpenFGA delete race: %d tuple(s) in this batch already absent (another worker deleted them)", len(batch))
+        for start in range(0, len(writes), _MAX_TUPLES_PER_WRITE):
+            batch = writes[start : start + _MAX_TUPLES_PER_WRITE]
+            try:
+                await self._request("POST", f"/stores/{settings.openfga_store_id}/write", {"writes": {"tuple_keys": batch}})
+            except OpenFgaUnavailable as exc:
+                if "already exists" not in str(exc):
+                    raise
+                logger.info("OpenFGA write race: %d tuple(s) in this batch already stored (another worker wrote them)", len(batch))
 
     async def read_tuples(self, object_filter: Optional[str] = None) -> list[dict[str, Any]]:
         """Read stored tuples, optionally filtered by object.
