@@ -166,13 +166,42 @@ def test_auto_mode_serves_modern_discover() -> None:
 
 @skip_unless_legacy
 def test_legacy_mode_rejects_modern_protocol_header() -> None:
-    """Legacy mode answers the 2026-07-28 header with 400 and the supported list."""
+    """Legacy mode answers the 2026-07-28 header with -32022 and the supported list."""
     resp = _post_discover(MCP_URL, _admin_jwt())
     assert resp.status_code == 400, f"legacy mode accepted {MODERN_PROTOCOL_VERSION}: {resp.status_code} {resp.text[:300]}"
-    body = resp.text
-    assert "Unsupported protocol version" in body, body[:300]
-    advertised = body.split("Supported versions:", maxsplit=1)[-1]
-    assert MODERN_PROTOCOL_VERSION not in advertised, f"legacy mode advertises the modern version as supported: {body[:300]}"
+    error = resp.json()["error"]
+    assert error["code"] == -32022, error
+    assert error["data"]["requested"] == MODERN_PROTOCOL_VERSION, error
+    advertised = error["data"]["supported"]
+    assert MODERN_PROTOCOL_VERSION not in advertised, f"legacy mode advertises the modern version as supported: {advertised}"
+    assert set(advertised) == set(HANDSHAKE_PROTOCOL_VERSIONS), f"legacy mode must advertise exactly the handshake versions: {advertised}"
+
+
+@skip_unless_legacy
+def test_dual_era_client_falls_back_to_initialize_after_rejection() -> None:
+    """A dual-era client recovers from -32022 by retrying initialize at an advertised version.
+
+    This is the full negotiation round trip a spec-compliant client performs
+    against a legacy-mode gateway: it opens at the modern revision, reads
+    ``data.supported`` off the rejection, and completes the handshake.
+    """
+    token = _admin_jwt()
+    rejected = _post_discover(MCP_URL, token)
+    assert rejected.status_code == 400, f"legacy mode accepted {MODERN_PROTOCOL_VERSION}: {rejected.status_code} {rejected.text[:300]}"
+    advertised = rejected.json()["error"]["data"]["supported"]
+
+    fallback = max(advertised)
+    handshake = build_initialize()
+    handshake["params"]["protocolVersion"] = fallback
+    resp = httpx.post(
+        MCP_URL,
+        headers=_headers(token=token, protocol_version=fallback),
+        json=handshake,
+        timeout=15.0,
+    )
+    assert resp.status_code == 200, f"initialize at advertised version {fallback} failed: {resp.status_code} {resp.text[:300]}"
+    negotiated = _jsonrpc_payload(resp)["result"]["protocolVersion"]
+    assert negotiated == fallback, f"initialize at {fallback} negotiated {negotiated}"
 
 
 def test_headerless_request_stays_on_legacy_handshake() -> None:

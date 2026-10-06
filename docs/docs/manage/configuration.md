@@ -515,6 +515,13 @@ These settings control how the gateway authenticates inbound MCP client connecti
 | `auto` (default) | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
 | `legacy` | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
 
+An unserved version is rejected with HTTP `400` and a JSON-RPC error body. The error code is `-32022` (`UnsupportedProtocolVersionError`); `data.supported` lists the versions this gateway accepts in its current mode and `data.requested` echoes the rejected version. The example below shows the default `auto` mode; in `legacy` mode `supported` omits `2026-07-28`:
+
+```json
+{"jsonrpc": "2.0", "id": null, "error": {"code": -32022, "message": "Unsupported protocol version",
+  "data": {"supported": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"], "requested": "2099-01-01"}}}
+```
+
 #### Outbound MCP Connect Mode (Gateway → MCP Servers)
 
 `MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens **outbound** connections to upstream MCP servers. It applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
