@@ -1,10 +1,16 @@
 # ADR-0014: Security Headers and Environment-Aware CORS Middleware
 
-- _Status:_ Accepted
+- _Status:_ Superseded by [ADR-0056](056-csp-hardening-no-eval-no-inline-handlers.md)
 - _Date:_ 2025-08-17
 - _Deciders:_ Core Engineering Team
 - _Issues:_ [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)
 - _Related:_ Addresses all 9 security headers identified by nodejsscan
+
+> ⚠️ The CSP directives and trade-off notes in this ADR have been superseded by
+> [ADR-0056](056-csp-hardening-no-eval-no-inline-handlers.md), which removes
+> `'unsafe-eval'` and `'unsafe-inline'` from `script-src` / `script-src-attr`,
+> disables HTMX eval, and replaces the hand-rolled sanitiser with DOMPurify.
+> The rest of this ADR (CORS, cookie utilities, SRI) remains authoritative.
 
 ## Context
 

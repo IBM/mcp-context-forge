@@ -6760,7 +6760,6 @@ async def admin_update_team(
         if is_htmx:
             return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
         # For regular form submission, redirect to admin page with error parameter
-        error_msg = urllib.parse.quote(f"Error updating team: {unexpected_error_detail(e)}")
         return RedirectResponse(_build_admin_redirect(root_path, "teams", error="update_failed"), status_code=303)
 
 
