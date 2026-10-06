@@ -40,6 +40,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.gateway_service import GatewayService, GatewayToolNameConflictError
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.validation.tags import validate_tags_field
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -910,7 +911,7 @@ class CatalogService:
 
         except Exception as e:
             logger.error("Failed to check server status for %s: %s", catalog_id, e)
-            return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
+            return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=unexpected_error_detail(e))
 
     async def bulk_register_servers(
         self,
@@ -973,7 +974,7 @@ class CatalogService:
                         break
 
             except Exception as e:
-                failed.append({"server_id": server_id, "error": str(e)})
+                failed.append({"server_id": server_id, "error": unexpected_error_detail(e)})
 
                 if not request.skip_errors:
                     break

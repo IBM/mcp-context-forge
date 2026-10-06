@@ -1724,7 +1724,8 @@ class TestProcessSingleToolForBulk:
                 federation_source=None,
             )
         assert result["status"] == "fail"
-        assert "boom" in result["error"]
+        assert "An unexpected error occurred" in result["error"]
+        assert "boom" not in result["error"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1852,7 +1853,8 @@ class TestA2AMethods:
             result = await tool_service._invoke_a2a_tool(db, mock_tool, {"query": "hello"})
 
         assert result.is_error is True
-        assert "connection failed" in result.content[0].text
+        assert "An unexpected error occurred" in result.content[0].text
+        assert "connection failed" not in result.content[0].text
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3577,7 +3579,8 @@ class TestInvokeA2AToolCoverage:
 
         result = await tool_service._invoke_a2a_tool(db, tool, {})
         assert result.is_error is True
-        assert "boom" in result.content[0].text
+        assert "An unexpected error occurred" in result.content[0].text
+        assert "boom" not in result.content[0].text
 
 
 # ─── _call_a2a_agent coverage ────────────────────────────────────────────────

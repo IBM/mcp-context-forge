@@ -64,20 +64,44 @@ class ContentModel(BaseModel):
         return v
 
 
-def test_format_validation_error_production_mode(monkeypatch):
-    """In production (default), format_validation_error returns a uniform generic detail, no field info."""
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
+def test_format_validation_error_never_leaks_pydantic_internals():
+    """The response carries field-level messages but no class name, version URL, or submitted value."""
+
+    class GatewayCreate(BaseModel):
+        count: int
+        name: str
+
     with pytest.raises(ValidationError) as exc:
-        NameModel(name="Bobby")
+        GatewayCreate(count="lots", name=12345)
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert result["detail"] == "An error occurred, please try again."
-    assert "message" not in result
-    assert "details" not in result
+    rendered = str(result)
+    assert result["success"] is False
+    assert result["detail"] == result["message"]
+    assert {d["field"] for d in result["details"]} == {"count", "name"}
+    assert "GatewayCreate" not in rendered
+    assert "pydantic" not in rendered.lower()
+    assert "input_value" not in rendered
+    assert "lots" not in rendered and "12345" not in rendered
 
 
-def test_format_validation_error_empty_errors_verbose(monkeypatch):
-    """In verbose mode with an empty errors list, user_message defaults to 'Validation error' (no NameError)."""
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_neutralises_class_name_error_types():
+    """Nested-model type errors embed the class name in Pydantic's msg; those are replaced."""
+
+    class Inner(BaseModel):
+        x: int
+
+    class Outer(BaseModel):
+        inner: Inner
+
+    with pytest.raises(ValidationError) as exc:
+        Outer(inner="not-a-dict")
+    result = ErrorFormatter.format_validation_error(exc.value)
+    assert result["details"][0] == {"field": "inner", "message": "Invalid inner"}
+    assert "Inner" not in str(result)
+
+
+def test_format_validation_error_empty_errors():
+    """With an empty errors list, the summary defaults to 'Validation error' (no NameError)."""
     # Craft a ValidationError mock whose .errors() returns []
     mock_exc = Mock(spec=ValidationError)
     mock_exc.errors = lambda: []
@@ -87,8 +111,7 @@ def test_format_validation_error_empty_errors_verbose(monkeypatch):
     assert result["message"] == "Validation failed: Validation error"
 
 
-def test_format_validation_error_letter_requirement(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_letter_requirement():
     with pytest.raises(ValidationError) as exc:
         NameModel(name="Bobby")
     result = ErrorFormatter.format_validation_error(exc.value)
@@ -98,40 +121,36 @@ def test_format_validation_error_letter_requirement(monkeypatch):
     assert "must start with a letter, number, or underscore" in result["details"][0]["message"]
 
 
-def test_format_validation_error_length(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_length():
     with pytest.raises(ValidationError) as exc:
         NameModel(name="A" * 300)
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "too long" in result["details"][0]["message"]
 
 
-def test_format_validation_error_url(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_url():
     with pytest.raises(ValidationError) as exc:
         UrlModel(url="ftp://example.com")
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "valid HTTP" in result["details"][0]["message"]
 
 
-def test_format_validation_error_directory_traversal(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_directory_traversal():
     with pytest.raises(ValidationError) as exc:
         PathModel(path="../etc/passwd")
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "invalid characters" in result["details"][0]["message"]
 
 
-def test_format_validation_error_html_injection(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_html_injection():
     with pytest.raises(ValidationError) as exc:
         ContentModel(content="<script>alert(1)</script>")
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "cannot contain HTML" in result["details"][0]["message"]
 
 
-def test_format_validation_error_fallback(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+def test_format_validation_error_custom_message_passes_through():
+    """A project validator's own message is user-facing; it is returned minus Pydantic's 'Value error, ' prefix."""
 
     class CustomModel(BaseModel):
         custom: str
@@ -143,12 +162,10 @@ def test_format_validation_error_fallback(monkeypatch):
     with pytest.raises(ValidationError) as exc:
         CustomModel(custom="foo")
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert result["details"][0]["message"] == "Invalid custom"
+    assert result["details"][0]["message"] == "Some unknown error"
 
 
-def test_format_validation_error_multiple_fields(monkeypatch):
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
-
+def test_format_validation_error_multiple_fields():
     class MultiModel(BaseModel):
         name: str
         url: str
@@ -172,6 +189,8 @@ def test_format_validation_error_multiple_fields(monkeypatch):
     messages = [d["message"] for d in result["details"]]
     assert any("too long" in m for m in messages)
     assert any("valid HTTP" in m for m in messages)
+    # The one-line summary lists every field's message, not just the last one
+    assert result["message"] == "Validation failed: " + "; ".join(messages)
 
 
 def test_get_user_message_all_patterns():
@@ -181,7 +200,50 @@ def test_get_user_message_all_patterns():
     assert "valid HTTP" in ErrorFormatter._get_user_message("endpoint", "Tool URL must start with http")
     assert "invalid characters" in ErrorFormatter._get_user_message("path", "cannot contain directory traversal")
     assert "cannot contain HTML" in ErrorFormatter._get_user_message("content", "contains HTML tags")
-    assert ErrorFormatter._get_user_message("foo", "random error") == "Invalid foo"
+    assert ErrorFormatter._get_user_message("foo", "random error") == "random error"
+    assert ErrorFormatter._get_user_message("foo", "Value error, random error", "value_error") == "random error"
+    assert ErrorFormatter._get_user_message("foo", "Assertion failed, nope", "assertion_error") == "nope"
+    assert ErrorFormatter._get_user_message("foo", "Input should be an instance of Secret", "is_instance_of") == "Invalid foo"
+    assert ErrorFormatter._get_user_message("foo", "", "string_type") == "Invalid foo"
+
+
+def test_format_request_validation_error_keeps_fastapi_shape_without_leaky_fields():
+    """Request-parsing errors keep type/loc/msg (and primitive ctx) but drop input, url, and exception ctx."""
+    fake = Mock()
+    fake.errors = lambda: [
+        {
+            "type": "string_too_short",
+            "loc": ("body", "name"),
+            "msg": "String should have at least 3 characters",
+            "input": "ab",
+            "url": "https://errors.pydantic.dev/2.13/v/string_too_short",
+            "ctx": {"min_length": 3, "error": ValueError("internal")},
+        },
+        {"type": "model_type", "loc": ("body", "auth"), "msg": "Input should be a valid dictionary or instance of AuthConfig", "input": {}},
+        {"type": "missing", "loc": (), "msg": "Field required"},
+    ]
+    out = ErrorFormatter.format_request_validation_error(fake)
+    assert out == [
+        {"type": "string_too_short", "loc": ["body", "name"], "msg": "String should have at least 3 characters", "ctx": {"min_length": 3}},
+        {"type": "model_type", "loc": ["body", "auth"], "msg": "Invalid auth"},
+        {"type": "missing", "loc": [], "msg": "Field required"},
+    ]
+    assert "AuthConfig" not in str(out) and "pydantic" not in str(out) and "internal" not in str(out)
+
+
+def test_format_request_validation_error_real_pydantic_error():
+    class M(BaseModel):
+        count: int
+
+    with pytest.raises(ValidationError) as exc:
+        M(count="lots")
+    out = ErrorFormatter.format_request_validation_error(exc.value)
+    assert out[0]["loc"] == ["count"]
+    assert out[0]["type"] == "int_parsing"
+    assert "input" not in out[0] and "url" not in out[0]
+
+
+TOKEN_NAME_CONFLICT = "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."
 
 
 def make_mock_integrity_error(msg):
@@ -232,28 +294,12 @@ def make_mock_integrity_error(msg):
         ("FOREIGN KEY constraint failed", "Referenced item not found"),
         ("NOT NULL constraint failed", "Required field is missing"),
         ("CHECK constraint failed: invalid_data", "Validation failed. Please check the input data."),
-        # Token name uniqueness – new per-team constraint name (sanitized in production)
-        (
-            "uq_email_api_tokens_user_name_team",
-            "A token with this name already exists. Please choose a different name.",
-        ),
-        # Token name uniqueness – legacy ORM constraint name (sanitized in production)
-        ("uq_email_api_tokens_user_name", "A token with this name already exists. Please choose a different name."),
-        # Token name uniqueness – Alembic migration constraint name (sanitized in production)
-        (
-            "uq_email_api_tokens_user_email_name",
-            "A token with this name already exists. Please choose a different name.",
-        ),
-        # Token name uniqueness – SQLite column-path variant (sanitized in production)
-        (
-            "UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name",
-            "A token with this name already exists. Please choose a different name.",
-        ),
-        # Token name uniqueness – partial unique index for global-scope tokens (sanitized in production)
-        (
-            "uq_email_api_tokens_user_name_global",
-            "A token with this name already exists. Please choose a different name.",
-        ),
+        # Token name uniqueness – every constraint spelling maps to the same specific message
+        ("uq_email_api_tokens_user_name_team", TOKEN_NAME_CONFLICT),
+        ("uq_email_api_tokens_user_name", TOKEN_NAME_CONFLICT),
+        ("uq_email_api_tokens_user_email_name", TOKEN_NAME_CONFLICT),
+        ("UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name", TOKEN_NAME_CONFLICT),
+        ("uq_email_api_tokens_user_name_global", TOKEN_NAME_CONFLICT),
     ],
 )
 def test_format_database_error_integrity_patterns(msg, expected):
@@ -297,80 +343,13 @@ def test_format_database_error_no_orig():
     assert result["success"] is False
 
 
-def test_should_expose_error_details_expose_flag_true(monkeypatch):
-    """Test that EXPOSE_ERROR_DETAILS=true enables verbose errors."""
-    from mcpgateway.utils.error_formatter import should_expose_error_details
-    from unittest.mock import MagicMock
-
-    mock_settings = MagicMock()
-    mock_settings.expose_error_details = True
-    mock_settings.debug = False
-    mock_settings.dev_mode = False
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
-
-    assert should_expose_error_details() is True
-
-
-def test_should_expose_error_details_debug_and_dev_mode(monkeypatch):
-    """Test that DEBUG=true AND DEV_MODE=true enables verbose errors."""
-    from mcpgateway.utils.error_formatter import should_expose_error_details
-    from unittest.mock import MagicMock
-
-    mock_settings = MagicMock()
-    mock_settings.expose_error_details = False
-    mock_settings.debug = True
-    mock_settings.dev_mode = True
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
-
-    assert should_expose_error_details() is True
-
-
-def test_should_expose_error_details_debug_only_false(monkeypatch):
-    """Test that DEBUG=true alone does NOT enable verbose errors."""
-    from mcpgateway.utils.error_formatter import should_expose_error_details
-    from unittest.mock import MagicMock
-
-    mock_settings = MagicMock()
-    mock_settings.expose_error_details = False
-    mock_settings.debug = True
-    mock_settings.dev_mode = False
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
-
-    assert should_expose_error_details() is False
-
-
-def test_should_expose_error_details_all_false(monkeypatch):
-    """Test that all flags false returns False."""
-    from mcpgateway.utils.error_formatter import should_expose_error_details
-    from unittest.mock import MagicMock
-
-    mock_settings = MagicMock()
-    mock_settings.expose_error_details = False
-    mock_settings.debug = False
-    mock_settings.dev_mode = False
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
-
-    assert should_expose_error_details() is False
-
-
-def test_safe_error_detail_verbose_mode(monkeypatch):
-    """Test safe_error_detail returns exception text in verbose mode."""
+def test_safe_error_detail_never_returns_exception_text():
+    """safe_error_detail always returns the fallback; raw exception text never reaches a response."""
     from mcpgateway.utils.error_formatter import safe_error_detail
 
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
-
-    result = safe_error_detail(ValueError("Detailed error message"), "Generic fallback")
-    assert result == "Detailed error message"
-
-
-def test_safe_error_detail_production_mode(monkeypatch):
-    """Test safe_error_detail returns fallback in production mode."""
-    from mcpgateway.utils.error_formatter import safe_error_detail
-
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
-
-    result = safe_error_detail(ValueError("Detailed error message"), "Generic fallback")
+    result = safe_error_detail(ValueError("UNIQUE constraint failed: tools.name"), "Generic fallback")
     assert result == "Generic fallback"
+    assert safe_error_detail(RuntimeError("boom")) == "Invalid request. Please check your input and try again."
 
 
 def test_public_validation_error_is_value_error():
@@ -382,30 +361,15 @@ def test_public_validation_error_is_value_error():
     assert str(err) == "Token expiration cannot exceed 365 days"
 
 
-def test_format_database_error_token_uniqueness_verbose(monkeypatch):
-    """Test that token uniqueness errors expose detail in verbose mode."""
+def test_format_database_error_token_uniqueness_specific_message():
+    """Token uniqueness errors always return the specific, user-actionable message (no schema names)."""
     from sqlalchemy.exc import IntegrityError
-
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
 
     orig = Exception("uq_email_api_tokens_user_name_team")
     err = IntegrityError("INSERT", {}, orig)
     result = ErrorFormatter.format_database_error(err)
     assert "unique per user per team" in result["message"]
-    assert result["success"] is False
-
-
-def test_format_database_error_token_uniqueness_production(monkeypatch):
-    """Test that token uniqueness errors are sanitized in production mode."""
-    from sqlalchemy.exc import IntegrityError
-
-    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
-
-    orig = Exception("uq_email_api_tokens_user_name_team")
-    err = IntegrityError("INSERT", {}, orig)
-    result = ErrorFormatter.format_database_error(err)
-    assert "already exists" in result["message"]
-    assert "unique per user per team" not in result["message"]
+    assert "uq_email_api_tokens" not in result["message"]
     assert result["success"] is False
 
 

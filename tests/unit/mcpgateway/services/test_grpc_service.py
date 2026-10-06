@@ -1654,7 +1654,7 @@ class TestInvokeMethodExceptionWrapping:
                 pass
 
         with patch("mcpgateway.translate_grpc.GrpcEndpoint", FailingEndpoint):
-            with pytest.raises(GrpcServiceError, match="Method invocation failed: internal grpc failure") as exc_info:
+            with pytest.raises(GrpcServiceError, match="Method invocation failed: An unexpected error occurred") as exc_info:
                 await GrpcService().invoke_method(mock_db, "svc-1", "svc.Method", {})
 
         # Verify exception chaining

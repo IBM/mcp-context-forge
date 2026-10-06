@@ -51,6 +51,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # ---------------------------------------------------------------------------
 # Server-associable entity registry
@@ -137,11 +138,11 @@ def _validate_server_team_assignment(db: Session, user_email: Optional[str], tar
             an active team owner.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     # Preserve existing behavior for system/internal updates where
     # user context may be intentionally omitted.
@@ -154,7 +155,7 @@ def _validate_server_team_assignment(db: Session, user_email: Optional[str], tar
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 # Initialize logging service first
@@ -761,7 +762,7 @@ class ServerService(BaseService):
                 created_by=created_by,
                 user_email=created_by,
             )
-            raise ServerError(f"Failed to register server: {str(ex)}")
+            raise ServerError(f"Failed to register server: {unexpected_error_detail(ex)}")
 
     async def list_servers(
         self,
@@ -1495,7 +1496,7 @@ class ServerService(BaseService):
                 modified_by=user_email,
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to update server: {str(e)}")
+            raise ServerError(f"Failed to update server: {unexpected_error_detail(e)}")
 
     async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
         """Set the activation status of a server.
@@ -1652,7 +1653,7 @@ class ServerService(BaseService):
                 error_message=str(e),
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to set server state: {str(e)}")
+            raise ServerError(f"Failed to set server state: {unexpected_error_detail(e)}")
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Permanently delete a server.
@@ -1758,7 +1759,7 @@ class ServerService(BaseService):
                 error_message=str(e),
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to delete server: {str(e)}")
+            raise ServerError(f"Failed to delete server: {unexpected_error_detail(e)}")
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """

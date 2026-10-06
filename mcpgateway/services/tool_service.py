@@ -125,6 +125,7 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -1124,7 +1125,7 @@ def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> i
         return default
     value = int(raw_value)
     if value < minimum:
-        raise ValueError(f"Retry policy integer must be >= {minimum}")
+        raise PublicValidationError(f"Retry policy integer must be >= {minimum}")
     return value
 
 
@@ -1133,7 +1134,7 @@ def _coerce_retry_policy_statuses(raw_value: Any) -> List[int]:
     if raw_value is None:
         return [429, 500, 502, 503, 504]
     if isinstance(raw_value, (str, bytes)) or not isinstance(raw_value, (list, tuple, set)):
-        raise ValueError("Retry policy retry_on_status must be a sequence of integers")
+        raise PublicValidationError("Retry policy retry_on_status must be a sequence of integers")
     return [int(code) for code in raw_value]
 
 
@@ -1151,14 +1152,14 @@ def _coerce_retry_policy_bool(raw_value: Any, *, default: bool) -> bool:
             return True
         if normalized in {"0", "false", "f", "no", "n", "off"}:
             return False
-    raise ValueError("Retry policy boolean must be a bool-like value")
+    raise PublicValidationError("Retry policy boolean must be a bool-like value")
 
 
 def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str) -> Dict[str, Any]:
     """Build a gateway-owned retry policy view from plugin config."""
     cfg = raw_cfg or {}
     if not isinstance(cfg, dict):
-        raise ValueError("Retry policy config must be a mapping")
+        raise PublicValidationError("Retry policy config must be a mapping")
     effective_cfg: Dict[str, Any] = {
         "max_retries": _coerce_retry_policy_int(cfg.get("max_retries"), default=2, minimum=0),
         "backoff_base_ms": _coerce_retry_policy_int(cfg.get("backoff_base_ms"), default=200, minimum=1),
@@ -1170,12 +1171,12 @@ def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str
 
     tool_overrides = cfg.get("tool_overrides") or {}
     if not isinstance(tool_overrides, dict):
-        raise ValueError("Retry policy tool_overrides must be a mapping")
+        raise PublicValidationError("Retry policy tool_overrides must be a mapping")
 
     overrides = tool_overrides.get(tool_name)
     if overrides:
         if not isinstance(overrides, dict):
-            raise ValueError("Retry policy tool override must be a mapping")
+            raise PublicValidationError("Retry policy tool override must be a mapping")
         effective_cfg.update({key: value for key, value in overrides.items() if key in effective_cfg})
         effective_cfg["max_retries"] = _coerce_retry_policy_int(effective_cfg.get("max_retries"), default=2, minimum=0)
         effective_cfg["backoff_base_ms"] = _coerce_retry_policy_int(effective_cfg.get("backoff_base_ms"), default=200, minimum=1)
@@ -2563,7 +2564,7 @@ class ToolService(BaseService):
                     "tool_name": tool.name,
                 },
             )
-            raise ToolError(f"Failed to register tool: {str(e)}")
+            raise ToolError(f"Failed to register tool: {unexpected_error_detail(e)}")
 
     async def register_tools_bulk(
         self,
@@ -2788,7 +2789,7 @@ class ToolService(BaseService):
             db.rollback()
             logger.error("Failed to process tool chunk: %s", str(e))
             stats["failed"] += len(chunk)
-            stats["errors"].append(f"Chunk processing failed: {str(e)}")
+            stats["errors"].append(f"Chunk processing failed: {unexpected_error_detail(e)}")
 
         return stats
 
@@ -2960,7 +2961,7 @@ class ToolService(BaseService):
 
         except Exception as e:
             logger.warning("Failed to process tool %s in bulk operation: %s", tool.name, str(e))
-            return {"status": "fail", "error": f"Failed to process tool {tool.name}: {str(e)}"}
+            return {"status": "fail", "error": f"Failed to process tool {tool.name}: {unexpected_error_detail(e)}"}
 
     def _create_tool_object(
         self,
@@ -3851,7 +3852,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=e,
             )
-            raise ToolError(f"Failed to delete tool: {str(e)}")
+            raise ToolError(f"Failed to delete tool: {unexpected_error_detail(e)}")
 
     async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
         """
@@ -4019,7 +4020,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=e,
             )
-            raise ToolError(f"Failed to set tool state: {str(e)}")
+            raise ToolError(f"Failed to set tool state: {unexpected_error_detail(e)}")
 
     @staticmethod
     def _make_mcp_tool_error(
@@ -4920,7 +4921,7 @@ class ToolService(BaseService):
                         )
                 except Exception as e:
                     logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                    raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                    raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {unexpected_error_detail(e)}")
             elif grant_type == "token-exchange":
                 headers = await self._resolve_token_exchange_header(
                     gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
@@ -4931,7 +4932,7 @@ class ToolService(BaseService):
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
                     logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
-                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {unexpected_error_detail(e)}")
         else:
             # Non-OAuth auth types (bearer / basic / authheaders / none): resolve PER-USER creds
             # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
@@ -6125,7 +6126,7 @@ class ToolService(BaseService):
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
-                            raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
+                            raise ToolInvocationError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
                     else:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Strip invisible Unicode format characters left over in a credential
@@ -6567,7 +6568,7 @@ class ToolService(BaseService):
                                     )
                             except Exception as e:
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                                raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                                raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {unexpected_error_detail(e)}")
                         elif grant_type == "token-exchange":
                             headers = await self._resolve_token_exchange_header(
                                 gateway_oauth_config,
@@ -6588,7 +6589,7 @@ class ToolService(BaseService):
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
-                                raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                                raise ToolInvocationError(f"OAuth authentication failed for gateway: {unexpected_error_detail(e)}")
                     else:
                         # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
                         try:
@@ -8008,9 +8009,9 @@ class ToolService(BaseService):
                     )
                     pre_hooks_run.append(ref.plugin_ref.name)
                 except PluginViolationError as exc:
-                    warnings.append(ToolPreviewWarning(code="preview_hook_violation", hook=ref.plugin_ref.name, message=str(exc)))
+                    warnings.append(ToolPreviewWarning(code="preview_hook_violation", hook=ref.plugin_ref.name, message=unexpected_error_detail(exc)))
                 except PluginError as exc:
-                    warnings.append(ToolPreviewWarning(code="preview_hook_error", hook=ref.plugin_ref.name, message=str(exc)))
+                    warnings.append(ToolPreviewWarning(code="preview_hook_error", hook=ref.plugin_ref.name, message=unexpected_error_detail(exc)))
 
             for ref in skipped_refs:
                 warnings.append(
@@ -8483,7 +8484,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=ex,
             )
-            raise ToolError(f"Failed to update tool: {str(ex)}")
+            raise ToolError(f"Failed to update tool: {unexpected_error_detail(ex)}")
 
     async def _notify_tool_updated(self, tool: DbTool) -> None:
         """
@@ -8625,7 +8626,7 @@ class ToolService(BaseService):
             response = await self._http_client.get(url)
             response.raise_for_status()
         except Exception as e:
-            raise ToolValidationError(f"Failed to validate tool URL: {str(e)}")
+            raise ToolValidationError(f"Failed to validate tool URL: {unexpected_error_detail(e)}")
 
     async def _check_tool_health(self, tool: DbTool) -> bool:
         """Check if tool endpoint is healthy.
@@ -8998,7 +8999,7 @@ class ToolService(BaseService):
             result = ToolResult(content=content, is_error=False)
 
         except Exception as e:
-            error_message = str(e)
+            error_message = unexpected_error_detail(e)
             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
             result = ToolResult(content=content, is_error=True)
 

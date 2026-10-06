@@ -995,7 +995,6 @@ class TestServerEndpoints:
 
     def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers, monkeypatch):
         """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
-        monkeypatch.setattr("mcpgateway.main.should_expose_error_details", lambda: True)
         req = {
             "server": {
                 "name": "test_server",

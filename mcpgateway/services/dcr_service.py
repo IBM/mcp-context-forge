@@ -30,6 +30,7 @@ from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.utils.origin import is_same_origin, origin_from_url
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +232,7 @@ class DcrService:
 
                 raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
         except httpx.HTTPError as e:
-            raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
+            raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {unexpected_error_detail(e)}")
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
@@ -319,7 +320,7 @@ class DcrService:
                     error_desc = error_data.get("error_description", str(error_data))
                     raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
         except httpx.HTTPError as e:
-            raise DcrError(f"Failed to register client with {normalized_issuer}: {e}")
+            raise DcrError(f"Failed to register client with {normalized_issuer}: {unexpected_error_detail(e)}")
 
         # Encrypt secrets
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
@@ -474,7 +475,7 @@ class DcrService:
                     raise DcrError(f"Failed to update client: upstream returned status {response.status_code} with a non-JSON body")
                 raise DcrError(f"Failed to update client: {error_data}")
         except httpx.HTTPError as e:
-            raise DcrError(f"Failed to update client registration: {e}")
+            raise DcrError(f"Failed to update client registration: {unexpected_error_detail(e)}")
 
     async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> bool:  # pylint: disable=unused-argument
         """Delete/revoke client registration (RFC 7591 section 4.3).

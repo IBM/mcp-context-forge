@@ -3243,7 +3243,9 @@ class Settings(BaseSettings):
     dev_mode: bool = False
     reload: bool = False
     debug: bool = False
-    expose_error_details: bool = False
+    expose_error_details: bool = Field(
+        default=False, description="Deprecated and ignored. Error responses are always sanitized; full detail is logged server-side. Will be removed in a future release."
+    )
 
     # Observability (OpenTelemetry)
     deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")

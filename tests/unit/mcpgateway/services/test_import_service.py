@@ -826,7 +826,8 @@ async def test_import_configuration_general_exception_handling(import_service, m
     with pytest.raises(ImportError) as excinfo:
         await import_service.import_configuration(db=mock_db, import_data=valid_import_data, imported_by="test_user")
 
-    assert "Import failed: Validation failed unexpectedly" in str(excinfo.value)
+    assert "Import failed: An unexpected error occurred" in str(excinfo.value)
+    assert "Validation failed unexpectedly" not in str(excinfo.value)
 
 
 @pytest.mark.asyncio

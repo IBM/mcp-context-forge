@@ -4890,7 +4890,7 @@ class TestToolService:
         # Mock HTTP error
         tool_service._http_client.get.side_effect = Exception("Connection refused")
 
-        with pytest.raises(ToolValidationError, match="Failed to validate tool URL: Connection refused"):
+        with pytest.raises(ToolValidationError, match="Failed to validate tool URL: An unexpected error occurred"):
             await tool_service._validate_tool_url("http://example.com/tool")
 
     async def test_check_tool_health_success(self, tool_service, mock_tool):
@@ -5129,7 +5129,8 @@ class TestToolService:
         with pytest.raises(ToolInvocationError) as exc_info:
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        assert "OAuth authentication failed: OAuth failed" in str(exc_info.value)
+        assert "OAuth authentication failed: An unexpected error occurred" in str(exc_info.value)
+        assert "OAuth failed" not in str(exc_info.value)
 
     async def test_invoke_tool_mcp_oauth_client_credentials(self, tool_service, mock_tool, mock_gateway, test_db):
         """Test invoking MCP tool with OAuth client credentials flow."""

@@ -37,6 +37,7 @@ from mcpgateway.services.root_service import RootServiceValidationError
 from mcpgateway.services.server_service import ServerNameConflictError
 from mcpgateway.services.tool_service import ToolNameConflictError
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -374,7 +375,7 @@ class ImportService:
             status.completed_at = datetime.now(timezone.utc)
             status.errors.append(f"Import failed: {str(e)}")
             logger.error("Import %s failed: %s", import_id, str(e))
-            raise ImportError(f"Import failed: {str(e)}")
+            raise ImportError(f"Import failed: {unexpected_error_detail(e)}")
 
     def _get_entity_identifier(self, entity_type: str, entity: Dict[str, Any]) -> str:
         """Get the unique identifier for an entity based on its type.
@@ -633,7 +634,7 @@ class ImportService:
             return entity_data
 
         except Exception as e:
-            raise ImportError(f"Failed to re-key authentication data: {str(e)}")
+            raise ImportError(f"Failed to re-key authentication data: {unexpected_error_detail(e)}")
 
     async def _process_single_entity(
         self, db: Session, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str
@@ -669,7 +670,7 @@ class ImportService:
         except GatewayToolNameConflictError:
             raise
         except Exception as e:
-            raise ImportError(f"Failed to process {entity_type}: {str(e)}")
+            raise ImportError(f"Failed to process {entity_type}: {unexpected_error_detail(e)}")
 
     async def _process_tool(self, db: Session, tool_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a tool entity.
@@ -736,7 +737,7 @@ class ImportService:
                     raise ImportConflictError(f"Tool name conflict: {tool_name}")
 
         except Exception as e:
-            raise ImportError(f"Failed to process tool {tool_name}: {str(e)}")
+            raise ImportError(f"Failed to process tool {tool_name}: {unexpected_error_detail(e)}")
 
     async def _process_gateway(self, db: Session, gateway_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process a gateway entity.
@@ -803,7 +804,7 @@ class ImportService:
         except GatewayToolNameConflictError:
             raise
         except Exception as e:
-            raise ImportError(f"Failed to process gateway {gateway_name}: {str(e)}")
+            raise ImportError(f"Failed to process gateway {gateway_name}: {unexpected_error_detail(e)}")
 
     async def _process_server(self, db: Session, server_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process a server entity.
@@ -865,7 +866,7 @@ class ImportService:
                     raise ImportConflictError(f"Server name conflict: {server_name}")
 
         except Exception as e:
-            raise ImportError(f"Failed to process server {server_name}: {str(e)}")
+            raise ImportError(f"Failed to process server {server_name}: {unexpected_error_detail(e)}")
 
     async def _process_prompt(self, db: Session, prompt_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a prompt entity.
@@ -914,7 +915,7 @@ class ImportService:
                     raise ImportConflictError(f"Prompt name conflict: {prompt_name}")
 
         except Exception as e:
-            raise ImportError(f"Failed to process prompt {prompt_name}: {str(e)}")
+            raise ImportError(f"Failed to process prompt {prompt_name}: {unexpected_error_detail(e)}")
 
     async def _process_resource(self, db: Session, resource_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a resource entity.
@@ -963,7 +964,7 @@ class ImportService:
                     raise ImportConflictError(f"Resource URI conflict: {resource_uri}")
 
         except Exception as e:
-            raise ImportError(f"Failed to process resource {resource_uri}: {str(e)}")
+            raise ImportError(f"Failed to process resource {resource_uri}: {unexpected_error_detail(e)}")
 
     async def _process_tools_bulk(self, db: Session, tools_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process multiple tools using bulk operations.
@@ -1197,7 +1198,7 @@ class ImportService:
             elif conflict_strategy == ConflictStrategy.FAIL:
                 raise ImportConflictError(f"Root URI conflict: {root_uri}")
             else:
-                raise ImportError(f"Failed to process root {root_uri}: {str(e)}")
+                raise ImportError(f"Failed to process root {root_uri}: {unexpected_error_detail(e)}")
 
     def _convert_to_tool_create(self, tool_data: Dict[str, Any]) -> ToolCreate:
         """Convert import data to ToolCreate schema.

@@ -40,6 +40,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.redis_client import get_redis_client
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 # Initialize logging
 logging_service = LoggingService()
@@ -837,7 +838,7 @@ class TeamManagementService:
             # Validate visibility
             valid_visibilities = ["private", "public"]
             if visibility not in valid_visibilities:
-                raise ValueError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
+                raise PublicValidationError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
 
             # Validate the member list before writing anything
             seeds = self._normalize_member_seeds(members, created_by)
@@ -847,13 +848,13 @@ class TeamManagementService:
             if not skip_limits:
                 max_teams = getattr(settings, "max_teams_per_user", 50)
                 if self._get_user_team_count(created_by) >= max_teams:
-                    raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+                    raise PublicValidationError(f"User has reached the maximum team limit of {max_teams}")
 
             # Enforce max_members cap for non-admins (only when explicitly provided)
             if not skip_limits and max_members is not None:
                 max_limit = settings.max_members_per_team
                 if max_members > max_limit:
-                    raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
+                    raise PublicValidationError(f"max_members cannot exceed the configured limit of {max_limit}")
 
             # If max_members is not explicitly provided, leave it as None in the DB.
             # The effective limit will be resolved at check time from settings.max_members_per_team,
@@ -1070,7 +1071,7 @@ class TeamManagementService:
             if visibility is not None:
                 valid_visibilities = ["private", "public"]
                 if visibility not in valid_visibilities:
-                    raise ValueError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
+                    raise PublicValidationError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
                 team.visibility = visibility
 
             # UNSET means "not provided" — leave unchanged.
@@ -1080,7 +1081,7 @@ class TeamManagementService:
                 if max_members is not None and not skip_limits:
                     max_limit = settings.max_members_per_team
                     if max_members > max_limit:
-                        raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
+                        raise PublicValidationError(f"max_members cannot exceed the configured limit of {max_limit}")
                 team.max_members = max_members
 
             team.updated_at = utc_now()
@@ -1127,7 +1128,7 @@ class TeamManagementService:
             # Prevent deleting personal teams
             if team.is_personal:
                 logger.warning("Cannot delete personal team %s", SecurityValidator.sanitize_log_message(team_id))
-                raise ValueError("Personal teams cannot be deleted")
+                raise PublicValidationError("Personal teams cannot be deleted")
 
             # Soft delete the team
             team.is_active = False
@@ -1337,7 +1338,7 @@ class TeamManagementService:
 
                 if owner_count <= 1:
                     logger.warning("Cannot remove the last owner from team %s", SecurityValidator.sanitize_log_message(team_id))
-                    raise ValueError("Cannot remove the last owner from a team")
+                    raise PublicValidationError("Cannot remove the last owner from a team")
 
             # Remove membership (soft delete)
             membership.is_active = False
@@ -1392,7 +1393,7 @@ class TeamManagementService:
             # Validate role
             valid_roles = ["owner", "member"]
             if new_role not in valid_roles:
-                raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+                raise PublicValidationError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
             team = await self.get_team_by_id(team_id)
             if not team:
@@ -1417,7 +1418,7 @@ class TeamManagementService:
 
                 if owner_count <= 1:
                     logger.warning("Cannot remove owner role from the last owner of team %s", SecurityValidator.sanitize_log_message(team_id))
-                    raise ValueError("Cannot remove owner role from the last owner of a team")
+                    raise PublicValidationError("Cannot remove owner role from the last owner of a team")
 
             # Update the role
             old_role = membership.role
@@ -2111,28 +2112,28 @@ class TeamManagementService:
             # Validate team
             team = await self.get_team_by_id(team_id)
             if not team:
-                raise ValueError("Team not found")
+                raise PublicValidationError("Team not found")
 
             if team.visibility != "public":
-                raise ValueError("Can only request to join public teams")
+                raise PublicValidationError("Can only request to join public teams")
 
             # Check if user is already a member
             existing_member = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
 
             if existing_member:
-                raise ValueError("User is already a member of this team")
+                raise PublicValidationError("User is already a member of this team")
 
             # Check max teams per user
             max_teams = getattr(settings, "max_teams_per_user", 50)
             if self._get_user_team_count(user_email) >= max_teams:
-                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+                raise PublicValidationError(f"User has reached the maximum team limit of {max_teams}")
 
             # Check for existing requests (any status)
             existing_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.user_email == user_email).first()
 
             if existing_request:
                 if existing_request.status == "pending" and not existing_request.is_expired():
-                    raise ValueError("User already has a pending join request for this team")
+                    raise PublicValidationError("User already has a pending join request for this team")
 
                 # Update existing request (cancelled, rejected, expired) to pending
                 existing_request.message = message or ""
@@ -2205,17 +2206,17 @@ class TeamManagementService:
             if join_request.is_expired():
                 join_request.status = "expired"
                 self.db.commit()
-                raise ValueError("Join request has expired")
+                raise PublicValidationError("Join request has expired")
 
             # Check max teams per user
             max_teams = getattr(settings, "max_teams_per_user", 50)
             if self._get_user_team_count(join_request.user_email) >= max_teams:
-                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+                raise PublicValidationError(f"User has reached the maximum team limit of {max_teams}")
 
             # Check team member limit
             team = await self.get_team_by_id(team_id)
             if not team:
-                raise ValueError(f"Team {team_id} not found or inactive")
+                raise PublicValidationError(f"Team {team_id} not found or inactive")
             check_team_member_capacity(self.db, team)
 
             # Add user to team
