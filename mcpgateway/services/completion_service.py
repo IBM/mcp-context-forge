@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 # Third-Party
-import httpx as httpx2
+import httpx2
 from mcp import MCPError as McpError, types
 from mcp.types import PromptReference, ResourceTemplateReference
 from sqlalchemy import desc, select

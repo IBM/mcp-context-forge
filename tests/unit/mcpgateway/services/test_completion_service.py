@@ -519,8 +519,10 @@ async def test_acquire_upstream_session_falls_back_to_mcp_proxy_client_without_d
         assert session is fake_client.session
     resolve_target.assert_awaited_once_with(_FakeGateway.url, "Gateway URL")
     assert proxy_kwargs["url"] == _FakeGateway.url
-    monkeypatch.setattr("mcpgateway.services.completion_service.httpx2.AsyncClient", MagicMock())
-    proxy_kwargs["httpx_client_factory"]()
+    import httpx2
+
+    async with proxy_kwargs["httpx_client_factory"]() as http_client:
+        assert isinstance(http_client, httpx2.AsyncClient)
     pinned_target.client_kwargs.assert_called_once_with(verify=True)
 
 
