@@ -1990,7 +1990,7 @@ class ServerService(BaseService):
             - scopes_supported: Optional list of supported scopes
 
         Raises:
-            ServerNotFoundError: If server doesn't exist, is disabled, or is non-public.
+            ServerNotFoundError: If server doesn't exist, is disabled, or is non-public without OAuth enabled.
             ServerError: If OAuth is not enabled or not properly configured.
 
         Examples:
@@ -2002,7 +2002,7 @@ class ServerService(BaseService):
         """
         server = db.get(DbServer, server_id)
 
-        # Return not found for non-existent, disabled, or non-public servers
+        # Return not found for non-existent, disabled, or non-public servers without OAuth
         # (avoids leaking information about private/team servers)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
@@ -2010,7 +2010,7 @@ class ServerService(BaseService):
         if not server.enabled:
             raise ServerNotFoundError(f"Server not found: {server_id}")
 
-        if getattr(server, "visibility", "public") != "public":
+        if getattr(server, "visibility", "public") != "public" and not getattr(server, "oauth_enabled", False):
             raise ServerNotFoundError(f"Server not found: {server_id}")
 
         # Check OAuth configuration

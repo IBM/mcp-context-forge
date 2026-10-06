@@ -13,7 +13,7 @@ OAuth Protected Resource Metadata Test Scenarios:
 1. Server WITHOUT oauth_enabled or oauth_config -> 404
 2. Server WITH oauth_enabled=True and valid oauth_config -> 200 + RFC 9728 JSON
 3. Server with oauth_enabled=False (even with oauth_config) -> 404
-4. Server with visibility="private" (non-public) -> 404
+4. Server with visibility="private" (non-public) -> 200 with oauth_enabled=True, 404 without OAuth
 5. Disabled server (enabled=False) -> 404
 6. Non-existent server ID -> 404
 7. Server with multiple authorization_servers -> 200 + list of auth servers
@@ -305,8 +305,8 @@ class TestOAuthProtectedResourceMetadata:
         assert response.status_code == 404
         assert "OAuth not enabled" in response.json()["detail"]
 
-    async def test_private_server_returns_404(self, client: AsyncClient):
-        """Scenario 4: Server with visibility="private" (non-public) returns 404."""
+    async def test_private_server_with_oauth_enabled_returns_metadata(self, client: AsyncClient):
+        """Scenario 4: Server with visibility="private" and oauth_enabled=True returns only RFC 9728 metadata."""
         server_id = await self._create_server(
             client,
             {
@@ -317,7 +317,33 @@ class TestOAuthProtectedResourceMetadata:
                     "oauth_enabled": True,
                     "oauth_config": {
                         "authorization_server": "https://idp.example.com",
+                        "token_endpoint": "https://idp.example.com/oauth/token",
+                        "client_secret": "must-not-be-exposed",  # pragma: allowlist secret
                     },
+                },
+                "team_id": None,
+            },
+        )
+
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["resource"] == f"http://test/servers/{server_id}/mcp"
+        assert data["authorization_servers"] == ["https://idp.example.com"]
+        assert data["bearer_methods_supported"] == ["header"]
+        assert "client_secret" not in data
+        assert "token_endpoint" not in data
+
+    async def test_private_server_without_oauth_still_returns_404(self, client: AsyncClient):
+        """Scenario 4: Server with visibility="private" without OAuth returns 404."""
+        server_id = await self._create_server(
+            client,
+            {
+                "server": {
+                    "name": "server_private_no_oauth",
+                    "description": "Private server without OAuth",
+                    "visibility": "private",
                 },
                 "team_id": None,
             },
