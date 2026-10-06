@@ -122,7 +122,7 @@ def _normalize_headers(headers: Optional[Mapping[str, str]]) -> Dict[str, tuple[
 
 def _header_dict(headers: Dict[str, tuple[str, str]]) -> Dict[str, str]:
     """Convert normalized headers to an HTTP header mapping."""
-    return {name: value for name, value in headers.values()}
+    return dict(headers.values())
 
 
 def _set_header(headers: Dict[str, tuple[str, str]], name: str, value: str) -> None:
