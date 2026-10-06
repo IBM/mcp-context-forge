@@ -1,0 +1,22 @@
+{{/* -------------------------------------------------------------------
+     SERVICE - OpenFGA
+     -------------------------------------------------------------------
+     - ClusterIP on 8080; the gateway reaches the engine in-cluster.
+     ------------------------------------------------------------------- */}}
+{{- if .Values.openfga.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-openfga
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-openfga
+spec:
+  type: {{ .Values.openfga.service.type | default "ClusterIP" }}
+  ports:
+    - name: http
+      port: {{ .Values.openfga.service.port | default 8080 }}
+      targetPort: http
+  selector:
+    app: {{ include "mcp-stack.fullname" . }}-openfga
+{{- end }}
