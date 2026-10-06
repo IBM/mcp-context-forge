@@ -395,6 +395,28 @@ def _extract_mcp_param_headers(request_headers: Optional[Dict[str, str]]) -> Dic
     return params
 
 
+def _merge_call_args_for_rules(request_headers: Optional[Dict[str, str]], call_arguments: Optional[dict]) -> Dict[str, Any]:
+    """Merge mirrored parameter headers with the call's body arguments.
+
+    The tool executes with the body arguments, so a pre-invocation deny
+    rule must evaluate them; header-only evaluation lets a caller bypass
+    argument predicates by omitting the mirrored header. Mirrored headers
+    still contribute values when the body omits a parameter (they carry
+    the client-attested value for parameters the server cannot see).
+
+    Args:
+        request_headers: Headers from the inbound HTTP request.
+        call_arguments: The ``arguments`` mapping from the JSON-RPC request.
+
+    Returns:
+        A mapping of parameter name to value for rule predicates.
+    """
+    merged: Dict[str, Any] = _extract_mcp_param_headers(request_headers)
+    if isinstance(call_arguments, dict):
+        merged.update(call_arguments)
+    return merged
+
+
 def _annotate_tools_with_rule_params(tools: List[types.Tool]) -> List[types.Tool]:
     """Inject x-mcp-header annotations per tool from the shared module.
 
@@ -2088,7 +2110,8 @@ async def call_tool(
             user_context=user_context,
             permission="tools.execute",
             check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
-            args=_extract_mcp_param_headers(request_headers),
+            args=_merge_call_args_for_rules(request_headers, arguments),
+            resource_id=name,
         )
         if not has_execute_permission:
             raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)

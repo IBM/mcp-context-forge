@@ -108,3 +108,15 @@ class TestAnnotateToolsWithRuleParams:
         mcp_tool = types.Tool.model_validate({"name": tool.name, "description": tool.description, "inputSchema": tool.inputSchema})
         result = _annotate_tools_with_rule_params([mcp_tool])
         assert "x-mcp-header" not in result[0].input_schema["properties"]["unrelated"]
+
+    def test_union_typed_param_never_annotated(self):
+        # SEP-2243 allows x-mcp-header only on properties whose type IS one
+        # primitive; a union node must not be annotated even when one branch
+        # is primitive. Validating clients drop tools that carry the
+        # annotation on a union-typed parameter.
+        from mcpgateway.services.tool_header_annotation import annotate_schema
+
+        schema = {"properties": {"timezone": {"type": ["string", "null"]}, "plain": {"type": "string"}}}
+        result = annotate_schema(schema, {"timezone", "plain"})
+        assert "x-mcp-header" not in result["properties"]["timezone"]
+        assert result["properties"]["plain"]["x-mcp-header"] == "plain"
