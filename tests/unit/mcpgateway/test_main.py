@@ -831,7 +831,7 @@ class TestProtocolEndpoints:
         """Test completion handling endpoint."""
         mock_filter_context.return_value = ("scoped@example.com", ["team-1"])
         mock_completion.return_value = {"result": "completion_result"}
-        req = {"ref": {"type": "ref/prompt", "name": "test"}}
+        req = {"ref": {"type": "ref/prompt", "name": "test"}, "_meta": {"trace": "completion-1"}}
         response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="scoped@example.com", token_teams=["team-1"])
@@ -3706,7 +3706,7 @@ class TestRPCEndpoints:
         """Test completion/complete JSON-RPC method."""
         mock_filter_context.return_value = ("rpc-user@example.com", ["team-2"])
         mock_completion.return_value = {"result": "done"}
-        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}, "_meta": {"trace": "completion-1"}}}
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200

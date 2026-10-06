@@ -5284,7 +5284,7 @@ async def test_list_resource_templates_outer_exception(monkeypatch, caplog):
 async def test_set_logging_level_debug():
     """Test set_logging_level with debug level."""
     # Third-Party
-    import mcp_types as mcp_types
+    import mcp_types
 
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import set_logging_level
@@ -5492,6 +5492,31 @@ async def test_complete_dict_result(monkeypatch):
         result = await complete(ref, argument)
         assert isinstance(result, mcp_types.CompleteResult)
         assert result.completion.values == ["val1", "val2"]
+
+
+@pytest.mark.asyncio
+async def test_complete_forwards_request_metadata(monkeypatch):
+    """Forward request metadata to the completion service."""
+    # Third-Party
+    import mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value={"completion": {"values": [], "total": 0, "hasMore": False}})
+        await complete(
+            mcp_types.PromptReference(type="ref/prompt", name="test"),
+            {"name": "arg", "value": "v"},
+            meta={"trace": "completion-1"},
+        )
+
+    assert mock_cs.handle_completion.await_args.args[1]["_meta"] == {"trace": "completion-1"}
 
 
 @pytest.mark.asyncio
@@ -19153,12 +19178,16 @@ class TestV2HandlerAdapters:
     async def test_adapt_complete_delegates(self, monkeypatch):
         expected = types.CompleteResult(completion=types.Completion(values=["a"], total=1, hasMore=False))
 
-        async def fake_complete(ref, argument, context):
+        async def fake_complete(ref, argument, context, meta):
             assert context is None
+            assert meta == {"trace": "completion-1"}
             return expected
 
         monkeypatch.setattr(tr, "complete", fake_complete)
-        result = await tr._adapt_complete(object(), SimpleNamespace(ref={"type": "ref/prompt", "name": "p"}, argument={"name": "a", "value": ""}))
+        result = await tr._adapt_complete(
+            object(),
+            SimpleNamespace(ref={"type": "ref/prompt", "name": "p"}, argument={"name": "a", "value": ""}, meta={"trace": "completion-1"}),
+        )
 
         assert result is expected
 

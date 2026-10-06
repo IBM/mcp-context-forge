@@ -7767,7 +7767,7 @@ class TestRpcHandling:
         list_roots.assert_not_awaited()
 
     async def test_handle_internal_mcp_completion_complete_returns_payload(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "completion-1", "method": "completion/complete", "params": {"prompt": "hi"}})
+        request = self._make_request({"jsonrpc": "2.0", "id": "completion-1", "method": "completion/complete", "params": {"prompt": "hi", "_meta": {"trace": "completion-1"}}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
@@ -7793,12 +7793,13 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"completion": {"text": "done"}})),
+            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"completion": {"text": "done"}})) as handle_completion,
         ):
             response = await handle_internal_mcp_completion_complete(request)
 
         assert response.status_code == 200
         assert json.loads(response.body.decode()) == {"completion": {"text": "done"}}
+        assert handle_completion.await_args.args[1]["_meta"] == {"trace": "completion-1"}
 
     async def test_handle_internal_mcp_completion_complete_returns_json_error_on_exception(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-err-1", "method": "completion/complete", "params": {"prompt": "hi"}})

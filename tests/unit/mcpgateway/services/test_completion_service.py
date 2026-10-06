@@ -494,9 +494,13 @@ async def test_acquire_upstream_session_uses_registry_when_downstream_session_in
 @pytest.mark.asyncio
 async def test_acquire_upstream_session_falls_back_to_mcp_proxy_client_without_downstream_session(monkeypatch):
     fake_client = _FakeClient(protocol_version="2025-11-25")
+    pinned_target = MagicMock()
+    pinned_target.client_kwargs.return_value = {}
+    proxy_kwargs = {}
 
     @asynccontextmanager
     async def fake_mcp_proxy_client(**kwargs):
+        proxy_kwargs.update(kwargs)
         yield fake_client
 
     monkeypatch.setattr(
@@ -507,10 +511,17 @@ async def test_acquire_upstream_session_falls_back_to_mcp_proxy_client_without_d
         "mcpgateway.services.completion_service.mcp_proxy_client",
         fake_mcp_proxy_client,
     )
+    resolve_target = AsyncMock(return_value=pinned_target)
+    monkeypatch.setattr("mcpgateway.services.completion_service.resolve_pinned_target", resolve_target)
 
     service = CompletionService()
     async with service._acquire_upstream_session(_FakeGateway()) as session:
         assert session is fake_client.session
+    resolve_target.assert_awaited_once_with(_FakeGateway.url, "Gateway URL")
+    assert proxy_kwargs["url"] == _FakeGateway.url
+    monkeypatch.setattr("mcpgateway.services.completion_service.httpx2.AsyncClient", MagicMock())
+    proxy_kwargs["httpx_client_factory"]()
+    pinned_target.client_kwargs.assert_called_once_with(verify=True)
 
 
 # ---------------------------------------------------------------------------
@@ -547,23 +558,33 @@ async def test_forward_completion_upstream_uses_has_more_snake_case_attribute(mo
 
     real_completion = Completion(values=["a", "b"], total=5, has_more=True)
 
-    async def fake_complete(ref, argument, context_arguments=None):
+    captured_request = None
+
+    async def fake_send_request(request, result_type):
+        nonlocal captured_request
+        captured_request = request
         return SdkCompleteResult(completion=real_completion)
 
     session = SimpleNamespace(
         server_capabilities=SimpleNamespace(completions=object()),
-        complete=fake_complete,
+        send_request=fake_send_request,
     )
     _patch_upstream(monkeypatch, session)
 
     service = CompletionService()
-    result = await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""})
+    result = await service._forward_completion_upstream(
+        _FakeGateway(),
+        PromptReference(type="ref/prompt", name="p"),
+        {"name": "arg", "value": ""},
+        meta={"trace": "completion-1"},
+    )
     # Regression guard for spec §2 row 11: a fake that returns a real SDK
     # Completion (has_more=True) must round-trip hasMore=True, not silently
     # become False/None because the service read the wrong attribute name.
     assert result.completion["hasMore"] is True
     assert result.completion["total"] == 5
     assert result.completion["values"] == ["a", "b"]
+    assert captured_request.params.model_dump(by_alias=True)["_meta"] == {"trace": "completion-1"}
 
 
 @pytest.mark.asyncio

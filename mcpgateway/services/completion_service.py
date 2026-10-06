@@ -22,7 +22,8 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 # Third-Party
-from mcp import MCPError as McpError
+import httpx as httpx2
+from mcp import MCPError as McpError, types
 from mcp.types import PromptReference, ResourceTemplateReference
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -43,6 +44,7 @@ from mcpgateway.services.upstream_session_registry import (
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.url_auth import apply_query_param_auth
 
 # Initialize logging service first
@@ -228,6 +230,21 @@ class CompletionService:
             ) as upstream:
                 yield upstream.session
         else:
+            pinned_target = await resolve_pinned_target(gateway_url, "Gateway URL")
+
+            def get_httpx_client_factory(
+                headers: Optional[Dict[str, str]] = None,
+                timeout: Optional[float] = None,
+                auth: Any = None,
+            ) -> httpx2.AsyncClient:
+                """Create an outbound client bound to the validated target."""
+                return httpx2.AsyncClient(
+                    headers=headers,
+                    timeout=timeout,
+                    auth=auth,
+                    **pinned_target.client_kwargs(verify=True),
+                )
+
             # pylint's contextmanager-generator-missing-cleanup check flags this
             # branch as a false positive: it only looks for a single
             # `async with ... yield` per generator and gets confused by the
@@ -238,6 +255,7 @@ class CompletionService:
                 url=gateway_url,
                 headers=headers,
                 timeout=settings.health_check_timeout,
+                httpx_client_factory=get_httpx_client_factory,
                 transport="sse" if transport == "sse" else "streamablehttp",
             ) as client:
                 yield client.session
@@ -291,6 +309,7 @@ class CompletionService:
         ref: Any,
         argument: Dict[str, str],
         context: Optional[Dict[str, Any]] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> CompleteResult:
         """Forward a completion/complete request to the owning upstream server.
 
@@ -299,6 +318,7 @@ class CompletionService:
             ref: The MCP ``ref/prompt`` or ``ref/resource`` reference.
             argument: ``{"name": ..., "value": ...}`` argument being completed.
             context: Optional completion context (``{"arguments": {...}}``).
+            meta: Optional MCP request metadata.
 
         Returns:
             The upstream's completion result, translated to this gateway's
@@ -332,7 +352,20 @@ class CompletionService:
                 if capabilities is None or getattr(capabilities, "completions", None) is None:
                     raise CompletionNotSupportedError(f"Upstream gateway '{gateway_id}' does not support completions")
 
-                remote_result = await session.complete(ref, argument, context_arguments)
+                if meta is None:
+                    remote_result = await session.complete(ref, argument, context_arguments)
+                else:
+                    remote_result = await session.send_request(
+                        types.CompleteRequest(
+                            params=types.CompleteRequestParams(
+                                ref=ref,
+                                argument=types.CompletionArgument(**argument),
+                                context=types.CompletionContext(arguments=context_arguments) if context_arguments is not None else None,
+                                _meta=meta,
+                            )
+                        ),
+                        types.CompleteResult,
+                    )
         except BaseException as exc:  # noqa: BLE001 - anyio wraps handler errors in ExceptionGroup
             root = self._unwrap_exception(exc)
             if isinstance(root, CompletionError):
@@ -413,12 +446,13 @@ class CompletionService:
                 raise CompletionInvalidParamsError("Missing reference type or argument name")
 
             context = request.get("context")
+            meta = request.get("_meta")
 
             # Handle different reference types
             if ref_type == "ref/prompt":
-                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams, context=context)
+                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams, context=context, meta=meta)
             elif ref_type == "ref/resource":
-                result = await self._complete_resource_uri(db, ref, arg_value, user_email=user_email, token_teams=token_teams, arg_name=arg_name, context=context)
+                result = await self._complete_resource_uri(db, ref, arg_value, user_email=user_email, token_teams=token_teams, arg_name=arg_name, context=context, meta=meta)
             else:
                 raise CompletionInvalidParamsError(f"Invalid reference type: {ref_type}")
 
@@ -501,6 +535,7 @@ class CompletionService:
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         context: Optional[Dict[str, Any]] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> CompleteResult:
         """Complete prompt argument value.
 
@@ -518,6 +553,7 @@ class CompletionService:
             token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
             context: Optional completion context (``{"arguments": {...}}``)
                 forwarded to a federated prompt's upstream.
+            meta: Optional MCP request metadata forwarded to the upstream.
 
         Returns:
             Completion suggestions
@@ -570,12 +606,15 @@ class CompletionService:
 
         if self._is_federated(prompt):
             remote_name = getattr(prompt, "original_name", None) or prompt.name
-            return await self._forward_completion_upstream(
+            forward_args = (
                 getattr(prompt, "gateway", None),
                 PromptReference(type="ref/prompt", name=remote_name),
                 {"name": arg_name, "value": arg_value},
                 context,
             )
+            if meta is not None:
+                return await self._forward_completion_upstream(*forward_args, meta=meta)
+            return await self._forward_completion_upstream(*forward_args)
 
         # Find argument in schema
         arg_schema = None
@@ -621,6 +660,7 @@ class CompletionService:
         token_teams: Optional[List[str]] = None,
         arg_name: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> CompleteResult:
         """Complete resource URI.
 
@@ -639,6 +679,7 @@ class CompletionService:
                 ``"uri"`` when not supplied).
             context: Optional completion context (``{"arguments": {...}}``)
                 forwarded to a federated resource template's upstream.
+            meta: Optional MCP request metadata forwarded to the upstream.
 
         Returns:
             URI completion suggestions
@@ -689,12 +730,15 @@ class CompletionService:
         owning_resource = db.execute(owner_stmt).scalar_one_or_none()
 
         if owning_resource is not None and self._is_federated(owning_resource):
-            return await self._forward_completion_upstream(
+            forward_args = (
                 getattr(owning_resource, "gateway", None),
                 ResourceTemplateReference(type="ref/resource", uri=uri_template),
                 {"name": arg_name or "uri", "value": arg_value},
                 context,
             )
+            if meta is not None:
+                return await self._forward_completion_upstream(*forward_args, meta=meta)
+            return await self._forward_completion_upstream(*forward_args)
 
         # List matching resources visible to caller
         stmt = select(DbResource).where(DbResource.enabled)

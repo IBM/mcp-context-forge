@@ -3327,6 +3327,7 @@ async def complete(
     ref: Union[types.PromptReference, types.ResourceTemplateReference],
     argument: types.CompleteRequest,
     context: Optional[types.CompletionContext] = None,
+    meta: Optional[types.RequestParamsMeta] = None,
 ) -> types.CompleteResult:
     """
     Provides argument completion suggestions for prompts or resources.
@@ -3338,6 +3339,7 @@ async def complete(
             position for which completion suggestions should be generated.
         context: Optional contextual information for the completion request,
             such as user, environment, or invocation metadata.
+        meta: Optional MCP request metadata.
 
     Returns:
         types.CompleteResult: A normalized completion result containing
@@ -3379,6 +3381,8 @@ async def complete(
                 "argument": argument.model_dump() if hasattr(argument, "model_dump") else argument,
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
             }
+            if meta is not None:
+                params["_meta"] = meta.model_dump(by_alias=True) if hasattr(meta, "model_dump") else meta
 
             result = await completion_service.handle_completion(
                 db,
@@ -3579,7 +3583,7 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
     token = _v2_request_ctx.set(ctx)
     try:
         completion_context = getattr(params, "context", None)
-        return await complete(params.ref, params.argument, completion_context)
+        return await complete(params.ref, params.argument, completion_context, getattr(params, "meta", None))
     finally:
         _v2_request_ctx.reset(token)
 
