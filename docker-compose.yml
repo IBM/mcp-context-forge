@@ -22,6 +22,7 @@
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
 #  --profile ui:          Adds the ContextForge web UI (web_ui) + its Redis session store
+#  --profile openfga:     Adds OpenFGA + its own Postgres (Layer-2 RBAC engine; see docker-compose.openfga.yml)
 #
 #  Compose overlays (separate files):
 #  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
@@ -61,6 +62,7 @@ volumes:                # Named volumes survive podman-compose down/up
   prometheus_token:
   keycloakdata:
   web_ui_redis_data:
+  openfgapgdata:
 
 ###############################################################################
 #  CORE SERVICE - ContextForge
@@ -868,6 +870,90 @@ services:
         reservations:
           cpus: '1'
           memory: 1G
+
+  # OpenFGA authorization engine for the rbac_rule_provider=openfga mode.
+  # Own Postgres datastore per the OpenFGA production guide - never the
+  # gateway database. The gateway talks to it over mcpnet on container
+  # port 8080; the host mapping (default 18080) exists for debugging
+  # only and must never claim 8080 (nginx requires it in testing stacks).
+  openfga-postgres:
+    image: postgres:18
+    restart: unless-stopped
+    profiles: ["openfga"]
+    networks: [mcpnet]
+    environment:
+      - POSTGRES_USER=openfga
+      # No default credential: an empty password makes the postgres image
+      # refuse to start (fail-closed). Set OPENFGA_DB_PASSWORD, or use
+      # make testing-up-openfga, which generates one when unset.
+      - POSTGRES_PASSWORD=${OPENFGA_DB_PASSWORD:-}
+      - POSTGRES_DB=openfga
+    volumes:
+      - openfgapgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot schema migration; compose ordering (depends_on
+  # service_completed_successfully) gates the server start on it.
+  openfga-migrate:
+    image: openfga/openfga:v1.8.9
+    restart: "no"
+    profiles: ["openfga"]
+    networks: [mcpnet]
+    command:
+      [
+        "migrate",
+        "--datastore-engine",
+        "postgres",
+        "--datastore-uri",
+        "postgres://openfga:${OPENFGA_DB_PASSWORD:-}@openfga-postgres:5432/openfga?sslmode=disable",  # pragma: allowlist secret
+      ]
+    depends_on:
+      openfga-postgres:
+        condition: service_healthy
+
+  openfga:
+    image: openfga/openfga:v1.8.9
+    restart: unless-stopped
+    profiles: ["openfga"]
+    networks: [mcpnet]
+    ports:
+      - "${OPENFGA_PORT:-18080}:8080"
+    command:
+      [
+        "run",
+        "--datastore-engine",
+        "postgres",
+        "--datastore-uri",
+        "postgres://openfga:${OPENFGA_DB_PASSWORD:-}@openfga-postgres:5432/openfga?sslmode=disable",  # pragma: allowlist secret
+        "--playground-enabled=false",
+        "--log-format=json",
+      ]
+    environment:
+      - OPENFGA_AUTHN_METHOD=preshared
+      # Empty token => OpenFGA exits at startup (exit code 2), so an engine
+      # without a key cannot come up unauthenticated. make testing-up-openfga
+      # prints the friendly guard before compose is invoked. Plain ":-" keeps
+      # interpolation inert for default-stack users without the token.
+      - OPENFGA_AUTHN_PRESHARED_KEYS=${OPENFGA_API_TOKEN:-}
+    depends_on:
+      openfga-postgres:
+        condition: service_healthy
+      openfga-migrate:
+        condition: service_completed_successfully
+    # The image is distroless: no shell, no wget/curl, so an HTTP probe from
+    # inside the container is impossible. --help exits 0 and proves the
+    # process namespace serves the binary; real readiness is enforced by the
+    # gateway client's retry loop (OpenFGA health check), not by compose.
+    healthcheck:
+      test: ["CMD", "/openfga", "--help"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
 ###############################################################################
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL

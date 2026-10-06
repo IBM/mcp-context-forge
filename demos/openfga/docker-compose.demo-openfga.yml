@@ -1,0 +1,41 @@
+# OpenFGA demo overlay: policy-engine gateway plus a seeded demo tenant.
+#
+# Layers on the base and OpenFGA compose files. The gateway answers through
+# the OpenFGA engine (RBAC_RULE_PROVIDER=openfga, set here so the demo turns
+# the engine on by itself). The one-shot demo-seed service registers the
+# fast-time federation gateway, creates the fast-time-demo virtual server,
+# and creates 4 non-administrative users: alice, becky, carol, david.
+#
+# Usage (from the repository root):
+#   export the OpenFGA credentials described in docker-compose.openfga.yml
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.openfga.yml \
+#                  -f demos/openfga/docker-compose.demo-openfga.yml \
+#                  --profile openfga --profile demo up -d
+#
+# The chat launcher runs outside compose. It mints per-user API keys from
+# ContextForge and starts one bobshell container per user in a tmux session:
+#   BOBSHELL_API_KEY=<bob inference key> demos/openfga/bob-chat.sh
+
+services:
+  gateway:
+    environment:
+      - RBAC_RULE_PROVIDER=openfga
+
+  demo-seed:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_time_server:
+        condition: service_healthy
+    profiles: ["demo"]
+    volumes:
+      - ./demos/openfga/seed_demo.py:/scripts/seed_demo.py:ro
+    environment:
+      - GATEWAY_URL=http://gateway:4444
+      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?Set PLATFORM_ADMIN_PASSWORD (repo .env carries it)}
+      - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-Demo!Passw0rd#2026}
+    entrypoint: ["python", "/scripts/seed_demo.py"]
+    restart: "no"
