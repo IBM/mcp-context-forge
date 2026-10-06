@@ -228,7 +228,7 @@ llmchat = [
     "langchain-mcp-adapters>=0.3.0",
     "langchain-ollama>=1.1.0",
     "langchain-openai<=1.4.1",
-    "langgraph<=1.2.0",
+    "langgraph<=1.2.12",
     "langsmith>=0.10.10", # Transitive pin (langchain-core)
 ]
 

@@ -1,7 +1,7 @@
 # High-Performance Nginx Caching Proxy for ContextForge
 # Based on Red Hat UBI 10.2 Minimal for consistency with gateway container
 
-ARG NGINX_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1790753097
+ARG NGINX_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1791270413
 FROM ${NGINX_IMAGE}
 
 # Install nginx and curl (for healthchecks)
