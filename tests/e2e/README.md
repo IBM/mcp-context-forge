@@ -34,9 +34,9 @@ MCP_CLI_BASE_URL=http://localhost:4444 make test-e2e
 pytest tests/live_gateway/e2e/test_e2e.py -v
 ```
 
-The legacy `make test-mcp-cli`, `make test-mcp-protocol-e2e`, and
-`make test-mcp-rbac` targets are retained as deprecation aliases and invoke
-the consolidated target.
+`make test-mcp-cli` and `make test-mcp-rbac` are aliases for the consolidated
+target. `make test-mcp-protocol-e2e` is a deprecated alias. It sunsets on
+2027-01-18.
 
 ### Environment Variables
 
