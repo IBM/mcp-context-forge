@@ -93,7 +93,7 @@ class PersonalTeamService:
             # team = asyncio.run(service.create_personal_team(user))
         """
         try:
-            # Check if user already has a personal team
+            # Check if user already has an active personal team
             existing_team = self.db.query(EmailTeam).filter(EmailTeam.created_by == user.email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
 
             if existing_team:
@@ -105,12 +105,26 @@ class PersonalTeamService:
             team_name = f"{display_name}'s Team"
 
             # Create team slug — use prefix from config if set, otherwise derive from display name
+            email_slug = user.email.replace("@", "-").replace(".", "-").lower()
             prefix = slugify(settings.personal_team_prefix.strip()) if settings.personal_team_prefix.strip() else ""
             if prefix:
-                email_slug = user.email.replace("@", "-").replace(".", "-").lower()
                 team_slug = f"{prefix}-{email_slug}"
             else:
                 team_slug = slugify(team_name)
+
+            adopted = self._adopt_orphaned(team_slug, team_name, user)
+            if adopted:
+                return adopted
+
+            # Display-name slugs collide for users who share a display
+            # name (bulk-provisioned accounts). The e-mail suffix is
+            # unique per account, so it disambiguates the slug.
+            slug_taken = self.db.query(EmailTeam.id).filter(EmailTeam.slug == team_slug).first() is not None
+            if slug_taken:
+                team_slug = f"{team_slug}-{email_slug}"
+                adopted = self._adopt_orphaned(team_slug, team_name, user)
+                if adopted:
+                    return adopted
 
             # Create the personal team
             team = EmailTeam(
@@ -126,17 +140,7 @@ class PersonalTeamService:
             self.db.add(team)
             self.db.flush()  # Get the team ID
 
-            # Add the user as the owner of their personal team. Dual-write:
-            # user_email keeps the FK-valid e-mail; user_id carries the
-            # canonical ID.
-            canonical = resolve_canonical_user_id(user.email, self.db)
-            membership = EmailTeamMember(team_id=team.id, user_email=user.email, user_id=canonical, role="owner", joined_at=utc_now(), is_active=True)
-
-            self.db.add(membership)
-            self.db.flush()  # Get the membership ID
-            # Insert history record
-            history = EmailTeamMemberHistory(team_member_id=membership.id, team_id=team.id, user_email=user.email, role="owner", action="added", action_by=user.email, action_timestamp=utc_now())
-            self.db.add(history)
+            self._ensure_owner_membership(team, user)
             self.db.commit()
 
             logger.info("Created personal team '%s' for user %s", team.name, user.email)
@@ -146,6 +150,58 @@ class PersonalTeamService:
             self.db.rollback()
             logger.error("Failed to create personal team for %s: %s", user.email, e)
             raise
+
+    def _adopt_orphaned(self, team_slug: str, team_name: str, user: EmailUser) -> Optional[EmailTeam]:
+        """Reactivate this user's inactive personal team holding the slug.
+
+        Args:
+            team_slug: Slug the new team would take.
+            team_name: Display name for the reactivated team.
+            user: Owner account.
+
+        Returns:
+            The adopted team, or None when no same-owner personal team
+            holds the slug.
+        """
+        # A prior lifecycle of the same e-mail can leave an inactive
+        # personal team holding the unique slug. Adopt it instead of
+        # failing: user creation must stay idempotent across
+        # re-created accounts.
+        orphaned = self.db.query(EmailTeam).filter(EmailTeam.slug == team_slug, EmailTeam.is_personal.is_(True), EmailTeam.created_by == user.email).first()
+        if not orphaned:
+            return None
+        logger.info("Adopting orphaned personal team %s (slug=%s) for user %s", orphaned.id, team_slug, user.email)
+        orphaned.name = team_name
+        orphaned.is_active = True
+        self.db.flush()
+        self._ensure_owner_membership(orphaned, user)
+        self.db.commit()
+        return orphaned
+
+    def _ensure_owner_membership(self, team: EmailTeam, user: EmailUser) -> None:
+        """Attach the user as the team owner when no active membership exists.
+
+        Args:
+            team: Personal team the user must own.
+            user: Owner account.
+
+        Raises:
+            Exception: When the membership write fails; the caller rolls back.
+        """
+        existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email == user.email, EmailTeamMember.is_active.is_(True)).first()
+        if existing:
+            return
+
+        # Dual-write: user_email keeps the FK-valid e-mail; user_id carries
+        # the canonical ID.
+        canonical = resolve_canonical_user_id(user.email, self.db)
+        membership = EmailTeamMember(team_id=team.id, user_email=user.email, user_id=canonical, role="owner", joined_at=utc_now(), is_active=True)
+
+        self.db.add(membership)
+        self.db.flush()  # Get the membership ID
+        # Insert history record
+        history = EmailTeamMemberHistory(team_member_id=membership.id, team_id=team.id, user_email=user.email, role="owner", action="added", action_by=user.email, action_timestamp=utc_now())
+        self.db.add(history)
 
     async def get_personal_team(self, user_email: str) -> Optional[EmailTeam]:
         """Get the personal team for a user.
