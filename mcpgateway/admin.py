@@ -190,7 +190,7 @@ from mcpgateway.services.observability_service import ensure_timezone_aware
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.rule_provider import get_rule_provider as PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError

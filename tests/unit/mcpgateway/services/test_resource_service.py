@@ -4791,7 +4791,7 @@ class TestSetResourceStateLockAndPermission:
         mock_resource.name = "Test Resource"
         mock_resource.enabled = False
 
-        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -4807,7 +4807,7 @@ class TestSetResourceStateLockAndPermission:
         mock_resource.name = "Test Resource"
         mock_resource.enabled = True
 
-        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -4842,7 +4842,7 @@ class TestDeleteResourcePermissionAndPurge:
         # Set up db.execute chain properly
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_resource)))
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -4909,7 +4909,7 @@ class TestUpdateResourcePermissionAndConflict:
 
         update = ResourceUpdate(name="Updated")
 
-        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), patch("mcpgateway.services.rule_provider.DbRuleProvider") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps

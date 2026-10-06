@@ -1273,7 +1273,7 @@ class TestA2AAgentService:
         """Test update denied when user is not owner."""
         sample_db_agent.owner_email = "owner@example.com"
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
-            with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+            with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
                 perm = perm_cls.return_value
                 perm.check_resource_ownership = AsyncMock(return_value=False)
                 with pytest.raises(PermissionError):
@@ -1283,7 +1283,7 @@ class TestA2AAgentService:
         """NULL-owner agent must not bypass ownership check for non-owner callers."""
         sample_db_agent.owner_email = None
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
-            with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+            with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
                 perm = perm_cls.return_value
                 perm.check_resource_ownership = AsyncMock(return_value=False)
                 with pytest.raises(PermissionError):
@@ -1292,7 +1292,7 @@ class TestA2AAgentService:
     async def test_update_agent_permission_allowed(self, service, mock_db, sample_db_agent, monkeypatch):
         """Owner passes PermissionService check and update proceeds."""
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
-            with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+            with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
                 perm_cls.return_value.check_resource_ownership = AsyncMock(return_value=True)
 
                 mock_db.commit = MagicMock()
@@ -1416,7 +1416,7 @@ class TestSetAgentStateEdgeCases:
         agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, owner_email="owner@x.com")
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
             perm_cls.return_value.check_resource_ownership = AsyncMock(return_value=False)
             with pytest.raises(PermissionError):
                 await service.set_agent_state(mock_db, "a1", activate=False, user_email="hacker@x.com")
@@ -1432,7 +1432,7 @@ class TestSetAgentStateEdgeCases:
         dummy_cache = SimpleNamespace(invalidate_agents=AsyncMock())
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
             perm_cls.return_value.check_resource_ownership = AsyncMock(return_value=True)
             await service.set_agent_state(mock_db, "a1", activate=False, user_email="owner@x.com")
 
@@ -1466,7 +1466,7 @@ class TestDeleteAgentEdgeCases:
         agent = SimpleNamespace(id="a1", name="ag", enabled=True, owner_email="owner@x.com")
         mock_db.execute.return_value.scalar_one_or_none.return_value = agent
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
             perm_cls.return_value.check_resource_ownership = AsyncMock(return_value=False)
             with pytest.raises(PermissionError):
                 await service.delete_agent(mock_db, "a1", user_email="hacker@x.com")
@@ -1482,7 +1482,7 @@ class TestDeleteAgentEdgeCases:
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as perm_cls:
             perm_cls.return_value.check_resource_ownership = AsyncMock(return_value=True)
             with patch("mcpgateway.services.tool_service.tool_service") as tool_service:
                 tool_service.delete_tool_from_a2a_agent = AsyncMock(return_value=None)

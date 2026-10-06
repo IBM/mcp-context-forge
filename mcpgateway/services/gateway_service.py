@@ -966,7 +966,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return
 
         # First-Party
-        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
         permission_service = PermissionService(db)
         is_platform_admin = await permission_service.check_permission(requester_email, "*", allow_admin_bypass=True)
@@ -2883,7 +2883,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
@@ -3889,7 +3889,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
@@ -4220,7 +4220,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.rule_provider import get_rule_provider as PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):

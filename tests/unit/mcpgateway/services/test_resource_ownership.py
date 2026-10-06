@@ -180,7 +180,7 @@ class TestGatewayServiceOwnership:
         mock_db_session.execute.side_effect = [mock_execute_result, mock_fetch_result]
         mock_db_session.expire = MagicMock()
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -205,7 +205,7 @@ class TestGatewayServiceOwnership:
         mock_execute_result.scalar_one_or_none.return_value = mock_gateway
         mock_db_session.execute.return_value = mock_execute_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -233,7 +233,7 @@ class TestServerServiceOwnership:
 
         mock_db_session.get.return_value = mock_server
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -251,7 +251,7 @@ class TestServerServiceOwnership:
 
         mock_db_session.get.return_value = mock_server
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -285,7 +285,7 @@ class TestToolServiceOwnership:
         mock_fetch_result.fetchone.return_value = ("tool-1",)
         mock_db_session.execute.return_value = mock_fetch_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -304,7 +304,7 @@ class TestToolServiceOwnership:
 
         mock_db_session.get.return_value = mock_tool
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -343,7 +343,7 @@ class TestResourcePromptA2AOwnership:
         mock_result.scalar_one_or_none.return_value = mock_resource
         mock_db_session.execute.return_value = mock_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -361,7 +361,7 @@ class TestResourcePromptA2AOwnership:
         mock_result.scalar_one_or_none.return_value = mock_prompt
         mock_db_session.execute.return_value = mock_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -379,7 +379,7 @@ class TestResourcePromptA2AOwnership:
         mock_result.scalar_one_or_none.return_value = mock_agent
         mock_db_session.execute.return_value = mock_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -414,7 +414,7 @@ class TestUpdateOperationsOwnership:
 
         gateway_update = GatewayUpdate(name="Updated Name")
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -441,7 +441,7 @@ class TestUpdateOperationsOwnership:
 
         agent_update = A2AAgentUpdate(name="updated-name")
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -481,7 +481,7 @@ class TestTeamAdminSpecialCase:
         mock_db_session.execute.side_effect = [mock_execute_result, mock_fetch_result]
         mock_db_session.expire = MagicMock()
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+        with patch("mcpgateway.services.rule_provider.DbRuleProvider") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             # Team admin returns True for ownership check
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
