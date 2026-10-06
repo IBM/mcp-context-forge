@@ -16,6 +16,9 @@ Key components include:
 Examples:
     >>> # Test module imports
     >>> from mcpgateway.transports.streamablehttp_transport import (
+
+# Third-Party
+from sqlalchemy import select as sa_select
     ...     EventEntry, StreamBuffer, InMemoryEventStore, SessionManagerWrapper
     ... )
     >>>
@@ -351,9 +354,104 @@ def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
     return types.Tool.model_validate({key: value for key, value in payload.items() if value is not None})
 
 
+def _extract_mcp_param_headers(request_headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Extract and decode ``Mcp-Param-*`` headers for rule predicates.
+
+    Conforming MCP 2026-07-28 clients mirror tool parameters annotated
+    with ``x-mcp-header`` into ``Mcp-Param-<name>`` headers on
+    ``tools/call`` (SEP-2243). Values that cannot be represented as
+    plain ASCII arrive Base64-encoded with a sentinel prefix.
+
+    Decoding per the spec's Value Encoding rules:
+    - ``=?base64?<data>?=`` → decode the Base64 UTF-8 payload
+    - otherwise use the value as-is (already a string representation)
+
+    Args:
+        request_headers: Headers from the inbound HTTP request.
+
+    Returns:
+        A mapping of parameter name to decoded header value.
+    """
+    if not request_headers:
+        return {}
+    params: Dict[str, str] = {}
+    prefix = "mcp-param-"
+    sentinel = "=?base64?"
+    for key, value in request_headers.items():
+        lower = key.lower()
+        if not lower.startswith(prefix):
+            continue
+        name = lower[len(prefix) :]
+        if value.startswith(sentinel) and value.endswith("?="):
+            import base64  # pylint: disable=import-outside-toplevel
+
+            try:
+                encoded = value[len(sentinel) : -2]
+                params[name] = base64.b64decode(encoded).decode("utf-8")
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.warning("Failed to decode Base64 Mcp-Param-%s header", name)
+        else:
+            params[name] = value
+    return params
+
+
+def _merge_call_args_for_rules(request_headers: Optional[Dict[str, str]], call_arguments: Optional[dict]) -> Dict[str, Any]:
+    """Merge mirrored parameter headers with the call's body arguments.
+
+    The tool executes with the body arguments, so a pre-invocation deny
+    rule must evaluate them; header-only evaluation lets a caller bypass
+    argument predicates by omitting the mirrored header. Mirrored headers
+    still contribute values when the body omits a parameter (they carry
+    the client-attested value for parameters the server cannot see).
+
+    Args:
+        request_headers: Headers from the inbound HTTP request.
+        call_arguments: The ``arguments`` mapping from the JSON-RPC request.
+
+    Returns:
+        A mapping of parameter name to value for rule predicates.
+    """
+    merged: Dict[str, Any] = _extract_mcp_param_headers(request_headers)
+    if isinstance(call_arguments, dict):
+        merged.update(call_arguments)
+    return merged
+
+
+def _annotate_tools_with_rule_params(tools: List[types.Tool]) -> List[types.Tool]:
+    """Inject x-mcp-header annotations per tool from the shared module.
+
+    Delegates to
+    :func:`mcpgateway.services.tool_header_annotation.annotate_schema`
+    and the per-tool collector. Spec compliance (primitive types only,
+    RFC 9110 token) is enforced in the shared module.
+
+    Args:
+        tools: The serialized tool list.
+
+    Returns:
+        The same list with x-mcp-header annotations injected.
+    """
+    try:
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.tool_header_annotation import annotate_schema, collect_params_for_tool  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            for i, tool in enumerate(tools):
+                names = collect_params_for_tool(db, tool.name)
+                if not names:
+                    continue
+                annotated = annotate_schema(tool.input_schema, names)
+                if annotated is not tool.input_schema:
+                    tools[i] = tool.model_copy(update={"input_schema": annotated})
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.debug("Rule parameter annotation skipped", exc_info=True)
+    return tools
+
+
 def _tools_for_client(tools: Iterable[Any]) -> List[types.Tool]:
-    """Serialize model-facing tools/list without exposing app-only helpers."""
-    return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+    """Serialize model-facing tools/list, then annotate rule parameters."""
+    serialized = [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+    return _annotate_tools_with_rule_params(serialized)
 
 
 def _to_mcp_resource(resource: Any) -> types.Resource:
@@ -1344,6 +1442,7 @@ async def _check_streamable_permission(
     permission: str,
     allow_admin_bypass: bool = True,
     check_any_team: bool = False,
+    args: Optional[Dict[str, str]] = None,
 ) -> bool:
     """Evaluate RBAC permission for a Streamable HTTP request context.
 
@@ -1352,6 +1451,7 @@ async def _check_streamable_permission(
         permission: Permission name to evaluate (for example ``tools.execute``).
         allow_admin_bypass: Whether unrestricted admin tokens can bypass team checks.
         check_any_team: Whether any matching team grants permission.
+        args: Tool arguments from Mcp-Param-* headers, when present.
 
     Returns:
         bool: ``True`` when the caller is authorized for ``permission``.
@@ -1373,6 +1473,7 @@ async def _check_streamable_permission(
                 check_any_team=check_any_team,
                 token_is_admin=bool(is_trusted and user_context.get("is_admin")),
                 token_roles=list(user_context.get("roles") or []) if is_trusted else None,
+                args=args,
             )
             if not granted:
                 logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
@@ -2001,7 +2102,7 @@ async def call_tool(
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "tools.execute"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
         # Session tokens have no explicit team_id; check across all team-scoped roles.
         # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
@@ -2009,9 +2110,11 @@ async def call_tool(
             user_context=user_context,
             permission="tools.execute",
             check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
+            args=_merge_call_args_for_rules(request_headers, arguments),
+            resource_id=name,
         )
         if not has_execute_permission:
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -2719,7 +2822,7 @@ async def list_tools() -> List[types.Tool]:
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2819,7 +2922,7 @@ async def list_prompts() -> List[types.Prompt]:
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2889,7 +2992,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -2975,7 +3078,7 @@ async def list_resources() -> List[types.Resource]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3082,7 +3185,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3218,7 +3321,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -3291,7 +3394,7 @@ async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") ->
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "admin.system_config"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
         has_permission = await _check_streamable_permission(
             user_context=user_context,
@@ -3299,7 +3402,7 @@ async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") ->
             check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_permission:
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     try:
         # Convert MCP logging level to our LogLevel enum
@@ -3355,7 +3458,7 @@ async def complete(
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError(_ACCESS_DENIED_MSG)
+            raise MCPError(code=-32003, message=_ACCESS_DENIED_MSG)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -4853,6 +4956,8 @@ class SessionManagerWrapper:
                     "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                     "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                 }
+                # Carry SEP-2243 mirrored tool arguments across the loopback.
+                rpc_headers.update({k: v for k, v in headers.items() if k.lower().startswith("mcp-param-")})
                 # Preserve the inbound gateway auth header (default: Authorization,
                 # or AUTH_HEADER_NAME when customized) so the CSRF bearer short-circuit
                 # keys on it. The trusted endpoint itself authenticates via the encoded
@@ -5052,6 +5157,10 @@ class SessionManagerWrapper:
                             "content-type": "application/json",
                             "x-mcp-session-id": mcp_session_id,
                         }
+                        # Carry SEP-2243 mirrored tool arguments across the
+                        # loopback so rule predicates can evaluate them on
+                        # the serving side (Mcp-Param-<name> headers).
+                        rpc_headers.update({k: v for k, v in headers.items() if k.lower().startswith("mcp-param-")})
                         # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
                         # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
                         # the configured header, so a custom header would otherwise be dropped.
