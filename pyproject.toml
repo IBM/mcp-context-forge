@@ -77,6 +77,7 @@ dependencies = [
     "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
     "gunicorn>=26.0.0",
     "h2>=4.4.1", # Transitive pin (httpx[http2]); CVE-2026-71554 fixed in 4.4.1
+    "cel-python>=0.2.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
     "idna>=3.18",
