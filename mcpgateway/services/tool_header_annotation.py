@@ -49,7 +49,9 @@ def _is_valid_annotation(name: str, prop_schema: dict) -> bool:
         return False
     prop_type = prop_schema.get("type")
     if isinstance(prop_type, list):
-        return any(t in _PRIMITIVE_TYPES for t in prop_type)
+        # A union type node is not a primitive type; the spec allows the
+        # annotation only when the property itself declares one primitive.
+        return False
     return prop_type in _PRIMITIVE_TYPES
 
 

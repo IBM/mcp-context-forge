@@ -223,7 +223,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
-    _extract_mcp_param_headers,
+    _merge_call_args_for_rules,
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
     MCPOriginHostGate,
@@ -11205,7 +11205,7 @@ async def handle_internal_mcp_tools_call(request: Request):
                 "tools.execute",
                 "tools/call",
                 request=request,
-                args=_extract_mcp_param_headers({k.lower(): v for k, v in request.headers.items()} if request else None),
+                args=_merge_call_args_for_rules({k.lower(): v for k, v in request.headers.items()} if request else None, params.get("arguments")),
                 resource_id=params.get("name"),
             )
 
@@ -11331,7 +11331,7 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
                 "tools.execute",
                 "tools/call",
                 request=request,
-                args=_extract_mcp_param_headers({k.lower(): v for k, v in request.headers.items()} if request else None),
+                args=_merge_call_args_for_rules({k.lower(): v for k, v in request.headers.items()} if request else None, params.get("arguments")),
                 resource_id=params.get("name"),
             )
 
@@ -11908,7 +11908,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
             await _ensure_rpc_permission(
-                user, db, "tools.execute", method, request=request, args=_extract_mcp_param_headers(dict(request.headers) if request else None), resource_id=params.get("name")
+                user, db, "tools.execute", method, request=request, args=_merge_call_args_for_rules(dict(request.headers) if request else None, params.get("arguments")), resource_id=params.get("name")
             )
             # Note: Multi-worker session affinity forwarding is handled earlier
             # (before method routing) to apply to ALL methods, not just tools/call
