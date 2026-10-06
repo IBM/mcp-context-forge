@@ -136,7 +136,7 @@ endif
 help:
 	@grep "^# help\:" Makefile | grep -v grep | sed 's/\# help\: //' | sed 's/\# help\://'
 	@if grep -q "^# deprecated:" Makefile; then \
-		printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work, will be removed in stated version)\033[0m\n'; \
+	printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work and sunset on the stated date)\033[0m\n'; \
 		grep "^# deprecated:" Makefile | sed 's/^# deprecated: //' | while IFS= read -r line; do \
 			printf '  \033[2;33m%s\033[0m\n' "$$line"; \
 		done; \
@@ -163,10 +163,11 @@ os-deps: $(OS_DEPS_SCRIPT)
 is_true = $(filter 1 true yes,$(1))
 
 # Deprecation warning for aliased targets.
-# Usage: $(call deprecated_target,old-name,replacement invocation,removal-version)
+# Usage: $(call deprecated_target,old-name,replacement invocation,deprecated-on,sunset-date)
+# The sunset date must be at least 90 days after the deprecated-on date.
 define deprecated_target
-	@printf '\n  ⚠️  WARNING: "%s" is deprecated. Use "%s" instead.\n' '$(1)' '$(2)'
-	@printf '     This alias will be removed in v%s.\n\n' '$(3)'
+	@printf '\n  ⚠️  WARNING: "%s" is deprecated as of %s. Use "%s" instead.\n' '$(1)' '$(3)' '$(2)'
+	@printf '     This alias sunsets on %s.\n\n' '$(4)'
 endef
 
 # Helper to ensure a Python package is installed in venv (uses uv to avoid pip corruption)
@@ -949,20 +950,16 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
-# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (v1.3.0)
+# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (sunsets 2027-01-18)
 test-mcp-protocol-e2e: test-e2e
-	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,1.3.0)
+	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,2026-10-20,2027-01-18)
 
-# deprecated: test-mcp-cli - Use "make test-e2e" instead (v1.3.0)
 test-mcp-cli: test-e2e
-	$(call deprecated_target,test-mcp-cli,make test-e2e,1.3.0)
 
 .PHONY: test-bats
 test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
-# deprecated: test-mcp-rbac - Use "make test-e2e" instead (v1.3.0)
 test-mcp-rbac: test-e2e
-	$(call deprecated_target,test-mcp-rbac,make test-e2e,1.3.0)
 
 test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -3792,14 +3789,14 @@ isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
-# deprecated: black-check       - Use "make black CHECK=1" instead (v1.2.0)
-# deprecated: isort-check       - Use "make isort CHECK=1" instead (v1.2.0)
+# deprecated: black-check       - Use "make black CHECK=1" instead (sunsets 2027-01-18)
+# deprecated: isort-check       - Use "make isort CHECK=1" instead (sunsets 2027-01-18)
 black-check:
-	$(call deprecated_target,black-check,make black CHECK=1,1.2.0)
+	$(call deprecated_target,black-check,make black CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)"
 
 isort-check:
-	$(call deprecated_target,isort-check,make isort CHECK=1,1.2.0)
+	$(call deprecated_target,isort-check,make isort CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
 
 
@@ -3990,19 +3987,19 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	$(UV_BIN) tool run ruff==$(RUFF_VERSION) $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
-# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
-# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (v1.2.0)
-# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (v1.2.0)
+# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (sunsets 2027-01-18)
+# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (sunsets 2027-01-18)
+# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (sunsets 2027-01-18)
 ruff-check:
-	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,1.2.0)
+	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)"
 
 ruff-fix:
-	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,1.2.0)
+	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$(TARGET)"
 
 ruff-format:
-	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,1.2.0)
+	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=format TARGET="$(TARGET)"
 
 future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged from main
@@ -5113,26 +5110,26 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
 # --- Deprecated container-run aliases ---
-# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (v1.2.0)
-# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
-# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
-# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
+# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (sunsets 2027-01-18)
 .PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
-	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
+	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_HOST_NET=1
 
 container-run-ssl: container-check-image
-	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,1.2.0)
+	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1
 
 container-run-ssl-host: container-check-image
-	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,1.2.0)
+	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1
 
 container-run-ssl-jwt: container-check-image
-	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
+	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
 
 .PHONY: container-push
@@ -6288,7 +6285,31 @@ ibmcloud-push:
 ibmcloud-deploy:
 	@test -f .env || { echo "❌ Missing .env — run: cp .env.example .env"; exit 1; }
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
-	@# Create the runtime env secret from .env if it does not exist yet
+	@# Verify the registry pull secret exists. Check CLI availability first so
+	@# infrastructure errors are distinguished from a genuinely absent secret.
+	@if ! command -v ibmcloud > /dev/null 2>&1; then \
+		echo "❌ ibmcloud CLI not found. Install it and the code-engine plugin first:"; \
+		echo "   make ibmcloud-cli-install"; \
+		exit 1; \
+	fi; \
+	if ! _secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); then \
+		if echo "$$_secret_err" | grep -qiF "Secret $(IBMCLOUD_REGISTRY_SECRET) not found"; then \
+			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
+			echo "   Create it first (first-time setup only):"; \
+			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
+			echo "       --format registry \\"; \
+			echo "       --server $$(echo $(IBMCLOUD_IMAGE_NAME) | cut -d/ -f1) \\"; \
+			echo "       --username iamapikey --password \$$IBMCLOUD_ICR_API_KEY"; \
+			echo "   (Use a long-lived IAM API key — IBMCLOUD_API_KEY may be blank for SSO users.)"; \
+			echo "   See the docs for service ID key setup and alternative credential types."; \
+		else \
+			echo "❌ Could not verify registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)'."; \
+			echo "   Diagnostic: $$_secret_err"; \
+			echo "   Check your IBM Cloud login, region, CE project selection, and plugin installation."; \
+		fi; \
+		exit 1; \
+	fi
+	@# Sync the runtime env secret from .env — create on first deploy, update thereafter.
 	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
 		echo "🔐 Creating runtime env secret from .env..."; \
 		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \

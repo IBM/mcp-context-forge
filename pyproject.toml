@@ -17,15 +17,16 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-09-24T23:59:59Z"
-cpex-url-reputation = "2026-09-24T23:59:59Z"
-cpex-rate-limiter = "2026-09-24T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-09-24T23:59:59Z"
-cpex-pii-filter = "2026-09-24T23:59:59Z"
-cpex-retry-with-backoff = "2026-09-24T23:59:59Z"
-cpex-output-length-guard = "2026-09-24T23:59:59Z"
-cpex-secrets-detection = "2026-09-24T23:59:59Z"
-cpex-sql-sanitizer = "2026-09-24T23:59:59Z"
+oauthlib = "2026-10-05T23:59:59Z" # allow 4.0.0 (2026-09-28); PYSEC-2026-4114 fixed in 4.0.0
+cpex = "2026-10-05T23:59:59Z"
+cpex-url-reputation = "2026-10-05T23:59:59Z"
+cpex-rate-limiter = "2026-10-05T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-10-05T23:59:59Z"
+cpex-pii-filter = "2026-10-05T23:59:59Z"
+cpex-retry-with-backoff = "2026-10-05T23:59:59Z"
+cpex-output-length-guard = "2026-10-05T23:59:59Z"
+cpex-secrets-detection = "2026-10-05T23:59:59Z"
+cpex-sql-sanitizer = "2026-10-05T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -101,7 +102,8 @@ dependencies = [
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "redis>=8.0.1",
-    "requests>=2.34.2", # Transivite pin (requests-oauthlib)
+    "oauthlib>=4.0.0", # Transitive pin (requests-oauthlib);
+    "requests>=2.34.2", # Transitive pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.52",
     "sse-starlette>=3.4.8",
@@ -226,7 +228,7 @@ llmchat = [
     "langchain-mcp-adapters>=0.3.0",
     "langchain-ollama>=1.1.0",
     "langchain-openai<=1.4.1",
-    "langgraph<=1.2.0",
+    "langgraph<=1.2.12",
     "langsmith>=0.10.10", # Transitive pin (langchain-core)
 ]
 

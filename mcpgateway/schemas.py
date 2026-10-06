@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
+from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
@@ -527,6 +528,13 @@ class AuthenticationValues(BaseModelWithConfigDict):
 _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
 
 
+def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject an input schema whose ``x-mcp-header`` annotations break the MCP 2026-07-28 constraints."""
+    if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
+        raise ValueError(f"invalid x-mcp-header annotation: {reason}")
+    return schema
+
+
 def _extract_rest_url_components(values: dict) -> dict:
     """Extract ``base_url`` and ``path_template`` from ``url`` for REST integration tools.
 
@@ -977,6 +985,12 @@ class ToolCreate(BaseModel):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -1535,6 +1549,12 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -5061,6 +5081,22 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     base_url: AnyHttpUrl = Field(..., description="Base URL of the MCP server to test")
     path: Optional[str] = Field(None, description="Optional path appended to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
+    gateway_id: Optional[str] = Field(None, description="Exact registered gateway to use for transport and connection settings")
+    credential_mode: Literal["stored_with_override", "candidate_only"] = Field("stored_with_override", description="Whether the handshake may use stored gateway credentials")
+
+    @model_validator(mode="after")
+    def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":
+        """Require exact gateway selection for candidate-only validation.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If candidate-only validation omits the gateway ID.
+        """
+        if self.credential_mode == "candidate_only" and not self.gateway_id:
+            raise ValueError("gateway_id is required when credential_mode is candidate_only")
+        return self
 
     @field_validator("path")
     @classmethod
