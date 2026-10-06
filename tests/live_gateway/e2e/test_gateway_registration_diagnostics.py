@@ -108,7 +108,7 @@ def test_malformed_url_rejected_with_422(auth_headers: dict[str, str]):
     assert resp.status_code == 422, f"Expected 422 for malformed URL, got {resp.status_code}: {resp.text}"
 
     reason_code = resp.json().get("reason_code")
-    assert reason_code is None or reason_code in PUBLIC_REASON_CODES, f"Unexpected reason_code in response: {reason_code}"
+    assert reason_code == "url_scheme_not_allowed", f"Expected the public reason_code for a malformed URL, got: {reason_code} ({resp.text})"
 
 
 @skip_no_gateway

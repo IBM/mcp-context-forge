@@ -13050,6 +13050,51 @@ class TestRemainingCoverageGaps:
         assert "request_id=corr-abc-123" in logged
         assert "does-not-exist.invalid" not in logged
 
+    async def test_request_validation_hides_log_only_reason_code(self):
+        """The handler exposes the message, never a log-only reason code."""
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.common.validators import UrlPolicyError
+
+        request = MagicMock(spec=Request)
+        request.url = SimpleNamespace(path="/gateways")
+
+        exc = MagicMock()
+        exc.errors.return_value = [
+            {
+                "loc": ["body", "url"],
+                "msg": "URL destination blocked",
+                "ctx": {"error": UrlPolicyError("url_destination_blocked", "URL destination blocked")},
+                "type": "value_error",
+            }
+        ]
+
+        response = await main_mod.request_validation_exception_handler(request, exc)
+        assert response.status_code == 422
+        assert "url_destination_blocked" not in response.body.decode()
+
+    async def test_request_validation_keeps_public_reason_code(self):
+        """The handler returns a public reason code at the top level."""
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.common.validators import UrlPolicyError
+
+        request = MagicMock(spec=Request)
+        request.url = SimpleNamespace(path="/gateways")
+
+        exc = MagicMock()
+        exc.errors.return_value = [
+            {
+                "loc": ["body", "url"],
+                "msg": "URL must start with https://",
+                "ctx": {"error": UrlPolicyError("url_scheme_not_allowed", "URL must start with https://")},
+                "type": "value_error",
+            }
+        ]
+
+        response = await main_mod.request_validation_exception_handler(request, exc)
+        assert json.loads(response.body.decode())["reason_code"] == "url_scheme_not_allowed"
+
     async def test_update_gateway_validation_error_branch(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
