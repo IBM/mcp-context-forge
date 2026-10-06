@@ -47,6 +47,7 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any
 import uuid
 
 # Third-Party
@@ -54,7 +55,7 @@ import httpx
 import pytest
 
 # First-Party
-from tests.helpers.auth import make_auth_headers, make_legacy_test_jwt, make_test_jwt
+from tests.helpers.auth import make_auth_headers, make_test_jwt
 
 pytestmark = pytest.mark.e2e
 
@@ -81,7 +82,19 @@ _DISCOVER_SUCCESS_BODY = json.dumps(
 ).encode()
 
 
-def _make_recording_handler() -> tuple[type, list]:
+class _DualStackThreadingHTTPServer(ThreadingHTTPServer):
+    """Accept IPv4 and IPv6 localhost connections through one test server."""
+
+    address_family = socket.AF_INET6
+
+    def server_bind(self) -> None:
+        """Enable dual-stack loopback access before binding."""
+        with contextlib.suppress(OSError):
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
+def _make_recording_handler(expected_candidate: str) -> tuple[type, list]:
     """Return a fresh (handler_class, requests_list) pair for one upstream stub.
 
     Each call produces a *new* handler subclass with its own ``requests`` list so
@@ -95,12 +108,20 @@ def _make_recording_handler() -> tuple[type, list]:
         """Serve a valid server/discover response and record every received request."""
 
         def do_POST(self):  # noqa: N802
-            """Accept any POST and return a successful server/discover JSON-RPC result."""
+            """Return success only when the request supplies the expected candidate."""
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length:
+                self.rfile.read(content_length)
             recorded.append((self.command, self.path, dict(self.headers)))
-            self.send_response(200)
+            candidate = self.headers.get("X-Candidate")
+            stored = self.headers.get("X-Stored-Key")
+            authorized = candidate == expected_candidate or stored == "stored-secret" or (candidate is None and stored is None)
+            response_body = _DISCOVER_SUCCESS_BODY if authorized else b'{"error":"unauthorized"}'
+            self.send_response(200 if authorized else 401)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
             self.end_headers()
-            self.wfile.write(_DISCOVER_SUCCESS_BODY)
+            self.wfile.write(response_body)
 
         def do_GET(self):  # noqa: N802
             """Accept health probes."""
@@ -151,23 +172,16 @@ def isolated_gateway(tmp_path):
         "MCPGATEWAY_ADMIN_API_ENABLED": "true",
         "MCPGATEWAY_UI_ENABLED": "false",
         "MCPGATEWAY_A2A_ENABLED": "false",
-        # Allow the handshake endpoint to probe our upstream stub on localhost.
-        # ssrf_allow_localhost=true exempts the "localhost" hostname from the
-        # SSRF loopback check before the IP-range block is reached.
+        # Restrict the isolated subprocess to localhost while permitting its test stub.
+        "SSRF_PROTECTION_ENABLED": "false",
         "SSRF_ALLOW_LOCALHOST": "true",
         "GATEWAY_TEST_ALLOW_REGISTERED_ONLY": "false",
         "GATEWAY_TEST_ALLOWED_HOSTS": '["localhost"]',
-        # Require JTI is on by default; disable so the minimal legacy token
-        # (no jti claim) used for the public-only user is accepted.
-        "REQUIRE_JTI": "false",
         "MCP_CLIENT_CONNECT_MODE": "auto",
-        # Skip the synchronous upstream probe on POST /gateways — the async
-        # lifecycle worker would normally do this in the background, but for
-        # these tests we only need the gateway row to exist so the handshake
-        # endpoint can look it up by id.
         "GATEWAY_ASYNC_LIFECYCLE_ENABLED": "true",
         "PLUGINS_ENABLED": "false",
         "LOG_LEVEL": "ERROR",
+        "NO_PROXY": "localhost,127.0.0.1",
         "PYTHONUNBUFFERED": "1",
     }
 
@@ -221,7 +235,7 @@ def isolated_gateway(tmp_path):
 # isolated_upstream  — ephemeral MCP stub server
 # ---------------------------------------------------------------------------
 @contextlib.contextmanager
-def _isolated_upstream():
+def _isolated_upstream(expected_candidate: str = "valid-candidate"):
     """Start an ephemeral ThreadingHTTPServer acting as an upstream MCP server.
 
     Each call creates a *fresh* handler class and requests list via
@@ -232,10 +246,8 @@ def _isolated_upstream():
         ``(url: str, requests: list)`` — the full base URL and the per-call
         list that accumulates ``(method, path, headers_dict)`` tuples.
     """
-    handler_cls, recorded = _make_recording_handler()
-    # Bind to localhost so ssrf_allow_localhost=true exempts the hostname
-    # from the SSRF loopback check before the IP-range block is reached.
-    upstream = ThreadingHTTPServer(("localhost", 0), handler_cls)
+    handler_cls, recorded = _make_recording_handler(expected_candidate)
+    upstream = _DualStackThreadingHTTPServer(("::", 0), handler_cls)
     worker = threading.Thread(target=upstream.serve_forever, daemon=True)
     worker.start()
     try:
@@ -298,6 +310,68 @@ def _post_handshake(client: httpx.Client, payload: dict, timeout: float = 30) ->
     return client.post(_HANDSHAKE_PATH, json=payload, timeout=timeout)
 
 
+def _request_json(client: httpx.Client, method: str, path: str, *, expected: tuple[int, ...] = (200, 201), **kwargs: Any) -> Any:
+    """Send an API request and return its JSON response."""
+    response = client.request(method, path, **kwargs)
+    assert response.status_code in expected, f"{method} {path} returned {response.status_code}: {response.text[:500]}"
+    return response.json() if response.content else None
+
+
+def _create_team(client: httpx.Client, label: str) -> str:
+    """Create a private team and return its ID."""
+    team = _request_json(client, "POST", "/teams/", json={"name": f"{_GW_PREFIX}-{label}-{uuid.uuid4().hex[:8]}", "visibility": "private"})
+    return team["id"]
+
+
+def _create_team_user(client: httpx.Client, signing_key: str, team_id: str) -> tuple[str, str]:
+    """Create a persisted team viewer and return its email and scoped JWT."""
+    email = f"candidate-viewer-{uuid.uuid4().hex[:8]}@example.com"
+    _request_json(
+        client,
+        "POST",
+        "/auth/email/admin/users",
+        json={
+            "email": email,
+            "password": "E2eCandidate!42",  # pragma: allowlist secret
+            "full_name": "Candidate Handshake Viewer",
+            "is_admin": False,
+            "is_active": True,
+            "password_change_required": False,
+        },
+        expected=(201,),
+    )
+    _request_json(client, "POST", f"/teams/{team_id}/members", json={"email": email, "role": "member"})
+    token = make_test_jwt(email, teams=[team_id], secret=signing_key, algorithm="HS256", include_email_claim=True)
+    return email, token
+
+
+def _candidate_payload(base_url: str, gateway_id: str, candidate: str = "valid-candidate") -> dict[str, Any]:
+    """Build a candidate-only handshake request."""
+    return {
+        "base_url": base_url,
+        "gateway_id": gateway_id,
+        "credential_mode": "candidate_only",
+        "headers": {"X-Candidate": candidate},  # pragma: allowlist secret
+    }
+
+
+def _assert_success(response: httpx.Response) -> None:
+    """Assert that a candidate-only handshake succeeded through the HTTP API."""
+    assert response.status_code == 200, response.text[:500]
+    body = response.json()
+    assert body["success"] is True, body.get("error")
+    assert body["credentialSource"] == "form"
+
+
+def _assert_candidate_requests(recorded: list, expected_candidate: str) -> None:
+    """Assert that all upstream requests contain only the expected candidate credential."""
+    assert recorded, "Upstream was never contacted"
+    for _method, _path, headers in recorded:
+        normalized = {key.lower(): value for key, value in headers.items()}
+        assert normalized.get("x-candidate") == expected_candidate
+        assert "x-stored-key" not in normalized
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -315,17 +389,10 @@ class TestCandidateCredentialHandshake:
     """
 
     def test_candidate_only_succeeds_and_reports_form_source(self, isolated_gateway) -> None:
-        """candidate_only handshake probes the upstream with only the supplied header.
-
-        Registers a gateway with stored ``X-Stored-Key`` auth. Issues a
-        ``credential_mode=candidate_only`` request with a *different* ``X-Candidate``
-        header. The handshake must:
-        - succeed (upstream stub returns a valid discover response)
-        - report ``credentialSource=form`` (stored credentials were not forwarded)
-        """
+        """Candidate-only handshakes succeed only with the valid supplied credential."""
         client, _token, _base_url, _secret = isolated_gateway
 
-        with _isolated_upstream() as (upstream_url, recorded):
+        with _isolated_upstream(expected_candidate="valid-candidate") as (upstream_url, recorded):
             gw_name = f"{_GW_PREFIX}-success-{uuid.uuid4().hex[:8]}"
             gw_id = _register_gateway(
                 client,
@@ -335,130 +402,85 @@ class TestCandidateCredentialHandshake:
                 auth_headers_list=[{"key": "X-Stored-Key", "value": "stored-secret"}],  # pragma: allowlist secret
             )
             try:
-                resp = _post_handshake(
-                    client,
-                    {
-                        "base_url": upstream_url,
-                        "gateway_id": gw_id,
-                        "credential_mode": "candidate_only",
-                        "headers": {"X-Candidate": "probe"},  # pragma: allowlist secret
-                    },
-                )
-                assert resp.status_code == 200, f"Unexpected HTTP status: {resp.status_code} {resp.text[:500]}"
-                body = resp.json()
-                assert body["success"] is True, f"Handshake failed: {body.get('error')}"
-                assert body["credentialSource"] == "form", f"Expected credentialSource=form (candidate_only must suppress stored headers), got {body['credentialSource']!r}"
-                # Upstream stub must have been contacted at least once.
-                assert len(recorded) >= 1, "Upstream was never contacted"
-                # The upstream must NOT have received the stored credential header —
-                # only the candidate header supplied in the request should appear.
-                upstream_headers = recorded[0][2]  # (method, path, headers_dict)
-                forwarded_keys = {k.lower() for k in upstream_headers}
-                assert "x-stored-key" not in forwarded_keys, f"Stored credential was forwarded to upstream in candidate_only mode: {upstream_headers}"
-                assert "x-candidate" in forwarded_keys, f"Candidate header was not forwarded to upstream: {upstream_headers}"
+                recorded.clear()
+                valid_response = _post_handshake(client, _candidate_payload(upstream_url, gw_id))
+                _assert_success(valid_response)
+                _assert_candidate_requests(recorded, "valid-candidate")
+
+                recorded.clear()
+                invalid_response = _post_handshake(client, _candidate_payload(upstream_url, gw_id, "invalid-candidate"))
+                assert invalid_response.status_code == 200, invalid_response.text[:500]
+                invalid_body = invalid_response.json()
+                assert invalid_body["success"] is False
+                assert invalid_body["failureClass"] == "auth"
+                _assert_candidate_requests(recorded, "invalid-candidate")
             finally:
                 _delete_gateway(client, gw_id)
 
     def test_hidden_gateway_denied_no_upstream_probe(self, isolated_gateway) -> None:
-        """A team-A token cannot probe a team-B private gateway via gateway_id.
-
-        Registers a team-scoped gateway owned by team-B.  A caller whose token
-        is limited to team-A requests it by gateway_id.  The handshake must:
-        - fail with ``success=false``
-        - report ``failureClass=transport``
-        - not contact the upstream (the upstream stub records no requests)
-        """
+        """A permitted team-A caller cannot probe a team-B gateway by ID."""
         client, _token, _base_url, signing_key = isolated_gateway
 
-        with _isolated_upstream() as (upstream_url, recorded):
-            # Create team-B via the API.
-            team_b_name = f"{_GW_PREFIX}-team-b-{uuid.uuid4().hex[:8]}"
-            team_resp = client.post(
-                "/teams/",
-                json={"name": team_b_name, "visibility": "private"},
-                timeout=15,
-            )
-            assert team_resp.status_code in (200, 201), f"Failed to create team: {team_resp.status_code} {team_resp.text[:300]}"
-            team_b_id = team_resp.json()["id"]
-
-            gw_name = f"{_GW_PREFIX}-hidden-{uuid.uuid4().hex[:8]}"
-            gw_id = _register_gateway(
-                client,
-                name=gw_name,
-                url=upstream_url,
-                visibility="team",
-                team_id=team_b_id,
-            )
+        team_a_id = _create_team(client, "team-a")
+        team_b_id = _create_team(client, "team-b")
+        user_email, team_a_token = _create_team_user(client, signing_key, team_a_id)
+        with _isolated_upstream() as (visible_url, visible_recorded), _isolated_upstream() as (hidden_url, hidden_recorded):
+            visible_gateway_id = _register_gateway(client, name=f"{_GW_PREFIX}-visible-{uuid.uuid4().hex[:8]}", url=visible_url, visibility="team", team_id=team_a_id)
+            hidden_gateway_id = _register_gateway(client, name=f"{_GW_PREFIX}-hidden-{uuid.uuid4().hex[:8]}", url=hidden_url, visibility="team", team_id=team_b_id)
             try:
-                # Build a public-only token (teams=[]) for a different user.
-                # make_legacy_test_jwt omits jti/env claims; REQUIRE_JTI=false in
-                # the fixture env ensures the gateway accepts it.  A public-only
-                # token passes team-membership validation but cannot see a
-                # team-scoped private gateway — which is the isolation we assert.
-                team_a_token = make_legacy_test_jwt(
-                    f"public-user-{uuid.uuid4().hex[:6]}@example.com",
-                    teams=[],
-                    secret=signing_key,
-                    algorithm="HS256",
-                    include_email_claim=True,
-                )
-                # Post the handshake using team-A's token (not the admin client fixture).
-                resp = httpx.post(
-                    f"{_base_url}{_HANDSHAKE_PATH}",
-                    json={
-                        "base_url": upstream_url,
-                        "gateway_id": gw_id,
-                        "credential_mode": "candidate_only",
-                        "headers": {"X-Candidate": "probe"},  # pragma: allowlist secret
-                    },
-                    headers={"Authorization": f"Bearer {team_a_token}"},  # pragma: allowlist secret
-                    timeout=30,
-                )
-                assert resp.status_code == 200, f"Unexpected HTTP status: {resp.status_code} {resp.text[:500]}"
+                visible_recorded.clear()
+                hidden_recorded.clear()
+                with httpx.Client(base_url=_base_url, headers=make_auth_headers(team_a_token), timeout=30, trust_env=False) as team_a_client:
+                    visible_response = _post_handshake(team_a_client, _candidate_payload(visible_url, visible_gateway_id))
+                    _assert_success(visible_response)
+                    _assert_candidate_requests(visible_recorded, "valid-candidate")
+
+                    visible_recorded.clear()
+                    hidden_recorded.clear()
+                    resp = _post_handshake(team_a_client, _candidate_payload(hidden_url, hidden_gateway_id))
+
+                assert resp.status_code == 200, resp.text[:500]
                 body = resp.json()
                 assert body["success"] is False, "Team-A token must not access team-B gateway — expected success=false"
                 assert body.get("failureClass") == "transport", f"Expected failureClass=transport, got {body.get('failureClass')!r}"
-                # The upstream stub must NOT have been contacted.
-                assert recorded == [], f"Upstream was probed despite denied gateway: {recorded}"
+                assert visible_recorded == []
+                assert hidden_recorded == []
             finally:
-                _delete_gateway(client, gw_id)
+                _delete_gateway(client, visible_gateway_id)
+                _delete_gateway(client, hidden_gateway_id)
                 with contextlib.suppress(Exception):
                     client.delete(f"/teams/{team_b_id}", timeout=10)
+                    client.delete(f"/teams/{team_a_id}", timeout=10)
+                    client.delete(f"/auth/email/admin/users/{user_email}", timeout=10)
 
     def test_url_mismatched_gateway_denied(self, isolated_gateway) -> None:
-        """gateway_id whose registered URL differs from base_url is rejected transport-level.
-
-        Registers a gateway at ``upstream_url``.  Issues a handshake with
-        ``base_url`` pointing at a *different* host. The gateway must reject
-        the mismatch before firing any outbound probe.
-        """
+        """An allowed URL paired with a different gateway ID is denied before probing."""
         client, _token, _base_url, _secret = isolated_gateway
 
-        with _isolated_upstream() as (upstream_url, recorded):
-            gw_name = f"{_GW_PREFIX}-mismatch-{uuid.uuid4().hex[:8]}"
-            # Register gateway at the real upstream URL.
-            gw_id = _register_gateway(
-                client,
-                name=gw_name,
-                url=upstream_url,
-                visibility="public",
-            )
+        with _isolated_upstream() as (upstream_a_url, recorded_a), _isolated_upstream() as (upstream_b_url, recorded_b):
+            gateway_a_id = _register_gateway(client, name=f"{_GW_PREFIX}-mismatch-a-{uuid.uuid4().hex[:8]}", url=upstream_a_url, visibility="public")
+            gateway_b_id = _register_gateway(client, name=f"{_GW_PREFIX}-mismatch-b-{uuid.uuid4().hex[:8]}", url=upstream_b_url, visibility="public")
             try:
-                # Request a probe against a *different* URL while supplying gateway_id.
-                resp = _post_handshake(
-                    client,
-                    {
-                        "base_url": "http://other-host.example.com/mcp",
-                        "gateway_id": gw_id,
-                        "credential_mode": "candidate_only",
-                        "headers": {},
-                    },
-                )
-                assert resp.status_code == 200, f"Unexpected HTTP status: {resp.status_code} {resp.text[:500]}"
+                recorded_a.clear()
+                recorded_b.clear()
+                _assert_success(_post_handshake(client, _candidate_payload(upstream_a_url, gateway_a_id)))
+                _assert_candidate_requests(recorded_a, "valid-candidate")
+                assert recorded_b == []
+
+                recorded_a.clear()
+                _assert_success(_post_handshake(client, _candidate_payload(upstream_b_url, gateway_b_id)))
+                _assert_candidate_requests(recorded_b, "valid-candidate")
+                assert recorded_a == []
+
+                recorded_a.clear()
+                recorded_b.clear()
+                resp = _post_handshake(client, _candidate_payload(upstream_b_url, gateway_a_id))
+                assert resp.status_code == 200, resp.text[:500]
                 body = resp.json()
                 assert body["success"] is False, "URL mismatch must be rejected — expected success=false"
                 assert body.get("failureClass") == "transport", f"Expected failureClass=transport for URL mismatch, got {body.get('failureClass')!r}"
-                # The upstream stub must NOT have been contacted.
-                assert recorded == [], f"Upstream was probed despite URL mismatch: {recorded}"
+                assert recorded_a == []
+                assert recorded_b == []
             finally:
-                _delete_gateway(client, gw_id)
+                _delete_gateway(client, gateway_a_id)
+                _delete_gateway(client, gateway_b_id)
