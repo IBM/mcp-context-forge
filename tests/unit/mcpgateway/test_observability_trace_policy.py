@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for request-root OpenTelemetry export policy."""
+"""Location: ./tests/unit/mcpgateway/test_observability_trace_policy.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for request-root OpenTelemetry export policy.
+"""
 
 # Standard
 from typing import Any
