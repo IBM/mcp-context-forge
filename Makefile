@@ -1778,6 +1778,7 @@ TESTING_COMPOSE_PROFILES := --profile testing --profile inspector --profile sso
 testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
 	@echo "🧪 Starting testing stack..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
+	@echo "   🔭 Observability: enabled for live gateway regression tests"
 	@# Fail early if port 8080 is already bound (nginx needs it)
 	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
 		echo "❌ Port 8080 is already in use. Cannot start nginx proxy."; \
@@ -1788,6 +1789,7 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	OBSERVABILITY_ENABLED=true \
 	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
