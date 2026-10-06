@@ -57,7 +57,8 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0052  | GET /mcp Stream and Server-Initiated Request Correlation | Proposed | MCP Protocol | 2026-04-19 |
 | 0053  | Governed MCP Extension Framework                     | Proposed | Security       | 2026-05-29 |
 | 0054  | Remove Granian HTTP Server (supersedes ADR-0025)     | Accepted  | Performance   | 2026-07-22 |
-| 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24  |
+| 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24 |
 | 0056  | CSP Hardening — No eval, No Inline Handlers, Nonce-Only Scripts (supersedes ADR-0014 CSP) | Accepted | Security | 2026-10-01  |
+| 0057  | Trust A2A Plugin Header Output | Accepted | Security | 2026-10-06 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

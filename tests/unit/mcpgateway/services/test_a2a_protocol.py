@@ -478,6 +478,66 @@ class TestBuildA2AJsonrpcRequest:
 # ── prepare_a2a_invocation ───────────────────────────────────────────────────
 
 
+def test_prepare_a2a_invocation_trusts_plugin_headers_and_normalizes_casing():
+    prepared = prepare_a2a_invocation(
+        agent_type="jsonrpc",
+        endpoint_url="https://agent.example/a2a",
+        protocol_version="1.0",
+        parameters={},
+        interaction_type="query",
+        auth_type="authheaders",
+        auth_value={"Authorization": "Bearer configured"},
+        base_headers={"Authorization": "Bearer caller", "X-Request-ID": "caller"},
+        plugin_input_headers={"X-Request-ID": "caller"},
+        plugin_output_headers={"Authorization": "Bearer first", "authorization": "Bearer plugin", "X-Credential": "plugin-credential"},
+    )
+
+    assert [value for name, value in prepared.headers.items() if name.lower() == "authorization"] == ["Bearer plugin"]
+    assert prepared.headers["X-Credential"] == "plugin-credential"
+    assert "X-Request-ID" not in prepared.headers
+
+
+def test_prepare_a2a_invocation_keeps_withheld_headers_and_honors_auth_removal():
+    prepared = prepare_a2a_invocation(
+        agent_type="custom",
+        endpoint_url="https://agent.example/a2a",
+        protocol_version="1.0",
+        parameters={},
+        interaction_type="query",
+        auth_type="authheaders",
+        auth_value={"Authorization": "Bearer configured", "X-Agent-Key": "configured"},
+        base_headers={"Authorization": "Bearer caller", "Cookie": "session=caller", "X-Request-ID": "caller"},
+        plugin_input_headers={"X-Request-ID": "caller"},
+        plugin_output_headers={"authorization": ""},
+    )
+
+    assert "Authorization" not in {name.title() for name in prepared.headers}
+    assert prepared.headers["Cookie"] == "session=caller"
+    assert prepared.headers["X-Agent-Key"] == "configured"
+    assert "X-Request-ID" not in prepared.headers
+
+
+def test_prepare_a2a_invocation_keeps_protocol_headers_under_gateway_control():
+    prepared = prepare_a2a_invocation(
+        agent_type="jsonrpc",
+        endpoint_url="https://agent.example/a2a",
+        protocol_version="0.3",
+        parameters={},
+        interaction_type="query",
+        auth_type="authheaders",
+        auth_value={"X-Vault-Tokens": "configured-secret"},
+        base_headers={"content-type": "text/plain", "A2A-VERSION": "caller"},
+        plugin_output_headers={"CONTENT-TYPE": "text/plugin", "a2a-version": "plugin", "x-correlation-id": "plugin", "accept": "application/plugin", "X-Vault-Tokens": "secret"},
+        correlation_id="gateway-correlation",
+    )
+
+    assert prepared.headers["Content-Type"] == "application/json"
+    assert prepared.headers["A2A-Version"] == "0.3"
+    assert prepared.headers["X-Correlation-ID"] == "gateway-correlation"
+    assert prepared.headers["accept"] == "application/plugin"
+    assert "x-vault-tokens" not in {name.lower() for name in prepared.headers}
+
+
 def test_prepare_a2a_invocation_builds_v1_send_message_for_query():
     prepared = prepare_a2a_invocation(
         agent_type="generic",

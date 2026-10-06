@@ -81,7 +81,7 @@ def _mint_jwt(env: Optional[dict] = None) -> str:
 
 
 @pytest.fixture(scope="module")
-def live_stack(tmp_path_factory):
+def live_stack(tmp_path_factory, request):
     """Boot echo backends + gateway with the Vault plugin on both hooks.
 
     Yield admin bearer token and echo log path. Stop processes afterwards.
@@ -114,7 +114,7 @@ def live_stack(tmp_path_factory):
                 "PLUGINS_ENABLED": "true",
                 "PLUGINS_CONFIG_FILE": "plugins/vault/config_vault_e2e.yaml",
                 "ENABLE_HEADER_PASSTHROUGH": "true",
-                "ENABLE_SENSITIVE_HEADER_PASSTHROUGH": "true",
+                "ENABLE_SENSITIVE_HEADER_PASSTHROUGH": "true" if getattr(request, "param", True) else "false",
                 "MAX_HEADER_VALUE_LENGTH": "16384",
                 "MAX_HEADER_FIELD_SIZE_BYTES": "12000",
                 "MAX_HEADER_TOTAL_SIZE_BYTES": "32768",
@@ -211,6 +211,7 @@ def test_tool_path_injects_token_and_strips_vault_header(live_stack):
     assert "x-vault-tokens" not in echo_log, "SECURITY: X-Vault-Tokens leaked to the upstream MCP server"
 
 
+@pytest.mark.parametrize("live_stack", [True, False], indirect=True)
 def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
     """A2A agent path (new behavior): Bearer injected upstream, X-Vault-Tokens stripped."""
     token = live_stack["token"]
@@ -239,13 +240,13 @@ def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
             json={"parameters": {"message": "hi"}, "interaction_type": "query"},
         )
         assert r.status_code == 200, r.text
-        received = _find_received_headers(r.json())
+        received = _find_received_header_pairs(r.json())
 
     assert received is not None, "echo_a2a did not reflect received headers"
-    assert str(received.get("authorization", "")).lower() == f"bearer {A2A_TOKEN}".lower(), "vault token was not injected as Bearer on the A2A path"
-    assert "x-vault-tokens" not in received, "SECURITY: X-Vault-Tokens leaked to the upstream A2A agent"
+    _assert_plugin_headers(received, A2A_TOKEN)
 
 
+@pytest.mark.parametrize("live_stack", [True, False], indirect=True)
 def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stack):
     """A2A agent wrapped as MCP tool: Bearer injected upstream, X-Vault-Tokens stripped.
 
@@ -358,28 +359,33 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
         except json.JSONDecodeError:
             a2a_response = {"response": content_text}  # Fallback if not JSON
 
-        received = _find_received_headers(a2a_response)
+        received = _find_received_header_pairs(a2a_response)
 
     # Assertions
     assert received is not None, f"A2A echo backend did not reflect received headers. Response: {a2a_response}"
-    assert str(received.get("authorization", "")).lower() == f"bearer {A2A_TOKEN}".lower(), \
-        "vault token was not injected as Bearer on A2A-tool-wrapped path"
-    assert "x-vault-tokens" not in received, \
-        "SECURITY: X-Vault-Tokens leaked to the upstream A2A agent when invoked as MCP tool"
+    _assert_plugin_headers(received, A2A_TOKEN)
 
 
-def _find_received_headers(obj):
-    """Recursively locate the reflected received_headers dict in a response body."""
+def _find_received_header_pairs(obj):
+    """Recursively locate reflected raw header pairs in a response body."""
     if isinstance(obj, dict):
-        if "received_headers" in obj and isinstance(obj["received_headers"], dict):
-            return obj["received_headers"]
-        for v in obj.values():
-            found = _find_received_headers(v)
+        pairs = obj.get("received_header_pairs")
+        if isinstance(pairs, list):
+            return pairs
+        for value in obj.values():
+            found = _find_received_header_pairs(value)
             if found is not None:
                 return found
     elif isinstance(obj, list):
-        for v in obj:
-            found = _find_received_headers(v)
+        for value in obj:
+            found = _find_received_header_pairs(value)
             if found is not None:
                 return found
     return None
+
+
+def _assert_plugin_headers(header_pairs, token):
+    """Assert plugin authentication reaches the agent once without Vault data."""
+    authorization = [value for name, value in header_pairs if name.lower() == "authorization"]
+    assert authorization == [f"Bearer {token}"]
+    assert all(name.lower() != "x-vault-tokens" for name, _ in header_pairs)
