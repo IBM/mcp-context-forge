@@ -19,6 +19,7 @@ database provider, so Admin UI audit views keep working.
 """
 
 # Standard
+import json
 import logging
 import time
 from typing import Dict, List, Optional, Set, Union
@@ -173,7 +174,8 @@ class OpenFgaRuleProvider(DbRuleProvider):
 
         capability = capability_for_permission(permission)
         relation = relation_for(permission)
-        key = ("check", user_email, permission, resource_id)
+        args_fingerprint = json.dumps(args, sort_keys=True, default=str) if args else ""
+        key = ("check", user_email, permission, resource_id, args_fingerprint)
         cached = self._cached(key)
         if cached is not None:
             return bool(cached)
@@ -248,10 +250,12 @@ class OpenFgaRuleProvider(DbRuleProvider):
                 logger.debug("DB fallback check failed for %s / %s", user_email, permission, exc_info=True)
 
         if not from_fallback:
-            # Cache engine answers only. The database fallback tracks
-            # live role rows; caching it would pin a stale denial for
-            # the whole decision-cache TTL.
-            self._store(key, allowed)
+            # Cache the final answer only after the overlay ran: storing the
+            # engine grant alone would satisfy later calls and skip the
+            # argument-predicate denial for the whole TTL. The database
+            # fallback tracks live role rows and is never cached.
+            if not (allowed and args):
+                self._store(key, allowed)
 
         if allowed and args:
             # The engine granted, but rule predicates may reference
@@ -266,6 +270,8 @@ class OpenFgaRuleProvider(DbRuleProvider):
             if overlay is False and not (allow_admin_bypass and (token_is_admin or await self.check_platform_admin_permission(user_email))):
                 logger.info("Rule catalog deny on engine grant: user=%s permission=%s", user_email, permission)
                 return False
+            if not from_fallback:
+                self._store(key, overlay is not False)
 
         if self.audit_enabled:
             await self._log_permission_check(
