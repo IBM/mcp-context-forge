@@ -3,448 +3,232 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-CPEX APL predicate subset for the RBAC rule catalog.
+CEL predicates for the RBAC rule catalog.
 
-The accepted grammar follows the CPEX Agent Policy Language predicate
-forms (https://contextforge-org.github.io/cpex/docs/apl/):
+Predicates are Google Common Expression Language expressions over
+the attribute families the gateway binds at evaluation time. The
+expression syntax matches OpenFGA condition expressions, so a
+predicate can move between the gateway rule catalog and an OpenFGA
+authorization model without rewriting
+(https://openfga.dev/docs/modeling/conditions).
 
-- Truthiness: ``role.team_admin``, ``authenticated``
-- Comparison: ``delegation.depth > 2``, ``client.trust_level == 'trusted'``
-  with the operators ``==``, ``!=``, ``>``, ``>=``, ``<``, ``<=``
-- Set membership: ``subject.id in allowed_users``, ``subject.id not in banned``
-- Existence: ``exists(delegation.origin_subject_id)``
-- Grouping with parentheses and the join operators ``&`` (and) and ``|`` (or)
-- ``require(a, b)`` denies when any argument is false; ``require(a | b)``
-  denies only when every argument is false
+Variable families:
 
-Attribute paths resolve against a mapping the caller builds from the
-user context and the tool invocation. Identity families: ``role.*``,
-``perm.*``, ``team.*``, ``subject.id``, ``authenticated``,
-``token.is_admin``. Tool arguments: ``args.<name>`` — the gateway
-populates these from ``Mcp-Param-<name>`` headers that conforming
-MCP 2026-07-28 clients mirror per SEP-2243 (``x-mcp-header``).
-Paths deeper than 2 segments are rejected. Missing attributes evaluate
-to false; an existence check is the only form that can distinguish a
-missing attribute from a false one. A predicate referencing ``args.*``
-that arrives without the corresponding header denies fail-closed.
+- ``subject.id`` — principal identity
+- ``authenticated`` — true on every evaluated request
+- ``token.is_admin`` — admin flag from the token
+- ``role.<name>`` — true for each role the principal holds
+- ``team.<id>`` — true for each team the principal belongs to
+- ``args.<name>`` — tool arguments, merged from SEP-2243 mirrored
+  ``Mcp-Param-<name>`` headers and the JSON-RPC body arguments
+
+Example predicates:
+
+- ``subject.id == 'becky@demo.example.com' && args.timezone != ''``
+- ``role.team_admin || subject.id in ['alice@demo.example.com']``
+- ``args.timezone.startsWith('America/')``
+- ``token.is_admin && args.depth > 2``
+
+Semantics: a missing attribute makes the enclosing select false, and
+an evaluation error means the predicate does not match. Both cases
+fail closed: an ``allow`` rule without a match grants nothing, and a
+``deny`` rule without a match must be paired with an engine grant
+that already excludes the caller.
+
+Expression notes:
+
+- ``startsWith``, ``endsWith``, ``matches`` (RE2 regex), and ``size``
+  work on strings. ``contains`` is rejected: the celpy interpreter
+  mis-evaluates it, and ``matches('.*x.*')`` covers the same need.
+- Mirrored header values are strings. Compare a numeric header with
+  ``int(args.depth) > 2``; body arguments keep their native types.
+- OpenFGA conditions declare typed parameters. A predicate that must
+  move into an OpenFGA authorization model should compare against
+  values of the declared parameter type.
+
+Expressions are validated at parse time against a canary activation
+that binds every family empty. The canary rejects unknown top-level
+identifiers and malformed calls before the rule is stored.
 """
 
 # Standard
-from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence, Union
+import re
+from typing import Any, Mapping
 
-_MAX_ATTR_DEPTH = 2
-_MISSING = object()
+# Third-Party
+from celpy import Environment, celtypes
+from celpy.celparser import CELParseError
+from celpy.evaluation import CELEvalError
 
-_VALID_OPERATORS = ("==", "!=", ">=", "<=", ">", "<")
+_MAX_PREDICATE_LENGTH = 4096
+_MAX_COMPILE_CACHE = 512
+
+_ANNOTATIONS: dict[str, Any] = {
+    "subject": celtypes.MapType,
+    "args": celtypes.MapType,
+    "role": celtypes.MapType,
+    "team": celtypes.MapType,
+    "token": celtypes.MapType,
+    "authenticated": celtypes.BoolType,
+}
+
+_CANARY_ACTIVATION = {
+    "subject": celtypes.MapType({}),
+    "args": celtypes.MapType({}),
+    "role": celtypes.MapType({}),
+    "team": celtypes.MapType({}),
+    "token": celtypes.MapType({}),
+    "authenticated": celtypes.BoolType(False),
+}
+
+_ENVIRONMENT = Environment(annotations=_ANNOTATIONS)
+
+_COMPILE_CACHE: dict[str, Any] = {}
+
+_STRING_LITERAL = re.compile(r"'(?:[^'\\]|\\.)*'")
+_ARGS_MEMBER = re.compile(r"\bargs\.([A-Za-z_][A-Za-z0-9_]*)\b")
+_ARGS_INDEX = re.compile(r"\bargs\[['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\]")
 
 
 class PredicateSyntaxError(ValueError):
-    """Raised when a predicate string falls outside the accepted grammar."""
+    """Raised when a predicate falls outside the accepted CEL subset."""
 
 
-@dataclass(frozen=True)
-class Truthiness:
-    """A bare attribute that is true when present and truthy."""
+class CelPredicate:
+    """A compiled CEL predicate ready for repeated evaluation."""
 
-    attr: str
-
-
-@dataclass(frozen=True)
-class Compare:
-    """An attribute compared with a literal."""
-
-    attr: str
-    op: str
-    literal: Union[bool, float, int, str]
-
-
-@dataclass(frozen=True)
-class Membership:
-    """An attribute checked against a collection attribute."""
-
-    attr: str
-    collection_attr: str
-    negate: bool
-
-
-@dataclass(frozen=True)
-class Exists:
-    """True when the attribute is present."""
-
-    attr: str
-
-
-@dataclass(frozen=True)
-class All:
-    """True when every child holds."""
-
-    children: Sequence[Any]
-
-
-@dataclass(frozen=True)
-class AnyOf:
-    """True when at least one child holds."""
-
-    children: Sequence[Any]
-
-
-Node = Union[All, AnyOf, Compare, Exists, Membership, Truthiness]
-
-
-def _resolve(attributes: Mapping[str, Any], attr: str) -> Any:
-    """Resolve a dotted attribute path against a nested mapping.
-
-    Args:
-        attributes: Nested attribute mapping.
-        attr: Dotted path of at most 2 segments.
-
-    Returns:
-        The value, or the ``_MISSING`` sentinel when any segment is absent.
-    """
-    current: Any = attributes
-    for segment in attr.split("."):
-        if not isinstance(current, Mapping) or segment not in current:
-            return _MISSING
-        current = current[segment]
-    return current
-
-
-def _is_number(value: Any) -> bool:
-    """Say whether the value is numeric (never bool)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _coerce_number(value: Any) -> Optional[float]:
-    """Coerce a value to a number for ordered comparison.
-
-    Mcp-Param headers deliver integers and booleans as strings per the
-    MCP 2026-07-28 Value Encoding rules. This helper converts them back
-    so ordered comparisons (``>``, ``<``) work against the predicate
-    literal.
-
-    Args:
-        value: The resolved attribute value.
-
-    Returns:
-        The numeric value, or None when not coercible.
-    """
-    if _is_number(value):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _coerce_compare(left: Any, right: Any, op) -> bool:
-    """Compare two values with string-to-primitive coercion.
-
-    Booleans arrive as ``"true"``/``"false"`` strings; integers as
-    decimal strings. Compare after best-effort coercion so
-    ``args.flag == true`` matches a header value of ``"true"``.
-
-    Args:
-        left: The resolved attribute value.
-        right: The predicate literal.
-        op: The comparison callable.
-
-    Returns:
-        The comparison result.
-    """
-    if type(left) is type(right):
-        return op(left, right)
-    # Boolean coercion: "true"/"false" ↔ True/False
-    if isinstance(right, bool) and isinstance(left, str):
-        if left.lower() == "true":
-            return op(True, right)
-        if left.lower() == "false":
-            return op(False, right)
-    # Number coercion: "42" ↔ 42
-    left_num = _coerce_number(left)
-    right_num = _coerce_number(right)
-    if left_num is not None and right_num is not None:
-        return op(left_num, right_num)
-    # String comparison as fallback
-    return op(str(left), str(right))
-
-
-def evaluate(node: Node, attributes: Mapping[str, Any]) -> bool:
-    """Evaluate a parsed predicate node against the attributes.
-
-    Args:
-        node: Node produced by :func:`parse_predicate`.
-        attributes: Nested attribute mapping from the caller context.
-
-    Returns:
-        bool: The node's truth value. Missing attributes are false.
-    """
-    if isinstance(node, Truthiness):
-        value = _resolve(attributes, node.attr)
-        return value is not _MISSING and bool(value)
-    if isinstance(node, Exists):
-        return _resolve(attributes, node.attr) is not _MISSING
-    if isinstance(node, Compare):
-        value = _resolve(attributes, node.attr)
-        if value is _MISSING:
-            return False
-        if node.op == "==":
-            return _coerce_compare(value, node.literal, lambda a, b: a == b)
-        if node.op == "!=":
-            return _coerce_compare(value, node.literal, lambda a, b: a != b)
-        if not _is_number(node.literal):
-            return False
-        numeric = _coerce_number(value)
-        if numeric is None:
-            return False
-        if node.op == ">":
-            return numeric > node.literal
-        if node.op == ">=":
-            return numeric >= node.literal
-        if node.op == "<":
-            return numeric < node.literal
-        return numeric <= node.literal
-    if isinstance(node, Membership):
-        member = _resolve(attributes, node.attr)
-        collection = _resolve(attributes, node.collection_attr)
-        if member is _MISSING or not isinstance(collection, (list, set, tuple, frozenset)):
-            result = False
-        else:
-            result = member in collection
-        return not result if node.negate else result
-    if isinstance(node, All):
-        return all(evaluate(child, attributes) for child in node.children)
-    if isinstance(node, AnyOf):
-        return any(evaluate(child, attributes) for child in node.children)
-    raise PredicateSyntaxError(f"Unknown predicate node: {type(node).__name__}")
-
-
-class _Tokenizer:
-    """Tokenizer for the CPEX APL predicate subset."""
-
-    _SYMBOLS = ("==", "!=", ">=", "<=", ">", "<", "&", "|", "(", ")", ",")
-
-    def __init__(self, text: str) -> None:
-        """Tokenize the predicate text.
+    def __init__(self, source: str, runner: Any) -> None:
+        """Hold the source text and its compiled runner.
 
         Args:
-            text: Predicate string.
-
-        Raises:
-            PredicateSyntaxError: On any character outside the grammar.
+            source: The predicate expression text.
+            runner: Compiled celpy program runner.
         """
-        self.tokens: list[str] = []
-        index = 0
-        while index < len(text):
-            char = text[index]
-            if char.isspace():
-                index += 1
-                continue
-            matched = False
-            for symbol in self._SYMBOLS:
-                if text.startswith(symbol, index):
-                    self.tokens.append(symbol)
-                    index += len(symbol)
-                    matched = True
-                    break
-            if matched:
-                continue
-            if char == "'":
-                end = text.find("'", index + 1)
-                if end == -1:
-                    raise PredicateSyntaxError(f"Unterminated string literal at {index}")
-                self.tokens.append(text[index : end + 1])
-                index = end + 1
-                continue
-            if char.isdigit() or (char == "-" and index + 1 < len(text) and text[index + 1].isdigit()):
-                start = index
-                index += 1
-                while index < len(text) and (text[index].isdigit() or text[index] == "."):
-                    index += 1
-                self.tokens.append(text[start:index])
-                continue
-            if char.isalpha() or char == "_":
-                start = index
-                index += 1
-                while index < len(text) and (text[index].isalnum() or text[index] in "_."):
-                    index += 1
-                self.tokens.append(text[start:index])
-                continue
-            raise PredicateSyntaxError(f"Unexpected character {char!r} at {index}")
-        if not self.tokens:
-            raise PredicateSyntaxError("Empty predicate")
+        self.source = source
+        self._runner = runner
 
-
-class _Parser:
-    """Recursive-descent parser for the CPEX APL predicate subset."""
-
-    def __init__(self, tokens: Sequence[str]) -> None:
-        """Prepare the parser.
+    def evaluate(self, attributes: Mapping[str, Any]) -> bool:
+        """Evaluate against bound attribute families.
 
         Args:
-            tokens: Tokens from :class:`_Tokenizer`.
-        """
-        self._tokens = list(tokens)
-        self._index = 0
-
-    def parse(self) -> Node:
-        """Parse the token stream into a predicate node.
+            attributes: Nested attribute mapping.
 
         Returns:
-            The root node.
-
-        Raises:
-            PredicateSyntaxError: On malformed input or trailing tokens.
+            bool: The expression truth value. Evaluation errors are
+            false; a predicate that cannot run does not match.
         """
-        node = self._parse_or()
-        if self._index != len(self._tokens):
-            raise PredicateSyntaxError(f"Unexpected token {self._peek()!r}")
-        return node
-
-    def _peek(self) -> Optional[str]:
-        """Return the next token without consuming it."""
-        return self._tokens[self._index] if self._index < len(self._tokens) else None
-
-    def _next(self) -> str:
-        """Consume and return the next token."""
-        token = self._peek()
-        if token is None:
-            raise PredicateSyntaxError("Unexpected end of predicate")
-        self._index += 1
-        return token
-
-    def _parse_or(self) -> Node:
-        """Parse ``a | b`` alternation."""
-        children = [self._parse_and()]
-        while self._peek() == "|":
-            self._next()
-            children.append(self._parse_and())
-        return children[0] if len(children) == 1 else AnyOf(tuple(children))
-
-    def _parse_and(self) -> Node:
-        """Parse ``a & b`` conjunction."""
-        children = [self._parse_unary()]
-        while self._peek() == "&":
-            self._next()
-            children.append(self._parse_unary())
-        return children[0] if len(children) == 1 else All(tuple(children))
-
-    def _parse_unary(self) -> Node:
-        """Parse one atom, a parenthesized group, or a require call."""
-        token = self._peek()
-        if token == "(":
-            self._next()
-            node = self._parse_or()
-            if self._next() != ")":
-                raise PredicateSyntaxError("Expected )")
-            return node
-        if token == "require":
-            self._next()
-            if self._next() != "(":
-                raise PredicateSyntaxError("require needs (")
-            children = [self._parse_or()]
-            while self._peek() == ",":
-                self._next()
-                children.append(self._parse_or())
-            if self._next() != ")":
-                raise PredicateSyntaxError("Expected ) after require arguments")
-            return All(tuple(children))
-        return self._parse_atom()
-
-    def _parse_atom(self) -> Node:
-        """Parse truthiness, existence, comparison, or membership."""
-        head = self._next()
-        if head == "exists":
-            if self._next() != "(":
-                raise PredicateSyntaxError("exists needs (")
-            attr = self._next()
-            if self._next() != ")":
-                raise PredicateSyntaxError("Expected ) after exists argument")
-            self._validate_attr(attr)
-            return Exists(attr)
-        self._validate_attr(head)
-        token = self._peek()
-        if token in _VALID_OPERATORS:
-            self._next()
-            return Compare(head, token, self._literal())
-        if token == "not":
-            self._next()
-            if self._next() != "in":
-                raise PredicateSyntaxError("Expected 'in' after 'not'")
-            return self._membership(head, negate=True)
-        if token == "in":
-            self._next()
-            return self._membership(head, negate=False)
-        return Truthiness(head)
-
-    def _membership(self, attr: str, negate: bool) -> Membership:
-        """Parse the collection attribute of a membership check."""
-        collection = self._next()
-        self._validate_attr(collection)
-        return Membership(attr, collection, negate)
-
-    def _literal(self) -> Union[bool, float, int, str]:
-        """Parse a comparison literal."""
-        token = self._next()
-        if token in ("True", "False", "true", "false"):
-            return token in ("True", "true")
-        if token.startswith("'") and token.endswith("'") and len(token) >= 2:
-            return token[1:-1]
         try:
-            return int(token)
-        except ValueError:
-            pass
-        try:
-            return float(token)
-        except ValueError as exc:
-            raise PredicateSyntaxError(f"Invalid literal {token!r}") from exc
-
-    @staticmethod
-    def _validate_attr(attr: str) -> None:
-        """Validate one attribute path token.
-
-        Args:
-            attr: Dotted attribute path.
-
-        Raises:
-            PredicateSyntaxError: When the path is malformed or too deep.
-        """
-        segments = attr.split(".")
-        if len(segments) > _MAX_ATTR_DEPTH:
-            raise PredicateSyntaxError(f"Attribute path too deep: {attr}")
-        for segment in segments:
-            if not segment or not (segment[0].isalpha() or segment[0] == "_"):
-                raise PredicateSyntaxError(f"Invalid attribute path: {attr}")
+            activation = _adapt(attributes)
+            return bool(self._runner.evaluate(activation))
+        except (CELEvalError, CELParseError, KeyError, TypeError, ValueError):
+            return False
 
 
-def parse_predicate(predicate: str) -> Node:
-    """Parse a predicate string into its node tree.
+def _adapt(value: Any) -> Any:
+    """Convert plain Python containers to celtypes recursively.
 
     Args:
-        predicate: Predicate in the CPEX APL subset.
+        value: A dict, list, or scalar from the attribute mapping.
 
     Returns:
-        The root node.
+        The value expressed with celtypes containers.
+    """
+    if isinstance(value, Mapping):
+        return celtypes.MapType({str(k): _adapt(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return celtypes.ListType([_adapt(v) for v in value])
+    return value
+
+
+def _canary(runner: Any) -> None:
+    """Reject expressions that cannot run against empty families.
+
+    Args:
+        runner: Compiled celpy program runner.
 
     Raises:
-        PredicateSyntaxError: On any input outside the grammar.
+        PredicateSyntaxError: When the canary reports an undeclared
+        reference, which means the expression names a variable the
+        gateway never binds.
     """
-    return _Parser(_Tokenizer(predicate).tokens).parse()
+    try:
+        runner.evaluate(dict(_CANARY_ACTIVATION))
+    except (CELEvalError, CELParseError, KeyError, TypeError, ValueError) as exc:
+        message = str(exc)
+        if "undeclared reference to" in message:
+            raise PredicateSyntaxError(f"Predicate fails validation: {message.splitlines()[0]}") from exc
+
+
+def parse_predicate(predicate: str) -> CelPredicate:
+    """Compile a CEL predicate for the catalog attribute families.
+
+    Args:
+        predicate: CEL expression over the bound families.
+
+    Returns:
+        CelPredicate: The compiled predicate.
+
+    Raises:
+        PredicateSyntaxError: On empty, oversized, unparsable, or
+        canary-failing input.
+    """
+    if not predicate or not predicate.strip():
+        raise PredicateSyntaxError("Empty predicate")
+    if len(predicate) > _MAX_PREDICATE_LENGTH:
+        raise PredicateSyntaxError(f"Predicate longer than {_MAX_PREDICATE_LENGTH} characters")
+    if ".contains(" in predicate:
+        raise PredicateSyntaxError("contains is unsupported: use matches('.*<text>.*') instead")
+    cached = _COMPILE_CACHE.get(predicate)
+    if cached is not None:
+        return cached
+    try:
+        program = _ENVIRONMENT.compile(predicate)
+        runner = _ENVIRONMENT.program(program)
+    except (CELParseError, SyntaxError, ValueError, TypeError) as exc:
+        raise PredicateSyntaxError(f"Predicate does not parse as CEL: {str(exc).splitlines()[0]}") from exc
+    _canary(runner)
+    compiled = CelPredicate(predicate, runner)
+    if len(_COMPILE_CACHE) >= _MAX_COMPILE_CACHE:
+        _COMPILE_CACHE.clear()
+    _COMPILE_CACHE[predicate] = compiled
+    return compiled
 
 
 def evaluate_predicate(predicate: str, attributes: Mapping[str, Any]) -> bool:
-    """Parse and evaluate a predicate against the caller attributes.
+    """Compile and evaluate a predicate against the attributes.
 
     Args:
-        predicate: Predicate in the CPEX APL subset.
+        predicate: CEL expression over the bound families.
         attributes: Nested attribute mapping built from the user context.
 
     Returns:
-        bool: The predicate truth value. Missing attributes are false.
+        bool: The truth value. Missing attributes and evaluation
+        errors are false.
 
     Raises:
-        PredicateSyntaxError: On any input outside the grammar.
+        PredicateSyntaxError: On any input outside the subset.
     """
-    return evaluate(parse_predicate(predicate), attributes)
+    return parse_predicate(predicate).evaluate(attributes)
+
+
+def collect_args_references(predicate: str) -> set[str]:
+    """Collect the ``args.<name>`` references in a predicate.
+
+    The header annotator uses this to learn which tool parameters a
+    rule's predicate reads. String literals are stripped first so a
+    quoted ``'args.x'`` never counts as a reference.
+
+    Args:
+        predicate: CEL expression over the bound families.
+
+    Returns:
+        The referenced parameter names.
+    """
+    try:
+        parse_predicate(predicate)
+    except PredicateSyntaxError:
+        return set()
+    names = set(_ARGS_INDEX.findall(predicate))
+    stripped = _STRING_LITERAL.sub("''", predicate)
+    names |= set(_ARGS_MEMBER.findall(stripped))
+    return names
