@@ -1444,7 +1444,7 @@ async def test_check_server_availability_outer_exception(service):
     with patch.object(service, "load_catalog", AsyncMock(side_effect=RuntimeError("catalog fail"))):
         result = await service.check_server_availability("1")
     assert result.is_available is False
-    assert "catalog fail" in (result.error or "")
+    assert result.error.startswith("An unexpected error occurred")
 
 
 @pytest.mark.asyncio
@@ -1454,7 +1454,7 @@ async def test_bulk_register_breaks_on_exception_when_not_skipping_errors(servic
     with patch.object(service, "register_catalog_server", AsyncMock(side_effect=Exception("boom"))):
         db = MagicMock()
         result = await service.bulk_register_servers(fake_request, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
-    assert result.failed and result.failed[0]["error"] == "boom"
+    assert result.failed and result.failed[0]["error"].startswith("An unexpected error occurred")
 
 
 # ---------- Deny-path regression tests for catalog registration scope ----------

@@ -364,8 +364,10 @@ async def test_sqlite_async_gateway_update_bad_url_defers_failure_to_worker(life
     assert retry_gateway["reachable"] is False
     assert _response_value(retry_gateway, "registration_attempts") == 1
     assert _response_value(retry_gateway, "next_retry_at") is not None
-    assert _response_value(retry_gateway, "last_error") == failure_message
-    assert _response_value(retry_gateway, "status_message") == failure_message
+    assert _response_value(retry_gateway, "last_error").startswith("An unexpected error occurred")
+    assert "example.com" not in _response_value(retry_gateway, "last_error")
+    assert _response_value(retry_gateway, "status_message").startswith("An unexpected error occurred")
+    assert "example.com" not in _response_value(retry_gateway, "status_message")
 
 
 @pytest.mark.asyncio
@@ -389,7 +391,8 @@ async def test_sqlite_async_gateway_lifecycle_retry_and_delete_stop_flow(lifecyc
     pending_gateway = pending_response.json()
     assert pending_gateway["status"] == "pending"
     assert _response_value(pending_gateway, "registration_attempts") == 1
-    assert _response_value(pending_gateway, "last_error") == "Connection refused: http://example.com/retry"
+    assert _response_value(pending_gateway, "last_error").startswith("An unexpected error occurred")
+    assert "example.com" not in _response_value(pending_gateway, "last_error")
     next_retry_at = _response_value(pending_gateway, "next_retry_at")
     assert next_retry_at is not None
     parsed_next_retry = datetime.fromisoformat(next_retry_at.replace("Z", "+00:00"))

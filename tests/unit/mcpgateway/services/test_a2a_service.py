@@ -5506,7 +5506,7 @@ class TestCrossGatewayRoutingCoverage:
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
         monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
-        with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*Network error"):
+        with pytest.raises(A2AAgentError, match="Cross-gateway routing failed: An unexpected error occurred"):
             await service._invoke_remote_agent(
                 uaid=uaid,
                 parameters={"test": "data"},

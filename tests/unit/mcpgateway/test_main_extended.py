@@ -7810,11 +7810,10 @@ class TestRpcHandling:
             response = await handle_internal_mcp_completion_complete(request)
 
         assert response.status_code == 500
-        assert json.loads(response.body.decode()) == {
-            "code": -32000,
-            "message": "Internal error",
-            "data": "boom",
-        }
+        body = json.loads(response.body.decode())
+        assert body["code"] == -32000
+        assert body["message"] == "Internal error"
+        assert body["data"].startswith("An unexpected error occurred")
 
     async def test_handle_internal_mcp_completion_complete_scope_and_cleanup_variants(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-3", "method": "completion/complete", "params": {}})
@@ -7933,11 +7932,10 @@ class TestRpcHandling:
             response = await handle_internal_mcp_sampling_create_message(request)
 
         assert response.status_code == 500
-        assert json.loads(response.body.decode()) == {
-            "code": -32000,
-            "message": "Internal error",
-            "data": "sampling boom",
-        }
+        body = json.loads(response.body.decode())
+        assert body["code"] == -32000
+        assert body["message"] == "Internal error"
+        assert body["data"].startswith("An unexpected error occurred")
 
     async def test_handle_internal_mcp_sampling_create_message_scope_and_jsonrpc_variants(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "sampling-3", "method": "sampling/createMessage", "params": []})
@@ -8709,7 +8707,7 @@ class TestRpcHandling:
         payload = json.loads(response.body.decode())
 
         assert payload["error"]["code"] == -32000
-        assert payload["error"]["data"] == "init boom"
+        assert payload["error"]["data"].startswith("An unexpected error occurred")
 
     async def test_handle_internal_mcp_initialize_generates_id_and_returns_jsonrpc_error(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "method": "initialize", "params": {}})
@@ -8785,7 +8783,7 @@ class TestRpcHandling:
         monkeypatch.setattr("mcpgateway.main.logging_service.notify", AsyncMock(side_effect=RuntimeError("notify boom")))
 
         response = await handle_internal_mcp_notifications_initialized(request)
-        assert json.loads(response.body.decode())["error"]["data"] == "notify boom"
+        assert json.loads(response.body.decode())["error"]["data"].startswith("An unexpected error occurred")
 
     async def test_handle_internal_mcp_notifications_message_accepts_non_dict_params(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "n3", "method": "notifications/message", "params": []})
@@ -8827,7 +8825,7 @@ class TestRpcHandling:
 
         response = await handle_internal_mcp_notifications_cancelled(request)
         payload = json.loads(response.body.decode())
-        assert payload["error"]["data"] == "cancel notify boom"
+        assert payload["error"]["data"].startswith("An unexpected error occurred")
 
     async def test_handle_internal_mcp_resources_list_server_scope_admin_unrestricted(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "res-list", "method": "resources/list", "params": {}})
@@ -9386,7 +9384,7 @@ class TestRpcHandling:
         monkeypatch.setattr("mcpgateway.main.logging_service.notify", AsyncMock(side_effect=RuntimeError("message boom")))
 
         response = await handle_internal_mcp_notifications_message(request)
-        assert json.loads(response.body.decode())["error"]["data"] == "message boom"
+        assert json.loads(response.body.decode())["error"]["data"].startswith("An unexpected error occurred")
 
     async def test_handle_internal_mcp_notifications_cancelled_re_raises_http_exception(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "n6", "method": "notifications/cancelled", "params": {"requestId": "req-1"}})
@@ -12962,19 +12960,30 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "skip_ssl_verify", True, raising=False)
         main_mod.log_security_recommendations({"secure_secrets": False, "auth_enabled": False})
 
-    async def test_request_validation_exception_handler_production_suppression(self, monkeypatch):
+    async def test_request_validation_exception_handler_strips_input_and_url(self):
         # First-Party
         import mcpgateway.main as main_mod
 
-        monkeypatch.setattr(main_mod, "should_expose_error_details", lambda: False)
         request = MagicMock(spec=Request)
-        request.url = SimpleNamespace(path="/tools")
+        request.url = SimpleNamespace(path="/servers")
         exc = MagicMock()
-        exc.errors.return_value = [{"loc": ["body"], "msg": "bad input", "ctx": {}, "type": "value_error"}]
+        exc.errors.return_value = [
+            {
+                "loc": ("body", "name"),
+                "msg": "Input should be a valid string",
+                "type": "string_type",
+                "input": "secret-value",
+                "url": "https://errors.pydantic.dev/2.13/v/string_type",
+                "ctx": {"error": ValueError("internal detail"), "min_length": 3},
+            }
+        ]
 
         response = await main_mod.request_validation_exception_handler(request, exc)
         assert response.status_code == 422
-        assert json.loads(response.body.decode()) == {"detail": "An error occurred, please try again."}
+        body = json.loads(response.body.decode())
+        assert body == {"detail": [{"type": "string_type", "loc": ["body", "name"], "msg": "Input should be a valid string", "ctx": {"min_length": 3}}]}
+        assert "secret-value" not in response.body.decode()
+        assert "pydantic.dev" not in response.body.decode()
 
     async def test_request_validation_exception_handler_ctx_non_dict(self):
         # First-Party
