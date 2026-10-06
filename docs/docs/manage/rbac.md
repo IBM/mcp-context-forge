@@ -724,7 +724,7 @@ to deny: the provider never fails open.
 
 ### Editing Rules
 
-The `rbac_rules` catalog holds end-user-editable rules in the CPEX APL
+The `rbac_rules` catalog holds end-user-editable rules in the rule
 taxonomy: capability type (`tool`, `resource`, `prompt`, `server`,
 `gateway`, `a2a_agent`, `route`), optional capability id, optional
 permission narrow, phase, predicate, and `allow` or `deny` effect.
@@ -742,11 +742,14 @@ POST /rbac/rules
 }
 ```
 
-Predicate grammar (CPEX APL subset): truthiness (`role.viewer`), the
-comparison operators `==`, `!=`, `>`, `>=`, `<`, `<=` on attribute and
-literal, set membership (`subject.id in allowed`), `exists(...)`, and
-grouping with `&` and `|`. The API rejects paths deeper than 2 segments
-with 422. Missing attributes evaluate false.
+Predicates are CEL expressions over the gateway's attribute families
+(`subject.id`, `authenticated`, `token.is_admin`, `role.<name>`,
+`team.<id>`, `args.<name>`), matching OpenFGA condition syntax:
+comparisons, `&&`, `||`, `in`, `startsWith`, `endsWith`, `matches`,
+and `size`. The API rejects unknown top-level identifiers with 422.
+Missing attributes evaluate false. Header-sourced numeric values
+arrive as strings: compare with `int(args.limit) > 100`. The
+`contains` call is rejected; use `matches('.*text.*')` instead.
 
 The seeded system rows mirror the built-in role matrix with one row per
 role and permission, so an unedited catalog changes no decision. A
