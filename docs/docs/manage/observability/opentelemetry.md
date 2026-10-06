@@ -333,6 +333,17 @@ Input/output capture is allowlist-based. ContextForge does not capture those pay
 | `OTEL_BSP_MAX_QUEUE_SIZE` | Max queued spans | `2048` |
 | `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` | Batch size | `512` |
 | `OTEL_BSP_SCHEDULE_DELAY` | Export interval (ms) | `5000` |
+| `OTEL_SYSTEM_TRACES_ENABLED` | Export background and platform trace roots | `false` |
+| `OTEL_HTTPX_INSTRUMENTATION_ENABLED` | Instrument outbound HTTPX requests | `false` |
+| `OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED` | Instrument SQLAlchemy queries | `false` |
+| `OTEL_REDIS_INSTRUMENTATION_ENABLED` | Instrument Redis commands | `false` |
+
+ContextForge exports request-rooted traces by default. A request trace starts with a `SERVER` span and retains its
+child spans. Background `INTERNAL` and `CLIENT` roots are dropped before batch queueing. This prevents health checks,
+Redis heartbeats, and background database work from entering tenant-aware exporters without tenant context.
+
+Set `OTEL_SYSTEM_TRACES_ENABLED=true` only when the configured exporter accepts tenantless platform traces. Do not set
+a tenant identifier on the process-wide OpenTelemetry resource. One ContextForge process can serve multiple tenants.
 
 ## Understanding Traces
 
