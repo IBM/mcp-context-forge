@@ -1,0 +1,9 @@
+# Removed deprecations registry.
+# Rendered by table-reader in docs/docs/deprecations.md.
+- Interface: "stdio wrapper (`mcpgateway/wrapper.py`, `crates/wrapper/`)"
+  Removed: "Next release"
+  Notes: >-
+    Removed without a deprecation window. Streamable HTTP clients connect to
+    `/servers/<server_id>/mcp/` directly. stdio clients use the FastMCP
+    bridge: `uvx fastmcp-remote <gateway-url>`. See
+    [client configuration](using/clients/index.md).
