@@ -25,6 +25,7 @@ sync and the provider.
 # Standard
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
@@ -38,7 +39,6 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailTeamMember, Permissions, RbacRule, Role, SessionLocal, UserRole
 from mcpgateway.services.openfga_client import OpenFgaClient, OpenFgaUnavailable
 from mcpgateway.services.rule_catalog_service import capability_for_permission
-from mcpgateway.services.rule_predicate import Truthiness, parse_predicate
 from mcpgateway.utils.create_slug import slugify
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,9 @@ def relation_for(permission: str) -> str:
     return permission.replace(":", "_").replace(".", "_")
 
 
+_PLAIN_FAMILY_RE = re.compile(r"^(role|team)\.([A-Za-z_][A-Za-z0-9_]*)$")
+
+
 def build_type_definitions() -> list[dict[str, Any]]:
     """Build the authorization model from the permission constants.
 
@@ -159,27 +162,22 @@ def build_type_definitions() -> list[dict[str, Any]]:
 
 
 def _simple_subject(predicate: str) -> str | None:
-    """Map a plain truthiness predicate to a tuple subject.
+    """Map a plain family-truthiness predicate to a tuple subject.
 
     Args:
         predicate: Predicate string from the catalog.
 
     Returns:
         A subject such as ``role:dev#assignee`` or ``team:eng#member``,
-        or None when the predicate is richer than plain truthiness.
+        or None when the predicate is richer than a bare family truth.
     """
-    try:
-        node = parse_predicate(predicate)
-    except ValueError:
+    match = _PLAIN_FAMILY_RE.fullmatch(predicate.strip())
+    if not match:
         return None
-    if not isinstance(node, Truthiness):
-        return None
-    kind, _, name = node.attr.partition(".")
-    if kind == "role" and name:
+    kind, name = match.group(1), match.group(2)
+    if kind == "role":
         return f"role:{name}#assignee"
-    if kind == "team" and name:
-        return f"team:{name}#member"
-    return None
+    return f"team:{name}#member"
 
 
 class OpenFgaSyncService:
@@ -263,14 +261,18 @@ class OpenFgaSyncService:
         desired = self.desired_tuples()
         stored_raw = await self._client.read_tuples()
         stored: dict[tuple[str, str, str], Optional[dict[str, Any]]] = {}
-        for t in stored_raw:
-            if not isinstance(t, dict) or not all(k in t for k in ("user", "relation", "object")):
+        for entry in stored_raw:
+            if not isinstance(entry, dict):
                 continue
-            condition = t.get("condition")
+            key = entry.get("key", entry)
+            if not isinstance(key, dict) or not all(k in key for k in ("user", "relation", "object")):
+                continue
+            # v1.8.x returns the condition nested inside the key object.
+            condition = entry.get("condition") or key.get("condition")
             if isinstance(condition, dict) and condition.get("name"):
-                stored[(t["user"], t["relation"], t["object"])] = {"name": condition["name"], "context": condition.get("context", {})}
+                stored[(key["user"], key["relation"], key["object"])] = {"name": condition["name"], "context": condition.get("context", {})}
             else:
-                stored[(t["user"], t["relation"], t["object"])] = None
+                stored[(key["user"], key["relation"], key["object"])] = None
         writes = []
         for key in sorted(set(desired) - set(stored)):
             entry: dict[str, Any] = {"user": key[0], "relation": key[1], "object": key[2]}
@@ -288,6 +290,9 @@ class OpenFgaSyncService:
             deletes.append({"user": key[0], "relation": key[1], "object": key[2]})
         await self._client.write_tuples(writes, deletes)
         if writes or deletes:
+            from mcpgateway.services.openfga_provider import clear_decision_cache  # pylint: disable=import-outside-toplevel
+
+            clear_decision_cache()
             logger.info("OpenFGA resync applied: writes=%d deletes=%d", len(writes), len(deletes))
         return len(writes) + len(deletes)
 
@@ -430,6 +435,25 @@ def build_contextual_domain_tuples(
         return tuples
 
     # Fallback: read email_team_members and user_roles from the database.
+    try:
+        return _build_db_fallback_tuples(db, user_email, admin_role_names)
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.debug("Contextual domain tuple fallback failed", exc_info=True)
+        return tuples
+
+
+def _build_db_fallback_tuples(db: Any, user_email: str, admin_role_names: set[str]) -> list[dict[str, str]]:
+    """Build domain tuples from the database fallback.
+
+    Args:
+        db: Database session.
+        user_email: The principal identity.
+        admin_role_names: Role names that elevate to domain admin.
+
+    Returns:
+        Contextual tuples from email_team_members and user_roles.
+    """
+    tuples: list[dict[str, str]] = []
     from mcpgateway.db import EmailTeam, EmailTeamMember, UserRole  # pylint: disable=import-outside-toplevel
 
     teams = {t.id: domain_object_id(t.name) for t in db.execute(select(EmailTeam)).scalars()}
