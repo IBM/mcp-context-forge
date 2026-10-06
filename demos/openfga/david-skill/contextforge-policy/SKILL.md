@@ -88,7 +88,8 @@ Fields:
   `a2a_agent`, or `route`.
 - `capability_id`: the entity name or id (omit for type-wide rules).
 - `permission`: narrow to one permission, or omit for all.
-- `predicate`: CPEX APL subset — see below. Missing attributes are false.
+- `predicate`: CEL expression — same syntax as OpenFGA condition
+  expressions. Missing attributes are false.
 - `effect`: `allow` or `deny`. A matching deny blocks unless the caller is
   a platform admin; a matching allow grants past the role model.
 - `priority`: lower runs first (default 1000).
@@ -102,11 +103,17 @@ arguments as `args.<name>`:
 args.timezone == 'UTC'
 args.message == 'secret'
 args.limit > 100
+args.timezone.startsWith('America/')
+subject.id in ['alice@demo.example.com', 'carol@demo.example.com']
 ```
 
-The gateway receives argument values from `Mcp-Param-<name>` request
-headers (SEP-2243). Only parameters annotated as headers reach the
-predicate — see forced params below. Check usable names with
+Predicates are CEL, so `&&`, `||`, `startsWith`, `endsWith`, `matches`,
+`size`, and `in` all work. The gateway evaluates the call's body
+arguments and any `Mcp-Param-<name>` mirrored headers (SEP-2243), so a
+rule fires even when the client does not mirror headers. Numeric header
+values arrive as strings: compare with `int(args.limit) > 100`. The
+`contains` function is rejected by the API; use
+`args.x.matches('.*text.*')` instead. Check usable names with
 `GET /rbac/rules/tool-attributes`.
 
 ## Expiring rules
