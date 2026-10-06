@@ -67,8 +67,8 @@ def ensure_federation_gateway(client: httpx.Client, headers: dict[str, str]) -> 
     """Register the fast-time gateway and return its id."""
     gateways = client.get("/gateways", headers=headers).json()
     for row in gateways:
-        if row.get("name") == GATEWAY_NAME or row.get("url") == FAST_TIME_UPSTREAM:
-            log(f"federation gateway present: {row['name']} ({row['id']})")
+        if row.get("name") == GATEWAY_NAME:
+            log(f"federation gateway present: {GATEWAY_NAME} ({row['id']})")
             return str(row["id"])
     response = client.post("/gateways", headers=headers, json={"name": GATEWAY_NAME, "url": FAST_TIME_UPSTREAM, "transport": "STREAMABLEHTTP"})
     if response.status_code not in (200, 201):
@@ -95,8 +95,16 @@ def ensure_virtual_server(client: httpx.Client, headers: dict[str, str], tool_id
     servers = client.get("/servers", headers=headers).json()
     for row in servers:
         if row.get("name") == SERVER_NAME:
-            log(f"virtual server present: {SERVER_NAME} ({row['id']})")
-            return str(row["id"])
+            server_id = str(row["id"])
+            response = client.put(
+                f"/servers/{server_id}",
+                headers=headers,
+                json={"name": SERVER_NAME, "description": "OpenFGA demo: fast-time tools behind the policy engine", "associated_tools": tool_ids},
+            )
+            if response.status_code not in (200, 201):
+                raise SystemExit(f"virtual server tool refresh failed: {response.status_code} {response.text[:200]}")
+            log(f"virtual server present: {SERVER_NAME} ({server_id}), tools refreshed ({len(tool_ids)})")
+            return server_id
     response = client.post(
         "/servers",
         headers=headers,
