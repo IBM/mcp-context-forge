@@ -55,6 +55,7 @@ class TestObservability:
             "LANGFUSE_PUBLIC_KEY",
             "LANGFUSE_SECRET_KEY",
             "OTEL_COPY_RESOURCE_ATTRS_TO_SPANS",
+            "OTEL_SYSTEM_TRACES_ENABLED",
         ]
         for var in env_vars:
             os.environ.pop(var, None)
