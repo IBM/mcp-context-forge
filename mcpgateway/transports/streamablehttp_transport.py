@@ -50,9 +50,9 @@ from fastapi.security.utils import get_authorization_scheme_param
 import httpx
 import jwt
 from mcp.server.lowlevel import Server
-from mcp.shared.exceptions import MCPError
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
@@ -1774,9 +1774,7 @@ def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[Pl
 # via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
 # argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
 # so the gateway's existing tool_service.py schema validation is the only path.
-async def call_tool(
-    name: str, arguments: dict
-) -> Union[
+async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
