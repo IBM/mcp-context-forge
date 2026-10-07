@@ -86,6 +86,7 @@ def live_stack(tmp_path_factory, request):
 
     Yield admin bearer token and echo log path. Stop processes afterwards.
     """
+    pytest.importorskip("fastmcp")
     for port in (4444, 8001, 8002):
         if not _port_free(port):
             pytest.skip(f"port {port} is in use; cannot run live vault E2E")
@@ -103,11 +104,11 @@ def live_stack(tmp_path_factory, request):
         procs.append(subprocess.Popen([PYBIN, "plugins/vault/echo_mcp.py"], cwd=REPO, stdout=logs[0], stderr=subprocess.STDOUT))
         procs.append(subprocess.Popen([PYBIN, "plugins/vault/echo_a2a.py"], cwd=REPO, stdout=logs[1], stderr=subprocess.STDOUT))
         if not _wait_http("http://localhost:8001/sse"):
-            pytest.skip("echo_mcp backend did not become ready")
+            pytest.fail(f"echo_mcp backend did not become ready (see {echo_mcp_log})")
         if not _wait_http("http://localhost:8002/health"):
-            pytest.skip("echo_a2a backend did not become ready")
+            pytest.fail(f"echo_a2a backend did not become ready (see {echo_a2a_log})")
 
-        # Gateway with E2E env: plugin on both hooks + sensitive header passthrough
+        # Gateway with E2E env: plugin on both hooks and explicit caller policy.
         env = dict(os.environ)
         env.update(
             {
@@ -133,15 +134,21 @@ def live_stack(tmp_path_factory, request):
 
         token = _mint_jwt(env)
         if not _wait_http(f"{BASE_URL}/health", headers={"Authorization": f"Bearer {token}"}):
-            pytest.skip(f"gateway did not become ready (see {gateway_log})")
+            pytest.fail(f"gateway did not become ready (see {gateway_log})")
 
-        yield {"token": token, "echo_mcp_log": echo_mcp_log}
+        yield {"token": token, "echo_mcp_log": echo_mcp_log, "echo_a2a_log": echo_a2a_log, "sensitive_passthrough": getattr(request, "param", True)}
     finally:
         for p in procs:
             try:
                 p.terminate()
             except Exception:
                 pass
+        for p in procs:
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
         for f in logs:
             try:
                 f.close()
@@ -227,7 +234,7 @@ def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
                     "endpoint_url": "http://127.0.0.1:8002/invoke",
                     "agent_type": "custom",  # plain-JSON POST, no jsonrpc envelope
                     "tags": [SYSTEM_TAG],
-                    "passthrough_headers": ["X-Vault-Tokens", "Authorization"],
+                    "passthrough_headers": ["X-Vault-Tokens"] + (["Authorization"] if live_stack["sensitive_passthrough"] else []),
                 },
                 "visibility": "public",
             },
@@ -241,6 +248,10 @@ def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
         )
         assert r.status_code == 200, r.text
         received = _find_received_header_pairs(r.json())
+        outbound_count = live_stack["echo_a2a_log"].read_text().count("POST /invoke")
+        denied = client.post(f"/a2a/{agent_name}/invoke", json={"parameters": {"message": "denied"}})
+        assert denied.status_code == 401, denied.text
+        assert live_stack["echo_a2a_log"].read_text().count("POST /invoke") == outbound_count
 
     assert received is not None, "echo_a2a did not reflect received headers"
     _assert_plugin_headers(received, A2A_TOKEN)
@@ -271,7 +282,7 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
                     "endpoint_url": "http://127.0.0.1:8002/invoke",
                     "agent_type": "custom",
                     "tags": [SYSTEM_TAG],  # Tag on the A2A agent
-                    "passthrough_headers": ["X-Vault-Tokens", "Authorization"],
+                    "passthrough_headers": ["X-Vault-Tokens"] + (["Authorization"] if live_stack["sensitive_passthrough"] else []),
                 },
                 "visibility": "public",
             },
@@ -338,6 +349,15 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
         )
         assert r.status_code == 200, r.text
         result = r.json()
+        outbound_count = live_stack["echo_a2a_log"].read_text().count("POST /invoke")
+        denied = client.post(
+            mcp_path,
+            params=sess,
+            headers={"Accept": MCP_ACCEPT},
+            json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": a2a_tool["name"], "arguments": {"query": "denied"}}},
+        )
+        assert denied.status_code == 401, denied.text
+        assert live_stack["echo_a2a_log"].read_text().count("POST /invoke") == outbound_count
 
         # Extract the A2A response from MCP tool result
         assert "result" in result, f"No result in MCP response: {result}"

@@ -188,6 +188,9 @@ def stamp_hop(headers: MutableMapping[str, str], hop_count: int) -> None:
     the actual value small; this is defensive insurance only.
     """
     next_hop = hop_count + 1 if hop_count < _HOP_MAX else _HOP_MAX
+    for name in list(headers):
+        if name.lower() == HOP_HEADER.lower():
+            del headers[name]
     headers[HOP_HEADER] = str(next_hop)
 
 

@@ -333,7 +333,7 @@ class TestA2AInvokePreHook:
         modified = SimpleNamespace(
             modified_payload=SimpleNamespace(
                 parameters=None,
-                headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123", "authorization": "Bearer plugin"}),
+                headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123", "authorization": "Bearer plugin", "x-contextforge-uaid-hop": "99"}),
             ),
             retry_delay_ms=0,
             metadata=None,
@@ -367,6 +367,7 @@ class TestA2AInvokePreHook:
         assert headers.get("X-Custom") == "value"
         assert headers.get("X-Request-ID") == "plugin-req-123"
         assert {name.lower(): value for name, value in headers.items()}["authorization"] == "Bearer plugin"
+        assert [(name, value) for name, value in headers.items() if name.lower() == "x-contextforge-uaid-hop"] == [("X-Contextforge-UAID-Hop", "1")]
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
