@@ -4432,7 +4432,7 @@ class TestSchemaRegexReDoS:
             # adds more round trips to this path.
             assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
             print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
-            assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
+            assert result.is_error, f"expected the hostile argument to be rejected, got: {result}"
             text = result.content[0].text if result.content else ""
             assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
 
@@ -4540,6 +4540,10 @@ async def test_downstream_catalog_pagination(jwt_token: str, method: str, result
                         page = await list_method(params=PaginatedRequestParams(cursor=cursor))
                         items = getattr(page, result_key)
                         assert len(items) <= page_size
+                        if method == "resources/list":
+                            for item in items:
+                                if item.name.startswith(prefix):
+                                    assert item.size == len("Pagination fixture")
                         found.extend(item.name for item in items if item.name.startswith(prefix))
                         pages += 1
                         next_cursor = page.next_cursor

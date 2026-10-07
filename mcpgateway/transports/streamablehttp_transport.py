@@ -360,12 +360,14 @@ def _tools_for_client(tools: Iterable[Any]) -> List[types.Tool]:
 
 def _to_mcp_resource(resource: Any) -> types.Resource:
     """Convert an internal resource record to the MCP transport model."""
+    size = getattr(resource, "size", None)
     payload: Dict[str, Any] = {
         "uri": resource.uri,
         "name": resource.name,
         "title": _safe_str_attr(resource, "title"),
         "description": resource.description,
         "mimeType": resource.mime_type,
+        "size": size if isinstance(size, int) else None,
     }
     apply_resource_meta(payload, getattr(resource, "extension_metadata", None))
     return types.Resource.model_validate({key: value for key, value in payload.items() if value is not None})

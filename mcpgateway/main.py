@@ -67,6 +67,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
+from starlette.types import Message
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -223,6 +224,8 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
+    _REJECT as _MCP_SERVER_REJECT,
+    _SERVER_ID_RE,
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
     MCPOriginHostGate,
@@ -658,9 +661,9 @@ async def _run_internal_mcp_authentication(
         client_ip=client_ip,
     )
     request = starletteRequest(scope)
-    sent_messages: list[dict[str, Any]] = []
+    sent_messages: list[Message] = []
 
-    async def _receive() -> dict[str, Any]:
+    async def _receive() -> Message:
         """Return an empty request body for the synthetic auth probe.
 
         Returns:
@@ -668,7 +671,7 @@ async def _run_internal_mcp_authentication(
         """
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    async def _send(message: dict[str, Any]) -> None:
+    async def _send(message: Message) -> None:
         """Capture ASGI response messages emitted by auth middleware.
 
         Args:
@@ -704,6 +707,9 @@ async def _run_internal_mcp_authentication(
         """
         auth_ok = await streamable_http_auth(scope, _receive, _send)
         if auth_ok:
+            validated = await SessionManagerWrapper._validate_server_id(_SERVER_ID_RE.search(path), path, scope, _receive, _send)  # pylint: disable=protected-access
+            if validated is _MCP_SERVER_REJECT:
+                return _captured_response()
             return ORJSONResponse(status_code=200, content={"authenticated": True})
         return _captured_response()
 
@@ -11141,6 +11147,8 @@ async def handle_internal_mcp_tools_call(request: Request):
             db.close()
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
+    except ToolInvocationError as exc:
+        return {"jsonrpc": "2.0", "result": {"content": [{"type": "text", "text": str(exc)}], "isError": True}, "id": req_id}
     except PluginViolationError as exc:
         # Use violation's codes if present, otherwise JSON-RPC defaults
         error_code = -32602  # Invalid params (JSON-RPC standard)
