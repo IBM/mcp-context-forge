@@ -1324,6 +1324,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            requires_user_credentials=gateway_data.get("requires_user_credentials", False),
             tags=gateway_data.get("tags", []),
             **auth_kwargs,
         )
@@ -1388,6 +1389,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            requires_user_credentials=gateway_data.get("requires_user_credentials") if "requires_user_credentials" in gateway_data else None,
             tags=gateway_data.get("tags"),
             **auth_kwargs,
         )

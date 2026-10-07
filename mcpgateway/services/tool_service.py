@@ -1410,6 +1410,7 @@ class ToolService(BaseService):
                 "capabilities": gateway.capabilities or {},
                 "passthrough_headers": gateway.passthrough_headers or [],
                 "auth_type": gateway.auth_type,
+                "requires_user_credentials": getattr(gateway, "requires_user_credentials", False),
                 "ca_certificate": getattr(gateway, "ca_certificate", None),
                 "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
                 "enabled": bool(gateway.enabled),
@@ -4539,6 +4540,7 @@ class ToolService(BaseService):
         gateway_id_str: str,
         gateway_name: str,
         jwt_teams_claim: Optional[List[str]] = None,
+        requires_user_credentials: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """Return per-user Vault auth headers for non-OAuth gateways, or None.
 
@@ -4555,11 +4557,12 @@ class ToolService(BaseService):
             gateway_id_str: Gateway UUID string.
             gateway_name: Gateway display name (for log messages only).
             jwt_teams_claim: Raw JWT teams claim for Vault path hint on admin bypass.
+            requires_user_credentials: Whether this gateway resolves per-user credentials.
 
         Returns:
             Dict of ``{header: value}`` pairs if found, otherwise ``None``.
         """
-        if not app_user_email or settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
+        if not requires_user_credentials or not app_user_email or settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
             return None
         try:
             from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
@@ -4659,6 +4662,7 @@ class ToolService(BaseService):
                     "name": gateway.name,
                     "url": gateway.url,
                     "auth_type": gateway.auth_type,
+                    "requires_user_credentials": getattr(gateway, "requires_user_credentials", False),
                     "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
                     "oauth_config": gateway.oauth_config,
@@ -4818,10 +4822,12 @@ class ToolService(BaseService):
         gateway_url = gateway_payload.get("url") if has_gateway else None
         gateway_name = gateway_payload.get("name") if has_gateway else None
         gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
+        gateway_requires_user_credentials = bool(gateway_payload.get("requires_user_credentials", False)) if has_gateway else False
         gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
         gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
         if has_gateway and gateway is not None:
+            gateway_requires_user_credentials = getattr(gateway, "requires_user_credentials", gateway_requires_user_credentials)
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
             if isinstance(runtime_gateway_auth_value, dict):
                 gateway_auth_value = encode_auth(runtime_gateway_auth_value)
@@ -4847,6 +4853,7 @@ class ToolService(BaseService):
                 if tool_id_for_hydration:
                     tool_auth_row = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.id == tool_id_for_hydration)).scalar_one_or_none()
                     if tool_auth_row and tool_auth_row.gateway:
+                        gateway_requires_user_credentials = getattr(tool_auth_row.gateway, "requires_user_credentials", gateway_requires_user_credentials)
                         hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
                         if isinstance(hydrated_gateway_auth_value, dict):
                             gateway_auth_value = encode_auth(hydrated_gateway_auth_value)
@@ -4936,17 +4943,24 @@ class ToolService(BaseService):
             # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
             # writes the per-user credential as a plain {header: value} dict under a `headers` field
             # at the same per-user Vault path used for OAuth tokens.
-            try:
-                vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
-            except (VaultConnectionError, VaultAuthError) as vault_err:
-                # Vault is down or auth failed — surface a 503-style error rather than
-                # falling back to shared credentials (CWE-284 credential isolation).
-                logger.warning(
-                    "Vault unavailable for gateway '%s': %s — failing closed",
-                    SecurityValidator.sanitize_log_message(gateway_name),
-                    SecurityValidator.sanitize_log_message(str(vault_err)),
-                )
-                raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+            vault_headers = None
+            if gateway_requires_user_credentials:
+                try:
+                    vault_headers = await self._resolve_vault_auth_headers(
+                        app_user_email,
+                        token_teams,
+                        gateway_id_str,
+                        gateway_name,
+                        jwt_teams_claim,
+                        requires_user_credentials=gateway_requires_user_credentials,
+                    )
+                except (VaultConnectionError, VaultAuthError) as vault_err:
+                    logger.warning(
+                        "Vault unavailable for gateway '%s': %s — failing closed",
+                        SecurityValidator.sanitize_log_message(gateway_name),
+                        SecurityValidator.sanitize_log_message(str(vault_err)),
+                    )
+                    raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
             headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
             # Strip invisible Unicode format characters left over in a credential stored
             # before this validation existed, so tool invocation self-heals without
@@ -5496,6 +5510,7 @@ class ToolService(BaseService):
                     "name": gateway.name,
                     "url": gateway.url,
                     "auth_type": gateway.auth_type,
+                    "requires_user_credentials": getattr(gateway, "requires_user_credentials", False),
                     # DbGateway.auth_value is JSON (dict); downstream code expects an encoded str.
                     "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
@@ -5850,10 +5865,12 @@ class ToolService(BaseService):
         gateway_url = gateway_payload.get("url") if has_gateway else None
         gateway_name = gateway_payload.get("name") if has_gateway else None
         gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
+        gateway_requires_user_credentials = bool(gateway_payload.get("requires_user_credentials", False)) if has_gateway else False
         gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
         gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
         if has_gateway and gateway is not None:
+            gateway_requires_user_credentials = getattr(gateway, "requires_user_credentials", gateway_requires_user_credentials)
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
             if isinstance(runtime_gateway_auth_value, dict):
                 gateway_auth_value = encode_auth(runtime_gateway_auth_value)
@@ -5891,6 +5908,7 @@ class ToolService(BaseService):
                         if isinstance(hydrated_tool_oauth_config, dict):
                             tool_oauth_config = hydrated_tool_oauth_config
                         if has_gateway and tool_auth_row.gateway:
+                            gateway_requires_user_credentials = getattr(tool_auth_row.gateway, "requires_user_credentials", gateway_requires_user_credentials)
                             hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
                             if isinstance(hydrated_gateway_auth_value, dict):
                                 gateway_auth_value = encode_auth(hydrated_gateway_auth_value)
@@ -6590,17 +6608,24 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {unexpected_error_detail(e)}")
                     else:
                         # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
-                        try:
-                            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
-                        except (VaultConnectionError, VaultAuthError) as vault_err:
-                            # Vault is down or auth failed — surface a clear error rather than
-                            # falling back to shared credentials (CWE-284 credential isolation).
-                            logger.warning(
-                                "Vault unavailable for gateway '%s': %s — failing closed",
-                                SecurityValidator.sanitize_log_message(gateway_name),
-                                SecurityValidator.sanitize_log_message(str(vault_err)),
-                            )
-                            raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+                        vault_headers = None
+                        if gateway_requires_user_credentials:
+                            try:
+                                vault_headers = await self._resolve_vault_auth_headers(
+                                    app_user_email,
+                                    token_teams,
+                                    gateway_id_str,
+                                    gateway_name,
+                                    jwt_teams_claim,
+                                    requires_user_credentials=gateway_requires_user_credentials,
+                                )
+                            except (VaultConnectionError, VaultAuthError) as vault_err:
+                                logger.warning(
+                                    "Vault unavailable for gateway '%s': %s — failing closed",
+                                    SecurityValidator.sanitize_log_message(gateway_name),
+                                    SecurityValidator.sanitize_log_message(str(vault_err)),
+                                )
+                                raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
                         # Strip invisible Unicode format characters left over in a credential
                         # stored before this validation existed, so tool invocation self-heals

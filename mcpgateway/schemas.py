@@ -3348,6 +3348,7 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+    requires_user_credentials: bool = Field(default=False, description="Resolve per-user credentials for non-OAuth gateway invocations")
 
     @field_validator("auth_type", mode="before")
     @classmethod
@@ -3758,6 +3759,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+    requires_user_credentials: Optional[bool] = Field(default=None, description="Resolve per-user credentials for non-OAuth gateway invocations")
 
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the gateway")
 
@@ -4078,6 +4080,7 @@ class GatewayRead(BaseModelWithConfigDict):
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+    requires_user_credentials: bool = Field(default=False, description="Whether non-OAuth invocations resolve per-user credentials")
     auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
