@@ -1331,6 +1331,7 @@ class ImportService:
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
             tool_validation_policy=gateway_data.get("tool_validation_policy"),
+            requires_user_credentials=gateway_data.get("requires_user_credentials", False),
             tags=gateway_data.get("tags", []),
             **auth_kwargs,
         )
@@ -1396,6 +1397,7 @@ class ImportService:
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
             tool_validation_policy=gateway_data.get("tool_validation_policy"),
+            requires_user_credentials=gateway_data.get("requires_user_credentials") if "requires_user_credentials" in gateway_data else None,
             tags=gateway_data.get("tags"),
             **auth_kwargs,
         )

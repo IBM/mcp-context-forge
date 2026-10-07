@@ -547,6 +547,7 @@ class ExportService:
                 "tags": gateway.tags or [],
                 "passthrough_headers": gateway.passthrough_headers or [],
                 "tool_validation_policy": gateway.tool_validation_policy,
+                "requires_user_credentials": gateway.requires_user_credentials,
             }
 
             # Handle authentication data securely - use batch-fetched values
@@ -978,6 +979,7 @@ class ExportService:
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
                 "tool_validation_policy": db_gateway.tool_validation_policy,
+                "requires_user_credentials": db_gateway.requires_user_credentials,
             }
 
             # Include auth data directly from DB (already have raw values)
