@@ -19195,7 +19195,11 @@ class TestXMcpHeaderServing:
         # mcp 2.2 attaches the HTTP request to the handler context, so the catalog handlers would
         # authenticate it; supply the default (no server, no headers, anonymous) context instead.
         monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=(None, {}, {})))
-        monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+        monkeypatch.setattr(
+            tr,
+            "_list_catalog_page",
+            AsyncMock(return_value={"tools": [{"name": tool.name, "description": tool.description, "inputSchema": tool.input_schema}]}),
+        )
         invoke = AsyncMock(return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")], is_error=False))
         monkeypatch.setattr(tool_service, "invoke_tool", invoke)
         return invoke
