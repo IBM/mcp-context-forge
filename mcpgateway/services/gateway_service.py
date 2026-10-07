@@ -5001,7 +5001,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                 # Get user-specific OAuth token only if user_email is provided
                                 if user_email:
@@ -5919,7 +5919,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        target_user = db.execute(
+            select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)
+        ).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
         if not target_user:
             raise ValueError(f"Target user not found or inactive: {target_owner_email}")
 
@@ -8261,7 +8263,7 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                     # SECURITY: Use token_teams from the authenticated user dict — this is
                     # already resolved by auth middleware and must not be widened by
