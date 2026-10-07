@@ -5907,8 +5907,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         # Validate target user exists and is active
         target_user = db.execute(
-            select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)
-        ).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+            select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)  # noqa: E712  # pylint: disable=singleton-comparison
+        ).scalar_one_or_none()
         if not target_user:
             raise ValueError(f"Target user not found or inactive: {target_owner_email}")
 
