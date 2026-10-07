@@ -317,7 +317,8 @@ export function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
     element.textContent = htmlContent; // Fallback to safe text
     return;
   }
-  element.innerHTML = sanitizeHtmlForInsertion(htmlContent);
+  // Native setter: the installed innerHTML guard would sanitize a second time.
+  INNER_HTML_DESCRIPTOR.set.call(element, sanitizeHtmlForInsertion(htmlContent));
 }
 
 /**
@@ -367,10 +368,10 @@ const INNER_HTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(
   "innerHTML"
 );
 
-// htmx/Alpine/data/aria attributes the UI depends on. None of them execute code:
+// htmx/Alpine attributes the UI depends on; DOMPurify keeps data-* and aria-* by default. None execute code:
 // htmx.config.allowEval = false (admin.js) disables hx-vals="js:", hx-vars and trigger filters,
 // JSON hx-vals is parsed with JSON.parse, and data-hx-vals-* are app pagination data, not htmx.
-const KEEP_ATTR = /^(hx-|x-|@|:|data-|aria-)/;
+const KEEP_ATTR = /^(hx-|x-|@|:)/;
 // htmx evaluates hx-on* and its data-hx-on* alias as code; DOMPurify keeps data-* before ADD_ATTR runs.
 // The hook is global, so it also covers window.DOMPurify callers such as the LLM chat Markdown renderer.
 const HTMX_CODE_ATTR = /^(data-)?hx-on/;
