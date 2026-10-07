@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Vendor-agnostic OpenTelemetry instrumentation for ContextForge.
 Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
+OTEL_AVAILABLE indicates core tracing support. Baggage support remains independently optional.
 """
 
 # Standard
@@ -20,6 +21,7 @@ from urllib.parse import urlparse
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
+otel_baggage: Any = None  # pylint: disable=invalid-name
 try:
     # Third-Party
     from opentelemetry import trace
@@ -35,12 +37,11 @@ try:
         # Third-Party
         from opentelemetry import baggage as otel_baggage
     except ImportError:
-        otel_baggage = None
+        logging.getLogger(__name__).debug("OpenTelemetry baggage support unavailable")
 
     OTEL_AVAILABLE = True
 except ImportError:
     # OpenTelemetry not installed - set to None for graceful degradation
-    otel_baggage = None
     trace = None
     otel_extract = None
     otel_inject = None
@@ -214,7 +215,7 @@ class RequestRootSampler(_SamplerBase):  # type: ignore[misc]
 
 
 class RequestRootFilteringSpanProcessor(_SpanProcessorBase):  # type: ignore[misc]
-    """Prevent local non-request roots from entering a span processor queue."""
+    """Filter local non-request roots before queueing. RequestRootSampler suppresses their descendants."""
 
     def __init__(self, delegate: Any, system_traces_enabled: bool = False):
         """Initialize filtering processor.
@@ -722,7 +723,7 @@ def _baggage_span_attributes(baggage_items: Mapping[str, Any]) -> Dict[str, Any]
         if policy.allowed_keys is not None and key not in policy.allowed_keys:
             continue
         attribute_name = f"baggage.{key}" if policy.emit_prefixed else key
-        span_attributes.setdefault(attribute_name, value)
+        span_attributes.setdefault(attribute_name, sanitize_trace_attribute_value(key, value))
     return span_attributes
 
 

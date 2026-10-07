@@ -345,6 +345,29 @@ Redis heartbeats, and background database work from entering tenant-aware export
 Set `OTEL_SYSTEM_TRACES_ENABLED=true` only when the configured exporter accepts tenantless platform traces. Do not set
 a tenant identifier on the process-wide OpenTelemetry resource. One ContextForge process can serve multiple tenants.
 
+### Gateway health metrics
+
+Periodic gateway health checks remain observable through Prometheus metrics when background traces are disabled.
+
+| Metric | Labels | Meaning |
+|--------|--------|---------|
+| `gateway_health_checks_total` | `outcome` | Number of gateway check executions |
+| `gateway_health_check_duration_seconds` | `outcome` | Duration of individual checks after acquiring a concurrency slot |
+| `gateway_health_check_batch_duration_seconds` | None | Duration of each completed batch, including empty batches |
+
+The `outcome` label describes execution completion, not gateway health:
+
+- `completed`: the check returns normally, including connectivity failures handled inside the check.
+- `timeout`: the outer per-check timeout expires.
+- `error`: an exception escapes the individual check.
+
+One-time-auth gateways are skipped and do not increment individual check metrics.
+Use gateway reachability state and failure logs to determine whether a gateway is healthy.
+
+The request-root sampler suppresses background trace trees. The filtering processor adds root filtering before
+queueing; it depends on the sampler to suppress descendants. Installing the processor alone does not filter
+entire background trace trees.
+
 ## Understanding Traces
 
 ### Span Attributes

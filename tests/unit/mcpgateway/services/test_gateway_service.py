@@ -4441,6 +4441,48 @@ class TestGatewayHealth:
             assert isinstance(error, asyncio.TimeoutError)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("case,outcome", [("success", "completed"), ("timeout", "timeout"), ("error", "error"), ("handled", "completed"), ("empty", None), ("skipped", None)])
+    async def test_health_completion_metrics(self, gateway_service, mock_gateway_health, monkeypatch, case, outcome):
+        """Record execution outcomes and durations independently of gateway health."""
+        from prometheus_client import CollectorRegistry, Counter, Histogram
+        from mcpgateway.services import gateway_service as module
+
+        registry = CollectorRegistry()
+        counter = Counter("test_health_total", "Checks", ["outcome"], registry=registry)
+        duration = Histogram("test_health_duration", "Duration", ["outcome"], registry=registry)
+        batch = Histogram("test_batch_duration", "Batch duration", registry=registry)
+        monkeypatch.setattr(module, "gateway_health_checks_total", counter)
+        monkeypatch.setattr(module, "gateway_health_check_duration_seconds", duration)
+        monkeypatch.setattr(module, "gateway_health_check_batch_duration_seconds", batch)
+        gateways = [] if case == "empty" else [mock_gateway_health]
+        if case == "skipped":
+            mock_gateway_health.auth_type = "one_time_auth"
+        if case == "handled":
+            mock_gateway_health.transport = "streamablehttp"
+            mock_gateway_health.client_key = None
+            gateway_service._handle_gateway_failure = AsyncMock()
+            monkeypatch.setattr(module, "resolve_pinned_target", AsyncMock(return_value=MagicMock()))
+            upstream = AsyncMock()
+            upstream.__aenter__.side_effect = ConnectionError("Upstream unavailable")
+            monkeypatch.setattr(module, "mcp_proxy_client", MagicMock(return_value=upstream))
+        else:
+            failure = asyncio.TimeoutError() if case == "timeout" else RuntimeError("Check failed") if case == "error" else None
+            gateway_service._check_single_gateway_health = AsyncMock(side_effect=failure)
+            gateway_service._handle_gateway_failure = AsyncMock()
+        assert await gateway_service.check_health_of_gateways(gateways) is True
+        assert registry.get_sample_value("test_batch_duration_count") == 1
+        assert registry.get_sample_value("test_batch_duration_sum") >= 0
+        for label in ("completed", "timeout", "error"):
+            assert registry.get_sample_value("test_health_total", {"outcome": label}) == (1 if label == outcome else None)
+            assert registry.get_sample_value("test_health_duration_count", {"outcome": label}) == (1 if label == outcome else None)
+        if outcome:
+            assert registry.get_sample_value("test_health_duration_sum", {"outcome": outcome}) >= 0
+        if case in ("timeout", "handled"):
+            gateway_service._handle_gateway_failure.assert_awaited_once()
+        if case == "skipped":
+            gateway_service._check_single_gateway_health.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_health_triggers_auto_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
         """Test that health check triggers auto-refresh when due."""
         # Setup: Auto-refresh ON, Refresh needed
