@@ -11,6 +11,7 @@
 //! still delegating authentication and RBAC authority to Python.
 
 pub mod backend_url_validator;
+mod catalog;
 pub mod config;
 pub mod observability;
 
@@ -133,6 +134,9 @@ pub enum RuntimeError {
 /// - runtime/session/tool caches that keep the public MCP hot path off repeated
 ///   backend lookups where possible
 pub struct AppState {
+    catalog_cursor: Option<Arc<catalog::CursorCodec>>,
+    catalog_page_size: usize,
+    catalog_cursor_ttl: u64,
     backend_rpc_url: Arc<str>,
     backend_authenticate_url: Arc<str>,
     backend_initialize_url: Arc<str>,
@@ -719,6 +723,13 @@ impl AppState {
     /// initialized from the provided configuration.
     pub fn new(config: &RuntimeConfig) -> Result<Self, RuntimeError> {
         ensure_internal_runtime_auth_secret()?;
+        let catalog_cursor = std::env::var("AUTH_ENCRYPTION_SECRET")
+            .ok()
+            .filter(|secret| !secret.is_empty())
+            .map(|secret| catalog::CursorCodec::new(secret.as_bytes()))
+            .transpose()
+            .map_err(RuntimeError::Config)?
+            .map(Arc::new);
         let client = Client::builder()
             .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
             .pool_idle_timeout(Duration::from_secs(config.client_pool_idle_timeout_seconds))
@@ -750,6 +761,9 @@ impl AppState {
             })?;
 
         Ok(Self {
+            catalog_cursor,
+            catalog_page_size: usize::from(config.mcp_list_page_size),
+            catalog_cursor_ttl: config.mcp_list_cursor_ttl_seconds,
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
             backend_authenticate_url: Arc::from(derive_backend_authenticate_url(
                 &config.backend_rpc_url,
@@ -1923,7 +1937,8 @@ async fn rpc_inner(
     }
 
     if rust_db_direct_resources_list {
-        return direct_server_resources_list(&state, effective_headers, request.id.clone()).await;
+        return direct_server_resources_list(&state, effective_headers, request.id.clone(), body)
+            .await;
     }
 
     if specialized_resources_list {
@@ -1982,6 +1997,7 @@ async fn rpc_inner(
             &state,
             effective_headers,
             request.id.clone(),
+            body,
         )
         .await;
     }
@@ -1997,7 +2013,8 @@ async fn rpc_inner(
     }
 
     if rust_db_direct_prompts_list {
-        return direct_server_prompts_list(&state, effective_headers, request.id.clone()).await;
+        return direct_server_prompts_list(&state, effective_headers, request.id.clone(), body)
+            .await;
     }
 
     if specialized_prompts_list {
@@ -2113,12 +2130,17 @@ async fn rpc_inner(
     }
 
     if rust_db_direct_tools_list {
-        return direct_server_tools_list(&state, effective_headers, request.id.clone()).await;
+        return direct_server_tools_list(&state, effective_headers, request.id.clone(), body).await;
     }
 
     if server_scoped_tools_list {
-        return forward_server_tools_list_to_backend(&state, effective_headers, request.id.clone())
-            .await;
+        return forward_server_tools_list_to_backend(
+            &state,
+            effective_headers,
+            request.id.clone(),
+            body,
+        )
+        .await;
     }
 
     if specialized_tools_call {
@@ -4953,6 +4975,7 @@ async fn forward_server_tools_list_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
+    body: Bytes,
 ) -> Response {
     let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
     let (span, is_root_span) =
@@ -4969,7 +4992,8 @@ async fn forward_server_tools_list_to_backend(
 
     let span_for_body = span.clone();
     async move {
-        let backend_response = match send_tools_list_to_backend(state, incoming_headers).await {
+        let backend_response = match send_tools_list_to_backend(state, incoming_headers, body).await
+        {
             Ok(response) => response,
             Err(response) => return response,
         };
@@ -5047,312 +5071,33 @@ async fn direct_server_tools_list(
     state: &AppState,
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
+    body: Bytes,
 ) -> Response {
-    let server_id = incoming_headers
-        .get("x-contextforge-server-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
-
-    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
-        warn!(
-            "Rust MCP direct tools/list missing trusted context; falling back to Python dispatcher"
-        );
-        return forward_server_tools_list_to_backend(state, incoming_headers, request_id).await;
-    };
-
-    if let Err(response) = authorize_server_method_via_backend(
-        state,
-        &incoming_headers,
-        request_id.clone(),
-        state.backend_tools_list_authz_url(),
-        "tools/list",
-    )
-    .await
-    {
-        return response;
-    }
-
-    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
-    let span = start_root_span("tool.list", &trace_context);
-    set_span_attribute(&span, "server_id", server_id.as_str());
-    set_langfuse_trace_name(&span, derive_langfuse_trace_name("tool.list", &[]));
-
-    let span_for_body = span.clone();
-    async move {
-        match query_server_tools_list_from_db(state, &server_id, &auth_context).await {
-            Ok(tools) => {
-                set_span_attribute(&span_for_body, "tool.count", tools.len());
-                if is_output_capture_enabled("tool.list") {
-                    set_span_attribute(
-                        &span_for_body,
-                        "langfuse.observation.output",
-                        serialize_trace_payload(&json!({ "tools": tools })),
-                    );
-                }
-                json_response(
-                    StatusCode::OK,
-                    json!({
-                        "jsonrpc": JSONRPC_VERSION,
-                        "id": request_id,
-                        "result": {
-                            "tools": tools,
-                        },
-                    }),
-                )
-            }
-            Err(err) => {
-                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
-                error!(
-                    "Rust MCP direct tools/list DB query failed: {err}; falling back to Python dispatcher"
-                );
-                forward_server_tools_list_to_backend(state, incoming_headers, request_id).await
-            }
-        }
-    }
-    .instrument(span)
-    .await
-}
-
-async fn query_server_tools_list_from_db(
-    state: &AppState,
-    server_id: &str,
-    auth_context: &InternalAuthContext,
-) -> Result<Vec<McpToolDefinition>, RuntimeError> {
-    let pool = state
-        .db_pool()
-        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
-    let client = pool.get().await.map_err(|err| {
-        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
-    })?;
-
-    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
-    let rows = if is_unrestricted_admin {
-        client
-            .query(
-                "SELECT t.name, t.description, t.input_schema, t.output_schema, t.annotations \
-                 FROM tools t \
-                 JOIN server_tool_association sta ON t.id = sta.tool_id \
-                 WHERE sta.server_id = $1 AND t.enabled = TRUE",
-                &[&server_id],
-            )
-            .await?
-    } else {
-        let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = match auth_context.teams.as_ref() {
-            None => true,
-            Some(teams) => teams.is_empty(),
-        };
-        let allow_owner_access = !is_public_only && auth_context.email.is_some();
-        let owner_email = auth_context.email.as_deref();
-
-        client
-            .query(
-                "SELECT t.name, t.description, t.input_schema, t.output_schema, t.annotations \
-                 FROM tools t \
-                 JOIN server_tool_association sta ON t.id = sta.tool_id \
-                 WHERE sta.server_id = $1 \
-                   AND t.enabled = TRUE \
-                   AND ( \
-                        t.visibility = 'public' \
-                        OR ($2::bool AND t.owner_email = $3) \
-                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND t.team_id = ANY($4::text[]) AND t.visibility IN ('team', 'public')) \
-                   )",
-                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
-            )
-            .await?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(|row| McpToolDefinition {
-            name: row.get("name"),
-            description: row.get("description"),
-            input_schema: normalize_tool_input_schema(row.get::<_, Option<Value>>("input_schema")),
-            annotations: row
-                .get::<_, Option<Value>>("annotations")
-                .unwrap_or_else(|| json!({})),
-            output_schema: row.get("output_schema"),
-        })
-        .collect())
+    catalog::serve(state, incoming_headers, request_id, body, "tools/list").await
 }
 
 async fn direct_server_resources_list(
     state: &AppState,
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
+    body: Bytes,
 ) -> Response {
-    // Direct DB-backed reads are only used when Rust already has the trusted
-    // auth context and Python authorizes the server-scoped method. Any missing
-    // context or DB/read-shape mismatch falls back to the Python dispatcher.
-    let server_id = incoming_headers
-        .get("x-contextforge-server-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
-
-    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
-        warn!(
-            "Rust MCP direct resources/list missing trusted context; falling back to Python dispatcher"
-        );
-        return forward_resources_list_to_backend(
-            state,
-            incoming_headers,
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
-            request_id,
-        )
-        .await;
-    };
-
-    if let Err(response) = authorize_server_method_via_backend(
-        state,
-        &incoming_headers,
-        request_id.clone(),
-        state.backend_resources_list_authz_url(),
-        "resources/list",
-    )
-    .await
-    {
-        return response;
-    }
-
-    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
-    let span = start_root_span("resource.list", &trace_context);
-    set_span_attribute(&span, "server_id", server_id.as_str());
-    set_langfuse_trace_name(&span, derive_langfuse_trace_name("resource.list", &[]));
-
-    let span_for_body = span.clone();
-    async move {
-        match query_server_resources_list_from_db(state, &server_id, &auth_context).await {
-            Ok(resources) => {
-                set_span_attribute(&span_for_body, "resource.count", resources.len());
-                if is_output_capture_enabled("resource.list") {
-                    set_span_attribute(
-                        &span_for_body,
-                        "langfuse.observation.output",
-                        serialize_trace_payload(&json!({ "resources": resources })),
-                    );
-                }
-                json_response(
-                    StatusCode::OK,
-                    json!({
-                        "jsonrpc": JSONRPC_VERSION,
-                        "id": request_id,
-                        "result": {
-                            "resources": resources,
-                        },
-                    }),
-                )
-            }
-            Err(err) => {
-                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
-                error!(
-                    "Rust MCP direct resources/list DB query failed: {err}; falling back to Python dispatcher"
-                );
-                forward_resources_list_to_backend(
-                    state,
-                    incoming_headers,
-                    Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
-                    request_id,
-                )
-                .await
-            }
-        }
-    }
-    .instrument(span)
-    .await
+    catalog::serve(state, incoming_headers, request_id, body, "resources/list").await
 }
 
 async fn direct_server_resource_templates_list(
     state: &AppState,
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
+    body: Bytes,
 ) -> Response {
-    // Resource template listing follows the same conservative pattern as
-    // `resources/list`: trust Python for authz, use Rust for the common DB read
-    // path, and fall back immediately when the local preconditions are missing.
-    let server_id = incoming_headers
-        .get("x-contextforge-server-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
-
-    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
-        warn!(
-            "Rust MCP direct resources/templates/list missing trusted context; falling back to Python dispatcher"
-        );
-        return forward_resource_templates_list_to_backend(
-            state,
-            incoming_headers,
-            Bytes::from_static(
-                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
-            ),
-            request_id,
-        )
-        .await;
-    };
-
-    if let Err(response) = authorize_server_method_via_backend(
+    catalog::serve(
         state,
-        &incoming_headers,
-        request_id.clone(),
-        state.backend_resource_templates_list_authz_url(),
+        incoming_headers,
+        request_id,
+        body,
         "resources/templates/list",
     )
-    .await
-    {
-        return response;
-    }
-
-    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
-    let span = start_root_span("resource_template.list", &trace_context);
-    set_span_attribute(&span, "server_id", server_id.as_str());
-    set_langfuse_trace_name(
-        &span,
-        derive_langfuse_trace_name("resource_template.list", &[]),
-    );
-
-    let span_for_body = span.clone();
-    async move {
-        match query_server_resource_templates_list_from_db(state, &server_id, &auth_context).await {
-            Ok(resource_templates) => {
-                set_span_attribute(&span_for_body, "resource_template.count", resource_templates.len());
-                if is_output_capture_enabled("resource_template.list") {
-                    set_span_attribute(
-                        &span_for_body,
-                        "langfuse.observation.output",
-                        serialize_trace_payload(&json!({ "resourceTemplates": resource_templates })),
-                    );
-                }
-                json_response(
-                    StatusCode::OK,
-                    json!({
-                        "jsonrpc": JSONRPC_VERSION,
-                        "id": request_id,
-                        "result": {
-                            "resourceTemplates": resource_templates,
-                        },
-                    }),
-                )
-            }
-            Err(err) => {
-                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
-                error!(
-                    "Rust MCP direct resources/templates/list DB query failed: {err}; falling back to Python dispatcher"
-                );
-                forward_resource_templates_list_to_backend(
-                    state,
-                    incoming_headers,
-                    Bytes::from_static(
-                        br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
-                    ),
-                    request_id,
-                )
-                .await
-            }
-        }
-    }
-    .instrument(span)
     .await
 }
 
@@ -5360,85 +5105,9 @@ async fn direct_server_prompts_list(
     state: &AppState,
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
+    body: Bytes,
 ) -> Response {
-    // Prompt listing is safe to serve directly from Rust when visibility can be
-    // expressed with a single DB query over the trusted auth context.
-    let server_id = incoming_headers
-        .get("x-contextforge-server-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
-
-    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
-        warn!(
-            "Rust MCP direct prompts/list missing trusted context; falling back to Python dispatcher"
-        );
-        return forward_prompts_list_to_backend(
-            state,
-            incoming_headers,
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
-            request_id,
-        )
-        .await;
-    };
-
-    if let Err(response) = authorize_server_method_via_backend(
-        state,
-        &incoming_headers,
-        request_id.clone(),
-        state.backend_prompts_list_authz_url(),
-        "prompts/list",
-    )
-    .await
-    {
-        return response;
-    }
-
-    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
-    let span = start_root_span("prompt.list", &trace_context);
-    set_span_attribute(&span, "server_id", server_id.as_str());
-    set_langfuse_trace_name(&span, derive_langfuse_trace_name("prompt.list", &[]));
-
-    let span_for_body = span.clone();
-    async move {
-        match query_server_prompts_list_from_db(state, &server_id, &auth_context).await {
-            Ok(prompts) => {
-                set_span_attribute(&span_for_body, "prompt.count", prompts.len());
-                if is_output_capture_enabled("prompt.list") {
-                    set_span_attribute(
-                        &span_for_body,
-                        "langfuse.observation.output",
-                        serialize_trace_payload(&json!({ "prompts": prompts })),
-                    );
-                }
-                json_response(
-                    StatusCode::OK,
-                    json!({
-                        "jsonrpc": JSONRPC_VERSION,
-                        "id": request_id,
-                        "result": {
-                            "prompts": prompts,
-                        },
-                    }),
-                )
-            }
-            Err(err) => {
-                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
-                error!(
-                    "Rust MCP direct prompts/list DB query failed: {err}; falling back to Python dispatcher"
-                );
-                forward_prompts_list_to_backend(
-                    state,
-                    incoming_headers,
-                    Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
-                    request_id,
-                )
-                .await
-            }
-        }
-    }
-    .instrument(span)
-    .await
+    catalog::serve(state, incoming_headers, request_id, body, "prompts/list").await
 }
 
 async fn direct_server_resources_read(
@@ -5747,167 +5416,6 @@ async fn direct_server_prompts_get(
     }
     .instrument(span)
     .await
-}
-
-async fn query_server_resources_list_from_db(
-    state: &AppState,
-    server_id: &str,
-    auth_context: &InternalAuthContext,
-) -> Result<Vec<Value>, RuntimeError> {
-    // Visibility is derived from the same normalized auth context Python
-    // produced: unrestricted admins with `teams=null` bypass filters; all other
-    // callers see public rows plus any owner/team rows implied by the token.
-    let pool = state
-        .db_pool()
-        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
-    let client = pool.get().await.map_err(|err| {
-        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
-    })?;
-
-    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
-    let rows = if is_unrestricted_admin {
-        client
-            .query(
-                "SELECT r.uri, r.name, r.description, r.mime_type, r.size \
-                 FROM resources r \
-                 JOIN server_resource_association sra ON r.id = sra.resource_id \
-                 WHERE sra.server_id = $1 AND r.uri_template IS NULL AND r.enabled = TRUE",
-                &[&server_id],
-            )
-            .await?
-    } else {
-        let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
-        let allow_owner_access = !is_public_only && auth_context.email.is_some();
-        let owner_email = auth_context.email.as_deref();
-
-        client
-            .query(
-                "SELECT r.uri, r.name, r.description, r.mime_type, r.size \
-                 FROM resources r \
-                 JOIN server_resource_association sra ON r.id = sra.resource_id \
-                 WHERE sra.server_id = $1 \
-                   AND r.uri_template IS NULL \
-                   AND r.enabled = TRUE \
-                   AND ( \
-                        r.visibility = 'public' \
-                        OR ($2::bool AND r.owner_email = $3) \
-                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND r.team_id = ANY($4::text[]) AND r.visibility IN ('team', 'public')) \
-                   )",
-                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
-            )
-            .await?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(|row| resource_row_to_value(&row))
-        .collect())
-}
-
-async fn query_server_resource_templates_list_from_db(
-    state: &AppState,
-    server_id: &str,
-    auth_context: &InternalAuthContext,
-) -> Result<Vec<Value>, RuntimeError> {
-    let pool = state
-        .db_pool()
-        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
-    let client = pool.get().await.map_err(|err| {
-        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
-    })?;
-
-    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
-    let rows = if is_unrestricted_admin {
-        client
-            .query(
-                "SELECT r.id, r.uri_template, r.name, r.description, r.mime_type \
-                 FROM resources r \
-                 JOIN server_resource_association sra ON r.id = sra.resource_id \
-                 WHERE sra.server_id = $1 AND r.uri_template IS NOT NULL AND r.enabled = TRUE",
-                &[&server_id],
-            )
-            .await?
-    } else {
-        let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
-        let allow_owner_access = !is_public_only && auth_context.email.is_some();
-        let owner_email = auth_context.email.as_deref();
-
-        client
-            .query(
-                "SELECT r.id, r.uri_template, r.name, r.description, r.mime_type \
-                 FROM resources r \
-                 JOIN server_resource_association sra ON r.id = sra.resource_id \
-                 WHERE sra.server_id = $1 \
-                   AND r.uri_template IS NOT NULL \
-                   AND r.enabled = TRUE \
-                   AND ( \
-                        r.visibility = 'public' \
-                        OR ($2::bool AND r.owner_email = $3) \
-                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND r.team_id = ANY($4::text[]) AND r.visibility IN ('team', 'public')) \
-                   )",
-                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
-            )
-            .await?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(|row| resource_template_row_to_value(&row))
-        .collect())
-}
-
-async fn query_server_prompts_list_from_db(
-    state: &AppState,
-    server_id: &str,
-    auth_context: &InternalAuthContext,
-) -> Result<Vec<Value>, RuntimeError> {
-    let pool = state
-        .db_pool()
-        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
-    let client = pool.get().await.map_err(|err| {
-        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
-    })?;
-
-    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
-    let rows = if is_unrestricted_admin {
-        client
-            .query(
-                "SELECT p.name, p.description, p.argument_schema \
-                 FROM prompts p \
-                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
-                 WHERE spa.server_id = $1 AND p.enabled = TRUE",
-                &[&server_id],
-            )
-            .await?
-    } else {
-        let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
-        let allow_owner_access = !is_public_only && auth_context.email.is_some();
-        let owner_email = auth_context.email.as_deref();
-
-        client
-            .query(
-                "SELECT p.name, p.description, p.argument_schema \
-                 FROM prompts p \
-                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
-                 WHERE spa.server_id = $1 \
-                   AND p.enabled = TRUE \
-                   AND ( \
-                        p.visibility = 'public' \
-                        OR ($2::bool AND p.owner_email = $3) \
-                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND p.team_id = ANY($4::text[]) AND p.visibility IN ('team', 'public')) \
-                   )",
-                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
-            )
-            .await?
-    };
-
-    Ok(rows
-        .into_iter()
-        .map(|row| prompt_row_to_value(&row))
-        .collect())
 }
 
 async fn query_server_resource_read_from_db(
@@ -6229,6 +5737,8 @@ fn prompt_arguments_from_schema(argument_schema: Option<Value>) -> Vec<Value> {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct DirectExecutionAuthorization {
+    #[serde(default)]
+    catalog_visibility: Option<catalog::Visibility>,
     #[serde(
         default = "default_direct_execution_eligible",
         alias = "directExecutionEligible"
@@ -6241,6 +5751,7 @@ struct DirectExecutionAuthorization {
 impl Default for DirectExecutionAuthorization {
     fn default() -> Self {
         Self {
+            catalog_visibility: None,
             direct_execution_eligible: true,
             fallback_reason: None,
         }
@@ -7953,6 +7464,7 @@ async fn send_session_delete_to_backend(
 async fn send_tools_list_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
+    body: Bytes,
 ) -> Result<reqwest::Response, Response> {
     // The helpers below are thin, method-specific bridges to Python's internal
     // MCP handlers. They keep the runtime's public response shaping separate
@@ -7964,6 +7476,7 @@ async fn send_tools_list_to_backend(
         .client
         .post(url)
         .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
         .send()
         .await
         .map_err(|err| {
@@ -10118,6 +9631,11 @@ fn build_forwarded_headers_with_session_validation(
         }
     }
 
+    // Backend responses are decoded or rewrapped, so this hop cannot negotiate client compression.
+    forwarded_headers.insert(
+        HeaderName::from_static("accept-encoding"),
+        HeaderValue::from_static("identity"),
+    );
     forwarded_headers.insert(
         HeaderName::from_static(RUNTIME_HEADER),
         HeaderValue::from_static(RUNTIME_NAME),
@@ -10476,6 +9994,8 @@ mod unit_tests {
     fn test_config() -> RuntimeConfig {
         ensure_test_auth_secret();
         RuntimeConfig {
+            mcp_list_page_size: 100,
+            mcp_list_cursor_ttl_seconds: 900,
             backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
             listen_http: free_tcp_addr(),
             listen_uds: None,
@@ -10710,6 +10230,22 @@ mod unit_tests {
             assert!(!state.use_rmcp_upstream_client());
             assert!(state.rmcp_upstream_clients().lock().await.is_empty());
         }
+    }
+
+    #[test]
+    fn backend_fallback_does_not_negotiate_client_compression() {
+        ensure_test_auth_secret();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "accept-encoding",
+            HeaderValue::from_static("gzip, br, zstd"),
+        );
+        let forwarded = super::build_forwarded_headers(&headers);
+        assert_eq!(forwarded.get("accept-encoding").unwrap(), "identity");
+        assert_eq!(
+            forwarded.get(super::RUNTIME_HEADER).unwrap(),
+            super::RUNTIME_NAME
+        );
     }
 
     #[test]
@@ -11614,7 +11150,7 @@ mod unit_tests {
         .expect("json body");
         assert_eq!(transport_payload["data"], CLIENT_ERROR_DETAIL);
 
-        let tools_list_error = send_tools_list_to_backend(&state, HeaderMap::new())
+        let tools_list_error = send_tools_list_to_backend(&state, HeaderMap::new(), Bytes::new())
             .await
             .expect_err("unreachable backend should fail");
         assert_eq!(tools_list_error.status(), StatusCode::BAD_GATEWAY);
@@ -12927,24 +12463,41 @@ mod unit_tests {
         config.backend_rpc_url = format!("{backend_url}/rpc");
         let state = AppState::new(&config).expect("state");
 
-        let resources_response =
-            direct_server_resources_list(&state, HeaderMap::new(), Some(json!(1))).await;
+        let resources_response = direct_server_resources_list(
+            &state,
+            HeaderMap::new(),
+            Some(json!(1)),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
+        )
+        .await;
         assert_eq!(resources_response.status(), StatusCode::OK);
         assert_eq!(
             response_json(resources_response).await["result"]["marker"],
             "resources-list"
         );
 
-        let templates_response =
-            direct_server_resource_templates_list(&state, HeaderMap::new(), Some(json!(2))).await;
+        let templates_response = direct_server_resource_templates_list(
+            &state,
+            HeaderMap::new(),
+            Some(json!(2)),
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
+            ),
+        )
+        .await;
         assert_eq!(templates_response.status(), StatusCode::OK);
         assert_eq!(
             response_json(templates_response).await["result"]["marker"],
             "resource-templates-list"
         );
 
-        let prompts_response =
-            direct_server_prompts_list(&state, HeaderMap::new(), Some(json!(3))).await;
+        let prompts_response = direct_server_prompts_list(
+            &state,
+            HeaderMap::new(),
+            Some(json!(3)),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
+        )
+        .await;
         assert_eq!(prompts_response.status(), StatusCode::OK);
         assert_eq!(
             response_json(prompts_response).await["result"]["marker"],
@@ -13157,25 +12710,41 @@ mod unit_tests {
         let state = AppState::new(&config).expect("state");
         let trusted_headers = trusted_server_headers("server-1");
 
-        let resources_list =
-            direct_server_resources_list(&state, trusted_headers.clone(), Some(json!(21))).await;
+        let resources_list = direct_server_resources_list(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(21)),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
+        )
+        .await;
         assert_eq!(resources_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(resources_list).await["result"]["marker"],
             "resources-list-db-fallback"
         );
 
-        let templates_list =
-            direct_server_resource_templates_list(&state, trusted_headers.clone(), Some(json!(22)))
-                .await;
+        let templates_list = direct_server_resource_templates_list(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(22)),
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
+            ),
+        )
+        .await;
         assert_eq!(templates_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(templates_list).await["result"]["marker"],
             "resource-templates-db-fallback"
         );
 
-        let prompts_list =
-            direct_server_prompts_list(&state, trusted_headers.clone(), Some(json!(23))).await;
+        let prompts_list = direct_server_prompts_list(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(23)),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
+        )
+        .await;
         assert_eq!(prompts_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(prompts_list).await["result"]["marker"],
@@ -13282,25 +12851,41 @@ mod unit_tests {
         let state = AppState::new(&config).expect("state");
         let trusted_headers = trusted_server_headers("server-1");
 
-        let resources_list =
-            direct_server_resources_list(&state, trusted_headers.clone(), Some(json!(26))).await;
+        let resources_list = direct_server_resources_list(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(26)),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
+        )
+        .await;
         assert_eq!(resources_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(resources_list).await["error"]["detail"],
             "resources/list denied"
         );
 
-        let templates_list =
-            direct_server_resource_templates_list(&state, trusted_headers.clone(), Some(json!(27)))
-                .await;
+        let templates_list = direct_server_resource_templates_list(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(27)),
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
+            ),
+        )
+        .await;
         assert_eq!(templates_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(templates_list).await["error"]["detail"],
             "templates denied"
         );
 
-        let prompts_list =
-            direct_server_prompts_list(&state, trusted_headers.clone(), Some(json!(28))).await;
+        let prompts_list = direct_server_prompts_list(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(28)),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
+        )
+        .await;
         assert_eq!(prompts_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(prompts_list).await["error"]["detail"],
@@ -13410,6 +12995,7 @@ mod unit_tests {
         assert_eq!(
             authz_fallback,
             DirectExecutionAuthorization {
+                catalog_visibility: None,
                 direct_execution_eligible: false,
                 fallback_reason: Some("resource-hooks-configured".to_string()),
             }

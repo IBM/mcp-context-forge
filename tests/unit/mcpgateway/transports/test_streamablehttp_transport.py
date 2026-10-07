@@ -36,24 +36,25 @@ import httpx
 import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
-from mcp_types import PromptArgument
-import mcp_types as types
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
+import mcp_types as types
+from mcp_types import PromptArgument
 import orjson
 import pytest
 from starlette.types import Scope
 
 # First-Party
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
 # ---------------------------------------------------------------------------
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
-from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
-from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError
+from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
     call_tool,
@@ -8114,8 +8115,6 @@ async def test_handle_streamable_http_unknown_method_without_session_returns_326
     assert payload["id"] == 1
 
 
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("header_name", [b"mcp-session-id", b"x-mcp-session-id"])
 async def test_handle_streamable_http_get_returns_sse_with_session(monkeypatch, header_name):
@@ -10523,8 +10522,6 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
-
-
 
 
 @pytest.mark.asyncio
@@ -19055,11 +19052,11 @@ class TestV2HandlerAdapters:
         tool = types.Tool(name="t", inputSchema={"type": "object"})
         seen = {}
 
-        async def fake_list_tools():
+        async def fake_list_tools(method, params):
             seen["ctx"] = tr._v2_request_ctx.get()
-            return [tool]
+            return {"tools": [tool]}
 
-        monkeypatch.setattr(tr, "list_tools", fake_list_tools)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_tools)
         result = await tr._adapt_list_tools(sentinel_ctx)
 
         assert isinstance(result, types.ListToolsResult)
@@ -19117,10 +19114,10 @@ class TestV2HandlerAdapters:
     async def test_adapt_list_prompts_wraps(self, monkeypatch):
         prompt = types.Prompt(name="p")
 
-        async def fake_list_prompts():
-            return [prompt]
+        async def fake_list_prompts(method, params):
+            return {"prompts": [prompt]}
 
-        monkeypatch.setattr(tr, "list_prompts", fake_list_prompts)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_prompts)
         result = await tr._adapt_list_prompts(object())
 
         assert isinstance(result, types.ListPromptsResult)
@@ -19143,10 +19140,10 @@ class TestV2HandlerAdapters:
     async def test_adapt_list_resources_wraps(self, monkeypatch):
         resource = types.Resource(uri="file:///x", name="x")
 
-        async def fake_list_resources():
-            return [resource]
+        async def fake_list_resources(method, params):
+            return {"resources": [resource]}
 
-        monkeypatch.setattr(tr, "list_resources", fake_list_resources)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_resources)
         result = await tr._adapt_list_resources(object())
 
         assert isinstance(result, types.ListResourcesResult)
@@ -19192,10 +19189,10 @@ class TestV2HandlerAdapters:
 
     @pytest.mark.asyncio
     async def test_adapt_list_resource_templates_dict_coercion(self, monkeypatch):
-        async def fake_list_resource_templates():
-            return [{"uriTemplate": "x://{id}", "name": "t"}]
+        async def fake_list_resource_templates(method, params):
+            return {"resourceTemplates": [{"uriTemplate": "x://{id}", "name": "t"}]}
 
-        monkeypatch.setattr(tr, "list_resource_templates", fake_list_resource_templates)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_resource_templates)
         result = await tr._adapt_list_resource_templates(object())
 
         assert isinstance(result, types.ListResourceTemplatesResult)
@@ -19847,6 +19844,7 @@ async def test_normalize_jwt_payload_rejects_missing_membership_on_cache_miss(mo
 
     auth_cache.set_team_membership_valid_sync.assert_called_once_with("former-member@example.com", ["team-removed"], False)
 
+
 @pytest.mark.asyncio
 async def test_get_request_context_propagates_normalization_http_exception(monkeypatch):
     """Authentication failures from fallback normalization must reach the caller."""
@@ -19873,6 +19871,7 @@ async def test_get_request_context_propagates_normalization_http_exception(monke
                 await tr._get_request_context_or_default()
     finally:
         tr.server_id_var.reset(token)
+
 
 @pytest.mark.asyncio
 async def test_normalize_jwt_payload_rechecks_cached_user_in_strict_mode(monkeypatch):
@@ -19901,6 +19900,7 @@ async def test_normalize_jwt_payload_rechecks_cached_user_in_strict_mode(monkeyp
 
     db_lookup.assert_called_once_with("deleted@example.com")
 
+
 def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
     """The shared membership helper validates all claimed teams and caches the result."""
     from mcpgateway.auth import validate_token_team_membership
@@ -19912,6 +19912,7 @@ def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
 
     assert validate_token_team_membership("member@example.com", ["team-a"]) is True
     auth_cache.set_team_membership_valid_sync.assert_called_once_with("member@example.com", ["team-a"], True)
+
 
 # ---------------------------------------------------------------------------
 # Affinity check span attribute paths (streamablehttp_transport.py lines 4312-4314)
@@ -19985,9 +19986,13 @@ async def test_affinity_span_attributes_owner_is_local_worker(monkeypatch):
 @pytest.mark.asyncio
 async def test_affinity_span_attributes_owner_is_different_worker(monkeypatch):
     """Span attributes report decision='forward' when the session is owned by another worker."""
-    import orjson
+    # Standard
     from contextlib import asynccontextmanager, contextmanager
 
+    # Third-Party
+    import orjson
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
 
     class DummySessionManager:
