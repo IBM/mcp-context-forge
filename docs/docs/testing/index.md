@@ -164,7 +164,7 @@ Linting is available:
 
 ```bash
 make eslint        # lint JavaScript
-make lint-web      # ESLint + HTMLHint + Stylelint
+make lint-web      # ESLint + HTMLHint + Biome (CSS)
 make format-web    # Prettier formatting
 ```
 

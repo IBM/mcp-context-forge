@@ -267,10 +267,10 @@ jobs:
               npm install --no-save --legacy-peer-deps htmlhint
               npx htmlhint "mcpgateway/templates/*.html"
 
-          - id: stylelint
+          - id: biome-css
             cmd: |
-              npm install --no-save --legacy-peer-deps stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order
-              npx stylelint "mcpgateway/static/*.css"
+              npm install --no-save @biomejs/biome
+              npx biome lint mcpgateway/static
 
           - id: eslint
             cmd: |
