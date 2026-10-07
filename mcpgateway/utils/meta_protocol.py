@@ -278,3 +278,82 @@ def synthesise_meta_for_modern_upstream(existing_meta: Optional[Dict[str, Any]],
     if _KEY_CLIENT_CAPABILITIES not in merged:
         merged[_KEY_CLIENT_CAPABILITIES] = session_capabilities if isinstance(session_capabilities, dict) else {}
     return merged
+
+
+# Namespaced keys that must be removed when forwarding to a legacy upstream.
+_MODERN_PROTOCOL_KEYS = frozenset({
+    _KEY_PROTOCOL_VERSION,
+    _KEY_CLIENT_CAPABILITIES,
+    _KEY_CLIENT_INFO,
+    _KEY_SERVER_INFO,
+})
+
+
+def strip_modern_meta_for_legacy_upstream(existing_meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Remove 2026-era namespaced keys before forwarding to a legacy upstream.
+
+    When the inbound request is from a modern client, its ``_meta`` carries
+    ``io.modelcontextprotocol/*`` keys that a legacy server does not understand.
+    This function strips those keys so only non-protocol keys
+    (e.g. ``progressToken``, tracing IDs) are forwarded.
+
+    If *existing_meta* is ``None`` or becomes empty after stripping, ``None``
+    is returned so the caller can omit ``meta=`` entirely.
+
+    Args:
+        existing_meta: The ``_meta`` from the inbound modern request.
+
+    Returns:
+        A new dict with all namespaced protocol keys removed, or ``None`` when
+        the result would be empty.
+
+    Examples:
+        >>> from mcpgateway.utils.meta_protocol import strip_modern_meta_for_legacy_upstream
+        >>> m = {
+        ...     "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        ...     "io.modelcontextprotocol/clientCapabilities": {},
+        ...     "progressToken": 42,
+        ... }
+        >>> out = strip_modern_meta_for_legacy_upstream(m)
+        >>> out
+        {'progressToken': 42}
+        >>> strip_modern_meta_for_legacy_upstream({"io.modelcontextprotocol/protocolVersion": "2026-07-28"}) is None
+        True
+        >>> strip_modern_meta_for_legacy_upstream(None) is None
+        True
+    """
+    if not existing_meta or not isinstance(existing_meta, dict):
+        return None
+    stripped = {k: v for k, v in existing_meta.items() if k not in _MODERN_PROTOCOL_KEYS}
+    return stripped if stripped else None
+
+
+def is_legacy_upstream(gateway_capabilities: Optional[Dict[str, Any]]) -> bool:
+    """Return True when *gateway_capabilities* indicates a legacy (pre-2026) upstream.
+
+    A modern upstream server includes ``io.modelcontextprotocol/serverInfo`` in
+    the capabilities it advertises during the ``initialize`` handshake.  Absence
+    of that key — or an entirely missing/non-dict capabilities dict — indicates
+    a legacy server that must not receive namespaced ``_meta`` keys.
+
+    Args:
+        gateway_capabilities: The ``capabilities`` dict stored on the
+            ``Gateway`` DB model after the handshake, or ``None`` if unavailable.
+
+    Returns:
+        ``True`` when the upstream appears to be a legacy server.
+
+    Examples:
+        >>> from mcpgateway.utils.meta_protocol import is_legacy_upstream
+        >>> is_legacy_upstream({"io.modelcontextprotocol/serverInfo": {"name": "srv", "version": "1.0"}})
+        False
+        >>> is_legacy_upstream({"tools": {}})
+        True
+        >>> is_legacy_upstream(None)
+        True
+        >>> is_legacy_upstream({})
+        True
+    """
+    if not gateway_capabilities or not isinstance(gateway_capabilities, dict):
+        return True
+    return _KEY_SERVER_INFO not in gateway_capabilities

@@ -9736,7 +9736,12 @@ class TestInvokeToolDirect:
 
     @pytest.fixture
     def mock_direct_gateway(self):
-        """Create a mock gateway in direct_proxy mode."""
+        """Create a mock gateway in direct_proxy mode.
+
+        capabilities is set to a modern-era dict (contains serverInfo) so that
+        is_legacy_upstream() returns False by default. Individual tests that want
+        to verify legacy-upstream behaviour must override capabilities explicitly.
+        """
         gw = MagicMock(spec=DbGateway)
         gw.id = "gw-direct-1"
         gw.name = "direct_gateway"
@@ -9749,6 +9754,8 @@ class TestInvokeToolDirect:
         gw.visibility = "public"
         gw.team_id = None
         gw.owner_email = None
+        # Modern upstream: serverInfo key present so synthesis path is taken.
+        gw.capabilities = {"io.modelcontextprotocol/serverInfo": {"name": "remote", "version": "1.0"}}
         return gw
 
     def _make_fresh_db_session(self, gateway, tool_row=None):
@@ -9912,6 +9919,97 @@ class TestInvokeToolDirect:
         assert forwarded_meta["request_id"] == "abc-123"
         assert "io.modelcontextprotocol/protocolVersion" in forwarded_meta
         assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_modern_client_legacy_upstream_strips_protocol_keys(self, tool_service, mock_direct_gateway):
+        """Modern client → legacy upstream: namespaced _meta keys are stripped before forwarding."""
+        # Legacy upstream: capabilities dict has no serverInfo namespaced key.
+        mock_direct_gateway.capabilities = {"tools": {}}
+        expected_result = MagicMock()
+        meta_data = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
+            "progressToken": 99,
+        }
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={"k": "v"},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        forwarded_meta = call_kwargs.get("meta", {})
+        # Protocol keys must be stripped for legacy upstream.
+        assert "io.modelcontextprotocol/protocolVersion" not in forwarded_meta
+        assert "io.modelcontextprotocol/clientCapabilities" not in forwarded_meta
+        # Non-protocol keys must be preserved.
+        assert forwarded_meta["progressToken"] == 99
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_modern_client_legacy_upstream_only_protocol_keys_omits_meta(self, tool_service, mock_direct_gateway):
+        """Modern client with only protocol keys → legacy upstream: call_tool is invoked without meta."""
+        # Legacy upstream: no serverInfo in capabilities.
+        mock_direct_gateway.capabilities = {}
+        expected_result = MagicMock()
+        meta_data = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        # After stripping, no meta remains — call_tool should be invoked without meta kwarg.
+        call_kwargs = session_mock.call_tool.await_args.kwargs
+        assert "meta" not in call_kwargs or call_kwargs.get("meta") is None
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_gateway_not_found(self, tool_service):

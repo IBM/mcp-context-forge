@@ -13,9 +13,11 @@ from mcpgateway.utils.meta_protocol import (
     check_capability,
     extract_protocol_meta,
     has_modern_meta_attempt,
+    is_legacy_upstream,
     is_modern_meta,
     is_modern_protocol_version,
     stamp_server_info_meta,
+    strip_modern_meta_for_legacy_upstream,
     synthesise_meta_for_modern_upstream,
 )
 
@@ -280,6 +282,76 @@ class TestSynthesiseMetaForModernUpstream:
         """Session capabilities are embedded when inbound caps are absent."""
         out = synthesise_meta_for_modern_upstream({}, {"sampling": {}}, "2026-07-28", "CF", "1.0.0")
         assert out["io.modelcontextprotocol/clientCapabilities"] == {"sampling": {}}
+
+
+class TestStripModernMetaForLegacyUpstream:
+    """Tests for strip_modern_meta_for_legacy_upstream()."""
+
+    def test_strips_all_namespaced_keys(self):
+        """All four namespaced protocol keys are removed."""
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "client", "version": "1.0"},
+            "io.modelcontextprotocol/serverInfo": {"name": "srv", "version": "1.0"},
+        }
+        out = strip_modern_meta_for_legacy_upstream(meta)
+        assert out is None
+
+    def test_preserves_non_protocol_keys(self):
+        """progressToken and tracing keys survive stripping."""
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "progressToken": 42,
+            "traceparent": "00-abc-def-01",
+        }
+        out = strip_modern_meta_for_legacy_upstream(meta)
+        assert out == {"progressToken": 42, "traceparent": "00-abc-def-01"}
+
+    def test_returns_none_for_none_input(self):
+        """None input returns None."""
+        assert strip_modern_meta_for_legacy_upstream(None) is None
+
+    def test_returns_none_for_empty_dict(self):
+        """An empty dict returns None."""
+        assert strip_modern_meta_for_legacy_upstream({}) is None
+
+    def test_returns_none_when_only_protocol_keys(self):
+        """A dict with only protocol keys returns None after stripping."""
+        assert strip_modern_meta_for_legacy_upstream({"io.modelcontextprotocol/protocolVersion": "2026-07-28"}) is None
+
+    def test_does_not_mutate_original(self):
+        """The original dict is not modified."""
+        meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "progressToken": 1}
+        original = dict(meta)
+        strip_modern_meta_for_legacy_upstream(meta)
+        assert meta == original
+
+
+class TestIsLegacyUpstream:
+    """Tests for is_legacy_upstream()."""
+
+    def test_modern_upstream_has_server_info_key(self):
+        """A capabilities dict with serverInfo signals a modern upstream."""
+        caps = {"io.modelcontextprotocol/serverInfo": {"name": "srv", "version": "1.0"}}
+        assert is_legacy_upstream(caps) is False
+
+    def test_legacy_upstream_has_no_server_info_key(self):
+        """A capabilities dict without serverInfo signals a legacy upstream."""
+        assert is_legacy_upstream({"tools": {}, "resources": {}}) is True
+
+    def test_none_capabilities_is_legacy(self):
+        """None capabilities signals a legacy upstream (fail-safe default)."""
+        assert is_legacy_upstream(None) is True
+
+    def test_empty_dict_is_legacy(self):
+        """An empty capabilities dict signals a legacy upstream."""
+        assert is_legacy_upstream({}) is True
+
+    def test_non_dict_is_legacy(self):
+        """A non-dict capabilities value signals a legacy upstream."""
+        assert is_legacy_upstream("bad") is True  # type: ignore[arg-type]
 
 
 class TestCapabilityNotSupportedConstant:
