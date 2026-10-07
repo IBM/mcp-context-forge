@@ -6289,7 +6289,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        target_user = db.execute(
+            select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)
+        ).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
         if not target_user:
             raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
