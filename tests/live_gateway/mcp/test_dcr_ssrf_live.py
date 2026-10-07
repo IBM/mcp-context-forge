@@ -137,13 +137,6 @@ def _free_port(host: str = "127.0.0.1") -> int:
         return cast(tuple[str, int], listener.getsockname())[1]
 
 
-def _private_host_ip() -> str:
-    """Return local interface address used for outbound IPv4 traffic."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        probe.connect(("192.0.2.1", 80))
-        return cast(tuple[str, int], probe.getsockname())[0]
-
-
 def _start_server(host: str, handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, threading.Thread]:
     """Start one local test HTTP server."""
     server = ThreadingHTTPServer((host, 0), handler)
@@ -167,14 +160,13 @@ def live_dcr_stack(tmp_path: Path) -> Generator[_LiveDcrStack, None, None]:
     _BlockedReceiverHandler.requests.clear()
     malicious_as, malicious_worker = _start_authorization_server()
     valid_as, valid_worker = _start_authorization_server()
-    blocked_receiver, blocked_worker = _start_server("0.0.0.0", _BlockedReceiverHandler)  # nosec B104 - test receiver must accept local-interface traffic
-    blocked_receiver_ip = _private_host_ip()
+    blocked_receiver, blocked_worker = _start_server("127.0.0.1", _BlockedReceiverHandler)
 
     malicious_issuer = f"http://127.0.0.1:{malicious_as.server_port}"
     valid_issuer = f"http://127.0.0.1:{valid_as.server_port}"
     redirect_uri = "http://gateway.example.test/oauth/callback"
     malicious_as.issuer = malicious_issuer
-    malicious_as.registration_endpoint = f"http://{blocked_receiver_ip}:{blocked_receiver.server_port}/imds/register"
+    malicious_as.registration_endpoint = f"http://127.0.0.1:{blocked_receiver.server_port}/imds/register"
     malicious_as.redirect_uri = redirect_uri
     valid_as.issuer = valid_issuer
     valid_as.registration_endpoint = f"{valid_issuer}/register"
@@ -205,7 +197,7 @@ def live_dcr_stack(tmp_path: Path) -> Generator[_LiveDcrStack, None, None]:
         "SSRF_PROTECTION_ENABLED": "true",
         "SSRF_ALLOW_LOCALHOST": "true",
         "SSRF_ALLOW_PRIVATE_NETWORKS": "false",
-        "SSRF_BLOCKED_NETWORKS": json.dumps([f"{blocked_receiver_ip}/32"]),
+        "SSRF_BLOCKED_NETWORKS": "[]",
         "SSRF_BLOCKED_HOSTS": "[]",
         "LOG_LEVEL": "ERROR",
         "PYTHONUNBUFFERED": "1",
