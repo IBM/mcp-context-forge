@@ -71,6 +71,10 @@ export const viewGateway = async function (gatewayId) {
           value: decodeHtml(gateway.description) || "N/A",
         },
         { label: "Visibility", value: gateway.visibility || "private" },
+        {
+          label: "Per-user credentials",
+          value: gateway.requiresUserCredentials ? "Enabled" : "Disabled",
+        },
       ];
 
       // Add tags field with special handling
@@ -588,6 +592,14 @@ export const editGateway = async function (gatewayId) {
       } else {
         passthroughHeadersField.value = "";
       }
+    }
+
+    const requiresUserCredentialsField = safeGetElement(
+      "requires-user-credentials-gw-edit"
+    );
+    if (requiresUserCredentialsField) {
+      requiresUserCredentialsField.checked =
+        gateway.requiresUserCredentials === true;
     }
 
     openModal("gateway-edit-modal");

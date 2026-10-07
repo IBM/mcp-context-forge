@@ -1974,6 +1974,19 @@ async def test_tool_service_resolve_vault_auth_headers_returns_headers():
 
 
 @pytest.mark.asyncio
+async def test_tool_service_resolve_vault_auth_headers_skips_disabled_policy():
+    """Disabled gateway policy returns before creating token storage."""
+    from mcpgateway.services.tool_service import ToolService
+
+    svc = object.__new__(ToolService)
+    with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_db_ctx:
+        result = await svc._resolve_vault_auth_headers("alice@example.com", ["eng"], "gw-1", "test-gw", requires_user_credentials=False)
+
+    assert result is None
+    mock_db_ctx.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_tool_service_resolve_vault_auth_headers_none_when_no_headers():
     """_resolve_vault_auth_headers returns None when vault returns no headers (lines 4170-4171)."""
     from mcpgateway.services.tool_service import ToolService
