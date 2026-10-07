@@ -10493,6 +10493,7 @@ async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(m
             (b"mcp-session-id", b"sess-fwd"),
             (b"x-forwarded-internally", b"true"),
             (b"authorization", b"Bearer original-jwt"),
+            (b"x-context-forge-gateway-id", b"gateway-selected"),
         ],
     )
 
@@ -10511,6 +10512,7 @@ async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(m
     assert sent_headers["x-forwarded-internally"] == "true"
     assert sent_headers["x-mcp-session-id"] == "sess-fwd"
     assert sent_headers["authorization"] == "Bearer original-jwt"
+    assert sent_headers["x-context-forge-gateway-id"] == "gateway-selected"
 
 
 @pytest.mark.asyncio
@@ -12123,7 +12125,6 @@ class TestProxyFunctions:
         mock_session.read_resource = AsyncMock(return_value=mock_result)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
-
 
         # Set request headers with gateway ID
         tr.request_headers_var.set({"x-context-forge-gateway-id": "original-gw-id"})
@@ -19971,3 +19972,23 @@ async def test_affinity_span_attributes_no_owner(monkeypatch):
 
     assert captured.get("mcp.affinity.owner") == "none"
     assert captured.get("mcp.affinity.decision") == "local"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("user_context", [{}, {"email": "user@example.com", "is_authenticated": False}, {"email": "user@example.com", "is_authenticated": True}])
+async def test_initialize_apps_uses_authenticated_scope(monkeypatch, enabled, user_context):
+    """Advertise Apps only when enabled for an authenticated request scope."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", enabled)
+    ctx = SimpleNamespace(method="initialize", request=SimpleNamespace(scope={tr._MCPGATEWAY_CONTEXT_KEY: {"user_context": user_context}}))
+    result = await tr._initialize_mcp_apps_capabilities(ctx, AsyncMock(return_value={"capabilities": {}}))
+    expected = enabled and user_context.get("is_authenticated", False)
+    assert (MCP_UI_EXTENSION in result["capabilities"].get("extensions", {})) == expected
+
+
+@pytest.mark.asyncio
+async def test_initialize_apps_leaves_other_results_unchanged():
+    """Preserve notification and catalog results through the capability middleware."""
+    for method, result in [("notifications/initialized", None), ("tools/list", {"tools": []})]:
+        ctx = SimpleNamespace(method=method)
+        assert await tr._initialize_mcp_apps_capabilities(ctx, AsyncMock(return_value=result)) is result

@@ -3552,6 +3552,24 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32601  # Method not found (Tool not found)
 
+    @patch("mcpgateway.main._execute_rpc_tools_call", new_callable=AsyncMock)
+    def test_rpc_tools_call_preserves_invocation_failure(self, execute, test_client, auth_headers):
+        """Return expected tool failures as MCP results through affinity dispatch."""
+        from mcpgateway.services.tool_service import ToolInvocationError
+
+        execute.side_effect = ToolInvocationError("Schema validation exceeded the execution time limit")
+        response = test_client.post(
+            "/rpc/",
+            json={"jsonrpc": "2.0", "id": "bounded", "method": "tools/call", "params": {"name": "probe", "arguments": {}}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": "bounded",
+            "result": {"content": [{"type": "text", "text": "Schema validation exceeded the execution time limit"}], "isError": True},
+        }
+
     def test_rpc_elicitation_disabled(self, test_client, auth_headers, monkeypatch):
         """Test elicitation/create JSON-RPC when feature disabled."""
         monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)

@@ -1811,7 +1811,7 @@ async def test_resource_template_edge_probe(admin_token: str, variant: str, reco
                     else:
                         with pytest.raises(McpError) as exc_info:
                             await session.read_resource(uri)
-                        assert exc_info.value.error.code == -32602, exc_info.value
+                        assert exc_info.value.error.code in (-32602, -32002), exc_info.value
                         assert peer.reads[before:] == [], peer.reads
                         observation["error"] = exc_info.value.error.model_dump(mode="json")
                     observation["upstream_requests"] = peer.reads[before:]

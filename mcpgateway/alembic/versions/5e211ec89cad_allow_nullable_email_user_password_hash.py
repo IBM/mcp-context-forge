@@ -26,9 +26,9 @@ down_revision: Union[str, Sequence[str], None] = "12d4a0c7789c"  # pragma: allow
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-DISABLED_PASSWORD_HASH = "!disabled"
+DISABLED_PASSWORD_HASH = "!disabled"  # nosec B105 - Sentinel rejects password authentication.
 PASSWORDLESS_HASH_TYPE = "none"
-COMPATIBLE_PASSWORD_HASH_TYPE = "argon2id"
+COMPATIBLE_PASSWORD_HASH_TYPE = "argon2id"  # nosec B105 - Hash algorithm identifier.
 NULL_HASH_KEY_PREFIX = "password_hash_was_null:"
 NONE_TYPE_KEY_PREFIX = "password_hash_type_was_none:"
 

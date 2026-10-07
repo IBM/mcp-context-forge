@@ -5901,13 +5901,14 @@ class TestReadResourceCoverageEdges:
         template_db = MagicMock()
         template_db.id = "tmpl-1"
         template_db.uri = "greetme://morning/{name}"
+        template_db.uri_template = template_db.uri
         template_db.enabled = False
         template_db.visibility = "public"
         template_db.owner_email = None
         template_db.team_id = None
 
-        # 1) URI lookup miss, 2) inactivity check miss, 3) inactive template miss, 4) template access-check fetch
-        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, None, template_db]
+        # URI lookup and inactivity lookup miss before the template access check.
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
 
         content = ResourceContent(type="resource", id="tmpl-1", uri="greetme://morning/{name}", text="greetme://morning/John")
 
@@ -5920,6 +5921,7 @@ class TestReadResourceCoverageEdges:
             out = await svc.read_resource(db, resource_uri="greetme://morning/John", include_inactive=True)
         assert out.id == "tmpl-1"
         assert out.text == "resolved template"
+        assert out.uri == "greetme://morning/John"
 
     @pytest.mark.asyncio
     async def test_read_resource_template_scoped_lookup_ignores_stale_cache(self):

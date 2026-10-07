@@ -11783,6 +11783,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     lowered_request_headers=_lowered_request_headers(),
                     server_id=server_id,
                 )
+            except ToolInvocationError as exc:
+                result = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
             finally:
                 # Release transaction after tools/call completes
                 db.commit()

@@ -1977,7 +1977,7 @@ async def call_tool(
                     if isinstance(value, dict):
                         try:
                             value = types.ElicitResult.model_validate(value)
-                        except Exception:  # noqa: BLE001 - non-elicitation responses pass through raw
+                        except Exception:  # nosec B110 - Preserve non-elicitation response values.
                             pass
                     inbound_input_responses[key] = value
     except LookupError:
@@ -2679,7 +2679,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         final_teams = normalize_token_teams(payload)
 
     # SECURITY: API/legacy team claims must still match current active memberships.
-    if token_use != "session" and final_teams and email:
+    if token_use != "session" and final_teams and email:  # nosec B105 - Token type discriminator, not a password.
         # First-Party
         from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 
@@ -3475,6 +3475,32 @@ def _get_v2_ctx() -> Any:
 # does not define this property natively.
 if not hasattr(type(mcp_app), "request_context"):
     type(mcp_app).request_context = property(lambda _self: _get_v2_ctx())  # type: ignore[attr-defined]
+
+
+async def _initialize_mcp_apps_capabilities(ctx: Any, call_next: Any) -> Any:
+    """Add MCP Apps capabilities from the authenticated HTTP request context.
+
+    Args:
+        ctx: SDK request context with the original HTTP request.
+        call_next: Next SDK middleware or handler.
+
+    Returns:
+        SDK result with capabilities for the authenticated caller.
+    """
+    result = await call_next(ctx)
+    if ctx.method != "initialize" or not isinstance(result, dict):
+        return result
+    request = ctx.request
+    scope_context = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY, {})
+    user_context = scope_context.get("user_context", {})
+    extensions = build_mcp_apps_capabilities(authorized=bool(user_context.get("email")) and user_context.get("is_authenticated", True))
+    if extensions:
+        capabilities = result.setdefault("capabilities", {})
+        capabilities.setdefault("extensions", {}).update(extensions)
+    return result
+
+
+mcp_app.middleware.append(_initialize_mcp_apps_capabilities)
 
 
 async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
@@ -4919,6 +4945,8 @@ class SessionManagerWrapper:
                 from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
                 rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+                if gateway_id := extract_gateway_id_from_headers(headers):
+                    rpc_headers[GATEWAY_ID_HEADER.lower()] = gateway_id
 
                 # Dispatch IN-PROCESS to the trusted internal endpoint so it executes in
                 # this worker (the session owner) rather than scattering over the shared
@@ -5114,6 +5142,8 @@ class SessionManagerWrapper:
                             rpc_headers[_auth_header_name] = _original_auth
                         # Forward passthrough headers for upstream MCP servers (see #3640).
                         rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+                        if gateway_id := extract_gateway_id_from_headers(headers):
+                            rpc_headers[GATEWAY_ID_HEADER.lower()] = gateway_id
 
                         # Dispatch in-process so the request runs on this worker, the
                         # session owner that holds the bound upstream session, instead of

@@ -119,7 +119,7 @@ def _detach_envelope_trace_context(token: Any) -> None:
         from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
 
         otel_context.detach(token)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except Exception:  # pylint: disable=broad-exception-caught  # nosec B110 - Trace cleanup must not interrupt request processing.
         pass
 
 
@@ -1076,7 +1076,8 @@ class SessionAffinity:
             request: The forwarded envelope.
             response_channel: Per-request reply channel for the rpc_forward result.
         """
-        assert self._forward_semaphore is not None  # set in start_rpc_listener
+        if self._forward_semaphore is None:
+            raise SessionAffinityNotInitializedError("Forward listener has not started")
         async with self._forward_semaphore:
             if forward_type == "rpc_forward":
                 response = await self._execute_forwarded_request(request)
@@ -1378,6 +1379,7 @@ class SessionAffinity:
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
             # First-Party
+            from mcpgateway.utils.gateway_access import extract_gateway_id_from_headers, GATEWAY_ID_HEADER  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
@@ -1401,6 +1403,8 @@ class SessionAffinity:
                 rpc_headers[auth_header_name] = original_auth
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+            if gateway_id := extract_gateway_id_from_headers(headers):
+                rpc_headers[GATEWAY_ID_HEADER.lower()] = gateway_id
 
             # Dispatch IN-PROCESS to the trusted internal endpoint via the shared helper.
             # Attach the envelope's trace context so the dispatch nests in the caller's trace.
