@@ -257,7 +257,7 @@ def _report_diagnostic_failure(message: str, source: str) -> None:
     """
     try:
         logger.warning(message, source, exc_info=True)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-exception-caught  # nosec B110 - Logging failure must not interrupt schema validation.
         pass
 
 

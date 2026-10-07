@@ -11,7 +11,7 @@ from typing import Optional, Protocol
 
 
 PASSWORDLESS_HASH_TYPE = "none"
-DISABLED_PASSWORD_HASH = "!disabled"
+DISABLED_PASSWORD_HASH = "!disabled"  # nosec B105 - Sentinel rejects password authentication.
 
 
 class PasswordCredentialState(Protocol):

@@ -11550,6 +11550,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 if not _trusted_internal_mcp_dispatch:
                     # /rpc is a 2025-era wire; an owner-worker dispatch is internal and keeps the value for the originating worker
                     result = _object_only_structured_content(result)
+            except ToolInvocationError as exc:
+                result = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
             finally:
                 # Release transaction after tools/call completes
                 db.commit()
