@@ -63,7 +63,6 @@
     display: none;
 }
 
-/* stylelint-disable-next-line selector-class-pattern -- third-party library class */
 .code-example+.CodeMirror {
     border-radius: 0.5rem;
     font-size: 0.8125rem;
@@ -71,7 +70,6 @@
     position: relative;
 }
 
-/* stylelint-disable-next-line selector-class-pattern -- third-party library class */
 .code-example+.CodeMirror.cm-s-monokai {
     background: #272822;
 }
