@@ -2146,10 +2146,12 @@ async def call_tool(
                     # and doesn't clobber the message with "Output validation
                     # error: outputSchema defined but no structured output
                     # returned".
+                    forwarded_meta = result_data.get("_meta")
                     return types.CallToolResult(
                         content=unstructured,
                         structured_content=structured,
                         is_error=True,
+                        _meta=forwarded_meta if isinstance(forwarded_meta, dict) else None,
                     )
                 # Success path: return the list/tuple shape so the MCP SDK's
                 # server-side validator runs and enforces the tool's
@@ -2310,10 +2312,12 @@ async def call_tool(
                 # and doesn't clobber the message with "Output validation
                 # error: outputSchema defined but no structured output
                 # returned".
+                result_meta = _convert_meta(getattr(result, "meta", None))
                 return types.CallToolResult(
                     content=unstructured,
                     structured_content=structured,
                     is_error=True,
+                    _meta=result_meta if isinstance(result_meta, dict) else None,
                 )
 
             # Success path: return the list/tuple shape so the MCP SDK's

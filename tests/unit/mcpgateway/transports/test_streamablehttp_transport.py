@@ -19225,6 +19225,24 @@ class TestUnknownEntityErrors:
         assert result.content[0].text == "Unknown tool: missing_tool"
 
     @pytest.mark.asyncio
+    async def test_upstream_error_code_in_meta_reaches_the_client(self, monkeypatch):
+        """The upstream error code the service preserved in the result's _meta is carried through the egress."""
+        # First-Party
+        from mcpgateway.common.models import TextContent, ToolResult
+        from mcpgateway.services.tool_service import UPSTREAM_ERROR_CODE
+
+        self._fake_db(monkeypatch)
+        relayed = ToolResult(content=[TextContent(type="text", text="Unknown tool: routed")], is_error=True, meta={UPSTREAM_ERROR_CODE: {"code": -32602}})
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=relayed))
+
+        result = await call_tool("routed", {})
+
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.content[0].text == "Unknown tool: routed"
+        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+
+    @pytest.mark.asyncio
     async def test_invocation_failure_returns_iserror_result(self, monkeypatch):
         """ToolInvocationError (eg: timeouts) becomes an isError result carrying the reason."""
         self._fake_db(monkeypatch)
