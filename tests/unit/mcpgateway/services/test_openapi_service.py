@@ -8,7 +8,7 @@ Unit tests for OpenAPI service.
 
 # Standard
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -538,8 +538,8 @@ class TestFetchOpenAPISpec:
         """Distinct parsed specs cannot exceed the aggregate cache budget."""
         first_url = "http://example.com/one.json"
         second_url = "http://example.com/two.json"
-        first_spec = {"paths": {"/one": {"get": {}}}}
-        second_spec = {"paths": {"/two": {"get": {}}}}
+        first_spec: dict[str, Any] = {"paths": {"/one": {"get": {}}}}
+        second_spec: dict[str, Any] = {"paths": {"/two": {"get": {}}}}
         budget = max(
             _estimate_spec_cache_size(first_url, first_spec, 1_000_000),
             _estimate_spec_cache_size(second_url, second_spec, 1_000_000),
@@ -559,7 +559,7 @@ class TestFetchOpenAPISpec:
     async def test_oversized_spec_is_returned_without_caching(self):
         """A spec above the cache budget remains usable without retaining its data or lock."""
         url = "http://example.com/openapi.json"
-        spec = {"openapi": "3.0.0", "paths": {}}
+        spec: dict[str, Any] = {"openapi": "3.0.0", "paths": {}}
 
         with patch("mcpgateway.services.openapi_service._SPEC_CACHE_MAX_BYTES", 1):
             with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value=spec) as fetch:

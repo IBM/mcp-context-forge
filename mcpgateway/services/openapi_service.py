@@ -13,7 +13,7 @@ import collections
 import logging
 import time
 from sys import getsizeof
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 import urllib.parse
 
 # Third-Party
@@ -65,7 +65,7 @@ _SPEC_CACHE_TTL = 60.0
 # queued single-flight waiter re-runs the failing fetch in turn, so N waiters pay N × timeout.
 _SPEC_ERROR_TTL = 5.0
 _SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
-_spec_cache: collections.OrderedDict[str, tuple[float, dict | Exception, int]] = collections.OrderedDict()
+_spec_cache: collections.OrderedDict[str, tuple[float, dict[str, Any] | Exception, int]] = collections.OrderedDict()
 _spec_cache_bytes = 0
 _spec_locks: dict[str, asyncio.Lock] = {}
 _spec_locks_guard = asyncio.Lock()
@@ -138,7 +138,7 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         return copy.deepcopy(result)
 
 
-def _estimate_spec_cache_size(spec_url: str, value: dict | Exception, max_bytes: int) -> int:
+def _estimate_spec_cache_size(spec_url: str, value: dict[str, Any] | Exception, max_bytes: int) -> int:
     """Estimate retained bytes and stop once the cache budget is exceeded."""
     total = getsizeof(spec_url) + _SPEC_CACHE_ENTRY_OVERHEAD_BYTES
     seen: set[int] = set()
