@@ -5854,10 +5854,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateways = await asyncio.to_thread(self._get_gateways)
                 if gateways:
                     await self.check_health_of_gateways(gateways, user_email, cycle_started_at=cycle_started_at)
-                # Advance by interval (not re-base on now) to keep ticks on a fixed grid.
-                next_health_check_at += max(self._health_check_interval, 0)
-                if next_health_check_at < now:
-                    next_health_check_at = now + max(self._health_check_interval, 0)
+                # Re-base the deadline on the pre-batch wall time so that variable
+                # wake-up delays do not shorten the measured gap below the interval.
+                next_health_check_at = now + max(self._health_check_interval, 0)
 
             if require_leader is not None and not await require_leader():
                 return

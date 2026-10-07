@@ -4792,6 +4792,71 @@ class TestGatewayHealth:
                     assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_scheduler_jitter_does_not_skip_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Alternating 20 ms / 5 ms wake-up delays must not cause the scheduler
+        to shorten the measured gap and trip the per-gateway throttle.
+
+        Regression for #7095: the fixed-grid increment (next += interval) produced
+        a gap of interval-15ms on the second tick when the delay dropped from 20ms
+        to 5ms, causing the throttle to reject the refresh.  The fix re-bases the
+        deadline on now (sampled before the batch), guaranteeing a full-interval gap
+        for every cycle regardless of jitter.
+
+        Five simulated cycle starts with alternating delays (seconds):
+          0.000, 60.020, 120.005, 180.020, 240.005
+        All five cycles must fire a refresh.
+        """
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock.return_value = lock
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        interval = 60
+
+        # Wake-up delays (seconds) that alternate between +20 ms and +5 ms.
+        jitter_offsets = [0.000, 0.020, 0.005, 0.020, 0.005]
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = interval
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    mock_db_session.__enter__().execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    base = datetime.now(timezone.utc)
+                    mock_gateway_health.last_refresh_at = None
+                    mock_gateway_health.refresh_interval_seconds = None
+
+                    cumulative = 0.0
+                    for i, jitter in enumerate(jitter_offsets):
+                        cumulative += interval * (1 if i > 0 else 0) + jitter
+                        cycle_ts = base + timedelta(seconds=cumulative)
+
+                        async def _write_ts(*_a, cycle_started_at=None, **_kw):
+                            mock_gateway_health.last_refresh_at = cycle_started_at
+
+                        gateway_service._refresh_gateway_tools_resources_prompts.side_effect = _write_ts
+                        await gateway_service._check_single_gateway_health(mock_gateway_health, cycle_started_at=cycle_ts)
+
+                    assert gateway_service._refresh_gateway_tools_resources_prompts.await_count == 5, (
+                        f"Expected 5 refreshes (one per cycle) but got "
+                        f"{gateway_service._refresh_gateway_tools_resources_prompts.await_count}"
+                    )
+
+    @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
         # First-Party
         import mcpgateway.services.gateway_service as gs
