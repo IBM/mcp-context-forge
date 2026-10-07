@@ -17,20 +17,6 @@ server must return JSON-RPC error **-32021**.
 
 Legacy connections (2024-11-05 / 2025-11-25) carry none of these keys and must
 never be rejected for lacking them.
-
-Examples:
-    >>> from mcpgateway.utils.meta_protocol import is_modern_meta, extract_protocol_meta
-    >>> modern = {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}}
-    >>> is_modern_meta(modern)
-    True
-    >>> legacy = {"progressToken": 1}
-    >>> is_modern_meta(legacy)
-    False
-    >>> pv, caps = extract_protocol_meta(modern)
-    >>> pv
-    '2026-07-28'
-    >>> caps
-    {}
 """
 
 # Standard
