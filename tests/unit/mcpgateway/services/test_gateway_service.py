@@ -10071,6 +10071,214 @@ class TestTokenExchangeAdminOnlyGate:
                 await gateway_service.register_gateway(test_db, cfg, owner_email="developer@example.com")
 
 
+class TestResolveTokenExchangeHeaderUpstreamAuth:
+    """_resolve_token_exchange_header uses X-Upstream-Authorization as the subject token
+    when it is present and JWT-shaped, falling back to the standard Authorization/cookie path.
+    """
+
+    _OAUTH_CONFIG = {
+        "grant_type": "token-exchange",
+        "token_url": "https://as.example.com/token",
+        "client_id": "cf",
+        "client_secret": "s",  # pragma: allowlist secret
+        "target_audience": "https://svc",
+    }
+
+    # Minimal valid compact-serialization JWT shape (three non-empty dot-separated segments).
+    _UPSTREAM_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.sig"
+    _INBOUND_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.sig2"
+
+    @pytest.fixture()
+    def svc(self):
+        return GatewayService()
+
+    @pytest.mark.asyncio
+    async def test_upstream_auth_bearer_used_as_subject_token(self, svc):
+        """X-Upstream-Authorization: Bearer <jwt> overrides the inbound Authorization bearer."""
+        svc._token_exchange_cache = AsyncMock()
+        svc._token_exchange_cache.get = AsyncMock(return_value=None)
+        svc._token_exchange_cache.is_failed = AsyncMock(return_value=False)
+        svc._token_exchange_cache.lock = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=None)))
+        svc._token_exchange_cache.set = AsyncMock()
+        svc._token_exchange_cache.set_failure = AsyncMock()
+
+        captured: dict = {}
+
+        async def fake_token_exchange(**kwargs):
+            captured.update(kwargs)
+            return {"access_token": "exchanged-tok", "expires_in": 300}
+
+        svc.oauth_manager = AsyncMock()
+        svc.oauth_manager.token_exchange = fake_token_exchange
+
+        headers = {
+            "Authorization": f"Bearer {self._INBOUND_JWT}",
+            "X-Upstream-Authorization": f"Bearer {self._UPSTREAM_JWT}",
+        }
+
+        with patch("mcpgateway.services.gateway_service.audit_token_exchange"):
+            with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+                result = await svc._resolve_token_exchange_header(
+                    self._OAUTH_CONFIG,
+                    gateway_id="gw-1",
+                    gateway_name="test-gw",
+                    app_user_email="user@example.com",
+                    request_headers=headers,
+                )
+
+        assert result == {"Authorization": "Bearer exchanged-tok"}
+        # The upstream JWT must have been used, not the inbound JWT.
+        assert captured["subject_token"] == self._UPSTREAM_JWT
+
+    @pytest.mark.asyncio
+    async def test_upstream_auth_without_bearer_prefix_accepted_as_raw_jwt(self, svc):
+        """X-Upstream-Authorization: <raw-jwt> (no Bearer prefix) is used directly when JWT-shaped."""
+        svc._token_exchange_cache = AsyncMock()
+        svc._token_exchange_cache.get = AsyncMock(return_value=None)
+        svc._token_exchange_cache.is_failed = AsyncMock(return_value=False)
+        svc._token_exchange_cache.lock = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=None)))
+        svc._token_exchange_cache.set = AsyncMock()
+        svc._token_exchange_cache.set_failure = AsyncMock()
+
+        captured: dict = {}
+
+        async def fake_token_exchange(**kwargs):
+            captured.update(kwargs)
+            return {"access_token": "exchanged-tok", "expires_in": 300}
+
+        svc.oauth_manager = AsyncMock()
+        svc.oauth_manager.token_exchange = fake_token_exchange
+
+        headers = {
+            "Authorization": f"Bearer {self._INBOUND_JWT}",
+            "X-Upstream-Authorization": self._UPSTREAM_JWT,  # no "Bearer " prefix
+        }
+
+        with patch("mcpgateway.services.gateway_service.audit_token_exchange"):
+            with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+                result = await svc._resolve_token_exchange_header(
+                    self._OAUTH_CONFIG,
+                    gateway_id="gw-1",
+                    gateway_name="test-gw",
+                    app_user_email="user@example.com",
+                    request_headers=headers,
+                )
+
+        assert result == {"Authorization": "Bearer exchanged-tok"}
+        assert captured["subject_token"] == self._UPSTREAM_JWT
+
+    @pytest.mark.asyncio
+    async def test_opaque_upstream_auth_falls_back_to_inbound_bearer(self, svc):
+        """If X-Upstream-Authorization carries a non-JWT opaque token, fall back to Authorization."""
+        svc._token_exchange_cache = AsyncMock()
+        svc._token_exchange_cache.get = AsyncMock(return_value=None)
+        svc._token_exchange_cache.is_failed = AsyncMock(return_value=False)
+        svc._token_exchange_cache.lock = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=None)))
+        svc._token_exchange_cache.set = AsyncMock()
+        svc._token_exchange_cache.set_failure = AsyncMock()
+
+        captured: dict = {}
+
+        async def fake_token_exchange(**kwargs):
+            captured.update(kwargs)
+            return {"access_token": "exchanged-tok", "expires_in": 300}
+
+        svc.oauth_manager = AsyncMock()
+        svc.oauth_manager.token_exchange = fake_token_exchange
+
+        headers = {
+            "Authorization": f"Bearer {self._INBOUND_JWT}",
+            "X-Upstream-Authorization": "Bearer opaque-not-a-jwt",
+        }
+
+        with patch("mcpgateway.services.gateway_service.audit_token_exchange"):
+            with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+                result = await svc._resolve_token_exchange_header(
+                    self._OAUTH_CONFIG,
+                    gateway_id="gw-1",
+                    gateway_name="test-gw",
+                    app_user_email="user@example.com",
+                    request_headers=headers,
+                )
+
+        assert result == {"Authorization": "Bearer exchanged-tok"}
+        # Opaque upstream token is ignored; inbound bearer is used instead.
+        assert captured["subject_token"] == self._INBOUND_JWT
+
+    @pytest.mark.asyncio
+    async def test_no_upstream_auth_falls_back_to_inbound_bearer(self, svc):
+        """Without X-Upstream-Authorization the inbound Authorization bearer is the subject token."""
+        svc._token_exchange_cache = AsyncMock()
+        svc._token_exchange_cache.get = AsyncMock(return_value=None)
+        svc._token_exchange_cache.is_failed = AsyncMock(return_value=False)
+        svc._token_exchange_cache.lock = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=None)))
+        svc._token_exchange_cache.set = AsyncMock()
+        svc._token_exchange_cache.set_failure = AsyncMock()
+
+        captured: dict = {}
+
+        async def fake_token_exchange(**kwargs):
+            captured.update(kwargs)
+            return {"access_token": "exchanged-tok", "expires_in": 300}
+
+        svc.oauth_manager = AsyncMock()
+        svc.oauth_manager.token_exchange = fake_token_exchange
+
+        headers = {"Authorization": f"Bearer {self._INBOUND_JWT}"}
+
+        with patch("mcpgateway.services.gateway_service.audit_token_exchange"):
+            with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+                result = await svc._resolve_token_exchange_header(
+                    self._OAUTH_CONFIG,
+                    gateway_id="gw-1",
+                    gateway_name="test-gw",
+                    app_user_email="user@example.com",
+                    request_headers=headers,
+                )
+
+        assert result == {"Authorization": "Bearer exchanged-tok"}
+        assert captured["subject_token"] == self._INBOUND_JWT
+
+    @pytest.mark.asyncio
+    async def test_upstream_auth_header_is_case_insensitive(self, svc):
+        """X-Upstream-Authorization lookup is case-insensitive."""
+        svc._token_exchange_cache = AsyncMock()
+        svc._token_exchange_cache.get = AsyncMock(return_value=None)
+        svc._token_exchange_cache.is_failed = AsyncMock(return_value=False)
+        svc._token_exchange_cache.lock = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=None)))
+        svc._token_exchange_cache.set = AsyncMock()
+        svc._token_exchange_cache.set_failure = AsyncMock()
+
+        captured: dict = {}
+
+        async def fake_token_exchange(**kwargs):
+            captured.update(kwargs)
+            return {"access_token": "exchanged-tok", "expires_in": 300}
+
+        svc.oauth_manager = AsyncMock()
+        svc.oauth_manager.token_exchange = fake_token_exchange
+
+        # Mixed-case header name.
+        headers = {
+            "Authorization": f"Bearer {self._INBOUND_JWT}",
+            "x-upstream-authorization": f"Bearer {self._UPSTREAM_JWT}",
+        }
+
+        with patch("mcpgateway.services.gateway_service.audit_token_exchange"):
+            with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+                result = await svc._resolve_token_exchange_header(
+                    self._OAUTH_CONFIG,
+                    gateway_id="gw-1",
+                    gateway_name="test-gw",
+                    app_user_email="user@example.com",
+                    request_headers=headers,
+                )
+
+        assert result == {"Authorization": "Bearer exchanged-tok"}
+        assert captured["subject_token"] == self._UPSTREAM_JWT
+
+
+
 class TestFetchToolsAfterOAuthEnforcementPoint:
     """Reviewer's HIGH-severity test-coverage gap: advisory vs. blocking audience mismatch at the enforcement point.
 

@@ -143,7 +143,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.subject_token import extract_subject_jwt
+from mcpgateway.utils.subject_token import extract_subject_jwt, looks_like_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
@@ -1025,6 +1025,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         falls back to forwarding the caller's raw JWT -- callers without a usable
         subject token get a failure, not a passthrough of unexchanged credentials.
 
+        Subject token resolution order:
+          1. ``X-Upstream-Authorization: Bearer <token>`` — when present and
+             JWT-shaped, use this value as the subject token. This lets callers
+             supply a distinct user JWT for the exchange (e.g. an IdP-issued token)
+             while the ``Authorization`` header still carries the internal gateway
+             JWT used for request authentication.
+          2. ``Authorization: Bearer <token>`` — the inbound request JWT (the
+             standard path when no ``X-Upstream-Authorization`` header is provided).
+          3. ``jwt_token`` cookie — Admin UI sessions that cannot attach a bearer.
+
         Args:
             oauth_config: Gateway OAuth configuration (grant_type == "token-exchange").
             gateway_id: Gateway identifier used as a cache key component.
@@ -1072,10 +1082,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id})
             raise GatewayConnectionError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
-        # Subject token: Authorization bearer first, then the HttpOnly jwt_token
-        # cookie (Admin UI sessions cannot attach a bearer header). Both routes
-        # sit behind CSRF enforcement at the endpoint/middleware layer.
-        subject_token = extract_subject_jwt(request_headers or {})
+        # Subject token resolution: prefer X-Upstream-Authorization when the caller
+        # supplies a distinct IdP-issued JWT for the exchange while using their
+        # internal gateway JWT in Authorization for request authentication.
+        # Both headers sit behind CSRF enforcement at the endpoint/middleware layer.
+        rh_lower = {k.lower(): v for k, v in (request_headers or {}).items()}
+        upstream_auth = rh_lower.get("x-upstream-authorization")
+        subject_token: Optional[str] = None
+        if upstream_auth and isinstance(upstream_auth, str):
+            parts = upstream_auth.split(None, 1)
+            candidate = parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else upstream_auth
+            if looks_like_jwt(candidate):
+                subject_token = candidate
+                logger.debug("token-exchange: using X-Upstream-Authorization as subject_token for gateway %s", gateway_name)
+        if not subject_token:
+            subject_token = extract_subject_jwt(request_headers or {})
         if not subject_token:
             raise GatewayConnectionError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
 
