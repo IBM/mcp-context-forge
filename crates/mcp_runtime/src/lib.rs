@@ -5737,7 +5737,7 @@ fn prompt_arguments_from_schema(argument_schema: Option<Value>) -> Vec<Value> {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct DirectExecutionAuthorization {
-    #[serde(default)]
+    #[serde(default, alias = "catalogVisibility")]
     catalog_visibility: Option<catalog::Visibility>,
     #[serde(
         default = "default_direct_execution_eligible",
@@ -12940,6 +12940,19 @@ mod unit_tests {
         let backend = Router::new()
             .route("/authz-ok", post(|| async { StatusCode::OK }))
             .route(
+                "/authz-catalog",
+                post(|| async {
+                    Json(json!({
+                        "directExecutionEligible": true,
+                        "catalogVisibility": {
+                            "email": "viewer@example.com",
+                            "teams": ["team-1"],
+                            "admin": false,
+                        },
+                    }))
+                }),
+            )
+            .route(
                 "/authz-fallback",
                 post(|| async {
                     (
@@ -12982,6 +12995,29 @@ mod unit_tests {
         .await
         .expect("success should pass through");
         assert_eq!(authz_ok, DirectExecutionAuthorization::default());
+
+        let catalog_authz = authorize_server_method_via_backend(
+            &state,
+            &trusted_server_headers("server-1"),
+            Some(json!(31)),
+            &format!("{backend_url}/authz-catalog"),
+            "tools/list",
+        )
+        .await
+        .expect("catalog authorization should decode");
+        assert!(catalog_authz.direct_execution_eligible);
+        let visibility = catalog_authz
+            .catalog_visibility
+            .expect("Python catalog visibility must reach native execution");
+        assert_eq!(
+            visibility,
+            serde_json::from_value(json!({
+                "email": "viewer@example.com",
+                "teams": ["team-1"],
+                "admin": false,
+            }))
+            .expect("expected catalog visibility"),
+        );
 
         let authz_fallback = authorize_server_method_via_backend(
             &state,
