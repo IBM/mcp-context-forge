@@ -11,7 +11,6 @@
 //! still delegating authentication and RBAC authority to Python.
 
 pub mod backend_url_validator;
-mod catalog;
 pub mod config;
 pub mod observability;
 
@@ -134,9 +133,6 @@ pub enum RuntimeError {
 /// - runtime/session/tool caches that keep the public MCP hot path off repeated
 ///   backend lookups where possible
 pub struct AppState {
-    catalog_cursor: Option<Arc<catalog::CursorCodec>>,
-    catalog_page_size: usize,
-    catalog_cursor_ttl: u64,
     backend_rpc_url: Arc<str>,
     backend_authenticate_url: Arc<str>,
     backend_initialize_url: Arc<str>,
@@ -667,38 +663,6 @@ enum ResolveToolsCallError {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct McpToolDefinition {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(rename = "inputSchema")]
-    input_schema: Value,
-    #[serde(rename = "annotations")]
-    annotations: Value,
-    #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
-    output_schema: Option<Value>,
-}
-
-fn normalize_tool_input_schema(input_schema: Option<Value>) -> Value {
-    let mut schema = input_schema.unwrap_or_else(|| json!({"type": "object", "properties": {}}));
-
-    let Some(schema_object) = schema.as_object_mut() else {
-        return schema;
-    };
-
-    let is_object_schema = schema_object.get("type").and_then(Value::as_str) == Some("object");
-    let has_properties = schema_object
-        .get("properties")
-        .is_some_and(Value::is_object);
-
-    if (is_object_schema || has_properties) && !schema_object.contains_key("required") {
-        schema_object.insert("required".to_string(), Value::Array(Vec::new()));
-    }
-
-    schema
-}
-
 fn jsonrpc_response_status(status: StatusCode) -> StatusCode {
     if status.is_success() {
         status
@@ -723,13 +687,6 @@ impl AppState {
     /// initialized from the provided configuration.
     pub fn new(config: &RuntimeConfig) -> Result<Self, RuntimeError> {
         ensure_internal_runtime_auth_secret()?;
-        let catalog_cursor = std::env::var("AUTH_ENCRYPTION_SECRET")
-            .ok()
-            .filter(|secret| !secret.is_empty())
-            .map(|secret| catalog::CursorCodec::new(secret.as_bytes()))
-            .transpose()
-            .map_err(RuntimeError::Config)?
-            .map(Arc::new);
         let client = Client::builder()
             .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
             .pool_idle_timeout(Duration::from_secs(config.client_pool_idle_timeout_seconds))
@@ -761,9 +718,6 @@ impl AppState {
             })?;
 
         Ok(Self {
-            catalog_cursor,
-            catalog_page_size: usize::from(config.mcp_list_page_size),
-            catalog_cursor_ttl: config.mcp_list_cursor_ttl_seconds,
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
             backend_authenticate_url: Arc::from(derive_backend_authenticate_url(
                 &config.backend_rpc_url,
@@ -1752,7 +1706,6 @@ async fn rpc_inner(
 
     let server_scoped_request = has_server_scope(&headers);
     let server_scoped_tools_list = request.method == "tools/list" && server_scoped_request;
-    let rust_db_direct_tools_list = server_scoped_tools_list && state.db_pool().is_some();
     let specialized_initialize = request.method == "initialize";
     let specialized_resources_list = request.method == "resources/list";
     let specialized_resources_read = request.method == "resources/read";
@@ -1784,16 +1737,10 @@ async fn rpc_inner(
     let catch_all_elicitation =
         request.method.starts_with("elicitation/") && request.method != "elicitation/create";
     let specialized_tools_call = request.method == "tools/call";
-    let rust_db_direct_resources_list =
-        specialized_resources_list && server_scoped_request && state.db_pool().is_some();
     let rust_db_direct_resources_read = specialized_resources_read
         && server_scoped_request
         && state.db_pool().is_some()
         && can_use_direct_resources_read(&request.params);
-    let rust_db_direct_resource_templates_list =
-        specialized_resource_templates_list && server_scoped_request && state.db_pool().is_some();
-    let rust_db_direct_prompts_list =
-        specialized_prompts_list && server_scoped_request && state.db_pool().is_some();
     let rust_db_direct_prompts_get = specialized_prompts_get
         && server_scoped_request
         && state.db_pool().is_some()
@@ -1869,8 +1816,6 @@ async fn rpc_inner(
         "backend-notifications-message-direct"
     } else if specialized_cancelled_notification {
         "backend-notifications-cancelled-direct"
-    } else if rust_db_direct_resources_list {
-        "db-resources-list-direct"
     } else if specialized_resources_list {
         "backend-resources-list-direct"
     } else if rust_db_direct_resources_read {
@@ -1881,12 +1826,8 @@ async fn rpc_inner(
         "backend-resources-subscribe-direct"
     } else if specialized_resources_unsubscribe {
         "backend-resources-unsubscribe-direct"
-    } else if rust_db_direct_resource_templates_list {
-        "db-resource-templates-list-direct"
     } else if specialized_resource_templates_list {
         "backend-resource-templates-list-direct"
-    } else if rust_db_direct_prompts_list {
-        "db-prompts-list-direct"
     } else if specialized_prompts_list {
         "backend-prompts-list-direct"
     } else if rust_db_direct_prompts_get {
@@ -1915,8 +1856,6 @@ async fn rpc_inner(
         "backend-initialize-direct"
     } else if specialized_tools_call {
         "backend-tools-call-direct"
-    } else if rust_db_direct_tools_list {
-        "db-tools-list-direct"
     } else if server_scoped_tools_list {
         "backend-tools-list-direct"
     } else {
@@ -1934,11 +1873,6 @@ async fn rpc_inner(
 
     if specialized_cancelled_notification {
         return forward_cancelled_notification_to_backend(&state, effective_headers, body).await;
-    }
-
-    if rust_db_direct_resources_list {
-        return direct_server_resources_list(&state, effective_headers, request.id.clone(), body)
-            .await;
     }
 
     if specialized_resources_list {
@@ -1992,16 +1926,6 @@ async fn rpc_inner(
         .await;
     }
 
-    if rust_db_direct_resource_templates_list {
-        return direct_server_resource_templates_list(
-            &state,
-            effective_headers,
-            request.id.clone(),
-            body,
-        )
-        .await;
-    }
-
     if specialized_resource_templates_list {
         return forward_resource_templates_list_to_backend(
             &state,
@@ -2010,11 +1934,6 @@ async fn rpc_inner(
             request.id.clone(),
         )
         .await;
-    }
-
-    if rust_db_direct_prompts_list {
-        return direct_server_prompts_list(&state, effective_headers, request.id.clone(), body)
-            .await;
     }
 
     if specialized_prompts_list {
@@ -2127,10 +2046,6 @@ async fn rpc_inner(
 
     if specialized_initialize {
         return forward_initialize_to_backend(&state, effective_headers, body).await;
-    }
-
-    if rust_db_direct_tools_list {
-        return direct_server_tools_list(&state, effective_headers, request.id.clone(), body).await;
     }
 
     if server_scoped_tools_list {
@@ -5067,49 +4982,6 @@ async fn forward_server_tools_list_to_backend(
     .await
 }
 
-async fn direct_server_tools_list(
-    state: &AppState,
-    incoming_headers: HeaderMap,
-    request_id: Option<Value>,
-    body: Bytes,
-) -> Response {
-    catalog::serve(state, incoming_headers, request_id, body, "tools/list").await
-}
-
-async fn direct_server_resources_list(
-    state: &AppState,
-    incoming_headers: HeaderMap,
-    request_id: Option<Value>,
-    body: Bytes,
-) -> Response {
-    catalog::serve(state, incoming_headers, request_id, body, "resources/list").await
-}
-
-async fn direct_server_resource_templates_list(
-    state: &AppState,
-    incoming_headers: HeaderMap,
-    request_id: Option<Value>,
-    body: Bytes,
-) -> Response {
-    catalog::serve(
-        state,
-        incoming_headers,
-        request_id,
-        body,
-        "resources/templates/list",
-    )
-    .await
-}
-
-async fn direct_server_prompts_list(
-    state: &AppState,
-    incoming_headers: HeaderMap,
-    request_id: Option<Value>,
-    body: Bytes,
-) -> Response {
-    catalog::serve(state, incoming_headers, request_id, body, "prompts/list").await
-}
-
 async fn direct_server_resources_read(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -5647,98 +5519,8 @@ async fn query_server_prompt_observability_metadata(
     }))
 }
 
-fn resource_row_to_value(row: &tokio_postgres::Row) -> Value {
-    let mut resource = serde_json::Map::new();
-    resource.insert("uri".to_string(), Value::String(row.get("uri")));
-    resource.insert("name".to_string(), Value::String(row.get("name")));
-    if let Some(description) = row.get::<_, Option<String>>("description") {
-        resource.insert("description".to_string(), Value::String(description));
-    }
-    if let Some(mime_type) = row.get::<_, Option<String>>("mime_type") {
-        resource.insert("mimeType".to_string(), Value::String(mime_type));
-    }
-    if let Some(size) = row.get::<_, Option<i32>>("size") {
-        resource.insert("size".to_string(), Value::Number(size.into()));
-    }
-    Value::Object(resource)
-}
-
-fn resource_template_row_to_value(row: &tokio_postgres::Row) -> Value {
-    let mut resource_template = serde_json::Map::new();
-    resource_template.insert("id".to_string(), Value::String(row.get("id")));
-    resource_template.insert(
-        "uriTemplate".to_string(),
-        Value::String(row.get("uri_template")),
-    );
-    resource_template.insert("name".to_string(), Value::String(row.get("name")));
-    if let Some(description) = row.get::<_, Option<String>>("description") {
-        resource_template.insert("description".to_string(), Value::String(description));
-    }
-    if let Some(mime_type) = row.get::<_, Option<String>>("mime_type") {
-        resource_template.insert("mimeType".to_string(), Value::String(mime_type));
-    }
-    Value::Object(resource_template)
-}
-
-fn prompt_row_to_value(row: &tokio_postgres::Row) -> Value {
-    let mut prompt = serde_json::Map::new();
-    prompt.insert("name".to_string(), Value::String(row.get("name")));
-    if let Some(description) = row.get::<_, Option<String>>("description") {
-        prompt.insert("description".to_string(), Value::String(description));
-    }
-    prompt.insert(
-        "arguments".to_string(),
-        Value::Array(prompt_arguments_from_schema(
-            row.get::<_, Option<Value>>("argument_schema"),
-        )),
-    );
-    Value::Object(prompt)
-}
-
-fn prompt_arguments_from_schema(argument_schema: Option<Value>) -> Vec<Value> {
-    let Some(argument_schema) = argument_schema else {
-        return Vec::new();
-    };
-    let Some(schema_object) = argument_schema.as_object() else {
-        return Vec::new();
-    };
-    let properties = schema_object
-        .get("properties")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let required = schema_object
-        .get("required")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    let required_names: std::collections::HashSet<String> = required
-        .into_iter()
-        .filter_map(|value| value.as_str().map(str::to_string))
-        .collect();
-
-    let mut arguments = Vec::new();
-    for (name, property) in properties {
-        let description = property
-            .as_object()
-            .and_then(|object| object.get("description"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        arguments.push(json!({
-            "name": name,
-            "description": description,
-            "required": required_names.contains(&name),
-        }));
-    }
-    arguments
-}
-
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct DirectExecutionAuthorization {
-    #[serde(default, alias = "catalogVisibility")]
-    catalog_visibility: Option<catalog::Visibility>,
     #[serde(
         default = "default_direct_execution_eligible",
         alias = "directExecutionEligible"
@@ -5751,7 +5533,6 @@ struct DirectExecutionAuthorization {
 impl Default for DirectExecutionAuthorization {
     fn default() -> Self {
         Self {
-            catalog_visibility: None,
             direct_execution_eligible: true,
             fallback_reason: None,
         }
@@ -9861,20 +9642,17 @@ mod unit_tests {
         derive_backend_tools_call_metric_url, derive_backend_tools_call_resolve_url,
         derive_backend_tools_call_url, derive_backend_tools_list_authz_url,
         derive_backend_tools_list_url, derive_backend_transport_url, direct_server_prompts_get,
-        direct_server_prompts_list, direct_server_resource_templates_list,
-        direct_server_resources_list, direct_server_resources_read,
-        encode_internal_auth_context_header, event_store_key_prefix, extract_client_capabilities,
-        extract_first_sse_data_payload, finalize_sse_frame, forward_initialize_to_backend,
-        forward_to_backend, forward_transport_request, get_runtime_session,
-        handle_initialize_with_session_core, handle_resume_transport_request, has_server_scope,
-        hex_decode, hex_encode, inject_server_id_header, inject_session_header,
+        direct_server_resources_read, encode_internal_auth_context_header, event_store_key_prefix,
+        extract_client_capabilities, extract_first_sse_data_payload, finalize_sse_frame,
+        forward_initialize_to_backend, forward_to_backend, forward_transport_request,
+        get_runtime_session, handle_initialize_with_session_core, handle_resume_transport_request,
+        has_server_scope, hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
         maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
-        normalize_postgres_database_url, normalize_tool_input_schema, parse_error_response,
-        parse_sse_line, pool_owner_key, prompt_arguments_from_schema, public_client_ip,
-        query_param, read_next_sse_frame, remove_runtime_session, replay_events_endpoint,
-        requested_initialize_session_id, requested_protocol_version,
-        response_from_affinity_forward_response, run, runtime_session_access_outcome,
+        normalize_postgres_database_url, parse_error_response, parse_sse_line, pool_owner_key,
+        public_client_ip, query_param, read_next_sse_frame, remove_runtime_session,
+        replay_events_endpoint, requested_initialize_session_id, requested_protocol_version,
+        response_from_affinity_forward_response, rpc_inner, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
         tools_call_error_type_from_payload, transport_delete_server_scoped,
@@ -9994,8 +9772,6 @@ mod unit_tests {
     fn test_config() -> RuntimeConfig {
         ensure_test_auth_secret();
         RuntimeConfig {
-            mcp_list_page_size: 100,
-            mcp_list_cursor_ttl_seconds: 900,
             backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
             listen_http: free_tcp_addr(),
             listen_uds: None,
@@ -12443,69 +12219,6 @@ mod unit_tests {
     }
 
     #[tokio::test]
-    async fn direct_server_list_methods_fall_back_without_trusted_context() {
-        let backend = Router::new()
-            .route(
-                "/_internal/mcp/resources/list",
-                post(|| async { Json(json!({"marker": "resources-list"})) }),
-            )
-            .route(
-                "/_internal/mcp/resources/templates/list",
-                post(|| async { Json(json!({"marker": "resource-templates-list"})) }),
-            )
-            .route(
-                "/_internal/mcp/prompts/list",
-                post(|| async { Json(json!({"marker": "prompts-list"})) }),
-            );
-        let backend_url = spawn_router(backend).await;
-
-        let mut config = test_config();
-        config.backend_rpc_url = format!("{backend_url}/rpc");
-        let state = AppState::new(&config).expect("state");
-
-        let resources_response = direct_server_resources_list(
-            &state,
-            HeaderMap::new(),
-            Some(json!(1)),
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
-        )
-        .await;
-        assert_eq!(resources_response.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(resources_response).await["result"]["marker"],
-            "resources-list"
-        );
-
-        let templates_response = direct_server_resource_templates_list(
-            &state,
-            HeaderMap::new(),
-            Some(json!(2)),
-            Bytes::from_static(
-                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
-            ),
-        )
-        .await;
-        assert_eq!(templates_response.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(templates_response).await["result"]["marker"],
-            "resource-templates-list"
-        );
-
-        let prompts_response = direct_server_prompts_list(
-            &state,
-            HeaderMap::new(),
-            Some(json!(3)),
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
-        )
-        .await;
-        assert_eq!(prompts_response.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(prompts_response).await["result"]["marker"],
-            "prompts-list"
-        );
-    }
-
-    #[tokio::test]
     async fn direct_server_read_methods_fall_back_for_missing_required_params() {
         let backend = Router::new()
             .route(
@@ -12710,47 +12423,6 @@ mod unit_tests {
         let state = AppState::new(&config).expect("state");
         let trusted_headers = trusted_server_headers("server-1");
 
-        let resources_list = direct_server_resources_list(
-            &state,
-            trusted_headers.clone(),
-            Some(json!(21)),
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
-        )
-        .await;
-        assert_eq!(resources_list.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(resources_list).await["result"]["marker"],
-            "resources-list-db-fallback"
-        );
-
-        let templates_list = direct_server_resource_templates_list(
-            &state,
-            trusted_headers.clone(),
-            Some(json!(22)),
-            Bytes::from_static(
-                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
-            ),
-        )
-        .await;
-        assert_eq!(templates_list.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(templates_list).await["result"]["marker"],
-            "resource-templates-db-fallback"
-        );
-
-        let prompts_list = direct_server_prompts_list(
-            &state,
-            trusted_headers.clone(),
-            Some(json!(23)),
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
-        )
-        .await;
-        assert_eq!(prompts_list.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(prompts_list).await["result"]["marker"],
-            "prompts-list-db-fallback"
-        );
-
         let resources_request = JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
             method: "resources/read".to_string(),
@@ -12851,47 +12523,6 @@ mod unit_tests {
         let state = AppState::new(&config).expect("state");
         let trusted_headers = trusted_server_headers("server-1");
 
-        let resources_list = direct_server_resources_list(
-            &state,
-            trusted_headers.clone(),
-            Some(json!(26)),
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
-        )
-        .await;
-        assert_eq!(resources_list.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(resources_list).await["error"]["detail"],
-            "resources/list denied"
-        );
-
-        let templates_list = direct_server_resource_templates_list(
-            &state,
-            trusted_headers.clone(),
-            Some(json!(27)),
-            Bytes::from_static(
-                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
-            ),
-        )
-        .await;
-        assert_eq!(templates_list.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(templates_list).await["error"]["detail"],
-            "templates denied"
-        );
-
-        let prompts_list = direct_server_prompts_list(
-            &state,
-            trusted_headers.clone(),
-            Some(json!(28)),
-            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
-        )
-        .await;
-        assert_eq!(prompts_list.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(prompts_list).await["error"]["detail"],
-            "prompts/list denied"
-        );
-
         let resources_read = direct_server_resources_read(
             &state,
             trusted_headers.clone(),
@@ -12940,19 +12571,6 @@ mod unit_tests {
         let backend = Router::new()
             .route("/authz-ok", post(|| async { StatusCode::OK }))
             .route(
-                "/authz-catalog",
-                post(|| async {
-                    Json(json!({
-                        "directExecutionEligible": true,
-                        "catalogVisibility": {
-                            "email": "viewer@example.com",
-                            "teams": ["team-1"],
-                            "admin": false,
-                        },
-                    }))
-                }),
-            )
-            .route(
                 "/authz-fallback",
                 post(|| async {
                     (
@@ -12996,29 +12614,6 @@ mod unit_tests {
         .expect("success should pass through");
         assert_eq!(authz_ok, DirectExecutionAuthorization::default());
 
-        let catalog_authz = authorize_server_method_via_backend(
-            &state,
-            &trusted_server_headers("server-1"),
-            Some(json!(31)),
-            &format!("{backend_url}/authz-catalog"),
-            "tools/list",
-        )
-        .await
-        .expect("catalog authorization should decode");
-        assert!(catalog_authz.direct_execution_eligible);
-        let visibility = catalog_authz
-            .catalog_visibility
-            .expect("Python catalog visibility must reach native execution");
-        assert_eq!(
-            visibility,
-            serde_json::from_value(json!({
-                "email": "viewer@example.com",
-                "teams": ["team-1"],
-                "admin": false,
-            }))
-            .expect("expected catalog visibility"),
-        );
-
         let authz_fallback = authorize_server_method_via_backend(
             &state,
             &trusted_server_headers("server-1"),
@@ -13031,7 +12626,6 @@ mod unit_tests {
         assert_eq!(
             authz_fallback,
             DirectExecutionAuthorization {
-                catalog_visibility: None,
                 direct_execution_eligible: false,
                 fallback_reason: Some("resource-hooks-configured".to_string()),
             }
@@ -13063,57 +12657,6 @@ mod unit_tests {
             response_json(bad_json).await["error"]["data"],
             CLIENT_ERROR_DETAIL
         );
-    }
-
-    #[test]
-    fn prompt_arguments_from_schema_covers_edge_cases() {
-        assert!(prompt_arguments_from_schema(None).is_empty());
-        assert!(prompt_arguments_from_schema(Some(json!("bad"))).is_empty());
-        assert!(prompt_arguments_from_schema(Some(json!({"type": "object"}))).is_empty());
-
-        let arguments = prompt_arguments_from_schema(Some(json!({
-            "type": "object",
-            "properties": {
-                "name": {"description": "Person name"},
-                "age": {}
-            },
-            "required": ["name", 123]
-        })));
-        assert_eq!(arguments.len(), 2);
-        assert!(arguments.iter().any(|value| {
-            value["name"] == "name"
-                && value["description"] == "Person name"
-                && value["required"] == true
-        }));
-        assert!(arguments.iter().any(|value| {
-            value["name"] == "age" && value["description"] == "" && value["required"] == false
-        }));
-    }
-
-    #[test]
-    fn normalize_tool_input_schema_adds_empty_required_for_object_schemas() {
-        let normalized = normalize_tool_input_schema(Some(json!({
-            "type": "object",
-            "properties": {
-                "timezone": {"type": "string"}
-            }
-        })));
-
-        assert_eq!(normalized["required"], json!([]));
-        assert_eq!(normalized["properties"]["timezone"]["type"], "string");
-    }
-
-    #[test]
-    fn normalize_tool_input_schema_preserves_existing_required_values() {
-        let normalized = normalize_tool_input_schema(Some(json!({
-            "type": "object",
-            "properties": {
-                "time": {"type": "string"}
-            },
-            "required": ["time"]
-        })));
-
-        assert_eq!(normalized["required"], json!(["time"]));
     }
 
     #[tokio::test]
@@ -13941,198 +13484,69 @@ mod unit_tests {
         let state = AppState::new(&config).expect("state");
         assert_eq!(state.max_request_body_size_bytes, 10_485_760); // 10 MB
     }
+
     #[tokio::test]
-    async fn postgres_catalog_pagination_enforces_visibility_on_every_page() {
-        let Ok(database_url) = std::env::var("MCP_RUST_TEST_DATABASE_URL") else {
-            eprintln!("PostgreSQL catalog test requires MCP_RUST_TEST_DATABASE_URL");
-            return;
-        };
-        let (db, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
-            .await
-            .expect("connect test PostgreSQL");
-        tokio::spawn(async move { connection.await.expect("test PostgreSQL connection") });
-        let schema = format!("catalog_test_{}", Uuid::new_v4().simple());
-        db.batch_execute(&format!(
-            "CREATE SCHEMA {schema}; SET search_path TO {schema}"
-        ))
-        .await
-        .unwrap();
-        for (table, association, key) in [
-            ("tools", "server_tool_association", "tool_id"),
-            ("resources", "server_resource_association", "resource_id"),
-            ("prompts", "server_prompt_association", "prompt_id"),
+    async fn catalog_lists_delegate_cursors_and_errors_to_python_with_db_pool() {
+        let mut backend = Router::new();
+        for path in [
+            "tools/list",
+            "resources/list",
+            "resources/templates/list",
+            "prompts/list",
         ] {
-            db.batch_execute(&format!(
-                "CREATE TABLE {table} (id text PRIMARY KEY, name text, title text, description text, \
-                 input_schema jsonb, output_schema jsonb, annotations jsonb, argument_schema jsonb, \
-                 uri text, uri_template text, mime_type text, size integer, \
-                 enabled boolean, visibility text, owner_email text, team_id text); \
-                 CREATE TABLE {association} (server_id text, {key} text)"
-            ))
-            .await
-            .unwrap();
+            backend = backend.route(
+                &format!("/_internal/mcp/{path}"),
+                post(|headers: HeaderMap, Json(payload): Json<Value>| async move {
+                    assert_eq!(headers["x-contextforge-server-id"], "server-1");
+                    assert!(headers.contains_key("x-contextforge-auth-context"));
+                    assert_eq!(payload["params"]["_meta"]["sentinel"], "preserved");
+                    if payload["params"]["cursor"] == "denied" {
+                        return (StatusCode::FORBIDDEN, Json(json!({"code": -32003, "message": "Access denied"})));
+                    }
+                    assert_eq!(payload["params"]["cursor"], "python-cursor");
+                    (StatusCode::OK, Json(json!({"nextCursor": "python-next-cursor", "method": payload["method"]})))
+                }),
+            );
         }
-        let visibility = Arc::new(Mutex::new(json!({})));
-        let backend_visibility = visibility.clone();
-        let backend = Router::new().fallback(post(move |uri: axum::http::Uri| {
-            let visibility = backend_visibility.clone();
-            async move {
-                assert!(uri.path().ends_with("/authz"), "native catalog must not use Python fallback: {uri}");
-                Json(json!({"directExecutionEligible": true, "catalogVisibility": visibility.lock().unwrap().clone()}))
-            }
-        }));
         let backend_url = spawn_router(backend).await;
         let mut config = test_config();
         config.backend_rpc_url = format!("{backend_url}/rpc");
-        config.mcp_list_page_size = 2;
-        let mut url = reqwest::Url::parse(&database_url).unwrap();
-        url.query_pairs_mut()
-            .append_pair("options", &format!("-csearch_path={schema}"));
-        config.database_url = Some(url.into());
-        let state = AppState::new(&config).unwrap();
-        let headers = trusted_server_headers("server-a");
-        for (method, result_key, table, association, _association_key) in [
-            (
-                "tools/list",
-                "tools",
-                "tools",
-                "server_tool_association",
-                "tool_id",
-            ),
-            (
-                "resources/list",
-                "resources",
-                "resources",
-                "server_resource_association",
-                "resource_id",
-            ),
-            (
-                "prompts/list",
-                "prompts",
-                "prompts",
-                "server_prompt_association",
-                "prompt_id",
-            ),
-            (
-                "resources/templates/list",
-                "resourceTemplates",
-                "resources",
-                "server_resource_association",
-                "resource_id",
-            ),
+        config.database_url = Some("postgresql://127.0.0.1:1/unused".to_string());
+        config.session_core_enabled = false;
+        let state = AppState::new(&config).expect("state");
+        assert!(state.db_pool().is_some());
+        for method in [
+            "tools/list",
+            "resources/list",
+            "resources/templates/list",
+            "prompts/list",
         ] {
-            db.batch_execute(&format!("TRUNCATE {table}, {association}"))
-                .await
-                .unwrap();
-            for index in 0..9 {
-                let id = format!("{index:032x}");
-                let name = format!("item-{index}");
-                let (access, team, owner) = match index {
-                    1 | 8 => ("team", "team-a", "other@example.com"),
-                    2 => ("team", "team-b", "other@example.com"),
-                    3 => ("private", "team-a", "other@example.com"),
-                    4 => ("private", "team-a", "user@example.com"),
-                    _ => ("public", "team-b", "other@example.com"),
-                };
-                let template =
-                    (method == "resources/templates/list").then_some("test://resource/{item}");
-                db.execute(&format!(
-                    "INSERT INTO {table} (id,name,title,description,input_schema,argument_schema,uri,uri_template,mime_type,size,enabled,visibility,owner_email,team_id) \
-                     VALUES ($1,$2,'Title','Description','{{\"type\":\"object\"}}','{{\"type\":\"object\"}}','test://resource',$3,'text/plain',4096,TRUE,$4,$5,$6)"
-                ), &[&id, &name, &template, &access, &owner, &team]).await.unwrap();
-                db.execute(
-                    &format!("INSERT INTO {association} VALUES ('server-a',$1)"),
-                    &[&id],
+            for cursor in ["python-cursor", "denied"] {
+                let mut headers = trusted_server_headers("server-1");
+                headers.insert("content-type", HeaderValue::from_static("application/json"));
+                let response = rpc_inner(
+                    state.clone(),
+                    None,
+                    headers,
+                    Uri::from_static("/rpc"),
+                    Bytes::from(
+                        serde_json::to_vec(&json!({"jsonrpc": "2.0", "id": 42, "method": method,
+                        "params": {"cursor": cursor, "_meta": {"sentinel": "preserved"}}}))
+                        .expect("request"),
+                    ),
+                    None,
                 )
-                .await
-                .unwrap();
-            }
-            for (scope, token_admin, expected) in [
-                (
-                    json!({"email":"user@example.com","teams":["team-a"],"admin":false}),
-                    false,
-                    vec![0, 1, 4, 5, 6, 8],
-                ),
-                (
-                    json!({"email":"user@example.com","teams":[],"admin":false}),
-                    false,
-                    vec![0, 5, 6],
-                ),
-                (
-                    json!({"email":"user@example.com","teams":[],"admin":false}),
-                    true,
-                    vec![0, 5, 6],
-                ),
-                (
-                    json!({"email":"user@example.com","teams":null,"admin":true}),
-                    true,
-                    vec![0, 1, 2, 4, 5, 6, 8],
-                ),
-            ] {
-                let mut headers = headers.clone();
-                let context = json!({"email":"user@example.com","teams":scope["teams"],"is_admin":token_admin,"is_authenticated":true});
-                headers.insert(
-                    "x-contextforge-auth-context",
-                    encode_internal_auth_context_header(&context).unwrap(),
-                );
-                *visibility.lock().unwrap() = scope;
-                db.execute(
-                    &format!("UPDATE {table} SET visibility='public' WHERE id=$1"),
-                    &[&format!("{:032x}", 7)],
-                )
-                .await
-                .unwrap();
-                let mut cursor = Value::Null;
-                let mut names = Vec::new();
-                let mut page_count = 0;
-                loop {
-                    let response = super::catalog::serve(
-                        &state,
-                        headers.clone(),
-                        Some(json!(1)),
-                        Bytes::from(
-                            serde_json::to_vec(&json!({
-                                "jsonrpc":"2.0","id":1,"method":method,"params":{"cursor":cursor}
-                            }))
-                            .unwrap(),
-                        ),
-                        method,
-                    )
-                    .await;
-                    let page = response_json(response).await;
-                    assert!(page.get("error").is_none(), "{method}: {page}");
-                    let items = page["result"][result_key].as_array().unwrap();
-                    assert!(items.len() <= 2);
-                    for item in items {
-                        names.push(item["name"].as_str().unwrap().to_string());
-                        if method == "resources/list" {
-                            assert_eq!(item["size"], 4096);
-                        }
-                    }
-                    page_count += 1;
-                    if page_count == 1 {
-                        db.execute(&format!("UPDATE {table} SET visibility='private',owner_email='other@example.com' WHERE id=$1"), &[&format!("{:032x}",7)]).await.unwrap();
-                    }
-                    let Some(next) = page["result"].get("nextCursor") else {
-                        break;
-                    };
-                    assert_ne!(next, &cursor);
-                    cursor = next.clone();
-                    assert!(page_count < 10);
+                .await;
+                assert_eq!(response.status(), StatusCode::OK);
+                let payload = response_json(response).await;
+                assert_eq!(payload["id"], 42);
+                if cursor == "denied" {
+                    assert_eq!(payload["error"]["code"], -32003);
+                } else {
+                    assert_eq!(payload["result"]["nextCursor"], "python-next-cursor");
+                    assert_eq!(payload["result"]["method"], method);
                 }
-                assert!(page_count >= 2);
-                assert_eq!(
-                    names,
-                    expected
-                        .into_iter()
-                        .map(|i| format!("item-{i}"))
-                        .collect::<Vec<_>>(),
-                    "{method}"
-                );
             }
         }
-        db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
-            .await
-            .unwrap();
     }
 }

@@ -13,8 +13,6 @@ default = []
 rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
 
 [dependencies]
-aes-gcm = "0.10.3"
-hkdf = "0.12.4"
 async-stream = "0.3.6"
 axum.workspace = true
 base64.workspace = true

@@ -202,28 +202,14 @@ jobs:
   rust-test-redis:
     needs: ci-decision
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
-    name: Rust test (Redis and PostgreSQL-backed paths)
+    name: Rust test (Redis-backed paths)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       AUTH_ENCRYPTION_SECRET: ci-rust-auth-encryption-secret-1234567890 # pragma: allowlist secret
       REDIS_URL: redis://127.0.0.1:6379/0
       MCP_RUST_REDIS_URL: redis://127.0.0.1:6379/0
-      MCP_RUST_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mcp # pragma: allowlist secret
     services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres # pragma: allowlist secret
-          POSTGRES_DB: mcp
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d mcp"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
       redis:
         image: redis:7-bookworm
         ports:
@@ -253,9 +239,6 @@ jobs:
 
       - name: Cargo test (Redis-backed runtime paths)
         run: cargo test -p contextforge_mcp_runtime --test runtime
-
-      - name: Cargo test (PostgreSQL catalog authorization)
-        run: cargo test -p contextforge_mcp_runtime --lib postgres_catalog_pagination -- --test-threads=1
 
   build-wheels:
     needs: ci-decision

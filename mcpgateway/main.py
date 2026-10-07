@@ -9722,7 +9722,7 @@ async def _authorize_internal_mcp_server_scoped_method(
 
     db = SessionLocal()
     try:
-        user = await _authorize_internal_mcp_request(
+        await _authorize_internal_mcp_request(
             request,
             db,
             permission=permission,
@@ -9740,18 +9740,6 @@ async def _authorize_internal_mcp_server_scoped_method(
                     "directExecutionEligible": False,
                     "fallbackReason": fallback_reason,
                 },
-            )
-        if method in ("tools/list", "resources/list", "prompts/list", "resources/templates/list"):
-            # First-Party
-            from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
-
-            email, teams = get_scoped_resource_access_context(request, user)
-            admin = teams is None and (email is None or bool(is_user_admin(db, email)))
-            return ORJSONResponse(
-                content={
-                    "directExecutionEligible": not (settings.mcpgateway_mcp_apps_enabled and method in ("tools/list", "resources/list")),
-                    "catalogVisibility": {"email": email, "teams": teams, "admin": admin},
-                }
             )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except JSONRPCError as exc:

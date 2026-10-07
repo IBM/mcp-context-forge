@@ -22,14 +22,6 @@ pub const DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES: usize = 10_485_760;
 /// the top-level `RUST_MCP_MODE` helper configures the right runtime behavior
 /// and these values are only used as advanced overrides.
 pub struct RuntimeConfig {
-    /// Maximum items per downstream MCP list page.
-    #[arg(long, env = "MCP_LIST_PAGE_SIZE", default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=1000))]
-    pub mcp_list_page_size: u16,
-
-    /// Fixed catalog traversal lifetime in seconds.
-    #[arg(long, env = "MCP_LIST_CURSOR_TTL_SECONDS", default_value_t = 900, value_parser = clap::value_parser!(u64).range(1..))]
-    pub mcp_list_cursor_ttl_seconds: u64,
-
     #[arg(
         long,
         env = "MCP_RUST_BACKEND_RPC_URL",

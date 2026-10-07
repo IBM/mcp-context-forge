@@ -919,7 +919,7 @@ class TestInternalTrustedMcpTransportBridge:
         monkeypatch.setattr("mcpgateway.main.get_plugin_manager", AsyncMock(return_value=None))
         monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", database)
         check = AsyncMock(return_value=exists, side_effect=RuntimeError("database unavailable") if failure else None)
-        monkeypatch.setattr("mcpgateway.services.server_service.server_service.entity_exists", check)
+        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", check)
         response, _ = await _run_internal_mcp_authentication(method="POST", path="/servers/server-a/mcp", query_string="", headers={}, client_ip="127.0.0.1")
         assert (response.status_code if response is not None else None) == expected_status
         check.assert_awaited_once()
@@ -8324,8 +8324,7 @@ class TestRpcHandling:
         with patch("mcpgateway.main.SessionLocal", return_value=mock_db):
             response = await handle_internal_mcp_tools_list_authz(request)
 
-        assert response.status_code == 200
-        assert "catalogVisibility" in json.loads(response.body)
+        assert response.status_code == 204
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 
@@ -8359,8 +8358,7 @@ class TestRpcHandling:
         ):
             response = await handle_internal_mcp_tools_list_authz(request)
 
-        assert response.status_code == 200
-        assert "catalogVisibility" in json.loads(response.body)
+        assert response.status_code == 204
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 
@@ -8393,7 +8391,7 @@ class TestRpcHandling:
         ):
             response = await handler(request)
 
-        assert response.status_code == (200 if "list" in handler.__name__ else 204)
+        assert response.status_code == 204
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 
