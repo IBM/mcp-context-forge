@@ -808,6 +808,7 @@ class GatewayRegistrationPreparation:
     init_client_cert: Optional[str]
     init_client_key: Optional[str]
     gateway_mode: str
+    requires_user_credentials: bool
 
 
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
@@ -1851,6 +1852,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             init_client_cert=init_client_cert,
             init_client_key=init_client_key,
             gateway_mode=gateway_mode,
+            requires_user_credentials=getattr(gateway, "requires_user_credentials", False),
         )
 
     def _get_existing_gateway_for_slug_conflict(self, db: Session, *, slug_name: str, visibility: str, team_id: Optional[str]) -> Optional[DbGateway]:
@@ -1895,6 +1897,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             last_seen=None,
             auth_type=preparation.auth_type,
             auth_value=preparation.auth_value,
+            requires_user_credentials=preparation.requires_user_credentials,
             auth_query_params=preparation.auth_query_params_encrypted,
             oauth_config=preparation.oauth_config,
             passthrough_headers=gateway.passthrough_headers,
@@ -2318,6 +2321,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 last_seen=datetime.now(timezone.utc),
                 auth_type=auth_type,
                 auth_value=auth_value,
+                requires_user_credentials=preparation.requires_user_credentials,
                 auth_query_params=preparation.auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 passthrough_headers=gateway.passthrough_headers,
@@ -3275,6 +3279,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             raise GatewayError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
 
                     logger.info("Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
+
+                if gateway_update.requires_user_credentials is not None:
+                    gateway.requires_user_credentials = gateway_update.requires_user_credentials
 
                 # Update team assignment if provided, validating ownership
                 if gateway_update.team_id is not None:
