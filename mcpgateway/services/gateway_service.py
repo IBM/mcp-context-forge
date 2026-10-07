@@ -903,7 +903,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # auto-discover path applies to `issuer`. Raises ValueError on internal /
         # disallowed hosts.
         try:
-            SecurityValidator.validate_url(token_url, "OAuth token URL")
+            from urllib.parse import urlsplit  # pylint: disable=import-outside-toplevel
+            _turl_host = (urlsplit(token_url).hostname or "").lower()
+            _localhost_hosts = ("localhost", "127.0.0.1", "::1")
+            _skip = settings.ssrf_allow_localhost and _turl_host in _localhost_hosts
+            SecurityValidator.validate_url(token_url, "OAuth token URL", skip_ssrf=_skip)
+            if _skip:
+                logger.warning("Allowing localhost token-exchange token_url (SSRF_ALLOW_LOCALHOST=true): %s", token_url)
         except ValueError as e:
             # L7: a rejected token_url is a security-relevant config attempt; record it
             # (sanitized) so the security audit sees attempted SSRF-shaped configs.
