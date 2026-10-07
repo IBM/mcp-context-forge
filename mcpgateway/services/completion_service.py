@@ -685,7 +685,7 @@ class CompletionService:
             URI completion suggestions
 
         Raises:
-            CompletionInvalidParamsError: If URI template is missing
+            CompletionInvalidParamsError: If the URI template is missing, unknown, disabled, or outside the caller's visibility scope.
 
         Examples:
             >>> from mcpgateway.services.completion_service import CompletionService, CompletionInvalidParamsError
@@ -702,14 +702,14 @@ class CompletionService:
             ...     str(e)
             'Missing URI template'
 
-            >>> # Test resource filtering (no federated owner -> local listing)
+            >>> # Test resource filtering for a visible local template
             >>> ref = {'uri': 'template://'}
             >>> mock_resources = [
             ...     MagicMock(uri='file://doc1.txt'),
             ...     MagicMock(uri='file://doc2.txt'),
             ...     MagicMock(uri='http://example.com')
             ... ]
-            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(gateway_id=None)
             >>> db.execute.return_value.scalars.return_value.all.return_value = mock_resources
             >>> result = asyncio.run(service._complete_resource_uri(db, ref, 'doc'))
             >>> len(result.completion['values'])
@@ -729,7 +729,10 @@ class CompletionService:
         owner_stmt = owner_stmt.order_by(desc(DbResource.created_at), desc(DbResource.id)).limit(1)
         owning_resource = db.execute(owner_stmt).scalar_one_or_none()
 
-        if owning_resource is not None and self._is_federated(owning_resource):
+        if owning_resource is None:
+            raise CompletionInvalidParamsError(f"Resource template not found: {uri_template}")
+
+        if self._is_federated(owning_resource):
             forward_args = (
                 getattr(owning_resource, "gateway", None),
                 ResourceTemplateReference(type="ref/resource", uri=uri_template),

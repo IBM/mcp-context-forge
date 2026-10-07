@@ -132,6 +132,20 @@ def federated_prompt_without_completions(admin_client: httpx.Client) -> Generato
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("endpoint", ["/rpc", "/protocol/completion/complete"])
+def test_unknown_resource_template_returns_invalid_params(admin_client: httpx.Client, endpoint: str) -> None:
+    """Reject an unknown resource template through both completion API surfaces."""
+    params = {"ref": {"type": "ref/resource", "uri": f"unknown-{uuid.uuid4().hex}://{{name}}"}, "argument": {"name": "name", "value": ""}}
+    payload = {"jsonrpc": "2.0", "id": 3, "method": "completion/complete", "params": params} if endpoint == "/rpc" else params
+    response = admin_client.post(endpoint, json=payload)
+    if endpoint == "/rpc":
+        assert response.status_code == 200, response.text
+        assert response.json()["error"]["code"] == -32602, response.text
+    else:
+        assert response.status_code == 400, response.text
+        assert "Resource template not found" in response.json()["detail"], response.text
+
+
 def test_protocol_completion_denied_without_rbac(admin_client: httpx.Client) -> None:
     """Reject completion when token scope grants tools.read but the user has no RBAC role."""
     email = f"completion-denied-{uuid.uuid4().hex[:8]}@example.com"

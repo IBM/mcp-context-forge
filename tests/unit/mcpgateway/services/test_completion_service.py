@@ -70,13 +70,7 @@ class FakeScalarsAllResult:
         return self._values
 
     def scalar_one_or_none(self):
-        # Task 5 adds a template-owner lookup (`.scalar_one_or_none()`)
-        # ahead of the plain-listing query these pre-#6629 fixtures exercise.
-        # None here means "no federated resource-template owner row found",
-        # which is the correct default for fixtures that never set
-        # gateway_id/uri_template — the code then falls through to the
-        # existing plain-listing behavior these tests assert on.
-        return None
+        return DummyResource("template://resource")
 
 
 class DummyPrompt:
@@ -318,6 +312,14 @@ def completion_db():
 
     db.add_all(
         [
+            DbResource(
+                uri="template://resource",
+                uri_template="template://resource",
+                name="Public Template",
+                text_content="template",
+                visibility="public",
+                enabled=True,
+            ),
             DbResource(
                 uri="file://public.txt",
                 name="Public Resource",
@@ -735,18 +737,53 @@ async def test_federated_resource_template_is_forwarded(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_federated_plain_resource_is_not_forwarded(monkeypatch):
-    # No owning DbResource row with a matching uri_template -> local listing answers.
-    db = _db_resource(owner=None, scalars_all=[_DummyResourceForForwarding("file://doc1.txt"), _DummyResourceForForwarding("file://doc2.txt")])
+async def test_local_resource_template_is_not_forwarded(monkeypatch):
+    owner = _DummyResourceForForwarding("template://", uri_template="template://")
+    db = _db_resource(owner=owner, scalars_all=[_DummyResourceForForwarding("file://doc1.txt"), _DummyResourceForForwarding("file://doc2.txt")])
 
     def fail_forward(*a, **kw):
-        raise AssertionError("must not forward when no uri_template owner matches")
+        raise AssertionError("must not forward a local resource template")
 
     monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fail_forward)
     service = CompletionService()
     result = await service._complete_resource_uri(db, {"uri": "template://"}, "doc")
     assert len(result.completion["values"]) == 2
     assert result.completion["values"] == ["file://doc1.txt", "file://doc2.txt"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_resource_template_does_not_list_resources():
+    """Reject unknown templates before listing resources or forwarding upstream."""
+    db = _db_resource(owner=None, scalars_all=[_DummyResourceForForwarding("file://doc1.txt")])
+    service = CompletionService()
+    with pytest.raises(CompletionInvalidParamsError, match="Resource template not found") as exc:
+        await service.handle_completion(
+            db,
+            {"ref": {"type": "ref/resource", "uri": "unknown://{name}"}, "argument": {"name": "name", "value": "doc"}},
+            token_teams=[],
+        )
+    assert completion_error_code(exc.value) == -32602
+    assert db.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "visibility,team_id,enabled,uri_template",
+    [("private", None, True, "hidden://{name}"), ("team", "other-team", True, "hidden://{name}"), ("public", None, False, "hidden://{name}"), ("public", None, True, None)],
+)
+async def test_resource_template_must_be_enabled_and_visible(completion_db, visibility, team_id, enabled, uri_template):
+    """Reject inaccessible, disabled, and plain resource references as invalid parameters."""
+    completion_db.add(
+        DbResource(uri="hidden://{name}", uri_template=uri_template, name="Hidden template", visibility=visibility, owner_email="other@example.com", team_id=team_id, enabled=enabled)
+    )
+    completion_db.commit()
+    with pytest.raises(CompletionInvalidParamsError, match="Resource template not found"):
+        await CompletionService().handle_completion(
+            completion_db,
+            {"ref": {"type": "ref/resource", "uri": "hidden://{name}"}, "argument": {"name": "name", "value": "file://"}},
+            user_email="caller@example.com",
+            token_teams=["team-1"],
+        )
 
 
 # ---------------------------------------------------------------------------
