@@ -125,7 +125,7 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
         # to prevent unauthorized access via invalid server IDs.
         try:
             with fresh_db_session() as db:
-                exists = db.execute(sa_exists().where(DbServer.id == server_id)).scalar()
+                exists = db.execute(sa_exists().where(DbServer.id == server_id).select()).scalar()
                 if not exists:
                     logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
                     response = ORJSONResponse({"detail": "Server not found"}, status_code=404, headers=_deprecation_response_headers())

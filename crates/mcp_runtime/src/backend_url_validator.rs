@@ -207,6 +207,8 @@ mod tests {
         validation_enabled: bool,
     ) -> RuntimeConfig {
         RuntimeConfig {
+            mcp_list_page_size: 100,
+            mcp_list_cursor_ttl_seconds: 900,
             backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
             listen_http: "127.0.0.1:8787".to_string(),
             listen_uds: None,

@@ -3991,6 +3991,10 @@ Disallow: /
     # ===================================
 
     # Default number of items per page for paginated endpoints
+    mcp_list_page_size: int = Field(default=100, ge=1, le=1000, description="Maximum items per downstream MCP list page")
+    mcp_list_cursor_ttl_seconds: int = Field(default=900, ge=1, description="Lifetime of an MCP catalog traversal in seconds")
+    mcp_proxy_list_max_snapshot_bytes: int = Field(default=67108864, ge=1, description="Maximum serialized bytes per direct-proxy MCP catalog snapshot")
+
     pagination_default_page_size: int = Field(default=50, ge=1, le=1000, description="Default number of items per page")
 
     # Maximum allowed items per page (prevents abuse)

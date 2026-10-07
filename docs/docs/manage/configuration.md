@@ -1456,6 +1456,31 @@ the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
 
 ---
 
+### MCP catalog pagination
+
+MCP `tools/list`, `resources/list`, `prompts/list`, and `resources/templates/list` return bounded pages.
+Send the returned `nextCursor` as `params.cursor` until the response omits `nextCursor`.
+This applies to global and virtual-server catalogs in both Python and Rust.
+REST and Admin pagination settings remain separate.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_LIST_PAGE_SIZE` | `100` | Items per MCP page, from 1 to 1000 |
+| `MCP_LIST_CURSOR_TTL_SECONDS` | `900` | Fixed traversal lifetime in seconds |
+| `MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES` | `67108864` | Maximum collected upstream catalog size for direct proxy |
+
+Database catalogs use stable ID ordering and check current visibility on every page.
+Catalog changes can affect later pages. Restart traversal to obtain a current catalog.
+Cursors bind the method, virtual server, identity, teams, and MCP session.
+Invalid, expired, or mismatched cursors return JSON-RPC error `-32602`.
+All workers must share `AUTH_ENCRYPTION_SECRET`; rotating it invalidates existing cursors.
+
+Direct proxy collects upstream pages within one session and stores immutable snapshot pages in Redis.
+Multi-page proxy catalogs require `CACHE_TYPE=redis` and a reachable `REDIS_URL`.
+Single-page proxy catalogs do not require Redis.
+Snapshots expire with the traversal and bind the gateway configuration and upstream authorization headers.
+Repeated upstream cursors, duplicate identifiers, timeouts, and collection limits return errors without partial catalogs.
+
 ## 🐳 Container Configuration
 
 ### Docker Environment File

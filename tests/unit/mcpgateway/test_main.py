@@ -3132,13 +3132,13 @@ class TestRPCEndpoints:
             _meta_data=None,
         )
 
-    @patch("mcpgateway.main.tool_service.list_tools")
+    @patch("mcpgateway.main.list_catalog_page")
     # @patch("mcpgateway.main.validate_request")
     def test_rpc_list_tools(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools via JSON-RPC."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
-        mock_list_tools.return_value = ([mock_tool], None)
+        mock_list_tools.return_value = {"tools": [item.model_dump() for item in [mock_tool]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3153,12 +3153,12 @@ class TestRPCEndpoints:
         assert isinstance(body["result"]["tools"], list)
         mock_list_tools.assert_called_once()
 
-    @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_list_tools_with_server_id(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools via JSON-RPC for a specific server."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
-        mock_list_tools.return_value = [mock_tool]
+        mock_list_tools.return_value = {"tools": [item.model_dump() for item in [mock_tool]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3193,12 +3193,12 @@ class TestRPCEndpoints:
         assert body["nextCursor"] == "next-cursor"
         assert body["tools"][0]["name"] == "test_tool"
 
-    @patch("mcpgateway.main.resource_service.list_server_resources", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resources_list_with_server_id(self, mock_list_resources, test_client, auth_headers):
         """Test listing resources via JSON-RPC for a specific server."""
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"uri": "res://1"}
-        mock_list_resources.return_value = [mock_resource]
+        mock_list_resources.return_value = {"resources": [item.model_dump() for item in [mock_resource]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3268,6 +3268,7 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
     def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
         """Test resources/read returns -32000 when ResourceError is raised."""
@@ -3308,7 +3309,6 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
 
-
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.unsubscribe_resource", new_callable=AsyncMock)
@@ -3338,12 +3338,12 @@ class TestRPCEndpoints:
         mock_subscribe.assert_called_once()
         mock_unsubscribe.assert_called_once()
 
-    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resource_templates_list(self, mock_list_templates, test_client, auth_headers):
         """Test resources/templates/list JSON-RPC method."""
         mock_template = MagicMock()
         mock_template.model_dump.return_value = {"uri": "tpl://1"}
-        mock_list_templates.return_value = [mock_template]
+        mock_list_templates.return_value = {"resourceTemplates": [item.model_dump() for item in [mock_template]]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3357,7 +3357,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["resourceTemplates"][0]["uri"] == "tpl://1"
 
-    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_resource_templates_list_admin_bypass_nulls_user_email(self, mock_list_templates, test_client, auth_headers):
         """SECURITY: admin bypass via JSON-RPC must pass (user_email=email, token_teams=None).
 
@@ -3365,7 +3365,7 @@ class TestRPCEndpoints:
         on private resources. This allows admins to view/edit their OWN private resources while
         maintaining proper access control (token_teams=None grants admin bypass).
         """
-        mock_list_templates.return_value = []
+        mock_list_templates.return_value = {"resourceTemplates": [item.model_dump() for item in []]}
 
         req = {
             "jsonrpc": "2.0",
@@ -3380,12 +3380,12 @@ class TestRPCEndpoints:
         assert call_kwargs.get("user_email") == "test_user@example.com"  # Preserved for owner matching
         assert call_kwargs.get("token_teams") is None  # None = admin bypass
 
-    @patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock)
+    @patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock)
     def test_rpc_prompts_list_next_cursor(self, mock_list_prompts, test_client, auth_headers):
         """Test prompts/list JSON-RPC method with nextCursor."""
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"name": "prompt-1"}
-        mock_list_prompts.return_value = ([mock_prompt], "next-cursor")
+        mock_list_prompts.return_value = {"prompts": [item.model_dump() for item in [mock_prompt]], "nextCursor": "next-cursor"}
 
         req = {
             "jsonrpc": "2.0",
@@ -3399,6 +3399,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
         """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
@@ -3459,7 +3460,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):

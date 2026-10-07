@@ -50,9 +50,9 @@ from fastapi.security.utils import get_authorization_scheme_param
 import httpx
 import jwt
 from mcp.server.lowlevel import Server
-from mcp.shared.exceptions import MCPError
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
@@ -84,6 +84,7 @@ from mcpgateway.services.mcp_apps import (
     filter_model_visible_tools,
     serialize_resource_content_for_mcp,
 )
+from mcpgateway.services.mcp_catalog_service import collect_proxy_catalog, list_catalog_page
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -115,6 +116,7 @@ from mcpgateway.utils.verify_credentials import (
     verify_credentials,
     verify_oauth_access_token,
 )
+from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -1606,7 +1608,44 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+def _build_proxy_list_headers(gateway: Any, request_headers: dict) -> dict[str, str]:
+    """Build the effective upstream headers for direct-proxy catalog requests.
+
+    Args:
+        gateway: Authorized upstream gateway.
+        request_headers: Incoming request headers.
+
+    Returns:
+        Approved upstream authentication and passthrough headers.
+    """
+    # Prepare headers with gateway auth
+    headers = build_gateway_auth_headers(gateway)
+
+    # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+    if request_headers:
+        gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+        if gw_passthrough is not None:
+            passthrough_allowed = gw_passthrough
+        else:
+            with SessionLocal() as db:
+                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+        headers = compute_passthrough_headers_cached(
+            request_headers,
+            headers,
+            passthrough_allowed,
+            gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+            gateway_passthrough_headers=gw_passthrough,
+        )
+
+    # Inject identity propagation headers
+    identity = user_identity_var.get()
+    if identity:
+        headers.update(build_identity_headers(identity, gateway))
+
+    return headers
+
+
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None, *, paginate: bool = False) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -1614,34 +1653,13 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         request_headers: Request headers from client
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
+        paginate: Collect every upstream page in the same session.
 
     Returns:
         List of Tool objects from remote server
     """
     try:
-        # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
-        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
-        if request_headers:
-            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
-            if gw_passthrough is not None:
-                passthrough_allowed = gw_passthrough
-            else:
-                with SessionLocal() as db:
-                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
-            headers = compute_passthrough_headers_cached(
-                request_headers,
-                headers,
-                passthrough_allowed,
-                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
-                gateway_passthrough_headers=gw_passthrough,
-            )
-
-        # Inject identity propagation headers
-        identity = user_identity_var.get()
-        if identity:
-            headers.update(build_identity_headers(identity, gateway))
+        headers = _build_proxy_list_headers(gateway, request_headers)
 
         # Use MCP v2 Client to connect and list tools
         async with mcp_proxy_client(
@@ -1649,6 +1667,9 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
             headers=headers,
             timeout=settings.mcpgateway_direct_proxy_timeout,
         ) as client:
+            if paginate:
+                collected = await collect_proxy_catalog(client, "tools/list", meta)
+                return filter_model_visible_tools(collected)
             # List tools with _meta forwarded
             if meta:
                 logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
@@ -1658,11 +1679,15 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
             return filter_model_visible_tools(tools_result.tools)
 
     except Exception as e:
+        if paginate:
+            if isinstance(e, JSONRPCError):
+                raise
+            raise JSONRPCError(-32000, "Direct-proxy MCP catalog collection failed") from e
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
         return []
 
 
-async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:  # pylint: disable=unused-argument
+async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None, *, paginate: bool = False) -> List[types.Resource]:  # pylint: disable=unused-argument
     """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -1670,34 +1695,13 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         request_headers: Request headers from client
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
+        paginate: Collect every upstream page in the same session.
 
     Returns:
         List of Resource objects from remote server
     """
     try:
-        # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
-        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
-        if request_headers:
-            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
-            if gw_passthrough is not None:
-                passthrough_allowed = gw_passthrough
-            else:
-                with SessionLocal() as db:
-                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
-            headers = compute_passthrough_headers_cached(
-                request_headers,
-                headers,
-                passthrough_allowed,
-                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
-                gateway_passthrough_headers=gw_passthrough,
-            )
-
-        # Inject identity propagation headers
-        identity = user_identity_var.get()
-        if identity:
-            headers.update(build_identity_headers(identity, gateway))
+        headers = _build_proxy_list_headers(gateway, request_headers)
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -1710,6 +1714,9 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             headers=headers,
             timeout=settings.mcpgateway_direct_proxy_timeout,
         ) as client:
+            if paginate:
+                collected = await collect_proxy_catalog(client, "resources/list", meta)
+                return collected
             # List resources with _meta forwarded (auto-initializes on first call)
             if meta:
                 logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
@@ -1722,6 +1729,10 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             return resource_list
 
     except Exception as e:
+        if paginate:
+            if isinstance(e, JSONRPCError):
+                raise
+            raise JSONRPCError(-32000, "Direct-proxy MCP catalog collection failed") from e
         logger.exception("Error proxying resources/list to gateway %s: %s", gateway.id, e)
         return []
 
@@ -3464,12 +3475,55 @@ if not hasattr(type(mcp_app), "request_context"):
     type(mcp_app).request_context = property(lambda _self: _get_v2_ctx())  # type: ignore[attr-defined]
 
 
+async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
+    """Authorize and serve one MCP catalog page.
+
+    Args:
+        method: MCP list method.
+        params: SDK pagination parameters.
+
+    Returns:
+        A bounded MCP list result.
+
+    Raises:
+        PermissionError: If the token excludes the list permission.
+        MCPError: If pagination fails.
+    """
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+
+    server_id, headers, user_context = await _get_request_context_or_default()
+    permission = {"tools/list": "tools.read", "prompts/list": "prompts.read"}.get(method, "resources.read")
+    if _should_enforce_streamable_rbac(user_context) and not _check_scoped_permission(user_context, permission):
+        raise PermissionError(_ACCESS_DENIED_MSG)
+    if not settings.mcp_require_auth:
+        await _check_server_oauth_enforcement(server_id, user_context)
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+    meta = getattr(params, "meta", None) if params is not None else None
+    try:
+        async with get_db() as db:
+            payload = await list_catalog_page(
+                db,
+                method,
+                cursor=getattr(params, "cursor", None),
+                server_id=server_id,
+                user_email=user_email,
+                token_teams=token_teams,
+                request_headers=headers,
+                meta=meta,
+            )
+            db.commit()
+            return payload
+    except JSONRPCError as exc:
+        raise MCPError(code=exc.code, message=exc.message) from exc
+
+
 async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsResult":
-    """v2 (ctx, params) -> v1 list_tools() -> ListToolsResult."""
+    """Serve one paginated tools/list result through the v2 handler."""
     token = _v2_request_ctx.set(ctx)
     try:
-        tools = await list_tools()
-        return types.ListToolsResult(tools=tools)
+        payload = await _list_catalog_page("tools/list", _params)
+        return types.ListToolsResult(**payload)
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3498,11 +3552,11 @@ async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
 
 
 async def _adapt_list_prompts(ctx: Any, _params: Any = None) -> "types.ListPromptsResult":
-    """v2 (ctx, params) -> v1 list_prompts() -> ListPromptsResult."""
+    """Serve one paginated prompts/list result through the v2 handler."""
     token = _v2_request_ctx.set(ctx)
     try:
-        prompts = await list_prompts()
-        return types.ListPromptsResult(prompts=prompts)
+        payload = await _list_catalog_page("prompts/list", _params)
+        return types.ListPromptsResult(**payload)
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3517,11 +3571,11 @@ async def _adapt_get_prompt(ctx: Any, params: Any) -> "types.GetPromptResult":
 
 
 async def _adapt_list_resources(ctx: Any, _params: Any = None) -> "types.ListResourcesResult":
-    """v2 (ctx, params) -> v1 list_resources() -> ListResourcesResult."""
+    """Serve one paginated resources/list result through the v2 handler."""
     token = _v2_request_ctx.set(ctx)
     try:
-        resources = await list_resources()
-        return types.ListResourcesResult(resources=resources)
+        payload = await _list_catalog_page("resources/list", _params)
+        return types.ListResourcesResult(**payload)
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3554,15 +3608,11 @@ async def _adapt_read_resource(ctx: Any, params: Any) -> "types.ReadResourceResu
 
 
 async def _adapt_list_resource_templates(ctx: Any, _params: Any = None) -> "types.ListResourceTemplatesResult":
-    """v2 (ctx, params) -> v1 list_resource_templates() -> ListResourceTemplatesResult.
-
-    v1 returns ``List[Dict[str, Any]]``; coerce to ``ResourceTemplate`` models.
-    """
+    """Serve one paginated resources/templates/list result through the v2 handler."""
     token = _v2_request_ctx.set(ctx)
     try:
-        raw_templates = await list_resource_templates()
-        templates = [types.ResourceTemplate.model_validate(t) if isinstance(t, dict) else t for t in raw_templates]
-        return types.ListResourceTemplatesResult(resourceTemplates=templates)
+        payload = await _list_catalog_page("resources/templates/list", _params)
+        return types.ListResourceTemplatesResult(**payload)
     finally:
         _v2_request_ctx.reset(token)
 

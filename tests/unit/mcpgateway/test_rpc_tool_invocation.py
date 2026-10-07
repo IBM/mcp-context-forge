@@ -98,10 +98,10 @@ class TestRPCToolInvocation:
         """Test the tools/list method."""
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_db", return_value=mock_db):
-                with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
+                with patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock) as mock_list:
                     sample_tool = MagicMock()
                     sample_tool.model_dump.return_value = {"name": "test_tool", "description": "A test tool"}
-                    mock_list.return_value = ([sample_tool], None)
+                    mock_list.return_value = {"tools": [item.model_dump() for item in [sample_tool]]}
 
                     request_body = {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2}
 
@@ -182,7 +182,7 @@ class TestRPCToolInvocation:
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_db", return_value=mock_db):
                 # Mock all possible service methods
-                with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock, return_value=([], None)):
+                with patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock, return_value={expected_result_key: []}):
                     with patch("mcpgateway.main.resource_service.list_resources", new_callable=AsyncMock, return_value=([], None)):
                         with patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock, return_value=([], None)):
                             with patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock, return_value=([], None)):
@@ -249,8 +249,8 @@ class TestRPCServerIdScoping:
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_current_user_with_permissions", return_value={"sub": "user@example.com"}):
                 with patch("mcpgateway.main.validate_server_access", return_value=True) as mock_validate:
-                    with patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock) as mock_list:
-                        mock_list.return_value = []
+                    with patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock) as mock_list:
+                        mock_list.return_value = {"tools": [item.model_dump() for item in []]}
                         response = client.post(
                             "/rpc",
                             json={"jsonrpc": "2.0", "method": "tools/list", "params": {"server_id": "abc"}, "id": 3},
@@ -307,13 +307,13 @@ class TestRPCServerIdScoping:
 
         mock_request.body = mock_body
 
-        with patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock) as mock_list:
-            mock_list.return_value = []
+        with patch("mcpgateway.main.list_catalog_page", new_callable=AsyncMock) as mock_list:
+            mock_list.return_value = {"tools": [item.model_dump() for item in []]}
             await handle_rpc(mock_request, db=mock_db, user={"sub": "u@ex.com"})
 
             # Auto-injected server_id must route to list_server_tools with "srv-abc"
             mock_list.assert_called_once()
-            assert mock_list.call_args[0][1] == "srv-abc"
+            assert mock_list.call_args.kwargs["server_id"] == "srv-abc"
 
     def test_auto_injection_skipped_for_global_token(self):
         """Global token (scopes.server_id=None) must NOT auto-inject a server_id."""

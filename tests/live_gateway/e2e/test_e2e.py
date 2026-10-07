@@ -4338,6 +4338,7 @@ class TestGatewayLifecycle:
                     with suppress(Exception):
                         admin_api.delete(f"/gateways/{gateway_id}")
 
+
 # ---------------------------------------------------------------------------
 # Schema ReDoS: a hostile input-schema pattern must not stall the gateway
 # ---------------------------------------------------------------------------
@@ -4458,3 +4459,196 @@ class TestSchemaRegexReDoS:
                 failures.append(failure)
             if failures:
                 pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))
+
+
+async def _pagination_fixture_request(api: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    """Create and remove fixtures within the gateway's REST rate limits.
+
+    Args:
+        api: Authenticated setup client.
+        method: HTTP method.
+        path: REST resource path.
+        **kwargs: HTTP request arguments.
+
+    Returns:
+        Final HTTP response after bounded rate-limit retries.
+    """
+    for _ in range(4):
+        response = await api.request(method, path, **kwargs)
+        if response.status_code != 429:
+            return response
+        await asyncio.sleep(60)
+    return response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,result_key,endpoint",
+    [
+        ("tools/list", "tools", "tools"),
+        ("resources/list", "resources", "resources"),
+        ("prompts/list", "prompts", "prompts"),
+        ("resources/templates/list", "resource_templates", "resources"),
+    ],
+)
+async def test_downstream_catalog_pagination(jwt_token: str, method: str, result_key: str, endpoint: str) -> None:
+    """Traverse global and server catalogs through an authenticated MCP session.
+
+    Args:
+        jwt_token: Administrator token for fixture setup and MCP calls.
+        method: Catalog method under test.
+        result_key: SDK result attribute containing items.
+        endpoint: REST endpoint for fixture creation.
+    """
+    page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
+    count = page_size * 2 + 1
+    prefix = f"page-{uuid.uuid4().hex[:10]}"
+    owned: list[tuple[str, str]] = []
+    records = []
+    async with httpx.AsyncClient(base_url=BASE_URL, headers={"Authorization": f"Bearer {jwt_token}"}, timeout=60) as api:
+        try:
+            for index in range(count):
+                name = f"{prefix}-{index:04d}"
+                if endpoint == "tools":
+                    payload = {"tool": {"name": name, "url": "https://example.com/pagination", "request_type": "GET", "visibility": "public", "inputSchema": {"type": "object", "properties": {}}}}
+                elif endpoint == "prompts":
+                    payload = {"prompt": {"name": name, "template": "Pagination fixture"}, "visibility": "public"}
+                else:
+                    resource = {"name": name, "uri": f"test://{prefix}/{index}", "content": "Pagination fixture"}
+                    if method == "resources/templates/list":
+                        resource["uri_template"] = f"test://{prefix}/{index}/{{item}}"
+                    payload = {"resource": resource, "visibility": "public"}
+                response = await _pagination_fixture_request(api, "POST", f"/{endpoint}", json=payload)
+                assert response.status_code in (200, 201), response.text
+                record = response.json()
+                owned.append((endpoint, record["id"]))
+                records.append(record)
+            server_field = {"tools": "associated_tools", "prompts": "associated_prompts", "resources": "associated_resources"}[endpoint]
+            response = await _pagination_fixture_request(api, "POST", "/servers", json={"server": {"name": prefix, server_field: [record["id"] for record in records]}, "visibility": "public"})
+            assert response.status_code == 201, response.text
+            server_id = response.json()["id"]
+            owned.append(("servers", server_id))
+            expected = [record["name"] for record in sorted(records, key=lambda record: record["id"])]
+            for server_url in (BASE_URL, f"{BASE_URL}/servers/{server_id}"):
+                async with _mcp_session(server_url, jwt_token) as session:
+                    list_method = getattr(session, "list_resource_templates" if method == "resources/templates/list" else f"list_{endpoint}")
+                    seen_cursors: set[str] = set()
+                    found = []
+                    cursor = None
+                    pages = 0
+                    while True:
+                        page = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                        items = getattr(page, result_key)
+                        assert len(items) <= page_size
+                        found.extend(item.name for item in items if item.name.startswith(prefix))
+                        pages += 1
+                        next_cursor = page.next_cursor
+                        if next_cursor is None:
+                            break
+                        assert next_cursor not in seen_cursors
+                        seen_cursors.add(next_cursor)
+                        retry = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                        assert getattr(retry, result_key) == items
+                        cursor = next_cursor
+                    assert pages >= 3
+                    assert found == expected
+                    assert len(found) == len(set(found))
+                    with pytest.raises(McpError) as invalid:
+                        await list_method(params=PaginatedRequestParams(cursor="invalid-catalog-cursor"))
+                    assert invalid.value.code == -32602
+                    first_cursor = next(iter(seen_cursors))
+                    other_method = session.list_prompts if method != "prompts/list" else session.list_tools
+                    with pytest.raises(McpError) as wrong_method:
+                        await other_method(params=PaginatedRequestParams(cursor=first_cursor))
+                    assert wrong_method.value.code == -32602
+        finally:
+            for collection, item_id in reversed(owned):
+                response = await _pagination_fixture_request(api, "DELETE", f"/{collection}/{item_id}")
+                assert response.status_code in (200, 204, 404), response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,result_key", [("tools/list", "tools"), ("resources/list", "resources")])
+async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, result_key: str) -> None:
+    """Keep proxy continuation pages independent of upstream session changes.
+
+    Args:
+        jwt_token: Administrator token for setup and MCP requests.
+        method: Upstream catalog method.
+        result_key: SDK catalog result attribute.
+    """
+    if os.getenv("MCPGATEWAY_DIRECT_PROXY_ENABLED", "false").lower() != "true" or os.getenv("CACHE_TYPE") != "redis":
+        pytest.skip("Requires direct proxy and Redis in both gateway and test process")
+    from mcp import types as mcp_types
+
+    page_size = int(os.getenv("MCP_LIST_PAGE_SIZE", "100"))
+    count = page_size * 2 + 1
+    prefix = f"proxy-page-{uuid.uuid4().hex[:8]}"
+    upstream = MCPServer(prefix)
+    received = []
+    changed = False
+
+    async def catalog_page(_ctx, params):
+        start = int(params.cursor or "0")
+        received.append(params.cursor)
+        stop = min(start + 2, count)
+        names = [f"{prefix}-{'changed' if changed else 'original'}-{index:04d}" for index in range(start, stop)]
+        next_cursor = str(stop) if stop < count else None
+        if method == "tools/list":
+            return mcp_types.ListToolsResult(tools=[mcp_types.Tool(name=name, input_schema={"type": "object"}) for name in names], next_cursor=next_cursor)
+        return mcp_types.ListResourcesResult(resources=[mcp_types.Resource(name=name, uri=f"test://{name}") for name in names], next_cursor=next_cursor)
+
+    upstream._lowlevel_server.add_request_handler(method, mcp_types.PaginatedRequestParams, catalog_page)
+    listener = socket.socket()
+    host = os.getenv("MCP_TEMPLATE_UPSTREAM_HOST", "127.0.0.1")
+    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    listener.bind((bind_host, 0))
+    port = listener.getsockname()[1]
+    worker = uvicorn.Server(uvicorn.Config(upstream.streamable_http_app(host=bind_host, stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=worker.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    owned = []
+    async with httpx.AsyncClient(base_url=BASE_URL, headers={"Authorization": f"Bearer {jwt_token}"}, timeout=60) as api:
+        try:
+            deadline = time.monotonic() + 10
+            while not worker.started and thread.is_alive() and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+            assert worker.started
+            response = await _pagination_fixture_request(
+                api, "POST", "/gateways", json={"name": prefix, "url": f"http://{host}:{port}/mcp/", "transport": "STREAMABLEHTTP", "visibility": "public", "gateway_mode": "direct_proxy"}
+            )
+            assert response.status_code in (200, 201, 202), response.text
+            gateway_id = response.json()["id"]
+            owned.append(("gateways", gateway_id))
+            response = await _pagination_fixture_request(api, "POST", "/servers", json={"server": {"name": prefix}, "visibility": "public"})
+            assert response.status_code == 201, response.text
+            server_id = response.json()["id"]
+            owned.append(("servers", server_id))
+            client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}", "X-Context-Forge-Gateway-Id": gateway_id}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+            async with streamable_http_client(f"{BASE_URL}/servers/{server_id}/mcp", http_client=client) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    list_method = getattr(session, f"list_{result_key}")
+                    page = await list_method()
+                    assert len(getattr(page, result_key)) == page_size
+                    assert page.next_cursor is not None
+                    found = [item.name for item in getattr(page, result_key)]
+                    upstream_calls = list(received)
+                    assert len(upstream_calls) >= (count + 1) // 2
+                    changed = True
+                    cursor = page.next_cursor
+                    while cursor is not None:
+                        page = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                        assert len(getattr(page, result_key)) <= page_size
+                        found.extend(item.name for item in getattr(page, result_key))
+                        cursor = page.next_cursor
+                    assert received == upstream_calls
+                    assert found == [f"{prefix}-original-{index:04d}" for index in range(count)]
+        finally:
+            for endpoint, item_id in reversed(owned):
+                response = await _pagination_fixture_request(api, "DELETE", f"/{endpoint}/{item_id}")
+                assert response.status_code in (200, 204, 404), response.text
+            worker.should_exit = True
+            await asyncio.to_thread(thread.join, 10)
+            listener.close()
+            assert not thread.is_alive()
