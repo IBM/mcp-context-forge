@@ -13941,4 +13941,198 @@ mod unit_tests {
         let state = AppState::new(&config).expect("state");
         assert_eq!(state.max_request_body_size_bytes, 10_485_760); // 10 MB
     }
+    #[tokio::test]
+    async fn postgres_catalog_pagination_enforces_visibility_on_every_page() {
+        let Ok(database_url) = std::env::var("MCP_RUST_TEST_DATABASE_URL") else {
+            eprintln!("PostgreSQL catalog test requires MCP_RUST_TEST_DATABASE_URL");
+            return;
+        };
+        let (db, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
+            .await
+            .expect("connect test PostgreSQL");
+        tokio::spawn(async move { connection.await.expect("test PostgreSQL connection") });
+        let schema = format!("catalog_test_{}", Uuid::new_v4().simple());
+        db.batch_execute(&format!(
+            "CREATE SCHEMA {schema}; SET search_path TO {schema}"
+        ))
+        .await
+        .unwrap();
+        for (table, association, key) in [
+            ("tools", "server_tool_association", "tool_id"),
+            ("resources", "server_resource_association", "resource_id"),
+            ("prompts", "server_prompt_association", "prompt_id"),
+        ] {
+            db.batch_execute(&format!(
+                "CREATE TABLE {table} (id text PRIMARY KEY, name text, title text, description text, \
+                 input_schema jsonb, output_schema jsonb, annotations jsonb, argument_schema jsonb, \
+                 uri text, uri_template text, mime_type text, size integer, \
+                 enabled boolean, visibility text, owner_email text, team_id text); \
+                 CREATE TABLE {association} (server_id text, {key} text)"
+            ))
+            .await
+            .unwrap();
+        }
+        let visibility = Arc::new(Mutex::new(json!({})));
+        let backend_visibility = visibility.clone();
+        let backend = Router::new().fallback(post(move |uri: axum::http::Uri| {
+            let visibility = backend_visibility.clone();
+            async move {
+                assert!(uri.path().ends_with("/authz"), "native catalog must not use Python fallback: {uri}");
+                Json(json!({"directExecutionEligible": true, "catalogVisibility": visibility.lock().unwrap().clone()}))
+            }
+        }));
+        let backend_url = spawn_router(backend).await;
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        config.mcp_list_page_size = 2;
+        let mut url = reqwest::Url::parse(&database_url).unwrap();
+        url.query_pairs_mut()
+            .append_pair("options", &format!("-csearch_path={schema}"));
+        config.database_url = Some(url.into());
+        let state = AppState::new(&config).unwrap();
+        let headers = trusted_server_headers("server-a");
+        for (method, result_key, table, association, _association_key) in [
+            (
+                "tools/list",
+                "tools",
+                "tools",
+                "server_tool_association",
+                "tool_id",
+            ),
+            (
+                "resources/list",
+                "resources",
+                "resources",
+                "server_resource_association",
+                "resource_id",
+            ),
+            (
+                "prompts/list",
+                "prompts",
+                "prompts",
+                "server_prompt_association",
+                "prompt_id",
+            ),
+            (
+                "resources/templates/list",
+                "resourceTemplates",
+                "resources",
+                "server_resource_association",
+                "resource_id",
+            ),
+        ] {
+            db.batch_execute(&format!("TRUNCATE {table}, {association}"))
+                .await
+                .unwrap();
+            for index in 0..9 {
+                let id = format!("{index:032x}");
+                let name = format!("item-{index}");
+                let (access, team, owner) = match index {
+                    1 | 8 => ("team", "team-a", "other@example.com"),
+                    2 => ("team", "team-b", "other@example.com"),
+                    3 => ("private", "team-a", "other@example.com"),
+                    4 => ("private", "team-a", "user@example.com"),
+                    _ => ("public", "team-b", "other@example.com"),
+                };
+                let template =
+                    (method == "resources/templates/list").then_some("test://resource/{item}");
+                db.execute(&format!(
+                    "INSERT INTO {table} (id,name,title,description,input_schema,argument_schema,uri,uri_template,mime_type,size,enabled,visibility,owner_email,team_id) \
+                     VALUES ($1,$2,'Title','Description','{{\"type\":\"object\"}}','{{\"type\":\"object\"}}','test://resource',$3,'text/plain',4096,TRUE,$4,$5,$6)"
+                ), &[&id, &name, &template, &access, &owner, &team]).await.unwrap();
+                db.execute(
+                    &format!("INSERT INTO {association} VALUES ('server-a',$1)"),
+                    &[&id],
+                )
+                .await
+                .unwrap();
+            }
+            for (scope, token_admin, expected) in [
+                (
+                    json!({"email":"user@example.com","teams":["team-a"],"admin":false}),
+                    false,
+                    vec![0, 1, 4, 5, 6, 8],
+                ),
+                (
+                    json!({"email":"user@example.com","teams":[],"admin":false}),
+                    false,
+                    vec![0, 5, 6],
+                ),
+                (
+                    json!({"email":"user@example.com","teams":[],"admin":false}),
+                    true,
+                    vec![0, 5, 6],
+                ),
+                (
+                    json!({"email":"user@example.com","teams":null,"admin":true}),
+                    true,
+                    vec![0, 1, 2, 4, 5, 6, 8],
+                ),
+            ] {
+                let mut headers = headers.clone();
+                let context = json!({"email":"user@example.com","teams":scope["teams"],"is_admin":token_admin,"is_authenticated":true});
+                headers.insert(
+                    "x-contextforge-auth-context",
+                    encode_internal_auth_context_header(&context).unwrap(),
+                );
+                *visibility.lock().unwrap() = scope;
+                db.execute(
+                    &format!("UPDATE {table} SET visibility='public' WHERE id=$1"),
+                    &[&format!("{:032x}", 7)],
+                )
+                .await
+                .unwrap();
+                let mut cursor = Value::Null;
+                let mut names = Vec::new();
+                let mut page_count = 0;
+                loop {
+                    let response = super::catalog::serve(
+                        &state,
+                        headers.clone(),
+                        Some(json!(1)),
+                        Bytes::from(
+                            serde_json::to_vec(&json!({
+                                "jsonrpc":"2.0","id":1,"method":method,"params":{"cursor":cursor}
+                            }))
+                            .unwrap(),
+                        ),
+                        method,
+                    )
+                    .await;
+                    let page = response_json(response).await;
+                    assert!(page.get("error").is_none(), "{method}: {page}");
+                    let items = page["result"][result_key].as_array().unwrap();
+                    assert!(items.len() <= 2);
+                    for item in items {
+                        names.push(item["name"].as_str().unwrap().to_string());
+                        if method == "resources/list" {
+                            assert_eq!(item["size"], 4096);
+                        }
+                    }
+                    page_count += 1;
+                    if page_count == 1 {
+                        db.execute(&format!("UPDATE {table} SET visibility='private',owner_email='other@example.com' WHERE id=$1"), &[&format!("{:032x}",7)]).await.unwrap();
+                    }
+                    let Some(next) = page["result"].get("nextCursor") else {
+                        break;
+                    };
+                    assert_ne!(next, &cursor);
+                    cursor = next.clone();
+                    assert!(page_count < 10);
+                }
+                assert!(page_count >= 2);
+                assert_eq!(
+                    names,
+                    expected
+                        .into_iter()
+                        .map(|i| format!("item-{i}"))
+                        .collect::<Vec<_>>(),
+                    "{method}"
+                );
+            }
+        }
+        db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+            .await
+            .unwrap();
+    }
 }

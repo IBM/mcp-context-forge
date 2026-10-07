@@ -97,6 +97,31 @@ async def test_complete_catalog_pages(catalog_db, method, key, model, count, ser
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [None, 0, 4096])
+@pytest.mark.parametrize("server_scoped", [False, True])
+async def test_resource_serialization_preserves_size(catalog_db, size, server_scoped):
+    """Preserve resource descriptors across catalog and SDK serialization."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _to_mcp_resource
+
+    row = _row("resources/list", 0, size=size, title="Resource title", description="Resource description", mime_type="text/plain")
+    catalog_db.add(row)
+    server_id = None
+    if server_scoped:
+        server = Server(id="size-server", name="Resource sizes", resources=[row])
+        catalog_db.add(server)
+        server_id = server.id
+    catalog_db.commit()
+    page = await catalog.list_catalog_page(catalog_db, "resources/list", server_id=server_id, user_email="admin@example.com", token_teams=None)
+    expected = {"uri": row.uri, "name": row.name, "title": row.title, "description": row.description, "mimeType": row.mime_type}
+    if size is not None:
+        expected["size"] = size
+    assert page["resources"] == [expected]
+    assert _to_mcp_resource(row).model_dump(by_alias=True, exclude_none=True, mode="json") == expected
+    assert types.ListResourcesResult.model_validate(page).model_dump(by_alias=True, exclude_none=True, mode="json")["resources"] == [expected]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("method,key,_model", METHODS)
 @pytest.mark.parametrize("teams,email,expected", [([], "user@example.com", [0, 3]), (["t1"], "user@example.com", [0, 1, 2, 3]), (None, "admin@example.com", [0, 1, 3])])
 async def test_visibility_applies_to_every_page(catalog_db, method, key, _model, teams, email, expected):
