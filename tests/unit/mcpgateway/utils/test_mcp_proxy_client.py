@@ -157,12 +157,13 @@ async def test_factory_failure_raises_runtime_error() -> None:
             pass
 
 
-def _response(method: str, status: int) -> httpx2.Response:
+def _response(method: str, status: int, body: bytes = b"") -> httpx2.Response:
     """Build a response as the httpx2 event hook would see it."""
-    return httpx2.Response(status, request=httpx2.Request(method, "https://upstream.example.com/mcp"))
+    return httpx2.Response(status, request=httpx2.Request(method, "https://upstream.example.com/mcp"), content=body)
 
 
 _SDK_STAND_IN = MCPError(code=-32603, message="Server returned an error response")
+_REAL_UPSTREAM_ERROR = MCPError(code=-32602, message="Invalid params from the strict upstream")
 
 
 @pytest.mark.asyncio
@@ -197,3 +198,26 @@ async def test_error_response_hook_ignores_get_stream_and_delete_and_non_sdk_err
 
     await hook._get_error(_response("POST", 500))  # pylint: disable=protected-access
     assert hook.to_http_status_error(RuntimeError("not from the SDK")) is None
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_leaves_a_real_json_rpc_error_alone() -> None:
+    """A 2026-era server mirrors -32602 onto HTTP 400 but the body carries the real error: it must pass through."""
+    body = b'{"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Invalid params from the strict upstream"}}'
+    hook = ErrorResponseHook()
+    await hook._get_error(_response("POST", 400, body))  # pylint: disable=protected-access
+
+    assert hook.to_http_status_error(_REAL_UPSTREAM_ERROR) is None
+    assert hook.to_http_status_error(BaseExceptionGroup("task group", [_REAL_UPSTREAM_ERROR])) is None
+
+
+@pytest.mark.asyncio
+async def test_error_response_hook_translates_an_http_rejection_without_a_json_rpc_body() -> None:
+    """A 401 whose body is not JSON-RPC (e.g. FastAPI's {"detail": ...}) is the SDK stand-in case: translate it."""
+    hook = ErrorResponseHook()
+    await hook._get_error(_response("POST", 401, b'{"detail": "Not authenticated"}'))  # pylint: disable=protected-access
+
+    status_error = hook.to_http_status_error(_SDK_STAND_IN)
+
+    assert isinstance(status_error, httpx2.HTTPStatusError)
+    assert status_error.response.status_code == 401
