@@ -29,12 +29,32 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
+import json
 from typing import Any, AsyncIterator, Callable, Optional
 
 # Third-Party
 import httpx2
 from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http_client
 from mcp.shared.exceptions import MCPError
+
+
+def _is_jsonrpc_error_body(body: bytes) -> bool:
+    """Return True if ``body`` is a JSON-RPC 2.0 error object (``{"jsonrpc": "2.0", "error": {"code": int, ...}}``).
+
+    Args:
+        body: Raw HTTP response body.
+
+    Returns:
+        bool: Whether the body is a JSON-RPC error the SDK will surface itself.
+    """
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
+        return False
+    error = payload.get("error")
+    return isinstance(error, dict) and isinstance(error.get("code"), int)
 
 
 class ErrorResponseHook:
@@ -48,6 +68,7 @@ class ErrorResponseHook:
     def __init__(self) -> None:
         """Start with no response."""
         self.response: Optional[httpx2.Response] = None
+        self.response_carried_jsonrpc_error: bool = False
 
     def install(self, http_client: httpx2.AsyncClient) -> "ErrorResponseHook":
         """Register the response hook on ``http_client`` and return self"""
@@ -55,19 +76,34 @@ class ErrorResponseHook:
         return self
 
     async def _get_error(self, response: httpx2.Response) -> None:
-        """Keep ``response`` if it answers a POST, whatever its status"""
-        if response.request.method == "POST":
-            self.response = response
+        """Keep ``response`` if it answers a POST, whatever its status.
+
+        An error status can mean two different things:
+
+        - the body is a JSON-RPC error (2026-era servers also set e.g. HTTP 400 on
+          one). The SDK reads it and raises it as it is; we must not touch it.
+        - the body is not JSON-RPC (e.g. a plain 401 from an auth layer). The SDK
+          cannot read it and raises a generic error; that is the case we translate.
+        """
+        if response.request.method != "POST":
+            return
+        self.response = response
+        self.response_carried_jsonrpc_error = response.status_code >= 400 and _is_jsonrpc_error_body(await response.aread())
 
     def to_http_status_error(self, exc: BaseException) -> Optional[httpx2.HTTPStatusError]:
-        """Translate a failed handshake into an ``httpx2.HTTPStatusError``"""
+        """Translate a failed handshake into an ``httpx2.HTTPStatusError``.
+
+        Translates only when the error response carried no JSON-RPC error, i.e. the
+        SDK fell back to its generic stand-in; a real JSON-RPC error the upstream
+        sent (even at a 4xx status) is left untouched.
+        """
         response = self.response
         if response is None or response.status_code < 400:
             return None
         root: BaseException = exc
         while isinstance(root, BaseExceptionGroup) and root.exceptions:  # pylint: disable=no-member
             root = root.exceptions[0]  # pylint: disable=no-member
-        if not isinstance(root, MCPError):
+        if not isinstance(root, MCPError) or self.response_carried_jsonrpc_error:
             return None
         return httpx2.HTTPStatusError(
             f"{response.status_code} {response.reason_phrase} for url '{response.request.url}'",
