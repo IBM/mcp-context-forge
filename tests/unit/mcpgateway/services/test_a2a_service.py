@@ -7,6 +7,7 @@ Tests for A2A Agent Service functionality.
 """
 
 # Standard
+import base64
 from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
@@ -1068,6 +1069,46 @@ class TestA2AAgentService:
         assert result.metrics.failure_rate == 50.0
         assert result.metrics.avg_response_time == 1.5
         assert result.team == "Test Team"
+
+    def test_convert_agent_to_read_masks_basic_auth_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable basic-auth credential (issue #6704).
+
+        This is the conversion every a2a.read-gated endpoint (get_agent, list_agents,
+        register_agent, update_agent, set_agent_state) routes through before returning
+        an A2AAgentRead, so masking here is the single enforcement point for the
+        contract described in #6704.
+        """
+        sample_db_agent.auth_type = "basic"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Basic " + base64.b64encode(b"admin:s3cr3t").decode()})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_password == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert "s3cr3t" not in (result.auth_value or "")  # pragma: allowlist secret
+
+    def test_convert_agent_to_read_masks_bearer_auth_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable bearer token (issue #6704)."""
+        sample_db_agent.auth_type = "bearer"
+        sample_db_agent.auth_value = encode_auth({"Authorization": "Bearer top-secret-token"})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_token == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert "top-secret-token" not in (result.auth_value or "")
+
+    def test_convert_agent_to_read_masks_authheaders_credentials(self, service, sample_db_agent):
+        """convert_agent_to_read must never return a usable custom auth header value (issue #6704)."""
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "top-secret-key"})  # pragma: allowlist secret
+
+        result = service.convert_agent_to_read(sample_db_agent)
+
+        assert result.auth_header_value == settings.masked_auth_value
+        assert result.auth_value == settings.masked_auth_value
+        assert all(header.get("value") == settings.masked_auth_value for header in (result.auth_headers or []))
+        assert "top-secret-key" not in (result.auth_value or "")
 
     def test_get_team_name_and_batch(self, service, mock_db):
         """Test team name lookup helpers."""

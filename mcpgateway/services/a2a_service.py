@@ -1538,6 +1538,22 @@ class A2AAgentService(BaseService):
             if agent_data.auth_type is not None and agent_data.auth_type == "":
                 agent.auth_value = ""
 
+            # Persist basic/bearer/legacy-single-header credential updates.
+            # `auth_value` is schema-computed by A2AAgentUpdate.create_auth_value (a
+            # field_validator with validate_default=True) and therefore never appears in
+            # model_fields_set, so the generic per-field loop above never writes it. The
+            # multi-header `auth_headers` list case is handled inline in that loop; this
+            # covers the remaining single-value auth types. A masked placeholder in any
+            # submitted component field means the caller did not retype the secret, so the
+            # existing encrypted value is preserved (mirrors GatewayService.update_gateway).
+            auth_headers_list_submitted = bool(agent_data.auth_headers) and isinstance(agent_data.auth_headers, list)
+            if agent_data.auth_type in ("basic", "bearer", "authheaders") and not auth_headers_list_submitted:
+                token = agent_data.auth_token
+                password = agent_data.auth_password
+                header_value = agent_data.auth_header_value
+                if agent_data.auth_value and settings.masked_auth_value not in (token, password, header_value):
+                    agent.auth_value = agent_data.auth_value
+
             # Handle query_param auth updates
             # Clear auth_query_params when switching away from query_param auth
             if original_auth_type == "query_param" and agent_data.auth_type is not None and agent_data.auth_type != "query_param":
