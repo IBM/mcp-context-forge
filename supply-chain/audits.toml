@@ -42,6 +42,27 @@ criteria = "safe-to-deploy"
 delta = "0.103.12 -> 0.103.13"
 notes = "Security patch update for RUSTSEC-2026-0104; fixes reachable panic in CRL parsing for empty BIT STRING in IssuingDistributionPoint extension. Reviewed upstream diff - minimal change, only affects CRL parsing logic."
 
+[[trusted.aead]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2023-04-02"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
+
+[[trusted.aes]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2024-02-13"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
+
+[[trusted.aes-gcm]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2023-09-21"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
+
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
 user-id = 189 # Andrew Gallant (BurntSushi)
@@ -298,6 +319,13 @@ start = "2021-02-10"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
 
+[[trusted.ctr]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2022-09-30"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
+
 [[trusted.ctutils]]
 criteria = "safe-to-deploy"
 user-id = 267 # Tony Arcieri (tarcieri)
@@ -366,6 +394,13 @@ start = "2019-06-28"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
 
+[[trusted.ghash]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2024-03-03"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
+
 [[trusted.h2]]
 criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
@@ -379,6 +414,13 @@ user-id = 55123 # rust-lang-owner
 start = "2025-04-30"
 end = "2027-04-13"
 notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.hkdf]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2023-12-13"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
 
 [[trusted.hmac]]
 criteria = "safe-to-deploy"
@@ -699,6 +741,13 @@ user-id = 51017 # Yuki Okushi (JohnTitor)
 start = "2021-06-17"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for phf ecosystem crates"
+
+[[trusted.polyval]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2024-03-03"
+end = "2027-04-13"
+notes = "Extend existing RustCrypto publisher trust to cursor cryptography dependencies. Verify the locked release publisher against crates.io."
 
 [[trusted.postgres-protocol]]
 criteria = "safe-to-deploy"
