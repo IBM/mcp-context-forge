@@ -551,7 +551,7 @@ async def test_password_flow_without_client_id_succeeds(oauth_manager):
 
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
-    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+    with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
         result = await oauth_manager._password_flow({"token_url": "https://auth/token", "username": "user", "password": "pass", "scopes": ["read"]})  # pragma: allowlist secret
     assert result == "no-cid-tok"
     posted = mock_client.post.call_args.kwargs["data"]
@@ -2587,7 +2587,7 @@ class TestPrivateKeyJwtFlows:
         mock_client.post.return_value = _success_json_response()
         public_pem = private_key_credentials.pop("_test_public_pem")
 
-        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
             if flow == "client_credentials":
                 await oauth_manager._client_credentials_flow(private_key_credentials)
             elif flow == "password":
@@ -2628,7 +2628,7 @@ class TestPrivateKeyJwtFlows:
         mock_client = AsyncMock()
         mock_client.post.return_value = _success_json_response()
 
-        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
             with pytest.raises(OAuthError, match="no private_key is configured"):
                 if flow == "client_credentials":
                     await oauth_manager._client_credentials_flow(credentials)
@@ -2661,7 +2661,7 @@ class TestPrivateKeyJwtFlows:
         mock_client = AsyncMock()
         mock_client.post.return_value = _success_json_response()
 
-        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
             if flow == "client_credentials":
                 await oauth_manager._client_credentials_flow(credentials)
             elif flow == "password":
@@ -2773,19 +2773,20 @@ class TestPrivateKeyJwtWireFormat:
         async def handler(request: httpx.Request) -> httpx.Response:
             captured["body"] = parse_qs(request.content.decode("utf-8"))
             captured["url"] = str(request.url)
+            captured["host"] = request.headers["host"]
+            captured["sni_hostname"] = request.extensions["sni_hostname"]
             return httpx.Response(200, json={"access_token": "tok", "token_type": "bearer", "expires_in": 3600}, headers={"content-type": "application/json"})
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
-        async def _stub_client_factory():
-            return client
-
-        with patch.object(oauth_manager, "_get_client", new=_stub_client_factory):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(client)):
             token = await oauth_manager._client_credentials_flow(private_key_credentials)
         await client.aclose()
 
         assert token == "tok"
-        assert captured["url"] == "https://issuer.example.com/token"
+        assert captured["url"] == "https://93.184.215.14/token"
+        assert captured["host"] == "issuer.example.com"
+        assert captured["sni_hostname"] == "issuer.example.com"
         body = captured["body"]
         assert body["grant_type"] == ["client_credentials"]
         assert body["client_id"] == ["test-client"]
