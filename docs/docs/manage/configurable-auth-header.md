@@ -119,6 +119,10 @@ X-Mcp-Gateway-Auth: Bearer token
 3. **Loopback (internal gateway-to-gateway)**: `Authorization` is never forwarded, regardless of `AUTH_HEADER_NAME`.
 4. **Other Headers**: subject to the standard passthrough allowlist (`enable_header_passthrough`, per-gateway overrides).
 
+#### X-Upstream-Authorization and token exchange
+
+For gateways configured with `grant_type: "token-exchange"`, `X-Upstream-Authorization` has an additional role: when it carries a JWT-shaped credential, ContextForge uses it as the RFC 8693 `subject_token` instead of the inbound `Authorization` bearer. This lets callers supply a token already issued by the downstream IdP (e.g. a Keycloak token) for a standard internal-to-internal exchange, while `Authorization` continues to authenticate the ContextForge request as normal. Opaque (non-JWT) values are ignored and the standard fallback applies.
+
 ### Security Considerations
 
 #### Protected Headers
