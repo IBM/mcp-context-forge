@@ -12,14 +12,18 @@ from collections.abc import Sequence
 import csv
 from datetime import datetime
 from html import escape
+import json
 from pathlib import Path
 import re
 import subprocess
 
-# Docker drops compose `reservations.cpus` outside swarm, so no CPU reservation column:
-# the value a compose file declares is never applied to a container.
-RESOURCE_HEADERS = ("Service", "Replicas", "CPU limit", "Mem limit", "Mem reservation")
-_DOCKER_FORMAT = '{{index .Config.Labels "com.docker.compose.service"}}\t{{.HostConfig.NanoCpus}}\t{{.HostConfig.CpuQuota}}\t{{.HostConfig.CpuPeriod}}\t{{.HostConfig.Memory}}\t{{.HostConfig.MemoryReservation}}'
+# Docker applies compose `reservations.cpus` only in swarm mode, so a running
+# container never carries the value; read it from the compose config instead.
+RESOURCE_HEADERS = ("Service", "Replicas", "CPU limit", "CPU reservation", "Mem limit", "Mem reservation")
+_DOCKER_FORMAT = (
+    '{{index .Config.Labels "com.docker.compose.service"}}\t{{.HostConfig.NanoCpus}}\t{{.HostConfig.CpuQuota}}\t{{.HostConfig.CpuPeriod}}\t{{.HostConfig.Memory}}\t{{.HostConfig.MemoryReservation}}'
+    '\t{{index .Config.Labels "com.docker.compose.project.config_files"}}\t{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
+)
 # The Locust bundle titles percentile columns `100*<expr>+"%ile (ms)"`. Rewrite the
 # suffix so the rendered header reads p50, p90, p99 like the summary table above it.
 _PERCENTILE_TITLE = re.compile(r'(100\*[^+"]{1,20}?)\+"%ile \(ms\)"')
@@ -90,6 +94,28 @@ def _bytes(value: str) -> str:
     return str(size) if size else "-"
 
 
+def _compose_cpu_reservations(config_files: str, working_dir: str) -> dict[str, str]:
+    """Read the declared `reservations.cpus` of every service in a compose project.
+
+    Args:
+        config_files: Comma-separated compose files from the project label.
+        working_dir: Directory the project started from, used for interpolation.
+
+    Returns:
+        Core counts keyed by service name; empty when the config cannot be read.
+    """
+    files = [argument for path in config_files.split(",") if path for argument in ("-f", path)]
+    if not files:
+        return {}
+    try:
+        rendered = subprocess.run(["docker", "compose", *files, "config", "--format", "json"], capture_output=True, text=True, check=True, cwd=working_dir or None).stdout
+        services = json.loads(rendered)["services"]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+        return {}
+    declared = {name: ((service.get("deploy") or {}).get("resources") or {}).get("reservations", {}).get("cpus") for name, service in services.items()}
+    return {name: f"{float(cores):g}" for name, cores in declared.items() if cores}
+
+
 def docker_resources(project: str) -> list[tuple[str, ...]]:
     """Read the running replica count and resource limits of a compose project.
 
@@ -109,15 +135,17 @@ def docker_resources(project: str) -> list[tuple[str, ...]]:
         return []
     replicas: dict[str, int] = {}
     limits: dict[str, tuple[str, str, str]] = {}
+    config_files = working_dir = ""
     for line in inspected.splitlines():
-        service, nanocpus, quota, period, memory, reservation = line.split("\t")
+        service, nanocpus, quota, period, memory, reservation, config_files, working_dir = line.split("\t")
         if not service:
             continue
         replicas[service] = replicas.get(service, 0) + 1
         # ponytail: first container of a service wins; scale a service with uneven
         # limits and the odd replica stays hidden.
         limits.setdefault(service, (_cpus(nanocpus, quota, period), _bytes(memory), _bytes(reservation)))
-    return [(service, str(replicas[service]), *limits[service]) for service in sorted(replicas)]
+    cpu_reservations = _compose_cpu_reservations(config_files, working_dir)
+    return [(service, str(replicas[service]), limits[service][0], cpu_reservations.get(service, "-"), *limits[service][1:]) for service in sorted(replicas)]
 
 
 def _table(anchor: str, title: str, headers: Sequence[str], rows: Sequence[Sequence[str]], row_header: bool = False) -> str:

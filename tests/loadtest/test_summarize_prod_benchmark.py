@@ -27,7 +27,7 @@ def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    summarize_reports(html_path, csv_path, [("Mode", "legacy"), ("Host", "http://localhost:8080")], [("gateway", "3", "4", "4G", "4G")])
+    summarize_reports(html_path, csv_path, [("Mode", "legacy"), ("Host", "http://localhost:8080")], [("gateway", "3", "4", "4", "4G", "4G")])
 
     html = html_path.read_text(encoding="utf-8")
     table = ElementTree.fromstring(html).find(".//table")
@@ -46,35 +46,40 @@ def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:
     context_table = ElementTree.fromstring(html).find('.//table[@aria-labelledby="run-context-heading"]')
     assert [(row.findtext("th"), row.findtext("td")) for row in context_table.findall("./tbody/tr")] == [("Mode", "legacy"), ("Host", "http://localhost:8080")]
     resource_table = ElementTree.fromstring(html).find('.//table[@aria-labelledby="service-resources-heading"]')
-    assert [cell.text for cell in resource_table.findall("./tbody/tr/td")] == ["3", "4", "4G", "4G"]
+    assert [cell.text for cell in resource_table.findall("./tbody/tr/td")] == ["3", "4", "4", "4G", "4G"]
 
 
 def test_docker_resources_groups_replicas_and_renders_limits(monkeypatch) -> None:
-    """Count one row per service and convert docker's raw limits to compose units."""
+    """Count one row per service, convert docker's raw limits, and read compose CPU reservations."""
+    labels = "/stack/docker-compose.yml,/stack/docker-compose.prod.yml\t/stack"
     inspected = "\n".join(
         (
-            "gateway\t4000000000\t0\t100000\t4294967296\t4294967296",
-            "gateway\t4000000000\t0\t100000\t4294967296\t4294967296",
-            "redis\t0\t50000\t100000\t536870912\t0",
+            f"gateway\t4000000000\t0\t100000\t4294967296\t4294967296\t{labels}",
+            f"gateway\t4000000000\t0\t100000\t4294967296\t4294967296\t{labels}",
+            f"redis\t0\t50000\t100000\t536870912\t0\t{labels}",
         )
     )
+    config = '{"services": {"gateway": {"deploy": {"resources": {"reservations": {"cpus": 4, "memory": "4G"}}}}, "redis": {"deploy": {}}}}'
+    seen: dict[str, list[str]] = {}
 
-    def fake_run(command, **_kwargs):
-        """Answer `docker ps` with container ids and `docker inspect` with fixed limits.
+    def fake_run(command, **kwargs):
+        """Answer `docker ps`, `docker inspect` and `docker compose config` with fixtures.
 
         Args:
             command: Argument list the module passes to `subprocess.run`.
-            _kwargs: Ignored `subprocess.run` options.
+            kwargs: `subprocess.run` options; only `cwd` is inspected.
 
         Returns:
             A completed process carrying the matching stdout.
         """
-        stdout = "a b c\n" if command[1] == "ps" else inspected
+        seen[command[1]] = [*command, str(kwargs.get("cwd"))]
+        stdout = {"ps": "a b c\n", "inspect": inspected}.get(command[1], config)
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    assert docker_resources("proj") == [("gateway", "2", "4", "4G", "4G"), ("redis", "1", "0.5", "512M", "-")]
+    assert docker_resources("proj") == [("gateway", "2", "4", "4", "4G", "4G"), ("redis", "1", "0.5", "-", "512M", "-")]
+    assert seen["compose"] == ["docker", "compose", "-f", "/stack/docker-compose.yml", "-f", "/stack/docker-compose.prod.yml", "config", "--format", "json", "/stack"]
 
 
 def test_docker_resources_without_docker(monkeypatch) -> None:
