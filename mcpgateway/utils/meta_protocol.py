@@ -76,14 +76,44 @@ def is_modern_protocol_version(protocol_version: Optional[str]) -> bool:
     return protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
 
 
-def is_modern_meta(meta: Optional[Dict[str, Any]]) -> bool:
-    """Return True when *meta* contains the MCP 2026-07-28 mandatory protocol key.
+def has_modern_meta_attempt(meta: Optional[Dict[str, Any]]) -> bool:
+    """Return True when *meta* contains any MCP 2026-07-28 namespaced key.
+
+    Use this to detect a client that is attempting a modern request regardless of
+    whether both mandatory keys are present.  Use ``is_modern_meta`` only when you
+    need to confirm the request is already well-formed.
 
     Args:
         meta: The ``_meta`` dict from ``params``.
 
     Returns:
-        ``True`` when the namespaced protocol-version key is present.
+        ``True`` when any ``io.modelcontextprotocol/`` key is present.
+
+    Examples:
+        >>> from mcpgateway.utils.meta_protocol import has_modern_meta_attempt
+        >>> has_modern_meta_attempt({"io.modelcontextprotocol/clientCapabilities": {}})
+        True
+        >>> has_modern_meta_attempt({"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}})
+        True
+        >>> has_modern_meta_attempt({"progressToken": 1})
+        False
+        >>> has_modern_meta_attempt(None)
+        False
+    """
+    if not meta or not isinstance(meta, dict):
+        return False
+    return any(k.startswith("io.modelcontextprotocol/") for k in meta)
+
+
+def is_modern_meta(meta: Optional[Dict[str, Any]]) -> bool:
+    """Return True when *meta* contains both MCP 2026-07-28 mandatory protocol keys.
+
+    Args:
+        meta: The ``_meta`` dict from ``params``.
+
+    Returns:
+        ``True`` when both the namespaced protocol-version key and the
+        client-capabilities key are present.
 
     Examples:
         >>> from mcpgateway.utils.meta_protocol import is_modern_meta
@@ -93,10 +123,12 @@ def is_modern_meta(meta: Optional[Dict[str, Any]]) -> bool:
         False
         >>> is_modern_meta({"progressToken": 1})
         False
+        >>> is_modern_meta({"io.modelcontextprotocol/protocolVersion": "2026-07-28"})
+        False
     """
     if not meta or not isinstance(meta, dict):
         return False
-    return _KEY_PROTOCOL_VERSION in meta
+    return _KEY_PROTOCOL_VERSION in meta and _KEY_CLIENT_CAPABILITIES in meta
 
 
 def extract_protocol_meta(meta: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -137,7 +169,8 @@ def check_capability(client_capabilities: Optional[Dict[str, Any]], required: st
             ``"sampling"``.
 
     Returns:
-        ``True`` when the capability key exists and is not falsy.
+        ``True`` when the capability key is present in *client_capabilities*,
+        regardless of its value (key presence alone signals the capability per spec).
 
     Examples:
         >>> from mcpgateway.utils.meta_protocol import check_capability
@@ -185,7 +218,7 @@ def stamp_server_info_meta(result: Dict[str, Any], app_name: str, version: str) 
     if not isinstance(result, dict):
         return result
     existing_meta = result.get("_meta")
-    if existing_meta is None:
+    if not isinstance(existing_meta, dict):
         existing_meta = {}
     meta = dict(existing_meta)
     meta[_KEY_SERVER_INFO] = {"name": app_name, "version": version}

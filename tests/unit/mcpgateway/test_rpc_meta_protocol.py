@@ -36,13 +36,11 @@ def mock_db():
     return MagicMock(spec=Session)
 
 
-def _modern_rpc(method: str, params: dict) -> dict:
-    """Return a modern-era JSON-RPC request body."""
-    return {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+def _rpc(method: str, params: dict) -> dict:
+    """Return a JSON-RPC 2.0 request body.
 
-
-def _legacy_rpc(method: str, params: dict) -> dict:
-    """Return a legacy JSON-RPC request body with no _meta protocol keys."""
+    Pass modern or legacy ``_meta`` contents via *params* to control protocol era.
+    """
     return {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
 
 
@@ -54,7 +52,8 @@ class TestModernMetaMissingKeyRejection:
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.config.settings.csrf_enabled", False):
                 with patch("mcpgateway.main.get_db", return_value=mock_db):
-                    body = _modern_rpc(
+                    # Modern attempt: protocolVersion present, clientCapabilities absent.
+                    body = _rpc(
                         "tools/list",
                         {
                             "_meta": {
@@ -69,6 +68,27 @@ class TestModernMetaMissingKeyRejection:
         assert result["error"]["code"] == -32600
         assert "clientCapabilities" in result["error"]["message"]
 
+    def test_missing_protocol_version_key_returns_error(self, client, mock_db):
+        """A modern request with only clientCapabilities (no protocolVersion) returns -32600."""
+        with patch("mcpgateway.config.settings.auth_required", False):
+            with patch("mcpgateway.config.settings.csrf_enabled", False):
+                with patch("mcpgateway.main.get_db", return_value=mock_db):
+                    # Modern attempt: clientCapabilities present, protocolVersion absent.
+                    body = _rpc(
+                        "tools/list",
+                        {
+                            "_meta": {
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                                # protocolVersion key intentionally absent
+                            }
+                        },
+                    )
+                    response = client.post("/rpc", json=body)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["error"]["code"] == -32600
+        assert "protocolVersion" in result["error"]["message"]
+
     def test_legacy_request_with_no_meta_passes_through(self, client, mock_db):
         """A legacy request (no _meta protocol keys) is never rejected for lacking them."""
         with patch("mcpgateway.config.settings.auth_required", False):
@@ -76,7 +96,8 @@ class TestModernMetaMissingKeyRejection:
                 with patch("mcpgateway.main.get_db", return_value=mock_db):
                     with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
                         mock_list.return_value = ([], None)
-                        body = _legacy_rpc("tools/list", {})
+                        # Legacy request: no _meta protocol keys.
+                        body = _rpc("tools/list", {})
                         response = client.post("/rpc", json=body)
         # A -32600 must not appear; any non-method-error result is fine
         result = response.json()
@@ -92,7 +113,7 @@ class TestCapabilityGating:
             with patch("mcpgateway.config.settings.csrf_enabled", False):
                 with patch("mcpgateway.main.get_db", return_value=mock_db):
                     with patch("mcpgateway.main.session_registry.get_client_capabilities", new=AsyncMock(return_value={})):
-                        body = _modern_rpc(
+                        body = _rpc(
                             "elicitation/create",
                             {
                                 "_meta": {
@@ -117,7 +138,7 @@ class TestCapabilityGating:
                     with patch("mcpgateway.main.get_db", return_value=mock_db):
                         with patch("mcpgateway.main.session_registry.get_client_capabilities", new=AsyncMock(return_value={"elicitation": {}})):
                             with patch("mcpgateway.main.session_registry.get_elicitation_capable_sessions", new=AsyncMock(return_value=[])):
-                                body = _modern_rpc(
+                                body = _rpc(
                                     "elicitation/create",
                                     {
                                         "_meta": caps_with_elicitation,
@@ -136,7 +157,7 @@ class TestCapabilityGating:
             with patch("mcpgateway.config.settings.csrf_enabled", False):
                 with patch("mcpgateway.main.get_db", return_value=mock_db):
                     with patch("mcpgateway.main.session_registry.get_client_capabilities", new=AsyncMock(return_value={})):
-                        body = _modern_rpc(
+                        body = _rpc(
                             "sampling/createMessage",
                             {
                                 "_meta": {
@@ -163,7 +184,8 @@ class TestServerInfoStamping:
                 with patch("mcpgateway.main.get_db", return_value=mock_db):
                     with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
                         mock_list.return_value = ([], None)
-                        body = _modern_rpc("tools/list", {"_meta": _MODERN_META})
+                        # Modern request: both mandatory keys present.
+                        body = _rpc("tools/list", {"_meta": _MODERN_META})
                         response = client.post("/rpc", json=body)
         assert response.status_code == 200
         result = response.json()
@@ -181,7 +203,8 @@ class TestServerInfoStamping:
                 with patch("mcpgateway.main.get_db", return_value=mock_db):
                     with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
                         mock_list.return_value = ([], None)
-                        body = _legacy_rpc("tools/list", {})
+                        # Legacy request: no _meta protocol keys.
+                        body = _rpc("tools/list", {})
                         response = client.post("/rpc", json=body)
         assert response.status_code == 200
         result = response.json()

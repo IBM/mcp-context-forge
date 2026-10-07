@@ -4230,12 +4230,10 @@ class ToolService(BaseService):
                                 settings.app_name,
                                 _mcpgateway_version,
                             )
-                        # Call tool with meta
-                        if request_meta_data:
-                            logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
-                        else:
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments)
+                        # synthesise_meta_for_modern_upstream always returns a non-empty dict,
+                        # so meta is always forwarded.
+                        logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                        tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
                     with create_span(
                         "mcp.client.response",
                         {

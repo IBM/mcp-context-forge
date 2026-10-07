@@ -12,6 +12,7 @@ from mcpgateway.utils.meta_protocol import (
     build_client_meta,
     check_capability,
     extract_protocol_meta,
+    has_modern_meta_attempt,
     is_modern_meta,
     is_modern_protocol_version,
     stamp_server_info_meta,
@@ -48,12 +49,20 @@ class TestIsModernProtocolVersion:
 class TestIsModernMeta:
     """Tests for is_modern_meta()."""
 
-    def test_returns_true_when_protocol_version_key_present(self):
-        """A meta dict with the namespaced key is modern."""
+    def test_returns_true_when_both_mandatory_keys_present(self):
+        """A meta dict with both mandatory keys is modern."""
         assert is_modern_meta(_MODERN_META) is True
 
+    def test_returns_false_when_only_protocol_version_present(self):
+        """A meta dict with only protocolVersion is not fully modern."""
+        assert is_modern_meta({"io.modelcontextprotocol/protocolVersion": "2026-07-28"}) is False
+
+    def test_returns_false_when_only_client_capabilities_present(self):
+        """A meta dict with only clientCapabilities is not fully modern."""
+        assert is_modern_meta({"io.modelcontextprotocol/clientCapabilities": {}}) is False
+
     def test_returns_false_when_key_absent(self):
-        """A meta dict without the key is not modern."""
+        """A meta dict without namespaced keys is not modern."""
         assert is_modern_meta({"progressToken": 1}) is False
 
     def test_returns_false_for_none(self):
@@ -67,6 +76,34 @@ class TestIsModernMeta:
     def test_returns_false_for_non_dict(self):
         """A non-dict value is not modern."""
         assert is_modern_meta("string") is False  # type: ignore[arg-type]
+
+
+class TestHasModernMetaAttempt:
+    """Tests for has_modern_meta_attempt()."""
+
+    def test_returns_true_when_protocol_version_only(self):
+        """A meta dict with only protocolVersion signals a modern attempt."""
+        assert has_modern_meta_attempt({"io.modelcontextprotocol/protocolVersion": "2026-07-28"}) is True
+
+    def test_returns_true_when_capabilities_only(self):
+        """A meta dict with only clientCapabilities signals a modern attempt."""
+        assert has_modern_meta_attempt({"io.modelcontextprotocol/clientCapabilities": {}}) is True
+
+    def test_returns_true_when_both_keys_present(self):
+        """A fully modern meta dict signals a modern attempt."""
+        assert has_modern_meta_attempt(_MODERN_META) is True
+
+    def test_returns_false_for_legacy_meta(self):
+        """A meta dict with no namespaced keys is not a modern attempt."""
+        assert has_modern_meta_attempt({"progressToken": 1}) is False
+
+    def test_returns_false_for_none(self):
+        """None is not a modern attempt."""
+        assert has_modern_meta_attempt(None) is False
+
+    def test_returns_false_for_empty_dict(self):
+        """An empty dict is not a modern attempt."""
+        assert has_modern_meta_attempt({}) is False
 
 
 class TestExtractProtocolMeta:
@@ -170,6 +207,20 @@ class TestStampServerInfoMeta:
         out = stamp_server_info_meta(result, "CF", "1.0.0")
         assert out is result
         assert "_meta" not in out
+
+    def test_non_dict_existing_meta_is_replaced_not_crash(self):
+        """A non-dict _meta value (e.g. a string) is replaced rather than causing a crash."""
+        result = {"_meta": "unexpected_string"}
+        out = stamp_server_info_meta(result, "CF", "1.0.0")
+        assert isinstance(out["_meta"], dict)
+        assert "io.modelcontextprotocol/serverInfo" in out["_meta"]
+
+    def test_list_existing_meta_is_replaced_not_crash(self):
+        """A list _meta value is replaced rather than causing a crash."""
+        result = {"_meta": ["bad", "value"]}
+        out = stamp_server_info_meta(result, "CF", "1.0.0")
+        assert isinstance(out["_meta"], dict)
+        assert "io.modelcontextprotocol/serverInfo" in out["_meta"]
 
 
 class TestBuildClientMeta:

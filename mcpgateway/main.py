@@ -248,6 +248,8 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
 from mcpgateway.utils.meta_protocol import (
     CAPABILITY_NOT_SUPPORTED,
+    check_capability,
+    has_modern_meta_attempt,
     is_modern_meta,
     stamp_server_info_meta,
 )
@@ -11645,7 +11647,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         # initialize is exempt — it IS the handshake that declares capabilities.
         if method != "initialize":
             _request_meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
-            if is_modern_meta(_request_meta):
+            if has_modern_meta_attempt(_request_meta):
                 # Both mandatory keys must be present on modern requests.
                 if "io.modelcontextprotocol/protocolVersion" not in _request_meta:
                     return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Missing required _meta key: io.modelcontextprotocol/protocolVersion"}, "id": req_id}
@@ -11659,7 +11661,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 _CAPABILITY_GATED: Dict[str, str] = {"elicitation/create": "elicitation", "sampling/createMessage": "sampling"}
                 if method in _CAPABILITY_GATED:
                     _required_cap = _CAPABILITY_GATED[method]
-                    if _required_cap not in _declared_caps:
+                    if not check_capability(_declared_caps, _required_cap):
                         return {"jsonrpc": "2.0", "error": {"code": CAPABILITY_NOT_SUPPORTED, "message": f"Client did not declare required capability: {_required_cap}"}, "id": req_id}
 
         if method == "initialize":
