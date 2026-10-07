@@ -3358,6 +3358,13 @@ async def complete(
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
+        has_permission = await _check_streamable_permission(
+            user_context=user_context,
+            permission="tools.read",
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
+        )
+        if not has_permission:
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.

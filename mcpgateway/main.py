@@ -4201,6 +4201,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
 
 
 @protocol_router.post("/completion/complete")
+@require_permission("tools.read")
 async def handle_completion(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Handles the completion of tasks by processing a completion request.

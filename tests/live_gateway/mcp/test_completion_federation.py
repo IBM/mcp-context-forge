@@ -40,7 +40,7 @@ import httpx
 import pytest
 
 # Local
-from ..helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_no_gateway, TOKEN_EXPIRY
+from ..helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_no_gateway, TEST_PASSWORD, TOKEN_EXPIRY
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
@@ -132,6 +132,36 @@ def federated_prompt_without_completions(admin_client: httpx.Client) -> Generato
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+def test_protocol_completion_denied_without_rbac(admin_client: httpx.Client) -> None:
+    """Reject completion when token scope grants tools.read but the user has no RBAC role."""
+    email = f"completion-denied-{uuid.uuid4().hex[:8]}@example.com"
+    response = admin_client.post(
+        "/auth/email/admin/users",
+        json={"email": email, "password": TEST_PASSWORD, "full_name": "Completion deny test", "is_admin": False, "is_active": True},
+    )
+    assert response.status_code in (200, 201), response.text
+    try:
+        minted = subprocess.run(
+            [sys.executable, "-m", "mcpgateway.utils.create_jwt_token", "--username", email, "--exp", "5", "--secret", JWT_SECRET, "--teams", "", "--scopes", '{"permissions": ["tools.read"]}'],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        token = minted.stdout.strip().strip('"')
+        response = httpx.post(
+            f"{BASE_URL}/protocol/completion/complete",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"ref": {"type": "ref/prompt", "name": "greet"}, "argument": {"name": "style", "value": "for"}},
+            timeout=30,
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"] == "Access denied", response.text
+    finally:
+        response = admin_client.delete(f"/auth/email/admin/users/{email}")
+        assert response.status_code in (200, 204), response.text
+
+
 def test_federated_completion_is_answered_by_upstream(admin_client: httpx.Client, federated_prompt: dict[str, Any]) -> None:
     """A federated prompt's completion/complete is answered by its owning upstream, not a stale synced schema.
 

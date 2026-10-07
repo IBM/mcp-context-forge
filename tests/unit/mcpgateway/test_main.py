@@ -825,6 +825,16 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
+    @patch("mcpgateway.middleware.rbac.check_permission_inline", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.completion_service.handle_completion")
+    def test_handle_completion_endpoint_denied_by_rbac(self, mock_completion, mock_permission, test_client, auth_headers):
+        """Reject completion before service access when RBAC denies tools.read."""
+        response = test_client.post("/protocol/completion/complete", json={"ref": {"type": "ref/prompt", "name": "test"}}, headers=auth_headers)
+        assert response.status_code == 403
+        mock_permission.assert_awaited_once()
+        assert mock_permission.await_args.args[1] == "tools.read"
+        mock_completion.assert_not_called()
+
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint(self, mock_completion, mock_filter_context, test_client, auth_headers):
