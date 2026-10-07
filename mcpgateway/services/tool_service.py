@@ -4347,10 +4347,8 @@ class ToolService(BaseService):
             started = time.monotonic()
             try:
                 response = await self.oauth_manager.token_exchange(
-                    token_url=oauth_config["token_url"],
+                    oauth_config=oauth_config,
                     subject_token=subject_token,
-                    client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),  # raw encrypted DB value — token_exchange() decrypts inline (client_secret_is_plaintext defaults False)
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),

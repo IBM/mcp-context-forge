@@ -1164,10 +1164,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             started = time.monotonic()
             try:
                 response = await self.oauth_manager.token_exchange(
-                    token_url=oauth_config["token_url"],
+                    oauth_config=oauth_config,
                     subject_token=subject_token,
-                    client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
