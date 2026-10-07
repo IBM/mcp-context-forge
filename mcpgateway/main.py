@@ -11658,9 +11658,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 _declared_caps = _request_meta.get("io.modelcontextprotocol/clientCapabilities") or {}
                 if not _declared_caps and mcp_session_id:
                     _declared_caps = (await session_registry.get_client_capabilities(mcp_session_id)) or {}
-                _CAPABILITY_GATED: Dict[str, str] = {"elicitation/create": "elicitation", "sampling/createMessage": "sampling"}
-                if method in _CAPABILITY_GATED:
-                    _required_cap = _CAPABILITY_GATED[method]
+                _capability_gated: Dict[str, str] = {"elicitation/create": "elicitation", "sampling/createMessage": "sampling"}
+                if method in _capability_gated:
+                    _required_cap = _capability_gated[method]
                     if not check_capability(_declared_caps, _required_cap):
                         return {"jsonrpc": "2.0", "error": {"code": CAPABILITY_NOT_SUPPORTED, "message": f"Client did not declare required capability: {_required_cap}"}, "id": req_id}
 
