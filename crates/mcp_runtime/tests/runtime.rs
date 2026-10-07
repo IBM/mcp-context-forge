@@ -96,8 +96,6 @@ fn test_runtime_config() -> RuntimeConfig {
         }
     });
     RuntimeConfig {
-        mcp_list_page_size: 100,
-        mcp_list_cursor_ttl_seconds: 900,
         backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
         listen_http: "127.0.0.1:8787".to_string(),
         listen_uds: None,
@@ -4394,7 +4392,7 @@ async fn elicitation_create_forwards_to_backend_rpc_endpoint() {
 }
 
 #[tokio::test]
-async fn server_scoped_tools_list_db_mode_falls_back_to_python_data_endpoint_on_db_failure() {
+async fn server_scoped_tools_list_delegates_to_python_with_db_pool() {
     let authz_calls = Arc::new(Mutex::new(0usize));
     let list_calls = Arc::new(Mutex::new(0usize));
     let rpc_calls = Arc::new(Mutex::new(0usize));
@@ -4490,7 +4488,7 @@ async fn server_scoped_tools_list_db_mode_falls_back_to_python_data_endpoint_on_
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["tools"][0]["name"], "echo");
-    assert_eq!(*authz_calls.lock().expect("lock"), 1);
+    assert_eq!(*authz_calls.lock().expect("lock"), 0);
     assert_eq!(*list_calls.lock().expect("lock"), 1);
     assert_eq!(*rpc_calls.lock().expect("lock"), 0);
 }

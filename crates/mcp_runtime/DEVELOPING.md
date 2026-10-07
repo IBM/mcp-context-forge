@@ -70,21 +70,6 @@ Use these when:
 - changing request routing, auth/session logic, direct DB paths, or helpers
 - touching the optional RMCP path
 
-### PostgreSQL catalog authorization
-
-Set `MCP_RUST_TEST_DATABASE_URL` to a disposable PostgreSQL database.
-The test creates an isolated schema and removes it after success.
-The database user must have schema creation permission.
-
-```bash
-cargo test -p contextforge_mcp_runtime --lib postgres_catalog_pagination -- --test-threads=1
-```
-
-The test executes native SQL for all four paginated catalogs.
-It checks team isolation, private ownership, public-only admin tokens, and visibility revocation between pages.
-The Rust CI service job supplies PostgreSQL and runs this test explicitly.
-Without `MCP_RUST_TEST_DATABASE_URL`, the test skips database execution.
-
 ## Repo-Wide Hygiene
 
 These are the standard root-level formatting and linting commands the repo

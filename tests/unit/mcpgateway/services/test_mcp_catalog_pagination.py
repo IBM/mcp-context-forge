@@ -123,7 +123,7 @@ async def test_resource_serialization_preserves_size(catalog_db, size, server_sc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method,key,_model", METHODS)
-@pytest.mark.parametrize("teams,email,expected", [([], "user@example.com", [0, 3]), (["t1"], "user@example.com", [0, 1, 2, 3]), (None, "admin@example.com", [0, 1, 3])])
+@pytest.mark.parametrize("teams,email,expected", [([], "user@example.com", [0, 3]), ([], "admin@example.com", [0, 3]), (["t1"], "user@example.com", [0, 1, 2, 3]), (None, "admin@example.com", [0, 1, 3])])
 async def test_visibility_applies_to_every_page(catalog_db, method, key, _model, teams, email, expected):
     """Preserve public, team, owner, and administrator visibility on each page."""
     catalog_db.add_all(
@@ -250,8 +250,8 @@ async def test_streamable_adapter_preserves_cursor(catalog_db, monkeypatch, meth
     assert [item["name"] for item in second.model_dump(by_alias=True)[key]] == ["item-003", "item-004", "item-005"]
 
 
-def test_cursor_interoperability_vector(monkeypatch):
-    """Keep cursor encryption and scope hashing compatible with Rust."""
+def test_cursor_encoding_vector(monkeypatch):
+    """Preserve the authenticated cursor format across Python workers."""
     # Third-Party
     from pydantic import SecretStr
 
@@ -304,18 +304,19 @@ async def test_proxy_denies_disabled_feature_and_wrong_scope(catalog_db, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_visibility_revocation_applies_before_continuation(catalog_db):
+@pytest.mark.parametrize("method,key,_model", METHODS)
+async def test_visibility_revocation_applies_before_continuation(catalog_db, method, key, _model):
     """Remove revoked and disabled rows from subsequent pages."""
-    rows = [_row("tools/list", index) for index in range(7)]
+    rows = [_row(method, index) for index in range(7)]
     catalog_db.add_all(rows)
     catalog_db.commit()
-    first = await catalog.list_catalog_page(catalog_db, "tools/list", user_email="user@example.com", token_teams=[])
+    first = await catalog.list_catalog_page(catalog_db, method, user_email="user@example.com", token_teams=[])
     rows[3].visibility = "private"
     rows[3].owner_email = "other@example.com"
     rows[4].enabled = False
     catalog_db.commit()
-    rest = await catalog.list_catalog_page(catalog_db, "tools/list", cursor=first["nextCursor"], user_email="user@example.com", token_teams=[])
-    assert [item["name"] for item in rest["tools"]] == ["item-005", "item-006"]
+    rest = await catalog.list_catalog_page(catalog_db, method, cursor=first["nextCursor"], user_email="user@example.com", token_teams=[])
+    assert [item["name"] for item in rest[key]] == ["item-005", "item-006"]
     assert "nextCursor" not in rest
 
 

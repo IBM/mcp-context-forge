@@ -11,6 +11,7 @@ Serve bounded MCP catalogs with current visibility checks.
 
 # Standard
 import asyncio
+from collections.abc import Sequence
 import hashlib
 import logging
 import time
@@ -257,7 +258,7 @@ async def list_catalog_page(
         items: list[tuple[str, dict[str, Any]]] = []
         while len(items) <= size:
             batch_query = query.where(model.id > after) if after is not None else query
-            rows = db.execute(batch_query.order_by(model.id.asc()).limit(size + 1)).scalars().all()
+            rows: Sequence[Tool | Resource | Prompt] = db.execute(batch_query.order_by(model.id.asc()).limit(size + 1)).scalars().all()
             if not rows:
                 break
             for row in rows:
