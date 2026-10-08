@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+- **Product-terminology request aliases for `gateway_id` and the virtual-server `server` body key** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544)) - Tool, resource, and prompt create/update bodies, and the gateway/MCP-server handshake test request, now also accept `mcp_server_id` as an alias of `gateway_id` ("MCP server" is the product term for what the code calls a "gateway"). `POST /servers` and `POST /v1/virtual-servers` now also accept a top-level `virtual_server` key as an alias of `server`. Both are additive: the existing field names and body keys keep working unchanged, and responses still use the existing key names. Output-side aliasing, RBAC permission strings, audit `resource_type` values, and config names remain tracked under #6544.
+
 - **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
 
 - **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.

@@ -11715,10 +11715,8 @@ class TestRemainingCoverageGaps:
         server_obj = MagicMock()
 
         response = await main_mod.create_server.__wrapped__(
-            server_obj,
+            SimpleNamespace(server=server_obj, team_id=None, visibility="team"),
             request,
-            team_id=None,
-            visibility="team",
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
@@ -11726,10 +11724,8 @@ class TestRemainingCoverageGaps:
 
         request.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
         response = await main_mod.create_server.__wrapped__(
-            server_obj,
+            SimpleNamespace(server=server_obj, team_id="team-2", visibility="team"),
             request,
-            team_id="team-2",
-            visibility="team",
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
@@ -11752,10 +11748,8 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.server_service, "register_server", register)
         db = MagicMock()
         _ = await main_mod.create_server.__wrapped__(
-            server_obj,
+            SimpleNamespace(server=server_obj, team_id="team-1", visibility="public"),
             request,
-            team_id="team-1",
-            visibility="public",
             db=db,
             user={"email": "user@example.com"},
         )

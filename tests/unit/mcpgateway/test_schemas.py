@@ -1599,6 +1599,95 @@ class TestGatewayCreateCamelCase:
             assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
 
 
+class TestMcpServerIdProductTerminologyAlias:
+    """`gateway_id` request bodies may additionally spell it `mcp_server_id` (mcp-context-forge#6544).
+
+    The API's internal field name and response key stay `gateway_id` for now — only
+    request-side acceptance changes, so these tests also pin down that the output
+    key is unaffected.
+    """
+
+    def test_tool_create_accepts_mcp_server_id(self):
+        """ToolCreate (no camelCase alias_generator) accepts the new snake_case name."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(name="t", url="http://example.com", mcp_server_id="gw-1")
+        assert tool.gateway_id == "gw-1"
+
+    def test_tool_create_still_accepts_gateway_id(self):
+        """The existing field name keeps working."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(name="t", url="http://example.com", gateway_id="gw-1")
+        assert tool.gateway_id == "gw-1"
+
+    def test_tool_update_accepts_mcp_server_id_and_camel_case(self):
+        """ToolUpdate uses BaseModelWithConfigDict, so the camelCase spelling must also work."""
+        # First-Party
+        from mcpgateway.schemas import ToolUpdate
+
+        assert ToolUpdate(mcp_server_id="gw-2").gateway_id == "gw-2"
+        assert ToolUpdate(mcpServerId="gw-3").gateway_id == "gw-3"
+        # Pre-existing spellings are unaffected.
+        assert ToolUpdate(gateway_id="gw-4").gateway_id == "gw-4"
+        assert ToolUpdate(gatewayId="gw-5").gateway_id == "gw-5"
+
+    def test_resource_create_accepts_mcp_server_id(self):
+        # First-Party
+        from mcpgateway.schemas import ResourceCreate
+
+        resource = ResourceCreate(uri="file:///x", name="r", content="c", mcp_server_id="gw-6")
+        assert resource.gateway_id == "gw-6"
+
+    def test_prompt_create_accepts_mcp_server_id_and_camel_case(self):
+        # First-Party
+        from mcpgateway.schemas import PromptCreate
+
+        assert PromptCreate(name="p", template="t", mcp_server_id="gw-7").gateway_id == "gw-7"
+        assert PromptCreate(name="p", template="t", mcpServerId="gw-8").gateway_id == "gw-8"
+
+    def test_gateway_handshake_request_accepts_mcp_server_id(self):
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeRequest
+
+        req = GatewayHandshakeRequest(base_url="https://example.com", mcp_server_id="gw-9")
+        assert req.gateway_id == "gw-9"
+
+    def test_response_still_serializes_under_existing_key(self):
+        """Output aliasing is a documented follow-up, not part of this change.
+
+        Until it lands, the response key stays exactly what it is today
+        regardless of which accepted input spelling populated the field.
+        """
+        # First-Party
+        from mcpgateway.schemas import ToolUpdate
+
+        data = ToolUpdate(mcp_server_id="gw-10").model_dump(by_alias=True, exclude_unset=True)
+        assert data == {"gatewayId": "gw-10"}
+
+
+class TestServerCreateRequestProductTerminologyAlias:
+    """The virtual-server create body may use `virtual_server` as well as `server` (mcp-context-forge#6544)."""
+
+    def test_accepts_legacy_server_key(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        payload = ServerCreateRequest.model_validate({"server": {"name": "s1"}, "team_id": None, "visibility": "public"})
+        assert payload.server.name == "s1"
+        assert payload.visibility == "public"
+
+    def test_accepts_virtual_server_key(self):
+        # First-Party
+        from mcpgateway.schemas import ServerCreateRequest
+
+        payload = ServerCreateRequest.model_validate({"virtual_server": {"name": "s2"}, "team_id": "team-1", "visibility": "team"})
+        assert payload.server.name == "s2"
+        assert payload.team_id == "team-1"
+
+
 class TestTitleSchemas:
     """Test title field in schema models."""
 
