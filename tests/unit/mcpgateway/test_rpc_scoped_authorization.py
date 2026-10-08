@@ -43,6 +43,16 @@ def _rpc_body(server_id: str, *, request_id: str = "scoped-authz") -> dict:
     }
 
 
+def _legacy_rpc_body(server_id: str, *, request_id: str = "legacy-scoped-authz") -> dict:
+    """Build a scoped legacy direct-method tool request."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "qualified-tool",
+        "params": {"server_id": server_id, "query": "cloudflare"},
+    }
+
+
 def _token(*, permissions: list[str], teams: list[str] | None = None, server_id: str | None = None) -> str:
     """Mint an API-token JWT with real team and permission scopes."""
     scopes: dict[str, object] = {"permissions": permissions}
@@ -337,3 +347,50 @@ def test_scoped_rpc_allows_authorized_server(scoped_rpc_client: TestClient) -> N
     assert response.json()["result"] == {"content": []}
     forward_request.assert_awaited_once()
     execute_call.assert_awaited_once()
+
+
+def test_legacy_scoped_rpc_hides_inaccessible_and_missing_servers_equally(scoped_rpc_client: TestClient) -> None:
+    """Legacy direct-method calls enforce the same server non-disclosure policy."""
+    responses = []
+    normalized_errors = []
+    with (
+        patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new_callable=AsyncMock, return_value=None) as forward_request,
+        patch.object(main_mod.tool_service, "invoke_tool", new_callable=AsyncMock) as invoke_tool,
+    ):
+        for server_id in (SERVER_B_ID, "rpc-scoped-missing"):
+            responses.append(
+                scoped_rpc_client.post(
+                    "/rpc",
+                    headers=make_auth_headers(_token(permissions=["tools.execute"])),
+                    json=_legacy_rpc_body(server_id, request_id=f"legacy-{server_id}"),
+                )
+            )
+
+    for response, server_id in zip(responses, (SERVER_B_ID, "rpc-scoped-missing")):
+        assert response.status_code == 200
+        error = response.json()["error"]
+        assert error == {"code": -32002, "message": f"Server not found: {server_id}", "data": {"server_id": server_id}}
+        normalized_errors.append({"code": error["code"], "message": error["message"].replace(server_id, "<server>"), "data": {"server_id": "<server>"}})
+    assert normalized_errors[0] == normalized_errors[1]
+    assert forward_request.await_count == 2
+    invoke_tool.assert_not_awaited()
+
+
+def test_legacy_scoped_rpc_allows_authorized_server(scoped_rpc_client: TestClient) -> None:
+    """An accessible server still reaches legacy direct-method tool invocation."""
+    with (
+        patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new_callable=AsyncMock, return_value=None) as forward_request,
+        patch.object(main_mod.tool_service, "invoke_tool", new_callable=AsyncMock, return_value={"content": []}) as invoke_tool,
+    ):
+        response = scoped_rpc_client.post(
+            "/rpc",
+            headers=make_auth_headers(_token(permissions=["tools.execute"])),
+            json=_legacy_rpc_body(SERVER_A_ID),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == {"content": []}
+    forward_request.assert_awaited_once()
+    invoke_tool.assert_awaited_once()
+    assert invoke_tool.await_args.kwargs["name"] == "qualified-tool"
+    assert invoke_tool.await_args.kwargs["server_id"] == SERVER_A_ID

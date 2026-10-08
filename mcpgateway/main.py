@@ -12045,6 +12045,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             oauth_user_email = get_user_email(user)
             # Get server_id from params if provided
             server_id = params.get("server_id")
+            if server_id and not _trusted_internal_mcp_dispatch:
+                server_user_email, server_token_teams = get_scoped_resource_access_context(request, user)
+                try:
+                    await server_service.ensure_server_access(db, server_id, user_email=server_user_email, token_teams=server_token_teams)
+                except ServerNotFoundError as exc:
+                    raise JSONRPCError(-32002, f"Server not found: {server_id}", {"server_id": server_id}) from exc
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
