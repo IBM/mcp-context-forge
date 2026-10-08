@@ -235,13 +235,13 @@ class TestVaultTokenBackendPathHelpers:
 
         path = backend._construct_vault_path(
             team_id="engineering",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="alice@example.com"
         )
 
-        # Verify path structure
-        assert path.startswith("secret/data/contextforge/oauth/engineering/")
-        assert "alice%40example.com" in path  # Email URL-encoded
+        # Verify path structure — the third segment is the gateway id, so two gateways sharing an
+        # upstream URL get separate paths (issue #6353 item 3).
+        assert path == "secret/data/contextforge/oauth/engineering/gw-123/alice%40example.com"
 
     def test_construct_vault_path_with_special_chars_in_email(self):
         """Test path construction with special characters in email."""
@@ -262,7 +262,7 @@ class TestVaultTokenBackendPathHelpers:
 
         path = backend._construct_vault_path(
             team_id="team1",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="user+test@example.com"
         )
 
@@ -288,7 +288,7 @@ class TestVaultTokenBackendPathHelpers:
 
         path = backend._construct_metadata_path(
             team_id="team1",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="alice@example.com"
         )
 
@@ -607,9 +607,11 @@ class TestVaultTokenBackendRevoke:
             )
 
             assert result is True
-            # Verify DELETE was called
-            call_args = mock_vault.call_args
-            assert call_args[0][0] == "DELETE"
+            # Both the gateway-keyed path and the legacy URL-keyed path are deleted, so a revoke
+            # cannot leave a readable credential behind at the path the read falls back to.
+            assert [c[0][0] for c in mock_vault.call_args_list] == ["DELETE", "DELETE"]
+            deleted = [c[0][1] for c in mock_vault.call_args_list]
+            assert "secret/metadata/contextforge/oauth/team1/gw-123/user%40example.com" in deleted
 
     @pytest.mark.asyncio
     async def test_revoke_user_tokens_not_found(self):
@@ -2083,12 +2085,8 @@ class TestVaultTokenBackendAdditionalCoverage:
         mock_gateway.url = "https://mcp.example.com"
         mock_db.get.return_value = mock_gateway
 
-        # Populate cache
-        cache_key = (
-            "team1",
-            backend._hash_server_id("https://mcp.example.com"),
-            "user@test.com",
-        )
+        # Populate cache — keyed on gateway_id, matching the Vault path
+        cache_key = ("team1", "gw-123", "user@test.com")
         VaultTokenBackend._token_cache[cache_key] = {"token": "cached", "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300)}
 
         with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
@@ -2096,10 +2094,11 @@ class TestVaultTokenBackendAdditionalCoverage:
 
             await backend.revoke_user_tokens("gw-123", "team1", "user@test.com")
 
-            # Assert: DELETE called and cache entry marked expired (not deleted —
-            # expire-in-place lets other workers' copies become stale within one TTL cycle).
-            mock_vault.assert_called_once()
-            assert mock_vault.call_args[0][0] == "DELETE"
+            # Assert: both the gateway-keyed and legacy paths are deleted, and the cache entry is
+            # marked expired (not deleted — expire-in-place lets other workers' copies become
+            # stale within one TTL cycle).
+            assert mock_vault.call_count == 2
+            assert all(c[0][0] == "DELETE" for c in mock_vault.call_args_list)
             assert cache_key in VaultTokenBackend._token_cache
             assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
 
@@ -2130,8 +2129,12 @@ class TestVaultTokenBackendAdditionalCoverage:
 
             await backend.revoke_user_tokens("gw-123", None, "user@test.com")
 
-            # Assert: DELETE called with correct path (no team_id segment)
-            mock_vault.assert_called_once()
+            # Assert: DELETE called for the gateway-keyed and legacy paths, both under "shared"
+            # since there is no team_id segment.
+            assert mock_vault.call_count == 2
+            deleted = [c[0][1] for c in mock_vault.call_args_list]
+            assert "secret/metadata/contextforge/oauth/shared/gw-123/user%40test.com" in deleted
+            assert all("/shared/" in path for path in deleted)
 
 
 # ============================================================================
@@ -2219,8 +2222,7 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
         mock_db.get.return_value = mock_gateway
 
         # Pre-populate cache with a future-expiry entry
-        server_id = backend._hash_server_id("https://mcp.example.com")
-        cache_key = ("team1", server_id, "user@test.com")
+        cache_key = ("team1", "gw-123", "user@test.com")
         VaultTokenBackend._token_cache[cache_key] = {
             "token": "cached_token",
             "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300),
