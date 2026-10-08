@@ -14,8 +14,9 @@ from jinja2 import TemplateNotFound
 import pytest
 
 # First-Party
-from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
+from mcpgateway.config import Settings
 from mcpgateway.schemas import EmailDeliveryStatus
+from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
 
 
 class TestAuthEmailNotificationService:
@@ -25,6 +26,29 @@ class TestAuthEmailNotificationService:
     def service(self):
         """Create service instance."""
         return AuthEmailNotificationService()
+
+    @pytest.mark.parametrize(
+        "configured_path, frontend_root",
+        [
+            ("", "/app"),
+            ("/contextforge", "/contextforge/app"),
+            ("/myapp", "/myapp/app"),
+            ("/app", "/app"),
+            ("/contextforge/app/", "/contextforge/app"),
+            ("/app/app", "/app/app"),
+            ("/contextforge/app/app", "/contextforge/app/app"),
+            ("/contextforge/app/app/", "/contextforge/app/app"),
+            ("/contextforge/app/app/app/", "/contextforge/app/app/app"),
+        ],
+    )
+    @pytest.mark.parametrize("path", ["/accept-invitation", "/reset-password", "/forgot-password"])
+    def test_configured_frontend_root_preserves_deployment_prefix(self, configured_path, frontend_root, path):
+        """All emailed routes retain deployment prefixes ending in app."""
+        configured = Settings(ui_base_url=f"https://ui.example.com{configured_path}", environment="development", _env_file=None)
+        token = None if path == "/forgot-password" else "test-token"
+        token_path = "" if token is None else "/test-token"
+        with patch("mcpgateway.services.email_notification_service.settings", configured):
+            assert build_frontend_url(path, token) == f"https://ui.example.com{frontend_root}{path}{token_path}"
 
     def test_smtp_password_none(self, service):
         """_smtp_password returns None when not configured."""
@@ -63,41 +87,53 @@ class TestAuthEmailNotificationService:
             mock_settings.smtp_from_email = "noreply@example.com"
             assert service._smtp_ready() is True
 
-    def test_build_frontend_url_prefers_ui_base_and_encodes_token(self):
-        """Frontend links use configured React base and encode token as one segment."""
+    @pytest.mark.parametrize("admin_api_enabled", [True, False])
+    @pytest.mark.parametrize("path", ["/accept-invitation", "/reset-password", "/forgot-password"])
+    def test_build_frontend_url_prefers_ui_base_and_encodes_token(self, path, admin_api_enabled):
+        """Configured frontend links use React routes regardless of legacy Admin availability."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = "https://ui.example.com/contextforge/"
-            result = build_frontend_url("/accept-invitation", "tok/en ?")
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
+            token = None if path == "/forgot-password" else "tok/en ?"
+            result = build_frontend_url(path, token)
 
-        assert result == "https://ui.example.com/contextforge/accept-invitation/tok%2Fen%20%3F"
+        suffix = "" if token is None else "/tok%2Fen%20%3F"
+        assert result == f"https://ui.example.com/contextforge/app{path}{suffix}"
 
-    @pytest.mark.parametrize(
-        ("admin_api_enabled", "expected_url"),
-        [
-            (True, "https://gateway.example.com/root/admin/forgot-password"),
-            (False, "https://gateway.example.com/root/forgot-password"),
-        ],
-    )
-    def test_build_frontend_url_falls_back_to_domain_and_root_path(self, admin_api_enabled, expected_url):
+    @pytest.mark.parametrize("root_path", ["", "/root/"])
+    @pytest.mark.parametrize("admin_api_enabled, prefix", [(True, "/admin"), (False, "/app")])
+    @pytest.mark.parametrize("path", ["/forgot-password", "/reset-password"])
+    def test_build_frontend_url_falls_back_to_domain_and_root_path(self, path, admin_api_enabled, prefix, root_path):
         """Password fallback uses Admin UI only when its routes are mounted."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
-            mock_settings.app_root_path = "/root/"
+            mock_settings.app_root_path = root_path
             mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
-            result = build_frontend_url("/forgot-password")
+            token = "tok/en" if path == "/reset-password" else None
+            result = build_frontend_url(path, token)
 
-        assert result == expected_url
+        root = "/root" if root_path else ""
+        suffix = "/tok%2Fen" if token else ""
+        assert result == f"https://gateway.example.com{root}{prefix}{path}{suffix}"
 
-    def test_build_frontend_url_invitation_fallback_remains_frontend_route(self):
+    @pytest.mark.parametrize("admin_api_enabled", [True, False])
+    def test_build_frontend_url_invitation_fallback_remains_frontend_route(self, admin_api_enabled):
         """Invitation fallback does not inherit legacy Admin UI prefix."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
             result = build_frontend_url("/accept-invitation", "tok/en")
 
-        assert result == "https://gateway.example.com/root/accept-invitation/tok%2Fen"
+        assert result == "https://gateway.example.com/root/app/accept-invitation/tok%2Fen"
+
+    @pytest.mark.parametrize("path", ["/app", "/app/reset-password", "/app/accept-invitation"])
+    def test_build_frontend_url_rejects_mount_prefix(self, path):
+        """Callers supply routes without an existing frontend mount prefix."""
+        with pytest.raises(ValueError, match="exclude the /app"):
+            build_frontend_url(path)
 
     def test_build_frontend_url_rejects_untrusted_path_shape(self):
         """Frontend helper rejects relative and scheme-relative paths."""

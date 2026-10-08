@@ -1469,7 +1469,7 @@ class TestTeamsRouter:
             mock_invite_service.create_invitation = AsyncMock(return_value=mock_invitation)
             mock_invite_service.deliver_invitation_email = AsyncMock(
                 return_value=InvitationDeliveryResult(
-                    invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
+                    invitation_url=f"https://ui.example/app/accept-invitation/{mock_invitation.token}",
                     status=EmailDeliveryStatus.DISABLED,
                 )
             )
@@ -1505,7 +1505,7 @@ class TestTeamsRouter:
             async def deliver_after_close(**_kwargs):
                 assert mock_db.close.called
                 return InvitationDeliveryResult(
-                    invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
+                    invitation_url=f"https://ui.example/app/accept-invitation/{mock_invitation.token}",
                     status=EmailDeliveryStatus.FAILED,
                     warning="Invitation created, but the email could not be delivered.",
                 )

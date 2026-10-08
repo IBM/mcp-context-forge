@@ -1069,11 +1069,12 @@ class TestTeamInvitationService:
         invitation.expires_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
         service.email_notification_service.deliver_team_invitation_email = AsyncMock(return_value=EmailDeliveryStatus.SENT)
 
-        with patch("mcpgateway.services.team_invitation_service.build_frontend_url", return_value="https://ui.example/accept-invitation/tok%2Fen"):
+        with patch("mcpgateway.services.team_invitation_service.build_frontend_url", return_value="https://ui.example/app/accept-invitation/tok%2Fen") as build_url:
             result = await service.deliver_invitation_email(invitation, "Engineering", "Alice")
 
+        build_url.assert_called_once_with("/accept-invitation", "tok/en")
         assert result == InvitationDeliveryResult(
-            invitation_url="https://ui.example/accept-invitation/tok%2Fen",
+            invitation_url="https://ui.example/app/accept-invitation/tok%2Fen",
             status=EmailDeliveryStatus.SENT,
         )
 
