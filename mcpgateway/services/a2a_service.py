@@ -1367,9 +1367,61 @@ class A2AAgentService(BaseService):
         if not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
 
-        capabilities = agent.capabilities or {}
+        return self._build_agent_card(agent)
 
-        card: Dict[str, Any] = {
+    async def get_agent_card_by_id(
+        self,
+        db: Session,
+        agent_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build an A2A v1 AgentCard dict for the agent with the given ID.
+
+        Mirrors :meth:`get_agent_card`, looking the agent up by ID instead of
+        name. Used by the public ``GET /v1/a2a/{agent_id}/card`` route.
+
+        Args:
+            db: Database session.
+            agent_id: ID of the agent to look up.
+            user_email: Caller's email for visibility scoping. See
+                :meth:`get_agent_card` for the admin-bypass semantics.
+            token_teams: Caller's team scope for visibility filtering. See
+                :meth:`get_agent_card` for the admin-bypass semantics.
+
+        Returns:
+            AgentCard dict, or None if the agent is not found / disabled / denied.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> asyncio.run(service.get_agent_card_by_id(db, "missing")) is None
+            True
+        """
+        query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id, DbA2AAgent.enabled.is_(True))
+        agent = db.execute(query).scalar_one_or_none()
+        if not agent:
+            return None
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            return None
+
+        return self._build_agent_card(agent)
+
+    def _build_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+        """Build the AgentCard dict for an already-resolved, visible agent.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+
+        Returns:
+            AgentCard dict conforming to the A2A AgentCard schema.
+        """
+        capabilities = agent.capabilities or {}
+        return {
             "name": agent.name,
             "description": agent.description or "",
             "url": agent.endpoint_url,
@@ -1385,7 +1437,6 @@ class A2AAgentService(BaseService):
             "skills": capabilities.get("skills", []),
             "supportsAuthenticatedExtendedCard": True,
         }
-        return card
 
     async def update_agent(
         self,
