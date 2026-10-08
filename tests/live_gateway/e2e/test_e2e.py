@@ -2728,6 +2728,68 @@ class TestVirtualServerLifecycle:
         assert detached.is_error, f"Detached tool remained invocable: {detached}"
         assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
 
+    def test_public_rpc_tools_call_honors_server_attachment(
+        self,
+        create_server: Any,
+        lifecycle_tools: list[dict[str, Any]],
+        admin_token: str,
+    ) -> None:
+        """Public /rpc should invoke an attached tool and reject an unassociated one.
+
+        Args:
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        unassociated_tool = next((tool for tool in lifecycle_tools if tool["id"] != (echo_tool or {}).get("id")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+        assert unassociated_tool, "The live gateway fixture must expose an unassociated tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        invoked = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-call",
+                "method": "tools/call",
+                "params": {
+                    "name": echo_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {"message": "scoped-rpc-live"},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert invoked.status_code == 200, f"POST /rpc returned {invoked.status_code}: {invoked.text[:500]}"
+        invoked_body = invoked.json()
+        assert "error" not in invoked_body, f"Attached tool invocation failed: {invoked_body}"
+        assert "scoped-rpc-live" in json.dumps(invoked_body["result"]), f"Attached tool returned the wrong result: {invoked_body}"
+
+        rejected = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-rejection",
+                "method": "tools/call",
+                "params": {
+                    "name": unassociated_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert rejected.status_code == 200, f"POST /rpc returned {rejected.status_code}: {rejected.text[:500]}"
+        rejected_body = rejected.json()
+        assert rejected_body.get("error", {}).get("code") == -32601, f"Unassociated tool returned the wrong error: {rejected_body}"
+
     @pytest.mark.parametrize(
         ("first_tenant", "second_tenant"),
         [("tenant-a", "tenant-b"), ("tenant-b", "tenant-a")],

@@ -270,7 +270,7 @@ class TestRPCServerIdScoping:
             patch("mcpgateway.config.settings.auth_required", False),
             patch("mcpgateway.main.validate_server_access", return_value=True),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"])),
-            patch("mcpgateway.main.server_service.get_server", new_callable=AsyncMock, return_value=MagicMock()) as get_server,
+            patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock) as ensure_server_access,
             patch("mcpgateway.main._execute_rpc_tools_call", new_callable=AsyncMock, return_value={"content": []}) as execute_call,
         ):
             response = client.post(
@@ -280,44 +280,48 @@ class TestRPCServerIdScoping:
 
         assert response.status_code == 200
         assert response.json() == {"jsonrpc": "2.0", "result": {"content": []}, "id": 4}
-        get_server.assert_awaited_once_with(ANY, "server-1", user_email="user@example.com", token_teams=["team-a"])
+        ensure_server_access.assert_awaited_once_with(ANY, "server-1", user_email="user@example.com", token_teams=["team-a"])
         execute_call.assert_awaited_once()
 
-    def test_rpc_tools_call_maps_hidden_server_to_generic_not_found(self, client):
-        """ServerNotFoundError should preserve get_server's non-disclosure contract."""
-        get_server = AsyncMock(side_effect=ServerNotFoundError("Server not found: server-1"))
+    @pytest.mark.parametrize("server_id", ["hidden-server", "missing-server"])
+    def test_rpc_tools_call_maps_hidden_and_missing_server_to_generic_not_found(self, client, server_id):
+        """Hidden and missing servers should produce the same JSON-RPC error shape."""
+        ensure_server_access = AsyncMock(side_effect=ServerNotFoundError(f"Server not found: {server_id}"))
         execute_call = AsyncMock()
+        forward_request = AsyncMock()
 
         with (
             patch("mcpgateway.config.settings.auth_required", False),
             patch("mcpgateway.main.validate_server_access", return_value=True),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"])),
-            patch("mcpgateway.main.server_service.get_server", get_server),
+            patch("mcpgateway.main.server_service.ensure_server_access", ensure_server_access),
+            patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", forward_request),
             patch("mcpgateway.main._execute_rpc_tools_call", execute_call),
         ):
             response = client.post(
                 "/rpc",
-                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "qualified-tool", "server_id": "server-1", "arguments": {}}, "id": 5},
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "qualified-tool", "server_id": server_id, "arguments": {}}, "id": 5},
             )
 
         assert response.status_code == 200
         assert response.json() == {
             "jsonrpc": "2.0",
-            "error": {"code": -32002, "message": "Server not found: server-1", "data": {"server_id": "server-1"}},
+            "error": {"code": -32002, "message": f"Server not found: {server_id}", "data": {"server_id": server_id}},
             "id": 5,
         }
-        get_server.assert_awaited_once()
+        ensure_server_access.assert_awaited_once()
+        forward_request.assert_not_awaited()
         execute_call.assert_not_awaited()
 
     def test_internal_tools_call_skips_public_rpc_server_preflight(self, client):
         """Trusted MCP transport dispatch should retain its existing lightweight path."""
-        get_server = AsyncMock()
+        ensure_server_access = AsyncMock()
 
         with (
             patch("mcpgateway.config.settings.auth_required", False),
             patch("mcpgateway.main.get_internal_mcp_auth_context", return_value={"scoped_server_id": "server-1"}),
             patch("mcpgateway.main.validate_server_access", return_value=True),
-            patch("mcpgateway.main.server_service.get_server", get_server),
+            patch("mcpgateway.main.server_service.ensure_server_access", ensure_server_access),
             patch("mcpgateway.main._execute_rpc_tools_call", new_callable=AsyncMock, return_value={"content": []}) as execute_call,
         ):
             response = client.post(
@@ -326,7 +330,7 @@ class TestRPCServerIdScoping:
             )
 
         assert response.status_code == 200
-        get_server.assert_not_awaited()
+        ensure_server_access.assert_not_awaited()
         execute_call.assert_awaited_once()
 
     def test_rpc_skips_validation_for_unscoped_token_without_server_id(self, client, mock_db):
