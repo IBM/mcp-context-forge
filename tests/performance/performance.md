@@ -60,7 +60,7 @@ These wrappers target the nginx-exposed compose stack on
 `http://localhost:8080` and use the MCP protocol Locust file under
 `tests/loadtest/locustfile_mcp_protocol.py`.
 
-For the fixed-tool workload, run `make prod-benchmark-tools PROD_BENCH_RUN_TIME=10s`.
+For the fixed-tool workload, run `make prod-benchmark-tools TIME=10s`.
 The default duration is 30 minutes. The default `MODE=legacy` sends `initialize`;
 `MODE=modern` skips it. Any other value stops the target.
 The target checks the gateway with one `initialize` request and stops on any non-2xx reply.
