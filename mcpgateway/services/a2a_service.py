@@ -1473,6 +1473,51 @@ class A2AAgentService(BaseService):
 
         return self._build_agent_card(agent, caller_version)
 
+    async def get_agent_card_by_id(
+        self,
+        db: Session,
+        agent_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        caller_version: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build an A2A v1 AgentCard dict for the agent with the given ID.
+
+        Mirrors :meth:`get_agent_card`, looking the agent up by ID instead of
+        name. Used by the public ``GET /v1/a2a/{agent_id}/card`` route.
+
+        Args:
+            db: Database session.
+            agent_id: ID of the agent to look up.
+            user_email: Caller's email for visibility scoping. See
+                :meth:`get_agent_card` for the admin-bypass semantics.
+            token_teams: Caller's team scope for visibility filtering. See
+                :meth:`get_agent_card` for the admin-bypass semantics.
+            caller_version: A2A version the caller speaks. See
+                :meth:`get_agent_card`.
+
+        Returns:
+            AgentCard dict, or None if the agent is not found / disabled / denied.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> asyncio.run(service.get_agent_card_by_id(db, "missing")) is None
+            True
+        """
+        query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id, DbA2AAgent.enabled.is_(True))
+        agent = db.execute(query).scalar_one_or_none()
+        if not agent:
+            return None
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            return None
+
+        return self._build_agent_card(agent, caller_version)
+
     def _build_agent_card(self, agent: DbA2AAgent, caller_version: Optional[str] = None) -> Dict[str, Any]:
         """Dispatch card construction by the agent's declared protocol version.
 
