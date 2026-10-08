@@ -1835,6 +1835,22 @@ def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
     return _run_async(_async_mcp_initialize(access_token, server_url))
 
 
+def _public_rpc_tool_call(server_id: str, tool_name: str, arguments: dict[str, Any], access_token: str | None = None) -> httpx.Response:
+    """Call a tool through the public JSON-RPC endpoint."""
+    headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
+    return httpx.post(
+        f"{BASE_URL}/rpc",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": f"scoped-rpc-{uuid.uuid4().hex}",
+            "method": "tools/call",
+            "params": {"name": tool_name, "server_id": server_id, "arguments": arguments},
+        },
+        timeout=_CLIENT_TIMEOUT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test: REST API server visibility
 # ---------------------------------------------------------------------------
@@ -2167,6 +2183,67 @@ class TestMcpPerServerEndpoint:
         with pytest.raises(Exception) as excinfo:
             _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
         print(f"    -> Outsider denied private server: {excinfo.value}")
+
+
+class TestPublicRpcScopedAuthorization:
+    """Public ``/rpc`` enforces authentication, token permissions, and server visibility."""
+
+    tool_name = f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time"
+
+    def test_unauthenticated_call_is_rejected(self, visibility_servers: dict) -> None:
+        """A scoped public tool call requires a bearer token."""
+        response = _public_rpc_tool_call(visibility_servers["public"]["id"], self.tool_name, {"timezone": "UTC"})
+        assert response.status_code == 401, f"Unauthenticated POST /rpc returned {response.status_code}: {response.text[:500]}"
+
+    def test_read_only_token_cannot_execute(self, scoped_token_read_only: dict, visibility_servers: dict) -> None:
+        """MCP transport access does not imply ``tools.execute``."""
+        response = _public_rpc_tool_call(
+            visibility_servers["public"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            scoped_token_read_only["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert body.get("error", {}).get("code") == -32003, f"Read-only token returned the wrong error: {body}"
+
+    def test_cross_team_developer_cannot_probe_team_server(
+        self,
+        admin_api: APIRequestContext,
+        playwright: Playwright,
+        create_team: Any,
+        visibility_servers: dict,
+    ) -> None:
+        """A caller with execute permission in another team sees generic not-found."""
+        _, other_team = _created_team(create_team, name=f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}")
+        caller = _create_user_with_token(
+            admin_api,
+            playwright,
+            f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}@test.com",
+            team_id=other_team["id"],
+            rbac_role="developer",
+        )
+        server_id = visibility_servers["team"]["id"]
+        try:
+            response = _public_rpc_tool_call(server_id, self.tool_name, {"timezone": "UTC"}, caller["access_token"])
+            assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+            body = response.json()
+            assert body.get("error") == {"code": -32002, "message": f"Server not found: {server_id}", "data": {"server_id": server_id}}, f"Hidden server returned the wrong error: {body}"
+        finally:
+            _cleanup_user(admin_api, caller)
+
+    def test_team_developer_can_invoke(self, test_users: dict, visibility_servers: dict) -> None:
+        """A team member with ``tools.execute`` can invoke an attached tool."""
+        response = _public_rpc_tool_call(
+            visibility_servers["team"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            test_users["developer"]["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert "error" not in body, f"Authorized scoped invocation failed: {body}"
+        assert body.get("result", {}).get("content"), f"Authorized scoped invocation returned no content: {body}"
 
 
 # ---------------------------------------------------------------------------
@@ -4358,6 +4435,7 @@ class TestGatewayLifecycle:
                 if gateway_id:
                     with suppress(Exception):
                         admin_api.delete(f"/gateways/{gateway_id}")
+
 
 # ---------------------------------------------------------------------------
 # Schema ReDoS: a hostile input-schema pattern must not stall the gateway

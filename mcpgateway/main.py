@@ -11568,7 +11568,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
         _trusted_internal_mcp_dispatch = get_internal_mcp_auth_context(request) is not None
         _tools_call_permission_checked = False
-        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if _trusted_internal_mcp_dispatch and request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
         if not _trusted_internal_mcp_dispatch:
             try:
