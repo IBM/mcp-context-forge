@@ -72,6 +72,9 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # Test-only hashing costs match make test; production defaults remain in config.py.
+      ARGON2ID_TIME_COST: "1"
+      ARGON2ID_MEMORY_COST: "1024"
       # Strong test-only secrets so Settings() validates in all environments.
       # config.py now rejects placeholder/weak secrets unconditionally (GHSA-8pcq-mx48-hjvj)
       # and feature-gates PLATFORM_ADMIN_PASSWORD/DEFAULT_USER_PASSWORD on EMAIL_AUTH_ENABLED
