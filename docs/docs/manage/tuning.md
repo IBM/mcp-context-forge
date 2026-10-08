@@ -699,7 +699,6 @@ When running MCP servers behind the gateway:
 | Setting | Recommendation | Why |
 |---------|---------------|-----|
 | `MCP_SESSION_POOL_HEALTH_CHECK_METHODS` | `["skip"]` for max throughput | Skips health checks on pooled sessions |
-| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | `0.5` | Fast cleanup of stale sessions |
 | Upstream `stateless_http` | `true` for multi-replica servers | Avoids session affinity requirements |
 | Upstream `json_response` | `true` for unary tool calls | Removes SSE framing overhead |
 | `terminate_on_close` | `false` for pooled sessions | Prevents session teardown on reuse |
