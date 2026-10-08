@@ -11,7 +11,6 @@ import {
   escapeHtml,
   escapeHtmlChat,
   extractApiError,
-  hasUnsafeUrlProtocol,
   parseErrorResponse,
   safeParseJsonResponse,
   safeSetInnerHTML,
@@ -317,48 +316,6 @@ describe("validateJson", () => {
 });
 
 // ---------------------------------------------------------------------------
-// hasUnsafeUrlProtocol
-// ---------------------------------------------------------------------------
-describe("hasUnsafeUrlProtocol", () => {
-  test("detects javascript: protocol", () => {
-    expect(hasUnsafeUrlProtocol("javascript:alert(1)")).toBe(true);
-  });
-
-  test("detects javascript: with mixed case", () => {
-    expect(hasUnsafeUrlProtocol("JavaScript:alert(1)")).toBe(true);
-  });
-
-  test("detects javascript: with leading whitespace", () => {
-    expect(hasUnsafeUrlProtocol("  javascript:alert(1)")).toBe(true);
-  });
-
-  test("detects vbscript: protocol", () => {
-    expect(hasUnsafeUrlProtocol("vbscript:msgbox(1)")).toBe(true);
-  });
-
-  test("detects data:text/html", () => {
-    expect(hasUnsafeUrlProtocol("data:text/html,<h1>hi</h1>")).toBe(true);
-  });
-
-  test("returns false for http:", () => {
-    expect(hasUnsafeUrlProtocol("http://example.com")).toBe(false);
-  });
-
-  test("returns false for https:", () => {
-    expect(hasUnsafeUrlProtocol("https://example.com")).toBe(false);
-  });
-
-  test("returns false for relative URL", () => {
-    expect(hasUnsafeUrlProtocol("/admin/page")).toBe(false);
-  });
-
-  test("returns false for non-string input", () => {
-    expect(hasUnsafeUrlProtocol(42)).toBe(false);
-    expect(hasUnsafeUrlProtocol(null)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // sanitizeHtmlForInsertion
 // ---------------------------------------------------------------------------
 describe("sanitizeHtmlForInsertion", () => {
@@ -403,6 +360,66 @@ describe("sanitizeHtmlForInsertion", () => {
 
   test("preserves plain text", () => {
     expect(sanitizeHtmlForInsertion("hello world")).toBe("hello world");
+  });
+
+  test("removes data:text/html src", () => {
+    const result = sanitizeHtmlForInsertion('<a href="data:text/html,<script>alert(1)</script>">x</a>');
+    expect(result).not.toContain("data:text/html");
+  });
+
+  test("preserves htmx, Alpine, data-* and aria-* attributes", () => {
+    const html =
+      '<button hx-get="/admin/x" hx-target="#t" hx-vals=\'{"a":1}\' x-data="{open:false}" ' +
+      '@click="open = !open" :class="open" x-show="open" data-action="go" aria-pressed="false">B</button>';
+    const div = document.createElement("div");
+    div.innerHTML = sanitizeHtmlForInsertion(html);
+    const btn = div.querySelector("button");
+    for (const name of ["hx-get", "hx-target", "hx-vals", "x-data", "@click", ":class", "x-show", "data-action", "aria-pressed"]) {
+      expect(btn.hasAttribute(name)).toBe(true);
+    }
+  });
+
+  test("keeps a leading Alpine <template x-for>", () => {
+    const div = document.createElement("div");
+    div.innerHTML = sanitizeHtmlForInsertion('<template x-for="i in pages" :key="i"><button x-text="i"></button></template>');
+    const tpl = div.querySelector("template");
+    expect(tpl.getAttribute("x-for")).toBe("i in pages");
+    expect(tpl.content.querySelector("button").getAttribute("x-text")).toBe("i");
+  });
+
+  test("preserves SVG icon markup", () => {
+    const result = sanitizeHtmlForInsertion('<svg viewBox="0 0 24 24" fill="none"><path stroke-linecap="round" d="M5 13l4 4L19 7"></path></svg>');
+    expect(result).toContain('viewBox="0 0 24 24"');
+    expect(result).toContain('d="M5 13l4 4L19 7"');
+  });
+
+  test("removes hx-on:* attributes and their data-hx-on:* alias", () => {
+    const result = sanitizeHtmlForInsertion(
+      '<button hx-on:click="alert(1)" hx-on::after-request="x" data-hx-on:click="alert(1)" data-hx-on-click="x" data-action="go" hx-get="/a">B</button>'
+    );
+    expect(result).toContain('data-action="go"');
+    expect(result).not.toContain("hx-on");
+    expect(result).toContain('hx-get="/a"');
+  });
+
+  const MXSS_PAYLOADS = [
+    '<form><math><mtext></form><mglyph><style></math><img src=/np.png onerror="alert(1)">',
+    '<math><mtext><table><mglyph><style><img src=x onerror="alert(1)">',
+    '<svg></p><style><a id="</style><img src=1 onerror=alert(1)>">',
+    '<math><mi><style><img src=x onerror="alert(1)"></style></mi></math>',
+    '<noscript><p title="</noscript><img src=x onerror=alert(1)>">',
+    '<svg><style><img src=x onerror="alert(1)"></style></svg>',
+    '<form><math><mtext></form><mglyph><svg><mtext><style><path id="</style><img onerror=alert(1) src>">',
+    '<math><annotation-xml encoding="text/html"><img src=x onerror="alert(1)"></math>',
+  ];
+
+  test.each(MXSS_PAYLOADS)("output stays inert after re-parse: %s", (payload) => {
+    const div = document.createElement("div");
+    div.innerHTML = sanitizeHtmlForInsertion(payload);
+    const withHandler = Array.from(div.querySelectorAll("*")).filter((el) =>
+      Array.from(el.attributes).some((attr) => attr.name.toLowerCase().startsWith("on"))
+    );
+    expect(withHandler).toEqual([]);
   });
 });
 

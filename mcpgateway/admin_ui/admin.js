@@ -36,6 +36,8 @@ import '@fortawesome/fontawesome-free/css/all.min.css';
 if (window.htmxConfig && window.htmxConfig.inlineScriptNonce) {
   htmx.config.inlineScriptNonce = window.htmxConfig.inlineScriptNonce;
 }
+// Injected markup must not reach htmx code evaluation (hx-on, hx-vals="js:", hx-vars, trigger filters).
+htmx.config.allowEval = false;
 
 // Import Alpine (registers components/magics; start() is called after all Admin setup)
 import Alpine from './alpine-setup.js';
