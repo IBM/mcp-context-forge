@@ -1314,7 +1314,7 @@ class Settings(BaseSettings):
     app_domain: HttpUrl = Field(default=HttpUrl("http://localhost:4444"))
     ui_base_url: Optional[HttpUrl] = Field(
         default=None,
-        description="Trusted base URL for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
+        description="Trusted deployment base or full frontend root ending in /app for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
     )
 
     @field_validator("ui_base_url", mode="before")
@@ -1335,7 +1335,7 @@ class Settings(BaseSettings):
     @field_validator("ui_base_url")
     @classmethod
     def validate_ui_base_url(cls, value: Optional[HttpUrl]) -> Optional[HttpUrl]:
-        """Reject URL components unsuitable for a trusted frontend base.
+        """Validate the frontend URL and remove its final mount segment when present.
 
         Args:
             value: Configured frontend base URL.
@@ -1355,10 +1355,9 @@ class Settings(BaseSettings):
         if value.fragment:
             raise ValueError("UI_BASE_URL must not contain a fragment")
         if (value.path or "").rstrip("/").endswith(FRONTEND_MOUNT_PREFIX):
-            logger.warning("UI_BASE_URL excludes the %s mount prefix; removing the trailing %s from the configured base", FRONTEND_MOUNT_PREFIX, FRONTEND_MOUNT_PREFIX)
+            logger.warning("UI_BASE_URL is a full frontend root; removing the trailing %s mount while preserving the deployment prefix", FRONTEND_MOUNT_PREFIX)
             normalized = str(value).rstrip("/")
-            while normalized.endswith(FRONTEND_MOUNT_PREFIX):
-                normalized = normalized[: -len(FRONTEND_MOUNT_PREFIX)].rstrip("/")
+            normalized = normalized[: -len(FRONTEND_MOUNT_PREFIX)].rstrip("/")
             return HttpUrl(normalized)
         return value
 

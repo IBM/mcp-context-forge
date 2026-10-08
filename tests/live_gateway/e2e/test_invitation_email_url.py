@@ -5,7 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 Verify invitation links through the live team API with SMTP disabled.
 
-Set MCP_EMAIL_TEST_UI_BASE to the gateway's UI_BASE_URL or APP_DOMAIN + APP_ROOT_PATH.
+Set MCP_EMAIL_TEST_UI_BASE to the expected deployment base before the final /app mount.
+For UI_BASE_URL=https://ui.example.com/contextforge/app/app, use https://ui.example.com/contextforge/app.
+With UI_BASE_URL unset, use APP_DOMAIN + APP_ROOT_PATH.
 Run against a disposable gateway with ALLOW_TEAM_INVITATIONS=true and SMTP_ENABLED=false.
 """
 

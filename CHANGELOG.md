@@ -33,6 +33,8 @@
 
 ### Fixed
 
+- **Frontend email routes** - Invitation and password emails include the React `/app` mount prefix. `UI_BASE_URL` accepts a deployment base or a full frontend root ending in `/app`. Full roots produce a startup warning and have only the final mount segment removed during normalization. For a deployment prefix `/contextforge/app`, set the full root `https://ui.example.com/contextforge/app/app` to preserve both segments in emailed links. The invitation frontend route remains tracked by #6776.
+
 - **Modern MCP clients no longer see the deprecated logging capability** ([#6630](https://github.com/IBM/mcp-context-forge/issues/6630), [#6631](https://github.com/IBM/mcp-context-forge/issues/6631)) - `server/discover` responses for `2026-07-28` clients now omit `capabilities.logging`. MCP 2026-07-28 deprecates that capability (SEP-2577), and ContextForge sends no request-scoped log messages. Clients on `2025-11-25` and older still receive the capability and can call `logging/setLevel`. Use OpenTelemetry and structured logging for gateway observability. Modern clients reach the gateway only when `MCP_INBOUND_PROTOCOL_MODE=auto`; `docker-compose.yml` now passes that variable to the gateway, with a `legacy` default.
 
 

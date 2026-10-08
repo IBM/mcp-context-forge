@@ -27,13 +27,28 @@ class TestAuthEmailNotificationService:
         """Create service instance."""
         return AuthEmailNotificationService()
 
-    @pytest.mark.parametrize("prefix", ["", "/contextforge", "/myapp"])
-    @pytest.mark.parametrize("suffix", ["/app/app", "/app/app/", "/app/app/app/"])
-    def test_configured_repeated_mount_produces_one_frontend_mount(self, prefix, suffix):
-        """Settings normalization and link generation preserve the deployment prefix."""
-        configured = Settings(ui_base_url=f"https://ui.example.com{prefix}{suffix}", environment="development", _env_file=None)
+    @pytest.mark.parametrize(
+        "configured_path, frontend_root",
+        [
+            ("", "/app"),
+            ("/contextforge", "/contextforge/app"),
+            ("/myapp", "/myapp/app"),
+            ("/app", "/app"),
+            ("/contextforge/app/", "/contextforge/app"),
+            ("/app/app", "/app/app"),
+            ("/contextforge/app/app", "/contextforge/app/app"),
+            ("/contextforge/app/app/", "/contextforge/app/app"),
+            ("/contextforge/app/app/app/", "/contextforge/app/app/app"),
+        ],
+    )
+    @pytest.mark.parametrize("path", ["/accept-invitation", "/reset-password", "/forgot-password"])
+    def test_configured_frontend_root_preserves_deployment_prefix(self, configured_path, frontend_root, path):
+        """All emailed routes retain deployment prefixes ending in app."""
+        configured = Settings(ui_base_url=f"https://ui.example.com{configured_path}", environment="development", _env_file=None)
+        token = None if path == "/forgot-password" else "test-token"
+        token_path = "" if token is None else "/test-token"
         with patch("mcpgateway.services.email_notification_service.settings", configured):
-            assert build_frontend_url("/accept-invitation", "test-token") == f"https://ui.example.com{prefix}/app/accept-invitation/test-token"
+            assert build_frontend_url(path, token) == f"https://ui.example.com{frontend_root}{path}{token_path}"
 
     def test_smtp_password_none(self, service):
         """_smtp_password returns None when not configured."""
@@ -113,6 +128,12 @@ class TestAuthEmailNotificationService:
             result = build_frontend_url("/accept-invitation", "tok/en")
 
         assert result == "https://gateway.example.com/root/app/accept-invitation/tok%2Fen"
+
+    @pytest.mark.parametrize("path", ["/app", "/app/reset-password", "/app/accept-invitation"])
+    def test_build_frontend_url_rejects_mount_prefix(self, path):
+        """Callers supply routes without an existing frontend mount prefix."""
+        with pytest.raises(ValueError, match="exclude the /app"):
+            build_frontend_url(path)
 
     def test_build_frontend_url_rejects_untrusted_path_shape(self):
         """Frontend helper rejects relative and scheme-relative paths."""

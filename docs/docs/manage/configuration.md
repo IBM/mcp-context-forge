@@ -132,12 +132,23 @@ ContextForge uses this trusted base to generate these browser-facing email links
 - `https://ui.example.com/contextforge/app/reset-password/{token}`
 - `https://ui.example.com/contextforge/app/forgot-password`
 
+Values whose final path segment is `/app` are treated as full frontend roots, including a trailing slash.
+Only that final mount segment is removed during normalization; earlier path segments are preserved.
+Other values are treated as deployment bases and receive the `/app` mount when links are generated.
+For a deployment prefix of `/contextforge/app`, configure the full frontend root:
+
+```bash
+UI_BASE_URL=https://ui.example.com/contextforge/app/app
+```
+
+This produces links such as `https://ui.example.com/contextforge/app/app/reset-password/{token}`.
+
 When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base.
 With `MCPGATEWAY_ADMIN_API_ENABLED=true`, password-recovery emails use the bundled Admin UI routes:
 `/admin/reset-password/{token}` and `/admin/forgot-password`.
 With the Admin API disabled, these emails use `/app/reset-password/{token}` and `/app/forgot-password`.
 Invitation emails always use `/app/accept-invitation/{token}`. The fallback host must serve the corresponding frontend routes.
-For a separately deployed React client, configure `UI_BASE_URL` with its base URL before the `/app` prefix.
+For a separately deployed React client, configure `UI_BASE_URL` using the deployment-base or full-root rules above.
 ContextForge never derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
 
 `UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
