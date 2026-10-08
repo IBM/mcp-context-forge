@@ -9034,8 +9034,9 @@ async def test_generate_unified_teams_view_filters_scoped_team_ids():
 
     assert "Beta" in body
     assert "Alpha" not in body
-    assert "Gamma" not in body
-    team_service.get_member_counts_batch_cached.assert_awaited_once_with(["team-2"])
+    # A team-scoped token grants "Team + Public" visibility, so joinable public teams stay listed.
+    assert "Gamma" in body
+    team_service.get_member_counts_batch_cached.assert_awaited_once_with(["team-2", "team-3"])
 
 
 @pytest.mark.asyncio
@@ -10615,6 +10616,65 @@ async def test_admin_teams_partial_html_admin_public_only_token_lists_no_teams(m
     assert team_service.list_teams.await_args.kwargs["team_ids"] == []
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][2]["data"] == []
+
+
+def _setup_non_admin_teams_partial(monkeypatch, user_teams, user_roles, public_teams):
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    current_user = SimpleNamespace(email="u@example.com", is_admin=False)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team_service = MagicMock()
+    team_service.get_user_teams = AsyncMock(return_value=user_teams)
+    team_service.get_user_roles_batch.return_value = user_roles
+    team_service.discover_public_teams = AsyncMock(return_value=public_teams)
+    team_service.get_pending_join_requests_batch.return_value = {}
+    team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    return team_service
+
+
+async def _render_teams_partial_ids(mock_request, mock_db, relationship, token_teams):
+    await admin_teams_partial_html(
+        request=mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        visibility=None,
+        render=None,
+        q=None,
+        relationship=relationship,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": token_teams},
+    )
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    return [team.id for team in template_call[0][2]["data"]]
+
+
+@pytest.mark.asyncio
+async def test_admin_teams_partial_html_scoped_non_admin_can_join_lists_public_teams(monkeypatch, mock_request, mock_db, allow_permission):
+    """Regression for #7158: a session scoped to the user's memberships still lists joinable public teams."""
+    member_team = SimpleNamespace(id="team-1", name="Mine", slug="mine", description="", visibility="private", is_active=True, is_personal=False)
+    public_team = SimpleNamespace(id="team-3", name="Open", slug="open", description="", visibility="public", is_active=True, is_personal=False)
+    _setup_non_admin_teams_partial(monkeypatch, [member_team], {"team-1": "member"}, [public_team])
+
+    ids = await _render_teams_partial_ids(mock_request, mock_db, relationship="public", token_teams=["team-1"])
+
+    assert ids == ["team-3"]
+
+
+@pytest.mark.asyncio
+async def test_admin_teams_partial_html_scoped_non_admin_hides_out_of_scope_member_teams(monkeypatch, mock_request, mock_db, allow_permission):
+    """A narrowed token hides the user's teams outside the scope, while public teams stay listed."""
+    in_scope = SimpleNamespace(id="team-1", name="InScope", slug="in-scope", description="", visibility="private", is_active=True, is_personal=False)
+    out_of_scope = SimpleNamespace(id="team-2", name="OutOfScope", slug="out-of-scope", description="", visibility="private", is_active=True, is_personal=False)
+    public_team = SimpleNamespace(id="team-3", name="Open", slug="open", description="", visibility="public", is_active=True, is_personal=False)
+    _setup_non_admin_teams_partial(monkeypatch, [in_scope, out_of_scope], {"team-1": "member", "team-2": "member"}, [public_team])
+
+    assert await _render_teams_partial_ids(mock_request, mock_db, relationship="member", token_teams=["team-1"]) == ["team-1"]
+    assert await _render_teams_partial_ids(mock_request, mock_db, relationship=None, token_teams=["team-1"]) == ["team-1", "team-3"]
+    assert await _render_teams_partial_ids(mock_request, mock_db, relationship=None, token_teams=[]) == ["team-3"]
 
 
 @pytest.mark.asyncio

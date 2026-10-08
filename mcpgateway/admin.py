@@ -5364,6 +5364,36 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 # ============================================================================ #
 
 
+def _filter_teams_by_scope(teams: list, scoped_team_ids: Optional[list[str]]) -> list:
+    """Keep only the teams inside an explicit token team scope.
+
+    Apply this to the caller's own teams. Do not apply it to joinable public
+    teams: a team-scoped token grants "Team + Public" visibility, and a joinable
+    team is never in the caller's membership set.
+
+    Args:
+        teams: Teams to filter
+        scoped_team_ids: Explicit token team scope, or None for no narrowing
+
+    Returns:
+        The teams whose id is in the scope, or all teams when the scope is None
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> teams = [SimpleNamespace(id="t1"), SimpleNamespace(id="t2")]
+        >>> [t.id for t in _filter_teams_by_scope(teams, ["t2"])]
+        ['t2']
+        >>> [t.id for t in _filter_teams_by_scope(teams, None)]
+        ['t1', 't2']
+        >>> _filter_teams_by_scope(teams, [])
+        []
+    """
+    if scoped_team_ids is None:
+        return list(teams)
+    allowed_team_ids = set(scoped_team_ids)
+    return [team for team in teams if str(team.id) in allowed_team_ids]
+
+
 async def _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids: Optional[list[str]] = None):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
 
@@ -5382,10 +5412,8 @@ async def _generate_unified_teams_view(team_service, current_user, root_path, sc
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
 
-    if scoped_team_ids is not None:
-        allowed_team_ids = set(scoped_team_ids)
-        user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
-        public_teams = [team for team in public_teams if str(team.id) in allowed_team_ids]
+    # Token scope narrows the caller's own teams only. A scoped token still sees public teams.
+    user_teams = _filter_teams_by_scope(user_teams, scoped_team_ids)
 
     # Batch fetch ALL data upfront - 3 queries instead of 3N queries (N+1 elimination)
     user_team_ids = [str(t.id) for t in user_teams]
@@ -5808,22 +5836,21 @@ async def admin_teams_partial_html(
         # Filter by relationship or regular user view
         all_teams = []
 
+        # Token scope narrows the caller's own teams only. A scoped token still sees public teams.
+        scoped_user_teams = _filter_teams_by_scope(user_teams, scoped_team_ids)
+
         if relationship == "owner":
             # Only teams user owns
-            all_teams = [t for t in user_teams if user_roles.get(str(t.id)) == "owner"]
+            all_teams = [t for t in scoped_user_teams if user_roles.get(str(t.id)) == "owner"]
         elif relationship == "member":
             # Only teams user is a member of (not owner)
-            all_teams = [t for t in user_teams if user_roles.get(str(t.id)) == "member"]
+            all_teams = [t for t in scoped_user_teams if user_roles.get(str(t.id)) == "member"]
         elif relationship == "public":
             # Only public teams user can join
             all_teams = list(public_teams)
         else:
             # All teams: user's teams + public teams they can join
-            all_teams = list(user_teams) + list(public_teams)
-
-        if scoped_team_ids is not None:
-            allowed_team_ids = set(scoped_team_ids)
-            all_teams = [t for t in all_teams if str(t.id) in allowed_team_ids]
+            all_teams = list(scoped_user_teams) + list(public_teams)
 
         # Apply search filter
         if q:
