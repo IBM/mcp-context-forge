@@ -3257,7 +3257,6 @@ class TestRootEndpoints:
         endpoint_logs = [record.getMessage() for record in caplog.records if record.name == "mcpgateway" and record.levelno >= logging.ERROR]
         assert endpoint_logs == ["Failed to remove root"]
 
-
     @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, _mock_root_admin, test_client, auth_headers):
@@ -6736,11 +6735,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, 
 
     # Verify the warning was logged with correct calculation
     # workers=4, pool_size=50, max_overflow=10 -> total_pool=60, total_connections=240
-    warning_found = any(
-        "DATABASE POOL: Running with 4 gunicorn workers" in record.message
-        and "240" in record.message
-        for record in caplog.records
-    )
+    warning_found = any("DATABASE POOL: Running with 4 gunicorn workers" in record.message and "240" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
 
 
@@ -6813,11 +6808,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
         async with main_mod.lifespan(main_mod.app):
             await asyncio.sleep(0)
 
-    warning_found = any(
-        "DATABASE POOL: Running with 13 gunicorn workers" in record.message
-        and "1560" in record.message
-        for record in caplog.records
-    )
+    warning_found = any("DATABASE POOL: Running with 13 gunicorn workers" in record.message and "1560" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
 
 
