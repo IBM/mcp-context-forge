@@ -2,12 +2,11 @@
 # 🧪  rstest & Coverage - Quality Gate
 # ===============================================================
 #
-#   - runs the full test-suite on Python 3.14
-#   - measures branch + line coverage (fails < 90% main, < 30% doctest)
-#   - writes XML coverage for changed-line checks
-#   - (optionally) generates / commits an SVG badge - kept disabled
-#   - retains the total and changed-line coverage gates
-#   - executes on every push / PR to *main*  ➕  a weekly cron
+#   - runs main tests and doctests on Python 3.14
+#   - enforces 90% main branch coverage and 90% changed-line coverage
+#   - enforces 30% doctest statement coverage
+#   - runs SDK-dependent tests with the observability extra
+#   - runs on selected pull request events targeting main
 # ---------------------------------------------------------------
 
 name: Tests & Coverage
@@ -22,8 +21,6 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/pytest.yml"
-  # schedule:
-  #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -157,30 +154,12 @@ jobs:
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
-          # Run doctests with coverage measurement
           uv run rstest -n auto \
             --doctest-modules mcpgateway/ \
             --cov=mcpgateway \
             --cov-report=xml:doctest-coverage.xml \
             --cov-fail-under=30 \
             --tb=short
-
-      # -----------------------------------------------------------
-      # 5️⃣  Doctest coverage check
-      # -----------------------------------------------------------
-      - name: 📊  Doctest coverage validation
-        run: |
-          uv run python3 -c "
-          import subprocess, sys
-          result = subprocess.run(['uv', 'run', 'rstest', '-n', '0', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True)
-          if result.returncode == 0:
-              print('✅ All doctests passing')
-          else:
-              print('❌ Doctest failures detected')
-              print(result.stdout.decode())
-              print(result.stderr.decode())
-              sys.exit(1)
-          "
 
   # -----------------------------------------------------------
   # 3b  Observability-extra tests (SDK-gated assertions)
@@ -246,42 +225,3 @@ jobs:
             ${{ runner.temp }}/observability-tests/**/*.log
             ${{ runner.temp }}/observability-tests/**/collector.jsonl
           retention-days: 7
-
-    # -----------------------------------------------------------
-    # 4️⃣  Upload coverage artifacts (XML + HTML)
-    #       --- keep disabled unless you need them ---
-    # -----------------------------------------------------------
-    # - name: 📤  Upload coverage.xml
-    #   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-    #   with:
-    #     name: coverage-xml-${{ matrix.python }}
-    #     path: coverage.xml
-    #
-    # - name: 📤  Upload HTML coverage
-    #   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-    #   with:
-    #     name: htmlcov-${{ matrix.python }}
-    #     path: htmlcov/
-
-    # -----------------------------------------------------------
-    # 5️⃣  Publish coverage table to the job summary
-    # -----------------------------------------------------------
-
-#     - name: 📝  Coverage summary
-#       if: always()
-#       run: |
-#         echo "### Coverage - Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
-#         echo "| File | Stmts | Miss | Branch | BrMiss | Cover |" >> "$GITHUB_STEP_SUMMARY"
-#         echo "|------|------:|-----:|-------:|-------:|------:|" >> "$GITHUB_STEP_SUMMARY"
-#         coverage json -q -o cov.json
-#         python3 - <<'PY'
-# import json, pathlib, sys, os
-# data = json.load(open("cov.json"))
-# root = pathlib.Path().resolve()
-# for f in data["files"].values():
-#     rel = pathlib.Path(f["filename"]).resolve().relative_to(root)
-#     s   = f["summary"]
-#     print(f"| {rel} | {s['num_statements']} | {s['missing_lines']} | "
-#           f"{s['num_branches']} | {s['missing_branches']} | "
-#           f"{s['percent_covered']:.1f}% |")
-# PY >> "$GITHUB_STEP_SUMMARY"
