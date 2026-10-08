@@ -1249,30 +1249,6 @@ async def _call_upstream_tool(
     )
 
 
-async def _call_upstream_tool(
-    session: Any,
-    tool_name: str,
-    arguments: Dict[str, Any],
-    *,
-    input_schema: Optional[Dict[str, Any]],
-    meta: Optional[Dict[str, Any]],
-    progress_callback: Optional[Any],
-    input_responses: Optional[Any],
-    request_state: Optional[str],
-) -> Any:
-    """Invoke a tool on an upstream SDK session with x-mcp-header mirroring in place"""
-    session._x_mcp_header_maps[tool_name] = x_mcp_header_map(input_schema or {})  # pylint: disable=protected-access
-    return await session.call_tool(
-        tool_name,
-        arguments,
-        meta=meta,
-        progress_callback=progress_callback,
-        allow_input_required=True,
-        input_responses=input_responses,
-        request_state=request_state,
-    )
-
-
 class ToolService(BaseService):
     """Service for managing and invoking tools.
 
