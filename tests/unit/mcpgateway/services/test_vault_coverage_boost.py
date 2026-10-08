@@ -474,8 +474,7 @@ class TestVaultStoreTokensCacheInvalidation:
         backend = _make_vault_backend(db=mock_db, vault_token_cache_enabled=True)
 
         # Pre-populate cache with a future-expiry entry
-        server_id = backend._hash_server_id("https://mcp.example.com")
-        cache_key = ("t1", server_id, "u@e.com")
+        cache_key = ("t1", "gw-1", "u@e.com")
         VaultTokenBackend._token_cache[cache_key] = {
             "token": "stale_token",
             "cache_expires": datetime.now(timezone.utc) + timedelta(hours=1),
@@ -520,8 +519,7 @@ class TestVaultGetUserTokenCache:
 
         backend = _make_vault_backend(db=mock_db, vault_token_cache_enabled=True)
 
-        server_id = backend._hash_server_id("https://mcp.example.com")
-        cache_key = ("t1", server_id, "u@e.com")
+        cache_key = ("t1", "gw-1", "u@e.com")
         VaultTokenBackend._token_cache[cache_key] = {
             "token": "cached_token",
             "cache_expires": datetime.now(timezone.utc) + timedelta(hours=1),
@@ -545,8 +543,7 @@ class TestVaultGetUserTokenCache:
 
         backend = _make_vault_backend(db=mock_db, vault_token_cache_enabled=True)
 
-        server_id = backend._hash_server_id("https://mcp.example.com")
-        cache_key = ("t1", server_id, "u@e.com")
+        cache_key = ("t1", "gw-1", "u@e.com")
         VaultTokenBackend._token_cache[cache_key] = {
             "token": "stale_token",
             "cache_expires": datetime.now(timezone.utc) - timedelta(seconds=1),  # already expired
