@@ -10398,6 +10398,25 @@ class TestInvokeToolDirectProxyViaHeader:
         assert result.content[0].text == "direct proxy result"
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_direct_proxy_header_with_server_scope(self, tool_service, test_db):
+        """A gateway routing header cannot override virtual-server tool membership."""
+        with (
+            patch.object(test_db, "execute", wraps=test_db.execute) as execute,
+            pytest.raises(ToolNotFoundError, match="Tool not found: my_remote_tool"),
+        ):
+            await tool_service.invoke_tool(
+                test_db,
+                "my_remote_tool",
+                {"arg": "value"},
+                request_headers={"x-context-forge-gateway-id": "gw-dp-1"},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+                server_id="server-1",
+            )
+
+        execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_header_gateway_not_direct_proxy(self, tool_service, mock_cache_gateway, test_db):
         """Header present but gateway_mode=cache should fall through to normal tool lookup."""
         # Set up DB: first call returns cache gateway, subsequent calls return no tool (to trigger ToolNotFoundError)
@@ -11137,6 +11156,23 @@ class TestRustMcpExecutionPlan:
             )
 
         assert plan == {"eligible": False, "fallbackReason": "direct-proxy"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_direct_proxy_header_with_server_scope(self, tool_service):
+        """Rust planning cannot route a server-scoped call through a header-selected gateway."""
+        db = MagicMock()
+
+        with pytest.raises(ToolNotFoundError, match="Tool not found: tool-one"):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                db,
+                "tool-one",
+                request_headers={"x-context-forge-gateway-id": "gw-1"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                server_id="server-1",
+            )
+
+        db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_direct_proxy_access_denied(self, tool_service):

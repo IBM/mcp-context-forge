@@ -4639,6 +4639,9 @@ class ToolService(BaseService):
         """
 
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+        if server_id and gateway_id_from_header:
+            logger.warning("Rejecting gateway routing override for server-scoped tool '%s'", name)
+            raise ToolNotFoundError(f"Tool not found: {name}")
         is_direct_proxy = False
         tool = None
         gateway = None
@@ -5515,6 +5518,9 @@ class ToolService(BaseService):
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+        if server_id and gateway_id_from_header:
+            logger.warning("Rejecting gateway routing override for server-scoped tool '%s'", name)
+            raise ToolNotFoundError(f"Tool not found: {name}")
 
         # If X-Context-Forge-Gateway-Id header is present, check if gateway is in direct_proxy mode
         is_direct_proxy = False

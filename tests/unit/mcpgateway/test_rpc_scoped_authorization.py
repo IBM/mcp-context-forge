@@ -20,7 +20,7 @@ import mcpgateway.auth as auth_mod
 import mcpgateway.db as db_mod
 import mcpgateway.main as main_mod
 from mcpgateway.config import settings
-from mcpgateway.db import Base, EmailTeam, EmailTeamMember, EmailUser, Role, Server, UserRole
+from mcpgateway.db import Base, EmailTeam, EmailTeamMember, EmailUser, Gateway, Role, Server, UserRole
 from tests.helpers.auth import make_auth_headers, make_test_jwt
 
 
@@ -30,6 +30,7 @@ TEAM_A_ID = "rpc-scoped-team-a"
 TEAM_B_ID = "rpc-scoped-team-b"
 SERVER_A_ID = "rpc-scoped-server-a"
 SERVER_B_ID = "rpc-scoped-server-b"
+DIRECT_GATEWAY_ID = "rpc-scoped-direct-gateway"
 
 
 def _rpc_body(server_id: str, *, request_id: str = "scoped-authz") -> dict:
@@ -77,6 +78,7 @@ def scoped_rpc_client():
     mp.setattr(settings, "auth_cache_enabled", False)
     mp.setattr(settings, "auth_cache_batch_queries", False)
     mp.setattr(settings, "permission_audit_enabled", False)
+    mp.setattr(settings, "mcpgateway_direct_proxy_enabled", True)
 
     mp.setattr(db_mod, "engine", engine, raising=False)
     mp.setattr(db_mod, "SessionLocal", test_session_local, raising=False)
@@ -154,6 +156,16 @@ def scoped_rpc_client():
             [
                 Server(id=SERVER_A_ID, name="Scoped RPC Server A", team_id=TEAM_A_ID, owner_email=OWNER_EMAIL, visibility="team", enabled=True, tags=[]),
                 Server(id=SERVER_B_ID, name="Scoped RPC Server B", team_id=TEAM_B_ID, owner_email=OWNER_EMAIL, visibility="team", enabled=True, tags=[]),
+                Gateway(
+                    id=DIRECT_GATEWAY_ID,
+                    name="Scoped RPC Direct Gateway",
+                    slug=f"rpc-direct-gateway-{uuid.uuid4().hex}",
+                    url="http://direct-gateway.example/mcp",
+                    capabilities={},
+                    gateway_mode="direct_proxy",
+                    visibility="public",
+                    owner_email=OWNER_EMAIL,
+                ),
             ]
         )
         db.commit()
@@ -284,6 +296,29 @@ def test_public_rpc_cannot_forge_internal_runtime_scope(scoped_rpc_client: TestC
     assert response.status_code == 200
     assert response.json()["error"]["code"] == -32002
     _assert_not_dispatched(forward_request, execute_call)
+
+
+def test_public_rpc_rejects_gateway_routing_override_with_server_scope(scoped_rpc_client: TestClient) -> None:
+    """A public routing header cannot bypass virtual-server tool membership."""
+    with (
+        patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new_callable=AsyncMock, return_value=None) as forward_request,
+        patch("mcpgateway.services.tool_service.mcp_proxy_client") as proxy_client,
+        patch.object(main_mod.tool_service, "_select_invocable_tool", new_callable=AsyncMock) as select_tool,
+    ):
+        response = scoped_rpc_client.post(
+            "/rpc",
+            headers=make_auth_headers(
+                _token(permissions=["tools.execute"]),
+                extra_headers={"x-context-forge-gateway-id": DIRECT_GATEWAY_ID},
+            ),
+            json=_rpc_body(SERVER_A_ID, request_id="gateway-routing-override"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["error"] == {"code": -32601, "message": "Tool not found: qualified-tool"}
+    forward_request.assert_awaited_once()
+    select_tool.assert_not_awaited()
+    proxy_client.assert_not_called()
 
 
 def test_scoped_rpc_allows_authorized_server(scoped_rpc_client: TestClient) -> None:
