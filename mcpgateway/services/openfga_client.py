@@ -215,7 +215,8 @@ class OpenFgaClient:
             user_filter: Exact user reference (``user:<id>``) to filter by.
 
         Returns:
-            Stored tuple keys with their relations and conditions.
+            Stored tuple entries: each carries ``key`` plus the optional
+            ``condition`` the engine attached at write time.
         """
         tuples: list[dict[str, Any]] = []
         continuation: Optional[str] = None
@@ -229,7 +230,7 @@ class OpenFgaClient:
             if continuation:
                 body["continuation_token"] = continuation
             result = await self._request("POST", f"/stores/{settings.openfga_store_id}/read", body)
-            tuples.extend(item.get("key", item) for item in result.get("tuples", []))
+            tuples.extend(result.get("tuples", []))
             continuation = result.get("continuation_token") or None
             if not continuation:
                 return tuples

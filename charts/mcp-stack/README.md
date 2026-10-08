@@ -140,6 +140,10 @@ echo 5000 > /sys/fs/cgroup/kubepods/pids.max
 
 For detailed guidance on resource limits and process management, see `docs/docs/security/resource-limits.md` in the repository.
 
+## OpenFGA Rule Engine
+
+Set `openfga.enabled=true` to run an OpenFGA deployment beside the gateway and use it for Layer-2 RBAC. The chart sets `RBAC_RULE_PROVIDER` (default `openfga`), the API URL, and the preshared key on the gateway automatically. Provide the key through `openfga.presharedKey.value` or an `existingSecret`. Give the engine its own datastore (`openfga.datastore.uri`); never the gateway database. See `docs/docs/manage/rbac.md` for the provider configuration and ADR-056 through ADR-058 for the decision records.
+
 ## Values
 
 | Key | Type | Default | Description |
