@@ -994,6 +994,16 @@ class TestServerEndpoints:
         assert response.status_code == 201
         mock_create.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    @patch("mcpgateway.main.server_service.register_server")
+    def test_create_server_accepts_virtual_server_body_key(self, mock_create, path_prefix, test_client, auth_headers):
+        """`virtual_server` works as a product-terminology alias of the `server` body key (#6544)."""
+        mock_create.return_value = ServerRead(**MOCK_SERVER_READ)
+        req = {"virtual_server": {"name": "test_server", "description": "A test server"}, "team_id": None, "visibility": "private"}
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
+        assert response.status_code == 201
+        mock_create.assert_called_once()
+
     def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers, monkeypatch):
         """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
         req = {

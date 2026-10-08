@@ -165,7 +165,7 @@ from mcpgateway.schemas import (
     RootCreate,
     RootUpdate,
     RPCRequest,
-    ServerCreate,
+    ServerCreateRequest,
     ServerHandshakeRequest,
     ServerRead,
     ServerUpdate,
@@ -4326,10 +4326,8 @@ async def get_server(server_id: str, request: Request, db: Session = Depends(get
 @server_router.post("/", response_model=ServerRead, status_code=201)
 @require_permission("servers.create")
 async def create_server(
-    server: ServerCreate,
+    payload: ServerCreateRequest,
     request: Request,
-    team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
-    visibility: Optional[str] = Body(None, description="Server visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
@@ -4337,10 +4335,10 @@ async def create_server(
     Creates a new server.
 
     Args:
-        server (ServerCreate): The data for the new server.
+        payload (ServerCreateRequest): The request body: the new server's data under
+            ``server`` (or its product-terminology alias ``virtual_server``), plus the
+            sibling ``team_id`` and ``visibility`` fields. See ``ServerCreateRequest``.
         request (Request): The incoming request object for extracting metadata.
-        team_id (Optional[str]): Team ID to assign the server to.
-        visibility (str): Server visibility level (private, team, public).
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -4351,6 +4349,10 @@ async def create_server(
         HTTPException: If there is a conflict with the server name or other errors.
     """
     try:
+        server = payload.server
+        team_id = payload.team_id
+        visibility = payload.visibility
+
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
