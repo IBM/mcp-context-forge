@@ -2770,6 +2770,51 @@ class TestInvokeAgentEdgeCases:
         assert result["capabilities"]["pushNotifications"] is True
         assert result["skills"] == [{"id": "s1"}]
 
+    async def test_get_agent_card_by_id_returns_none_when_agent_missing(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        assert await service.get_agent_card_by_id(mock_db, "missing") is None
+
+    async def test_get_agent_card_by_id_returns_none_when_visibility_denies(self, service, mock_db):
+        """Mirrors ``test_get_agent_card_returns_none_when_visibility_denies`` for the by-ID lookup (#6700)."""
+        agent = SimpleNamespace(
+            name="ag",
+            description="desc",
+            endpoint_url="https://x.com",
+            version=1,
+            protocol_version="1.0",
+            capabilities={},
+            visibility="private",
+            team_id=None,
+            owner_email="other@example.com",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card_by_id(mock_db, "a1", user_email=None, token_teams=None)
+
+        assert result is None
+
+    async def test_get_agent_card_by_id_builds_capabilities(self, service, mock_db):
+        agent = SimpleNamespace(
+            name="ag",
+            description="desc",
+            endpoint_url="https://x.com",
+            version=2,
+            protocol_version="1.0",
+            capabilities={"streaming": True, "pushNotifications": True, "stateTransitionHistory": False, "skills": [{"id": "s1"}]},
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        result = await service.get_agent_card_by_id(mock_db, "a1")
+
+        assert result["name"] == "ag"
+        assert result["capabilities"]["streaming"] is True
+        assert result["capabilities"]["pushNotifications"] is True
+        assert result["skills"] == [{"id": "s1"}]
+
     async def test_invoke_prepare_failure_without_auth_wraps_error(self, service, mock_db, monkeypatch):
         agent = SimpleNamespace(
             id="a1",

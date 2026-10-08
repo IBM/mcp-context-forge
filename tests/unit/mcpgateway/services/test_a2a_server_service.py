@@ -160,6 +160,61 @@ class TestA2AServerService:
         assert result is None
 
     # ------------------------------------------------------------------
+    # get_server_agent_card_by_id
+    # ------------------------------------------------------------------
+
+    def test_get_server_agent_card_by_id_found_with_a2a_interface(self, service, mock_db):
+        """Server with an enabled A2A interface returns a populated AgentCard dict, looked up by ID (#6700)."""
+        server = _make_server(name="my-server", sid="srv-123", version=2)
+        iface = _make_interface(binding="https://a2a.example.com/agent", version="0.9")
+
+        exec_side_effects = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+        mock_db.execute.side_effect = exec_side_effects
+
+        card = service.get_server_agent_card_by_id(mock_db, "srv-123")
+
+        assert card is not None
+        assert card["name"] == "my-server"
+        assert card["url"] == "https://a2a.example.com/agent"
+        assert card["protocolVersion"] == "0.9"
+        assert card["version"] == "2"
+
+    def test_get_server_agent_card_by_id_server_not_found(self, service, mock_db):
+        """Unknown server ID returns None."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        result = service.get_server_agent_card_by_id(mock_db, "no-such-id")
+
+        assert result is None
+
+    def test_get_server_agent_card_by_id_no_a2a_interface(self, service, mock_db):
+        """Server exists but has no enabled A2A interface → returns None."""
+        server = _make_server(name="server-without-a2a", sid="srv-456")
+
+        exec_side_effects = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": None}),
+        ]
+        mock_db.execute.side_effect = exec_side_effects
+
+        result = service.get_server_agent_card_by_id(mock_db, "srv-456")
+
+        assert result is None
+
+    def test_get_server_agent_card_by_id_hidden_server_returns_none(self, service, mock_db):
+        server = _make_server(name="private-server", sid="srv-789")
+        server.visibility = "private"
+        server.owner_email = "other@example.com"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = server
+
+        result = service.get_server_agent_card_by_id(mock_db, "srv-789", user_email="user@example.com", token_teams=[])
+
+        assert result is None
+
+    # ------------------------------------------------------------------
     # resolve_server_agent
     # ------------------------------------------------------------------
 

@@ -438,6 +438,7 @@ the `a2a.read` role.
 |----------|--------|------------|
 | `/a2a` | GET | `a2a.read` |
 | `/a2a/{agent_id}` | GET | `a2a.read` |
+| `/a2a/{agent_id}/card` | GET | `a2a.read` |
 | `/a2a` | POST | `a2a.create` |
 | `/a2a/{agent_id}` | PUT | `a2a.update` |
 | `/a2a/{agent_id}/state` | POST | `a2a.update` |
