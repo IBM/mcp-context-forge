@@ -3026,18 +3026,31 @@ class TestRPCEndpoints:
         )
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
-        req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id-deny",
+            "method": "tools/call",
+            "params": {"name": "test_tool", "server_id": "server-1", "arguments": {"param": "value"}},
+        }
 
         async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission),
+            patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock) as ensure_server_access,
+            patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new_callable=AsyncMock) as forward_request,
+            patch("mcpgateway.main._execute_rpc_tools_call", new_callable=AsyncMock) as execute_call,
+        ):
             response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
         assert "Access denied" in body["error"]["message"]
+        ensure_server_access.assert_not_awaited()
+        forward_request.assert_not_awaited()
+        execute_call.assert_not_awaited()
 
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
