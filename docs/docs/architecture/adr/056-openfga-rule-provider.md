@@ -4,6 +4,13 @@
 - Date: 2026-10-03
 - Deciders: platform security
 
+
+!!! warning "Partially superseded"
+    ADR 057 replaces the CPEX APL predicate grammar named in decision 2
+    and the alternatives section with CEL. ADR 058 records how
+    argument predicates source their values and supersedes the
+    header-only reading implied by decision 3.
+
 ## Context
 
 Layer-2 RBAC lived inline: route decorators called

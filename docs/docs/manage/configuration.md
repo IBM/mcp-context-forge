@@ -323,6 +323,28 @@ capacity has been sized for more frequent snapshots.
 
 **Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
 
+### RBAC Rule Providers
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `RBAC_RULE_PROVIDER` | Layer-2 RBAC engine selector | `db` | `db`, `openfga` |
+| `RBAC_RULE_PROVIDER_SHADOW` | Evaluate both engines, enforce the `db` answer, log divergence | `false` | bool |
+| `OPENFGA_API_URL` | OpenFGA HTTP API base URL | `http://localhost:8080` | URL |
+| `OPENFGA_STORE_ID` | Pin an OpenFGA store; empty bootstraps by name | empty | string |
+| `OPENFGA_STORE_NAME` | Store name used when the id is empty | `contextforge` | string |
+| `OPENFGA_API_TOKEN` | Preshared key for the engine API | empty | string |
+| `OPENFGA_API_TOKEN_FILE` | File carrying the preshared key; wins over the value | empty | path |
+| `OPENFGA_CACHE_TTL_SECONDS` | Decision cache TTL for engine answers | `30` | int |
+| `OPENFGA_RECONCILE_SECONDS` | Full tuple reconciliation interval | `300` | int |
+| `OPENFGA_MODEL_ID` | Pin an authorization model id; empty uses the store's latest model | empty | string |
+| `OPENFGA_TIMEOUT_SECONDS` | OpenFGA API call timeout in seconds | `2.0` | float |
+| `PERMISSION_AUDIT_ENABLED` | Write one audit row per permission check; heavy database load | `false` | bool |
+
+**Configuration Effects:**
+
+- `RBAC_RULE_PROVIDER=openfga` selects the external engine. Startup fails validation without `OPENFGA_API_URL` and a token. A denial requires both the engine and the database to deny.
+- `RBAC_RULE_PROVIDER_SHADOW=true` runs both engines side by side as a cutover rehearsal. See the RBAC guide (`manage/rbac.md`) and ADR-056 for the decision record.
+
 ### ToolOps
 
 ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
