@@ -286,7 +286,7 @@ from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
-from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
+from mcpgateway.services.root_service import RootService, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
@@ -1249,7 +1249,8 @@ class TestAdminServerRoutes:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "error=" in result.headers["location"]
-        assert "Only%20the%20owner" in result.headers["location"]
+        assert "error=permission_denied" in result.headers["location"]
+        assert "owner" not in result.headers["location"]
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_lock_conflict_inactive_checked(self, mock_set_state, mock_request, mock_db):
@@ -1270,7 +1271,7 @@ class TestAdminServerRoutes:
         assert result.status_code == 303
         location = unquote(result.headers["location"])
         assert "include_inactive=true" in location
-        assert "Server is being modified" in location
+        assert "error=conflict" in location
 
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_with_inactive_checkbox(self, mock_delete_server, mock_request, mock_db):
@@ -1337,8 +1338,8 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
 
         cases = [
-            (PermissionError("nope"), "nope"),
-            (Exception("boom"), "Failed to delete server. Please try again."),
+            (PermissionError("nope"), "error=permission_denied"),
+            (Exception("boom"), "error=delete_failed"),
         ]
 
         for exc, expected_msg in cases:
@@ -1347,6 +1348,7 @@ class TestAdminServerRoutes:
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
+            assert str(exc) not in unquote(response.headers["location"])
 
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_error_inactive_checked_redirects(self, mock_delete_server, mock_request, mock_db):
@@ -1363,7 +1365,8 @@ class TestAdminServerRoutes:
         assert response.status_code == 303
         location = unquote(response.headers["location"])
         assert "include_inactive=true" in location
-        assert "nope" in location
+        assert "error=permission_denied" in location
+        assert "nope" not in location
 
 
 class TestAdminToolRoutes:
@@ -2133,9 +2136,9 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "false"}))
 
         cases = [
-            (PermissionError("nope"), "nope"),
-            (ToolLockConflictError("locked"), "Tool is being modified by another request"),
-            (Exception("boom"), "Failed to set tool state. Please try again."),
+            (PermissionError("nope"), "error=permission_denied"),
+            (ToolLockConflictError("locked"), "error=conflict"),
+            (Exception("boom"), "error=state_change_failed"),
         ]
 
         for exc, expected_msg in cases:
@@ -2144,6 +2147,7 @@ class TestAdminToolRoutes:
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
+            assert str(exc) not in unquote(response.headers["location"])
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_include_inactive_redirects(self, mock_toggle_status, mock_request, mock_db):
@@ -2200,7 +2204,8 @@ class TestAdminToolRoutes:
         assert response.status_code == 303
         location = response.headers["location"]
         assert "team_id=12345678123456781234567812345678" in location  # pragma: allowlist secret
-        assert "nope" in unquote(location)
+        assert "error=permission_denied" in unquote(location)
+        assert "nope" not in unquote(location)
         assert location.endswith("#tools")
 
 
@@ -3669,7 +3674,7 @@ class TestAdminGatewayRoutes:
         response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
-        assert "error=nope" in response.headers["location"]
+        assert "error=permission_denied" in response.headers["location"]
 
     @pytest.mark.asyncio
     async def test_admin_set_gateway_state_success_include_inactive(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -3690,7 +3695,7 @@ class TestAdminGatewayRoutes:
         response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert response.status_code == 303
-        assert "error=Gateway%20tool%20name%20conflicts%20with%20an%20existing%20tool" in response.headers["location"]
+        assert "error=name_conflict" in response.headers["location"]
         assert "prod-api-search" not in response.headers["location"]
 
     @pytest.mark.asyncio
@@ -3834,7 +3839,7 @@ class TestAdminRootRoutes:
 
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
     async def test_admin_add_root_error_handlers(self, mock_add_root, mock_request, mock_db):
-        """Cover RootServiceError and generic exception branches in admin_add_root."""
+        """Cover RootServiceValidationError, RootServiceError and generic exception branches in admin_add_root."""
         # Standard
         from urllib.parse import unquote
 
@@ -3846,8 +3851,9 @@ class TestAdminRootRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         cases = [
-            (RootServiceError("bad uri"), "Failed to add root. Please check the URI format."),
-            (Exception("boom"), "Failed to add root. Please try again."),
+            (RootServiceValidationError("bad uri"), "error=invalid_uri"),
+            (RootServiceError("bad uri"), "error=invalid_uri"),
+            (Exception("boom"), "error=create_failed"),
         ]
 
         for exc, expected_msg in cases:
@@ -3856,19 +3862,17 @@ class TestAdminRootRoutes:
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
+            assert str(exc) not in unquote(response.headers["location"])
 
     async def test_admin_add_root_missing_uri_validation(self, mock_request, mock_db):
         """Cover ValueError branch when uri is missing/blank in admin_add_root."""
-        # Standard
-        from urllib.parse import unquote
-
         mock_request.scope = {"root_path": ""}
         mock_request.form = AsyncMock(return_value=FakeForm({"uri": ""}))
 
         response = await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert "Invalid input. Please try again." in unquote(response.headers["location"])
+        assert "error=invalid_input" in response.headers["location"]
 
     @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
     async def test_admin_delete_root_with_error(self, mock_remove_root, mock_request):
@@ -3880,6 +3884,19 @@ class TestAdminRootRoutes:
             await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
 
         assert "Root is in use" in str(excinfo.value)
+
+    @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
+    async def test_admin_delete_root_validation_error_redirects_with_code(self, mock_remove_root, mock_request, mock_db):
+        """A RootServiceValidationError redirects with the invalid_uri code, not the exception text."""
+        mock_remove_root.side_effect = RootServiceValidationError("scheme_not_allowed")
+        mock_request.scope = {"root_path": ""}
+        mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
+
+        response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
+        assert isinstance(response, RedirectResponse)
+        assert response.status_code == 303
+        assert "error=invalid_uri" in response.headers["location"]
+        assert "scheme_not_allowed" not in response.headers["location"]
 
     @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
     async def test_admin_delete_root_redirects(self, mock_remove_root, mock_request, mock_db):
@@ -6295,9 +6312,9 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true"}))
 
         cases = [
-            (PermissionError("nope"), "nope"),
-            (A2AAgentNotFoundError("missing"), "A2A agent not found."),
-            (Exception("boom"), "Failed to set state of A2A agent. Please try again."),
+            (PermissionError("nope"), "error=permission_denied"),
+            (A2AAgentNotFoundError("missing"), "error=not_found"),
+            (Exception("boom"), "error=state_change_failed"),
         ]
 
         for exc, expected_msg in cases:
@@ -6306,6 +6323,7 @@ class TestA2AAgentManagement:
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
+            assert str(exc) not in unquote(response.headers["location"])
 
     @pytest.mark.asyncio
     async def test_admin_set_a2a_agent_state_disabled_redirects(self, monkeypatch, mock_request, mock_db):
@@ -6345,9 +6363,9 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=FakeForm({"purge_metrics": "false"}))
 
         cases = [
-            (PermissionError("nope"), "nope"),
-            (A2AAgentNotFoundError("missing"), "A2A agent not found."),
-            (Exception("boom"), "Failed to delete A2A agent. Please try again."),
+            (PermissionError("nope"), "error=permission_denied"),
+            (A2AAgentNotFoundError("missing"), "error=not_found"),
+            (Exception("boom"), "error=delete_failed"),
         ]
 
         for exc, expected_msg in cases:
@@ -6356,6 +6374,7 @@ class TestA2AAgentManagement:
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
+            assert str(exc) not in unquote(response.headers["location"])
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_preserves_team_id(self, mock_delete_agent, mock_request, mock_db):
@@ -9785,7 +9804,7 @@ async def test_admin_update_team_missing_name_redirect(monkeypatch, mock_db, all
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "error=Team%20name%20is%20required" in response.headers["location"]
+    assert "error=team_name_required" in response.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -9812,7 +9831,7 @@ async def test_admin_update_team_invalid_characters_htmx_and_redirect(monkeypatc
     response = await admin_update_team("team-1", request=non_htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "error=Team%20name%20contains%20invalid%20characters" in response.headers["location"]
+    assert "error=team_name_invalid" in response.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -9833,7 +9852,7 @@ async def test_admin_update_team_description_dangerous_pattern_redirect(monkeypa
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "Team%20description%20contains%20script%20patterns" in response.headers["location"]
+    assert "error=invalid_input" in response.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -9879,7 +9898,7 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     response = await admin_update_team("team-1", request=non_htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "Error%20updating%20team" in response.headers["location"]
+    assert "error=update_failed" in response.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -9957,7 +9976,7 @@ async def test_admin_update_team_value_error_redirect(monkeypatch, mock_db, allo
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "cannot%20exceed" in response.headers["location"]
+    assert "error=invalid_input" in response.headers["location"]
     mock_db.rollback.assert_called()
 
 
@@ -18060,8 +18079,8 @@ async def test_admin_delete_gateway_error_handlers(mock_delete, mock_db):
     request.scope = {"root_path": ""}
 
     cases = [
-        (PermissionError("nope"), "nope"),
-        (Exception("boom"), "Failed to delete gateway. Please try again."),
+        (PermissionError("nope"), "error=permission_denied"),
+        (Exception("boom"), "error=delete_failed"),
     ]
 
     for exc, expected_msg in cases:
@@ -18069,6 +18088,7 @@ async def test_admin_delete_gateway_error_handlers(mock_delete, mock_db):
         response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
+        assert str(exc) not in unquote(response.headers["location"])
 
 
 @pytest.mark.asyncio
@@ -18119,7 +18139,7 @@ async def test_admin_delete_gateway_pending_redirect_message(mock_delete, mock_d
     response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
 
     assert response.status_code == 303
-    assert "message=Gateway%20deletion%20accepted%20and%20pending%20cleanup." in response.headers["location"]
+    assert "message=gateway_delete_pending" in response.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -18160,8 +18180,8 @@ async def test_admin_delete_resource_error_handlers(mock_delete, mock_db):
     request.scope = {"root_path": ""}
 
     cases = [
-        (PermissionError("nope"), "nope"),
-        (Exception("boom"), "Failed to delete resource. Please try again."),
+        (PermissionError("nope"), "error=permission_denied"),
+        (Exception("boom"), "error=delete_failed"),
     ]
 
     for exc, expected_msg in cases:
@@ -18169,6 +18189,7 @@ async def test_admin_delete_resource_error_handlers(mock_delete, mock_db):
         response = await admin_delete_resource("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
+        assert str(exc) not in unquote(response.headers["location"])
 
 
 @pytest.mark.asyncio
@@ -18223,8 +18244,8 @@ async def test_admin_delete_prompt_error_handlers(mock_delete, mock_db):
     request.scope = {"root_path": ""}
 
     cases = [
-        (PermissionError("nope"), "nope"),
-        (Exception("boom"), "Failed to delete prompt. Please try again."),
+        (PermissionError("nope"), "error=permission_denied"),
+        (Exception("boom"), "error=delete_failed"),
     ]
 
     for exc, expected_msg in cases:
@@ -18232,6 +18253,7 @@ async def test_admin_delete_prompt_error_handlers(mock_delete, mock_db):
         response = await admin_delete_prompt("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
+        assert str(exc) not in unquote(response.headers["location"])
 
 
 @pytest.mark.asyncio
@@ -18260,8 +18282,8 @@ async def test_admin_set_resource_state_error_handlers(mock_set_state, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "false"}))
 
     cases = [
-        (PermissionError("nope"), "nope"),
-        (Exception("boom"), "Failed to set resource state. Please try again."),
+        (PermissionError("nope"), "error=permission_denied"),
+        (Exception("boom"), "error=state_change_failed"),
     ]
 
     for exc, expected_msg in cases:
@@ -18269,6 +18291,7 @@ async def test_admin_set_resource_state_error_handlers(mock_set_state, mock_db):
         response = await admin_set_resource_state("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
+        assert str(exc) not in unquote(response.headers["location"])
 
 
 @pytest.mark.asyncio
@@ -18310,8 +18333,8 @@ async def test_admin_set_prompt_state_error_handlers(mock_set_state, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "false"}))
 
     cases = [
-        (PermissionError("nope"), "nope"),
-        (Exception("boom"), "Failed to set prompt state. Please try again."),
+        (PermissionError("nope"), "error=permission_denied"),
+        (Exception("boom"), "error=state_change_failed"),
     ]
 
     for exc, expected_msg in cases:
@@ -18319,6 +18342,7 @@ async def test_admin_set_prompt_state_error_handlers(mock_set_state, mock_db):
         response = await admin_set_prompt_state("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
+        assert str(exc) not in unquote(response.headers["location"])
 
 
 @pytest.mark.asyncio
@@ -21195,6 +21219,20 @@ class TestRootManagement:
         with pytest.raises(HTTPException) as exc_info:
             await admin_update_root("file:///missing", request, user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_update_root_validation_error_redirects_with_code(self, monkeypatch, allow_permission):
+        monkeypatch.setattr("mcpgateway.admin.root_service.update_root", AsyncMock(side_effect=RootServiceValidationError("scheme_not_allowed")))
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value=FakeForm({"name": "Updated", "is_inactive_checked": "false"}))
+
+        result = await admin_update_root("file:///test", request, user={"email": "admin@test.com"})
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert "error=invalid_uri" in result.headers["location"]
+        assert "scheme_not_allowed" not in result.headers["location"]
 
     @pytest.mark.asyncio
     async def test_admin_update_root_generic_exception_is_reraised(self, monkeypatch, allow_permission):
