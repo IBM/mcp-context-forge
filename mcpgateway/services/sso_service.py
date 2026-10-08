@@ -1729,6 +1729,58 @@ class SSOService:
         return []
 
     @staticmethod
+    def _resolve_email_claim(user_data: Dict[str, Any], metadata: Optional[Dict[str, Any]], provider_id: str) -> Optional[str]:
+        """Resolve the email address for a generic OIDC provider.
+
+        ``authenticate_or_create_user`` keys the local user record on email and
+        refuses any identity without one, but not every OIDC deployment releases
+        an ``email`` claim from ``/userinfo`` even when it advertises the scope.
+        The dedicated Keycloak, Entra and ADFS branches already fall back to other
+        claims; the generic branch did not, so such a provider failed the login
+        with ``user_creation_failed`` after an otherwise successful token
+        exchange.
+
+        Resolution order:
+
+        1. ``provider_metadata["email_claim"]`` when configured -- explicit
+           operator intent, used as-is with no ``@`` check.
+        2. Otherwise the conventional claims, in order: ``email``,
+           ``preferred_username``, ``upn``, ``unique_name``, ``mail``. A fallback
+           value must look like an address (contain ``@``), so a bare username is
+           never silently promoted to an identity key.
+
+        Args:
+            user_data: Raw claims from the provider's userinfo/id_token.
+            metadata: The provider's ``provider_metadata`` mapping, if any.
+            provider_id: Provider id, for logging.
+
+        Returns:
+            The resolved email, or None when no candidate qualifies.
+        """
+        configured = (metadata or {}).get("email_claim")
+        if configured:
+            value = user_data.get(configured)
+            return value if isinstance(value, str) and value else None
+
+        for claim in ("email", "preferred_username", "upn", "unique_name", "mail"):
+            value = user_data.get(claim)
+            if isinstance(value, str) and "@" in value:
+                if claim != "email":
+                    # Say which claim stood in for email: it becomes the identity
+                    # key, so this must be visible rather than inferred later.
+                    logger.info("SSO provider %s: no 'email' claim; using '%s' as the email identity", provider_id, claim)
+                return value
+
+        # Name the claims that WERE present. "no email" alone gives the operator
+        # nothing to act on, and userinfo bodies are not otherwise logged.
+        logger.warning(
+            "SSO provider %s returned no usable email claim. Claims present: %s. Set provider_metadata.email_claim to name the right one.",
+            provider_id,
+            sorted(user_data.keys()),
+        )
+        return None
+
+    @staticmethod
     def _extract_groups_and_roles(user_data: Dict[str, Any], groups_claim: str = "groups") -> list[str]:
         """Extract groups and roles from user data into a unified, de-duplicated list.
 
@@ -1954,7 +2006,7 @@ class SSOService:
 
         # Generic OIDC format for all other providers.
         groups = self._extract_groups_and_roles(user_data, groups_claim)
-        return self._build_normalized_user_info(user_data, provider.id, groups)
+        return self._build_normalized_user_info(user_data, provider.id, groups, email=self._resolve_email_claim(user_data, metadata, provider.id))
 
     def _reset_pending_approval(self, pending: PendingUserApproval, incoming_provider: str, user_info: Dict[str, Any]) -> None:
         """Reset a pending approval request to pending state with fresh metadata.
@@ -2104,8 +2156,10 @@ class SSOService:
         resolved_auth_provider = incoming_provider
         resolved_is_admin = False
 
-        # Check if user exists
-        user = await self.auth_service.get_user_by_email(email)
+        # Mutation path: use a session-attached row (not the cached, detached copy
+        # get_user_by_email returns) so relink/last_login/is_admin writes below are
+        # tracked and durable across self.db.commit().
+        user = self.auth_service._fetch_user_from_db(email)  # pylint: disable=protected-access
 
         if user:
             current_full_name = user.full_name or resolved_full_name
@@ -2113,14 +2167,39 @@ class SSOService:
             current_is_admin = bool(user.is_admin)
             current_admin_origin = user.admin_origin
 
+            provider_relinked = False
             if user.auth_provider and current_auth_provider != incoming_provider:
-                logger.warning(
-                    "SSO authenticate_or_create_user: account-linking required for email '%s' (existing provider='%s', incoming='%s').",
+                # Email is already verified (gated above) and within trusted-domain policy,
+                # so linking here only ever rebinds a trusted, verified identity.
+                if provider is None:
+                    # Can't re-vet admin status against a provider we can't resolve (deleted
+                    # between callback and this call, or an id-casing mismatch) — refusing here
+                    # keeps the relink admin-carryover guard (below) from being silently skipped.
+                    logger.warning(
+                        "SSO authenticate_or_create_user: refusing login for email '%s' — incoming provider '%s' could not be resolved, so admin status cannot be re-vetted for a relink from '%s'.",
+                        email,
+                        incoming_provider,
+                        current_auth_provider,
+                    )
+                    return None
+                if not settings.sso_allow_provider_linking:
+                    logger.warning(
+                        "SSO authenticate_or_create_user: login refused for email '%s' — it is bound to provider '%s' and sign-in came from '%s'. "
+                        "One email maps to one provider unless SSO_ALLOW_PROVIDER_LINKING is enabled.",
+                        email,
+                        current_auth_provider,
+                        incoming_provider,
+                    )
+                    return None
+                logger.info(
+                    "SSO authenticate_or_create_user: relinking email '%s' from provider '%s' to '%s' (SSO_ALLOW_PROVIDER_LINKING enabled).",
                     email,
                     current_auth_provider,
                     incoming_provider,
                 )
-                return None
+                user.auth_provider = incoming_provider
+                current_auth_provider = incoming_provider
+                provider_relinked = True
 
             provider_id: Optional[str] = None
             provider_metadata: Dict[str, Any] = {}
@@ -2144,10 +2223,11 @@ class SSOService:
             user.email_verified = self._is_email_verified_claim(user_info)
             user.last_login = utc_now()
 
-            # Synchronize is_admin status based on current group membership
-            # Track origin to support both promotion AND demotion for SSO-granted admins
-            # Manual/API grants are "sticky" - never auto-demoted by SSO
-            # Only users with admin_origin="sso" can be demoted on login
+            # Synchronize is_admin status based on current group membership.
+            # Manual/API grants are sticky - only admin_origin="sso" is auto-demoted on a
+            # same-provider login. A relink is the exception: it always re-vets against the
+            # new provider so an admin can't inherit "*" by relinking to a provider that
+            # never vets for admin (issue #6431).
             if provider_ctx:
                 should_be_admin = self._should_user_be_admin(email, user_info, provider_ctx)
                 if should_be_admin:
@@ -2159,27 +2239,33 @@ class SSOService:
                         user.admin_origin = "sso"
                         current_is_admin = True
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
-                elif current_is_admin and current_admin_origin == "sso":
-                    # User was SSO admin but no longer in admin groups - revoke access
-                    logger.info("Revoking is_admin for %s - removed from SSO admin groups", SecurityValidator.sanitize_log_message(email))
+                elif current_is_admin and (current_admin_origin == "sso" or provider_relinked):
+                    # No longer in admin groups, or relinked to a provider that doesn't grant admin.
+                    logger.warning("Revoking is_admin for %s (admin_origin=%s, relinked=%s)", SecurityValidator.sanitize_log_message(email), current_admin_origin, provider_relinked)
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
 
             self.db.commit()
 
-            if provider_ctx and self._should_sync_roles(provider_id, provider_metadata):
-                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
-                await self._sync_user_roles(email, role_assignments, provider_ctx)
-                # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
-                # (e.g. user existed before the generic OIDC fix was deployed), promote now.
-                if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
-                    logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
-                    user.is_admin = True
-                    user.admin_origin = "sso"
-                    current_is_admin = True
-                    self.db.commit()
-            await self._apply_team_mapping(email, user_info, provider)
+            try:
+                if provider_ctx and self._should_sync_roles(provider_id, provider_metadata):
+                    role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
+                    await self._sync_user_roles(email, role_assignments, provider_ctx)
+                    # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
+                    # (e.g. user existed before the generic OIDC fix was deployed), promote now.
+                    if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
+                        logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
+                        user.is_admin = True
+                        user.admin_origin = "sso"
+                        current_is_admin = True
+                        self.db.commit()
+                await self._apply_team_mapping(email, user_info, provider)
+            finally:
+                # Row was mutated above (auth_provider relink, last_login, is_admin sync);
+                # drop the stale cached copy so the next read reflects the committed state,
+                # even if role sync or team mapping above raised.
+                await self.auth_service._invalidate_user_auth_cache(email)  # pylint: disable=protected-access
 
             user_email = getattr(user, "email", None)
             if isinstance(user_email, str) and user_email.strip():

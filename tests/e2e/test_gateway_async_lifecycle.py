@@ -25,7 +25,7 @@ from sqlalchemy.pool import StaticPool
 from mcpgateway.config import settings
 from mcpgateway.db import Base
 from mcpgateway.main import app, get_db
-from mcpgateway.schemas import ToolCreate
+from mcpgateway.schemas import ResourceCreate, ToolCreate
 from tests.helpers.auth import make_auth_headers, make_legacy_test_jwt
 from tests.utils.rbac_mocks import MockPermissionService, create_mock_email_user, create_mock_user_context
 
@@ -364,8 +364,10 @@ async def test_sqlite_async_gateway_update_bad_url_defers_failure_to_worker(life
     assert retry_gateway["reachable"] is False
     assert _response_value(retry_gateway, "registration_attempts") == 1
     assert _response_value(retry_gateway, "next_retry_at") is not None
-    assert _response_value(retry_gateway, "last_error") == failure_message
-    assert _response_value(retry_gateway, "status_message") == failure_message
+    assert _response_value(retry_gateway, "last_error").startswith("An unexpected error occurred")
+    assert "example.com" not in _response_value(retry_gateway, "last_error")
+    assert _response_value(retry_gateway, "status_message").startswith("An unexpected error occurred")
+    assert "example.com" not in _response_value(retry_gateway, "status_message")
 
 
 @pytest.mark.asyncio
@@ -389,7 +391,8 @@ async def test_sqlite_async_gateway_lifecycle_retry_and_delete_stop_flow(lifecyc
     pending_gateway = pending_response.json()
     assert pending_gateway["status"] == "pending"
     assert _response_value(pending_gateway, "registration_attempts") == 1
-    assert _response_value(pending_gateway, "last_error") == "Connection refused: http://example.com/retry"
+    assert _response_value(pending_gateway, "last_error").startswith("An unexpected error occurred")
+    assert "example.com" not in _response_value(pending_gateway, "last_error")
     next_retry_at = _response_value(pending_gateway, "next_retry_at")
     assert next_retry_at is not None
     parsed_next_retry = datetime.fromisoformat(next_retry_at.replace("Z", "+00:00"))
@@ -409,3 +412,79 @@ async def test_sqlite_async_gateway_lifecycle_retry_and_delete_stop_flow(lifecyc
 
     deleted_response = await client.get("/admin/gateways/retry-gateway", headers=TEST_ADMIN_AUTH_HEADER)
     assert deleted_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_gateway_resource_cold_cache_failure_end_to_end(lifecycle_client, monkeypatch):
+    """A federated placeholder is resolved through the real gateway API and never served as empty content."""
+    client, live_gateway_service = lifecycle_client
+    monkeypatch.setattr(
+        live_gateway_service,
+        "_initialize_gateway",
+        AsyncMock(
+            return_value=(
+                {"resources": {"listChanged": False}},
+                [],
+                [
+                    ResourceCreate(
+                        uri="manual://resource",
+                        name="manual_resource",
+                        description="",
+                        mime_type="text/plain",
+                        content="",
+                    )
+                ],
+                [],
+                [],
+            )
+        ),
+    )
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True, raising=False)
+    from mcpgateway.services.resource_service import ResourceError
+    import mcpgateway.main as main_mod
+
+    gateway_id = None
+    try:
+        create_response = await client.post(
+            "/gateways",
+            json={
+                "name": "resource-cache-e2e",
+                "url": "http://example.com/mcp",
+                "transport": "STREAMABLEHTTP",
+                "visibility": "public",
+            },
+            headers=TEST_AUTH_HEADER,
+        )
+        assert create_response.status_code == 202
+        gateway_id = create_response.json()["id"]
+        await live_gateway_service._run_gateway_lifecycle_pass()
+
+        resources_response = await client.get("/resources?include_pagination=false", headers=TEST_AUTH_HEADER)
+        assert resources_response.status_code == 200
+        resource = next(item for item in resources_response.json() if item["uri"] == "manual://resource")
+        assert resource["size"] is None
+
+        with monkeypatch.context() as upstream_available:
+            upstream_available.setattr(main_mod.resource_service, "invoke_resource", AsyncMock(return_value="real upstream content"))
+            healthy_read = await client.post(
+                "/rpc",
+                json={"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": "manual://resource"}},
+                headers=TEST_AUTH_HEADER,
+            )
+        assert healthy_read.status_code == 200
+        assert healthy_read.json()["result"]["contents"][0]["text"] == "real upstream content"
+
+        monkeypatch.setattr(main_mod.resource_service, "invoke_resource", AsyncMock(side_effect=ResourceError("Gateway resource content could not be resolved")))
+        failed_read = await client.post(
+            "/rpc",
+            json={"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "manual://resource"}},
+            headers=TEST_AUTH_HEADER,
+        )
+        failed_payload = failed_read.json()
+        assert failed_read.status_code == 200
+        assert failed_payload["error"]["code"] == -32000
+        assert "Gateway resource content could not be resolved" in failed_payload["error"]["message"]
+        assert "contents" not in failed_payload.get("result", {})
+    finally:
+        if gateway_id is not None:
+            await client.delete(f"/gateways/{gateway_id}", headers=TEST_AUTH_HEADER)

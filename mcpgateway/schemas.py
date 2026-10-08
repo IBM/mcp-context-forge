@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
+from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
@@ -38,7 +39,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -128,6 +129,40 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
 )
 
 
+def _validate_oauth_token_endpoint_auth(v: Dict[str, Any]) -> None:
+    """Validate the token endpoint client authentication settings structurally.
+
+    Structural rules match the runtime exactly because both read the same
+    constant sets: an unknown ``token_endpoint_auth_method`` or signing
+    algorithm is rejected here so a config value can never pass the API
+    boundary and then fail or silently switch behavior later.
+
+    Args:
+        v: OAuth configuration dict.
+
+    Raises:
+        ValueError: If the method, algorithm, key ID, or signing key is invalid.
+    """
+    raw_method = v.get("token_endpoint_auth_method")
+    if raw_method is not None and raw_method not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_method '{raw_method}' is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+
+    raw_alg = v.get("token_endpoint_auth_signing_alg")
+    if raw_alg is not None and raw_alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_signing_alg '{raw_alg}' is not allowed. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS))}")
+
+    raw_kid = v.get("private_key_jwt_kid")
+    if raw_kid is not None and raw_kid != "":
+        if not isinstance(raw_kid, str) or not raw_kid.strip():
+            raise ValueError("oauth_config.private_key_jwt_kid must be a non-empty string when provided")
+
+    method = raw_method or "client_secret_post"
+    if method == "private_key_jwt":
+        private_key = v.get("private_key")
+        if not isinstance(private_key, str) or not private_key.strip():
+            raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -148,6 +183,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         return v
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
+    _validate_oauth_token_endpoint_auth(v)
     for field_name in ("token_url", "authorization_url", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
         raw_value = v.get(field_name)
         if raw_value in (None, ""):
@@ -525,6 +561,13 @@ class AuthenticationValues(BaseModelWithConfigDict):
 
 # Minimal valid JSON Schema used as the default input_schema for REST tools.
 _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
+
+
+def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject an input schema whose ``x-mcp-header`` annotations break the MCP 2026-07-28 constraints."""
+    if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
+        raise ValueError(f"invalid x-mcp-header annotation: {reason}")
+    return schema
 
 
 def _extract_rest_url_components(values: dict) -> dict:
@@ -977,6 +1020,12 @@ class ToolCreate(BaseModel):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -1536,6 +1585,12 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         return _validate_jsonpath_filter_value(value)
 
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
+
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
     def validate_json_fields(cls, v: Dict[str, Any]) -> Dict[str, Any]:
@@ -2089,9 +2144,32 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
                                    Not executed against the tool; see :class:`ToolPreviewResponse`.
+
+    Examples:
+        >>> ToolPreviewRequest().arguments
+        {}
+        >>> ToolPreviewRequest(arguments={}).arguments
+        {}
+        >>> # An explicit JSON null for "arguments" is as good as omitting the key entirely --
+        >>> # a client that always serializes the field shouldn't 422 for doing so (#5629).
+        >>> ToolPreviewRequest(arguments=None).arguments
+        {}
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _coerce_none_to_empty_dict(cls, value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Treat an explicit JSON ``null`` the same as an omitted ``arguments`` key.
+
+        Args:
+            value: The raw ``arguments`` value as received, before type validation.
+
+        Returns:
+            Dict[str, Any]: ``value`` unchanged, or ``{}`` when ``value`` is ``None``.
+        """
+        return {} if value is None else value
 
 
 class ToolPreviewTarget(BaseModelWithConfigDict):
@@ -2319,6 +2397,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
+    custom_name: Optional[str] = Field(None, description="Explicit resource base name; required to rename federated resources. Local names remain literal.")
     description: Optional[str] = Field(None, description="Resource description")
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
@@ -2344,6 +2423,19 @@ class ResourceUpdate(BaseModelWithConfigDict):
             List of validated tag strings or None if input is None
         """
         return validate_tags_field(v)
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate an explicit rename without changing the legacy name contract.
+
+        Args:
+            v: Requested base name, or None to use legacy name handling.
+
+        Returns:
+            Validated name or None.
+        """
+        return SecurityValidator.validate_name(v, "Resource name") if v is not None else None
 
     @field_validator("name")
     @classmethod
@@ -2459,6 +2551,8 @@ class ResourceRead(BaseModelWithConfigDict):
     id: str = Field(description="Unique ID of the resource")
     uri: str
     name: str
+    original_name: Optional[str] = Field(None, description="Upstream name for federated resources; initial naming history for local resources")
+    custom_name_slug: Optional[str] = Field(None, description="Slugified base used to compose the namespaced name")
     description: Optional[str]
     mime_type: Optional[str]
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
@@ -3214,7 +3308,10 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
+        "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
+        "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3624,7 +3721,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
+        "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
+        "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -4897,6 +4997,14 @@ class ServerRead(BaseModelWithConfigDict):
     updated_at: datetime
     # is_active: bool
     enabled: bool
+    url: Optional[str] = Field(
+        None,
+        description=(
+            "Fully-qualified MCP endpoint URL for this virtual server, derived from APP_DOMAIN. "
+            "This value is also the RFC 8707 OAuth resource/audience identifier; keep its path format stable "
+            "and use a separate function for any future display-only path change. None if APP_DOMAIN isn't a usable URL."
+        ),
+    )
     associated_tools: List[str] = []
     associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
@@ -5014,6 +5122,22 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     base_url: AnyHttpUrl = Field(..., description="Base URL of the MCP server to test")
     path: Optional[str] = Field(None, description="Optional path appended to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
+    gateway_id: Optional[str] = Field(None, description="Exact registered gateway to use for transport and connection settings")
+    credential_mode: Literal["stored_with_override", "candidate_only"] = Field("stored_with_override", description="Whether the handshake may use stored gateway credentials")
+
+    @model_validator(mode="after")
+    def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":
+        """Require exact gateway selection for candidate-only validation.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If candidate-only validation omits the gateway ID.
+        """
+        if self.credential_mode == "candidate_only" and not self.gateway_id:
+            raise ValueError("gateway_id is required when credential_mode is candidate_only")
+        return self
 
     @field_validator("path")
     @classmethod
@@ -8409,6 +8533,26 @@ class PluginStatsResponse(BaseModel):
 # MCP Server Catalog Schemas
 
 
+class CatalogOAuthMetadata(BaseModel):
+    """Public OAuth discovery metadata seeded for a catalog server entry.
+
+    Non-secret only: ``client_id``/``client_secret`` are per-deployment values
+    and never belong here. Seeding these fields lets a catalog entry skip the
+    outbound discovery probe at registration time, which matters for
+    restricted-egress deployments and for providers that publish no discovery
+    document at all (see issue #6461).
+    """
+
+    model_config = ConfigDict(extra="forbid")  # secrets must never round-trip through this model, even silently
+
+    issuer: Optional[str] = Field(None, description="OAuth issuer / authorization server base URL")
+    authorization_url: Optional[str] = Field(None, description="OAuth authorization endpoint")
+    token_url: Optional[str] = Field(None, description="OAuth token endpoint")
+    scopes: List[str] = Field(default_factory=list, description="Scopes recognized by this provider's OAuth server")
+    supports_dcr: bool = Field(default=False, description="Whether the provider supports Dynamic Client Registration (RFC 7591)")
+    resource: Optional[str] = Field(None, description="RFC 8707 resource indicator for this server")
+
+
 class CatalogServer(BaseModel):
     """Schema for a catalog server entry."""
 
@@ -8429,6 +8573,56 @@ class CatalogServer(BaseModel):
     gateway_id: Optional[str] = Field(None, description="ID of the caller-visible gateway matched to this catalog server")
     is_available: bool = Field(default=True, description="Whether server is currently available")
     requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
+    oauth: Optional[CatalogOAuthMetadata] = Field(None, description="Seeded public OAuth discovery metadata for OAuth entries, when known (no secrets)")
+
+
+# oauth_credentials is a flat dict of known keys (issuer, client_id, client_secret, token_url,
+# authorization_url, redirect_uri, audience, scopes, resource) - CatalogService only ever reads a
+# scalar or a list of scalars out of it, so two levels of nesting is already generous.
+# validate_meta_data's own byte budget (4096 total, meant for a different field) would reject a
+# single legitimate 4096-char secret once JSON overhead is added, so the caps here are sized for
+# oauth_credentials specifically rather than reused wholesale.
+_OAUTH_CREDENTIALS_MAX_KEYS = 16
+_OAUTH_CREDENTIALS_MAX_DEPTH = 2
+_OAUTH_CREDENTIALS_MAX_BYTES = 65536
+
+
+def _validate_catalog_oauth_credentials(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Bound catalog ``oauth_credentials`` overrides against oversized/malicious input (CWE-400).
+
+    Shared by ``CatalogServerRegisterRequest`` (bound as the admin
+    ``POST /admin/mcp-registry/{server_id}/register`` body) and ``CatalogServerRegisterBody``
+    (the v1 ``POST /v1/catalog/{server_id}/register`` body), so both request bodies that read
+    this field get the same bound - a bespoke top-level-only string-length check here would walk
+    straight past a nested container (a list/dict value skips the ``isinstance(value, str)`` check
+    entirely), so this also enforces key-count, nesting-depth, and total serialized size, the same
+    class of check ``validate_meta_data`` applies to ``meta_data`` elsewhere.
+
+    Args:
+        v: OAuth credential overrides to validate.
+
+    Returns:
+        The validated oauth_credentials dict or None.
+
+    Raises:
+        ValueError: If any string value exceeds 4096 characters, the dict has too many keys,
+            nests too deeply, or its serialized size exceeds the bound.
+    """
+    if v is None:
+        return v
+    if len(v) > _OAUTH_CREDENTIALS_MAX_KEYS:
+        raise ValueError(f"oauth_credentials exceeds maximum key count ({_OAUTH_CREDENTIALS_MAX_KEYS}): got {len(v)}")
+    SecurityValidator.validate_json_depth(v, max_depth=_OAUTH_CREDENTIALS_MAX_DEPTH)
+    for key, value in v.items():
+        if isinstance(value, str) and len(value) > 4096:
+            raise ValueError(f"oauth_credentials.{key} exceeds maximum length of 4096 characters")
+    try:
+        size = len(orjson.dumps(v))
+    except TypeError as exc:
+        raise ValueError(f"oauth_credentials is not serializable: {exc}") from exc
+    if size > _OAUTH_CREDENTIALS_MAX_BYTES:
+        raise ValueError(f"oauth_credentials exceeds maximum size ({_OAUTH_CREDENTIALS_MAX_BYTES} bytes): got {size}")
+    return v
 
 
 class CatalogServerRegisterRequest(BaseModel):
@@ -8441,16 +8635,34 @@ class CatalogServerRegisterRequest(BaseModel):
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
+    @field_validator("oauth_credentials")
+    @classmethod
+    def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Bound ``oauth_credentials`` (see ``_validate_catalog_oauth_credentials``).
+
+        This request is bound as the admin ``POST /admin/mcp-registry/{server_id}/register``
+        body, so it needs the same cap as the v1 endpoint's ``CatalogServerRegisterBody`` -
+        without this, the admin path was the uncapped one.
+
+        Args:
+            v: OAuth credential overrides to validate.
+
+        Returns:
+            The validated oauth_credentials dict or None.
+        """
+        return _validate_catalog_oauth_credentials(v)
+
 
 class CatalogServerRegisterBody(BaseModel):
     """Body for the v1 catalog register endpoint.
 
     The catalog server id comes from the path; this body carries only the
-    optional overrides. OAuth configuration is out of scope here (#5967).
+    optional overrides.
     """
 
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+    oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if the catalog entry requires OAuth")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
@@ -8468,6 +8680,19 @@ class CatalogServerRegisterBody(BaseModel):
         if v is None:
             return v
         return SecurityValidator.validate_name(v, "Server name")
+
+    @field_validator("oauth_credentials")
+    @classmethod
+    def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Bound ``oauth_credentials`` (see ``_validate_catalog_oauth_credentials``).
+
+        Args:
+            v: OAuth credential overrides to validate.
+
+        Returns:
+            The validated oauth_credentials dict or None.
+        """
+        return _validate_catalog_oauth_credentials(v)
 
 
 class CatalogServerRegisterResponse(BaseModel):
@@ -9265,11 +9490,6 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     auth_type: Optional[str] = Field(None, description="Authentication type")
     content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
     endpoint_url: Optional[str] = Field(None, description="Registered endpoint URL for the agent, as configured at registration time")
-
-    class Config:
-        """Pydantic config for A2A agent metadata."""
-
-        from_attributes = True  # SQLAlchemy ORM compatibility
 
 
 class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):

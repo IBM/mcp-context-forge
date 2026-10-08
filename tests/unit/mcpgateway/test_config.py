@@ -2441,7 +2441,6 @@ def test_alembic_env_import_does_not_require_secrets():
                 os.environ[key] = val
         sys.modules.pop("mcpgateway.alembic.env", None)
 
-
 def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
     """CSRF key must be SecretStr, and must still inherit the JWT secret when unset."""
     # Third-Party
@@ -2466,7 +2465,6 @@ def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
         environment="development",
     )
     assert cfg2.csrf_secret_key.get_secret_value() == explicit
-
 
 def test_min_secret_length_below_floor_raises_validation_error():
     """Regression: MIN_SECRET_LENGTH=0 (or any value < 32) must raise ValidationError at
@@ -2498,3 +2496,147 @@ def test_min_secret_length_below_floor_raises_validation_error():
         )
     # Confirm the error is about min_secret_length, not some other field
     assert "min_secret_length" in str(exc_info.value).lower() or "greater than or equal" in str(exc_info.value).lower()
+
+# --------------------------------------------------------------------------- #
+#                    mcp_client_connect_mode                                     #
+# --------------------------------------------------------------------------- #
+def test_mcp_client_connect_mode_defaults_to_auto():
+    """Library default is 'auto'."""
+    s = Settings(_env_file=None)
+    assert s.mcp_client_connect_mode == "auto"
+
+
+@pytest.mark.parametrize("valid_value", ["auto", "legacy"])
+def test_mcp_client_connect_mode_accepts_valid_values(valid_value):
+    """Both 'auto' and 'legacy' must be accepted explicitly."""
+    s = Settings(mcp_client_connect_mode=valid_value, _env_file=None)
+    assert s.mcp_client_connect_mode == valid_value
+
+
+def test_mcp_client_connect_mode_rejects_invalid_value():
+    """An invalid value must raise ValidationError at Settings construction."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(mcp_client_connect_mode="bogus", _env_file=None)
+    assert "mcp_client_connect_mode" in str(exc_info.value)
+
+
+def test_mcp_client_connect_mode_env_var_honored(monkeypatch):
+    """MCP_CLIENT_CONNECT_MODE=legacy must be honoured."""
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",  # Avoid the auth-gated password checks; this test covers the connect mode only
+        "MCP_CLIENT_CONNECT_MODE": "legacy",
+    }
+    monkeypatch.delenv("MCP_CLIENT_CONNECT_MODE", raising=False)
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert s.mcp_client_connect_mode == "legacy"
+
+
+# --------------------------------------------------------------------------- #
+#                    mcp_inbound_protocol_mode                                  #
+# --------------------------------------------------------------------------- #
+def test_mcp_inbound_protocol_mode_defaults_to_auto():
+    """Library default is 'auto'."""
+    s = Settings(_env_file=None)
+    assert s.mcp_inbound_protocol_mode == "auto"
+
+
+@pytest.mark.parametrize("valid_value", ["auto", "legacy"])
+def test_mcp_inbound_protocol_mode_accepts_valid_values(valid_value):
+    """Both 'auto' and 'legacy' must be accepted explicitly."""
+    s = Settings(mcp_inbound_protocol_mode=valid_value, _env_file=None)
+    assert s.mcp_inbound_protocol_mode == valid_value
+
+
+def test_mcp_inbound_protocol_mode_rejects_invalid_value():
+    """An invalid value must raise ValidationError at Settings construction."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(mcp_inbound_protocol_mode="bogus", _env_file=None)
+    assert "mcp_inbound_protocol_mode" in str(exc_info.value)
+
+
+def test_mcp_inbound_protocol_mode_env_var_honored(monkeypatch):
+    """MCP_INBOUND_PROTOCOL_MODE=legacy must be honoured."""
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",  # Avoid the auth-gated password checks; this test covers the protocol mode only
+        "MCP_INBOUND_PROTOCOL_MODE": "legacy",
+    }
+    monkeypatch.delenv("MCP_INBOUND_PROTOCOL_MODE", raising=False)
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert s.mcp_inbound_protocol_mode == "legacy"
+
+
+# --------------------------------------------------------------------------- #
+#                    _parse_mcp_origin_sets                                    #
+# --------------------------------------------------------------------------- #
+# _parse_allowed_origins (unified validator for allowed_origins, mcp_allowed_origins,
+# mcp_allowed_hosts)
+# --------------------------------------------------------------------------- #
+def test_parse_mcp_origin_sets_json_array():
+    """JSON array string is parsed into a set."""
+    result = Settings._parse_allowed_origins('["https://a.com","https://b.com"]')
+    assert result == {"https://a.com", "https://b.com"}
+
+
+def test_parse_mcp_origin_sets_csv_string():
+    """Comma-separated string is parsed into a set."""
+    result = Settings._parse_allowed_origins("https://x.com , https://y.com")
+    assert result == {"https://x.com", "https://y.com"}
+
+
+def test_parse_mcp_origin_sets_empty_string():
+    """Blank string returns empty set."""
+    assert Settings._parse_allowed_origins("") == set()
+    assert Settings._parse_allowed_origins("   ") == set()
+
+
+def test_parse_mcp_origin_sets_quoted_string():
+    """Outer quote pair is stripped before parsing."""
+    result = Settings._parse_allowed_origins('"https://a.com,https://b.com"')
+    assert "https://a.com" in result
+    assert "https://b.com" in result
+
+
+def test_parse_mcp_origin_sets_set_passthrough():
+    """An already-parsed set is returned as-is."""
+    assert Settings._parse_allowed_origins({"https://a.com"}) == {"https://a.com"}
+
+
+def test_parse_mcp_origin_sets_list_passthrough():
+    """A list is converted to a set."""
+    assert Settings._parse_allowed_origins(["https://a.com", "https://b.com"]) == {"https://a.com", "https://b.com"}
+
+
+def test_parse_mcp_origin_sets_unknown_type_returns_empty():
+    """An unrecognised type (e.g. int) falls back to empty set."""
+    assert Settings._parse_allowed_origins(42) == set()  # type: ignore[arg-type]
+
+
+def test_mcp_allowed_origins_settings_field():
+    """mcp_allowed_origins is parsed correctly when passed to Settings."""
+    s = Settings(mcp_allowed_origins="https://trusted.example.com", environment="development", _env_file=None)
+    assert "https://trusted.example.com" in s.mcp_allowed_origins
+
+
+def test_mcp_allowed_hosts_settings_field():
+    """mcp_allowed_hosts is parsed correctly when passed to Settings."""
+    s = Settings(mcp_allowed_hosts="myapp.example.com:4444,myapp.example.com:*", environment="development", _env_file=None)
+    assert "myapp.example.com:4444" in s.mcp_allowed_hosts
+    assert "myapp.example.com:*" in s.mcp_allowed_hosts
+
+
+def test_mcp_allowed_origins_default_empty():
+    """mcp_allowed_origins defaults to empty set."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.mcp_allowed_origins == set()
+
+
+def test_mcp_allowed_hosts_default_empty():
+    """mcp_allowed_hosts defaults to empty set."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.mcp_allowed_hosts == set()

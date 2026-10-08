@@ -671,6 +671,7 @@ export const editResource = async function (resourceId) {
 
     const uriField = safeGetElement("edit-resource-uri");
     const nameField = safeGetElement("edit-resource-name");
+    const customNameField = safeGetElement("edit-resource-custom-name");
     const descField = safeGetElement("edit-resource-description");
     const mimeField = safeGetElement("edit-resource-mime-type");
     // const contentField = safeGetElement("edit-resource-content");
@@ -678,8 +679,21 @@ export const editResource = async function (resourceId) {
     if (uriField && uriValidation.valid) {
       uriField.value = uriValidation.value;
     }
-    if (nameField && nameValidation.valid) {
-      nameField.value = nameValidation.value;
+    if (nameField) {
+      // Federated names are derived and can become stale while the modal is open.
+      // Omitting this legacy field makes customName the only rename signal.
+      nameField.disabled = Boolean(resource.gatewayId);
+      if (nameValidation.valid) {
+        nameField.value = nameValidation.value;
+      }
+    }
+    if (customNameField) {
+      const base = resource.gatewayId
+        ? (resource.customNameSlug ?? resource.originalName ?? resource.name)
+        : resource.name;
+      customNameField.value = base;
+      customNameField.dataset.originalValue = base;
+      customNameField.required = base !== "";
     }
     if (descField) {
       descField.value = decodeHtml(resource.description || "");

@@ -190,7 +190,6 @@ If not using Dev Containers, set up manually:
 
 ???+ check "Run wrapper and test transports"
 
-    - [ ] Run: `python3 -m mcpgateway.wrapper` (stdio support)
     - [ ] Test transports:
 
         - Streamable HTTP

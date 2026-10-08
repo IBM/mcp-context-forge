@@ -53,6 +53,20 @@ class TestPerformanceServiceInit:
         assert service.db is mock_db
 
 
+def _make_mock_psutil() -> MagicMock:
+    """Return a fully-stubbed psutil MagicMock for get_system_metrics() tests."""
+    mock_psutil = MagicMock()
+    mock_psutil.cpu_percent.return_value = 1.0
+    mock_psutil.cpu_count.return_value = 1
+    mock_psutil.cpu_freq.return_value = MagicMock(current=2400.0)
+    mock_psutil.virtual_memory.return_value = MagicMock(total=1_048_576, used=0, available=1_048_576, percent=0.0)
+    mock_psutil.swap_memory.return_value = MagicMock(total=0, used=0)
+    mock_psutil.disk_usage.return_value = MagicMock(total=1_073_741_824, used=0, percent=0.0)
+    mock_psutil.net_io_counters.return_value = MagicMock(bytes_sent=0, bytes_recv=0)
+    mock_psutil.boot_time.return_value = 0
+    return mock_psutil
+
+
 class TestSystemMetrics:
     """Tests for system metrics collection."""
 
@@ -96,16 +110,8 @@ class TestSystemMetrics:
     def test_get_system_metrics_load_average_exception_sets_none(self):
         """When os.getloadavg fails, load averages should be None."""
         service = PerformanceService()
-
-        mock_psutil = MagicMock()
-        mock_psutil.cpu_percent.return_value = 1.0
-        mock_psutil.cpu_count.return_value = 1
+        mock_psutil = _make_mock_psutil()
         mock_psutil.cpu_freq.return_value = None
-        mock_psutil.virtual_memory.return_value = MagicMock(total=1_048_576, used=0, available=1_048_576, percent=0.0)
-        mock_psutil.swap_memory.return_value = MagicMock(total=0, used=0)
-        mock_psutil.disk_usage.return_value = MagicMock(total=1_073_741_824, used=0, percent=0.0)
-        mock_psutil.net_io_counters.return_value = MagicMock(bytes_sent=0, bytes_recv=0)
-        mock_psutil.boot_time.return_value = 0
 
         with patch("mcpgateway.services.performance_service.PSUTIL_AVAILABLE", True):
             with patch("mcpgateway.services.performance_service.psutil", mock_psutil):
@@ -116,6 +122,24 @@ class TestSystemMetrics:
         assert result.load_avg_1m is None
         assert result.load_avg_5m is None
         assert result.load_avg_15m is None
+
+    @pytest.mark.parametrize("exc", [
+        SystemError("cpu_freq C extension error"),
+        RuntimeError("invalid CPU frequency data"),
+    ])
+    def test_get_system_metrics_cpu_freq_exception_sets_none(self, exc):
+        """cpu_freq_mhz is None when psutil.cpu_freq() raises (psutil bug #2382)."""
+        service = PerformanceService()
+        mock_psutil = _make_mock_psutil()
+        mock_psutil.cpu_freq.side_effect = exc
+
+        with patch("mcpgateway.services.performance_service.PSUTIL_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.psutil", mock_psutil):
+                with patch.object(service, "_get_net_connections_cached", return_value=0):
+                    result = service.get_system_metrics()
+
+        assert result.cpu_freq_mhz is None
+        assert result.cpu_percent == 1.0
 
 
 class TestWorkerMetrics:

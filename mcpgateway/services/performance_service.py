@@ -196,8 +196,11 @@ class PerformanceService:
         # CPU metrics
         cpu_percent = psutil.cpu_percent(interval=0.1)
         cpu_count = psutil.cpu_count(logical=True) or 1
-        cpu_freq = psutil.cpu_freq()
-        cpu_freq_mhz = round(cpu_freq.current) if cpu_freq else None
+        try:
+            cpu_freq = psutil.cpu_freq()
+            cpu_freq_mhz = round(cpu_freq.current) if cpu_freq else None
+        except Exception:  # psutil may raise SystemError on macOS (psutil bug #2382)
+            cpu_freq_mhz = None
 
         # Load average (Unix only)
         try:

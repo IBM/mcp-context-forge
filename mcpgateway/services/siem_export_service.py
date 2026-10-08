@@ -32,10 +32,12 @@ import orjson
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.services.metrics import siem_events_exported_total, siem_export_latency_seconds, siem_queue_depth
 from mcpgateway.utils.redis_client import get_redis_client
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +279,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
                 "name": destination_name,
                 "status": "failed",
                 "latency_ms": round(latency_ms, 2),
-                "error": str(exc),
+                "error": unexpected_error_detail(exc),
             }
 
         latency_ms = (time.perf_counter() - start) * 1000.0
@@ -471,7 +473,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
                 await self._send_to_destination(destination=destination, event=event)
             except Exception as exc:
                 failed.append(destination_name)
-                self._record_delivery_failure(destination_name=destination_name, error=str(exc))
+                self._record_delivery_failure(destination_name=destination_name, error=unexpected_error_detail(exc))
                 siem_events_exported_total.labels(destination=destination_name, status="failure").inc()
             else:
                 latency_seconds = time.perf_counter() - start
@@ -1145,6 +1147,9 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         name = str(normalized.get("name") or "").strip()
         if not name:
             raise ValueError("Destination requires non-empty 'name'")
+        # Issue #5856: config-loaded names bypass DestinationUpsertRequest — enforce the same
+        # HTML-safe charset here so a malicious identifier can never be stored on this path either.
+        name = SecurityValidator.validate_name(name, "Destination name")
 
         destination_type = str(normalized.get("type") or "").strip().lower()
         if destination_type not in _ALLOWED_DEST_TYPES:

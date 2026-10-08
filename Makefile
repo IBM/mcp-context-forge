@@ -136,7 +136,7 @@ endif
 help:
 	@grep "^# help\:" Makefile | grep -v grep | sed 's/\# help\: //' | sed 's/\# help\://'
 	@if grep -q "^# deprecated:" Makefile; then \
-		printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work, will be removed in stated version)\033[0m\n'; \
+	printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work and sunset on the stated date)\033[0m\n'; \
 		grep "^# deprecated:" Makefile | sed 's/^# deprecated: //' | while IFS= read -r line; do \
 			printf '  \033[2;33m%s\033[0m\n' "$$line"; \
 		done; \
@@ -163,10 +163,11 @@ os-deps: $(OS_DEPS_SCRIPT)
 is_true = $(filter 1 true yes,$(1))
 
 # Deprecation warning for aliased targets.
-# Usage: $(call deprecated_target,old-name,replacement invocation,removal-version)
+# Usage: $(call deprecated_target,old-name,replacement invocation,deprecated-on,sunset-date)
+# The sunset date must be at least 90 days after the deprecated-on date.
 define deprecated_target
-	@printf '\n  ⚠️  WARNING: "%s" is deprecated. Use "%s" instead.\n' '$(1)' '$(2)'
-	@printf '     This alias will be removed in v%s.\n\n' '$(3)'
+	@printf '\n  ⚠️  WARNING: "%s" is deprecated as of %s. Use "%s" instead.\n' '$(1)' '$(3)' '$(2)'
+	@printf '     This alias sunsets on %s.\n\n' '$(4)'
 endef
 
 # Helper to ensure a Python package is installed in venv (uses uv to avoid pip corruption)
@@ -451,12 +452,8 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
         js-build
 
 ## --- JS build ----------------------------------------------------------------
-js-build:                        ## Install npm dependencies and build CSS and JS bundles
-	@if command -v npm >/dev/null 2>&1; then \
-		npm install --no-audit --no-fund && npm run build:css && npm run vite:build; \
-	else \
-		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
-	fi
+js-build:                        ## Install npm dependencies and build CSS and JS bundles (delegates to build-ui)
+	@$(MAKE) build-ui
 
 ## --- Primary servers ---------------------------------------------------------
 serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
@@ -857,10 +854,11 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
-# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
-# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
-# help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
+# help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
+# help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
+# help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
+# help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
+# help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
@@ -900,8 +898,8 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
-	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
+.PHONY: smoketest test-e2e test-mcp-cli test-mcp-protocol-e2e test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
@@ -916,7 +914,7 @@ clean:
 # a running gateway (`make testing-up`), Keycloak/Entra (sso/), or the Rust
 # transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
-# (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
+# (test-e2e, test-mcp-plugin-parity,
 # test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
@@ -931,40 +929,37 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
-	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+.PHONY: bats
+bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
+	@command -v bats >/dev/null 2>&1 || { echo "❌ bats not found - install with 'brew install bats-core' or see https://bats-core.readthedocs.io"; exit 1; }
+	@echo "🦇 Running bats shell tests..."
+	@files=$$(find tests -type f -name '*.bats' | sort); \
+	if [ -z "$$files" ]; then echo "ℹ️  No .bats files found under tests/"; exit 0; fi; \
+	echo "$$files" | sed 's/^/   /'; \
+	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
+	@echo "✅ bats tests passed!"
+
+test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
+	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
+	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
-		|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }
-	@echo "✅ MCP protocol E2E tests passed!"
+	@$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+		|| { echo "❌ E2E suite failed!"; exit 1; }
+	@echo "✅ E2E suite passed!"
 
-# deprecated: test-mcp-cli       - Use "make test-mcp-protocol-e2e" instead (v1.2.0)
-test-mcp-cli:
-	$(call deprecated_target,test-mcp-cli,make test-mcp-protocol-e2e,1.2.0)
-	@$(MAKE) --no-print-directory test-mcp-protocol-e2e K="$(K)"
+# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (sunsets 2027-01-18)
+test-mcp-protocol-e2e: test-e2e
+	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,2026-10-20,2027-01-18)
+
+test-mcp-cli: test-e2e
 
 .PHONY: test-bats
-test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
-	@command -v bats >/dev/null 2>&1 || { \
-		echo "❌  bats not found - install it to run tests/bash:"; \
-		echo "    macOS:          brew install bats-core"; \
-		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
-		echo "    npm:            npm install -g bats"; \
-		exit 1; \
-	}
-	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
-	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
+test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
-test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
-	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires: docker-compose stack with SSE gateway registered"
-	@$(UV_BIN) run playwright install --with-deps chromium >/dev/null
-	@$(UV_BIN) run pytest -p playwright tests/live_gateway/mcp/test_mcp_rbac_transport.py -v -s --tb=short \
-		|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }
-	@echo "✅ MCP RBAC transport tests passed!"
+test-mcp-rbac: test-e2e
 
 test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -997,6 +992,20 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
+
+test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] against a running gateway + its Postgres
+	@echo "🧪 Running OAuth status endpoint live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack (postgres exposed on localhost:5433, the default)"
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
+		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
+	@echo "✅ OAuth status live tests passed!"
+
+test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt token auth against a running gateway
+	@echo "🧪 Running private_key_jwt live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack; stub AS/upstream run on host.docker.internal"
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
+		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
+	@echo "✅ private_key_jwt live tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1765,6 +1774,9 @@ TESTING_LOCUST_WORKERS ?= 1
 # can write reports to ./reports on bind mounts without EACCES.
 HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
+# Profiles that bring up the testing stack. Also used to resolve the web_ui
+# host port for the startup summary, so both paths see the same services.
+TESTING_COMPOSE_PROFILES := --profile testing --profile inspector --profile sso
 
 .PHONY: testing-up
 testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
@@ -1780,13 +1792,15 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
 	@echo "Service              URL                           Purpose"
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@WEB_UI_PUBLISHED_PORT=$$(COMPOSE_CMD='$(COMPOSE_CMD_MONITOR)' COMPOSE_PROFILES='$(TESTING_COMPOSE_PROFILES)' scripts/testing-web-ui-port.sh); \
+		echo "ContextForge Web UI  http://localhost:$$WEB_UI_PUBLISHED_PORT         Gateway Supported UX"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
 	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
@@ -3780,14 +3794,14 @@ isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
-# deprecated: black-check       - Use "make black CHECK=1" instead (v1.2.0)
-# deprecated: isort-check       - Use "make isort CHECK=1" instead (v1.2.0)
+# deprecated: black-check       - Use "make black CHECK=1" instead (sunsets 2027-01-18)
+# deprecated: isort-check       - Use "make isort CHECK=1" instead (sunsets 2027-01-18)
 black-check:
-	$(call deprecated_target,black-check,make black CHECK=1,1.2.0)
+	$(call deprecated_target,black-check,make black CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)"
 
 isort-check:
-	$(call deprecated_target,isort-check,make isort CHECK=1,1.2.0)
+	$(call deprecated_target,isort-check,make isort CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
 
 
@@ -3978,19 +3992,19 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	$(UV_BIN) tool run ruff==$(RUFF_VERSION) $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
-# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
-# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (v1.2.0)
-# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (v1.2.0)
+# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (sunsets 2027-01-18)
+# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (sunsets 2027-01-18)
+# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (sunsets 2027-01-18)
 ruff-check:
-	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,1.2.0)
+	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)"
 
 ruff-fix:
-	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,1.2.0)
+	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$(TARGET)"
 
 ruff-format:
-	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,1.2.0)
+	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=format TARGET="$(TARGET)"
 
 future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged from main
@@ -4492,7 +4506,6 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	  -not -path './.venv/*' \
 	  -not -path './.cache/*' \
 	  -not -path './.venv/*' \
-	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
 
@@ -5050,6 +5063,11 @@ container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
 
+.PHONY: container-bump-image-versions
+container-bump-image-versions: ## Bump pinned UBI image tags in Containerfiles to latest within their minor line
+	@echo "🔄 Checking Red Hat Catalog for newer UBI image tags..."
+	@bash scripts/container-bump-image-versions.sh
+
 container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
 	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
 
@@ -5097,26 +5115,26 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
 # --- Deprecated container-run aliases ---
-# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (v1.2.0)
-# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
-# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
-# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
+# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (sunsets 2027-01-18)
 .PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
-	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
+	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_HOST_NET=1
 
 container-run-ssl: container-check-image
-	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,1.2.0)
+	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1
 
 container-run-ssl-host: container-check-image
-	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,1.2.0)
+	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1
 
 container-run-ssl-jwt: container-check-image
-	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
+	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
 
 .PHONY: container-push
@@ -5675,7 +5693,8 @@ endef
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
 compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
-	embedded-up embedded-down embedded-clean embedded-status embedded-logs
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
+	compose-ui-config-check
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5692,6 +5711,22 @@ compose-validate:
 	fi
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
+
+# Config-only smoke test for the supported 'ui' profile (contextforge-web-ui BFF)
+# Catches profile, variable-interpolation, and Compose-schema regressions without
+# starting any containers. See docs/docs/development/release-management.md #6.4.
+compose-ui-config-check:
+	@echo "🔍 Validating 'ui' profile compose config..."
+	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
+		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile ui config --quiet
+	@echo "✅ 'ui' profile compose config is valid"
 
 compose-upgrade-pg18: compose-validate
 	@echo "⚠️  This will upgrade Postgres 17 -> 18"
@@ -6112,7 +6147,7 @@ compose-test-hardened: compose-validate
 # help: ibmcloud-deploy             - Deploy (or update) container image in Code Engine
 # help: ibmcloud-ce-logs            - Stream logs for the deployed application
 # help: ibmcloud-ce-status          - Get deployment status
-# help: ibmcloud-ce-rm              - Delete the Code Engine application
+# help: ibmcloud-ce-rm              - Delete the Code Engine application and its env secret
 
 .PHONY: ibmcloud-check-env ibmcloud-cli-install ibmcloud-login ibmcloud-ce-login \
 	ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
@@ -6253,20 +6288,55 @@ ibmcloud-push:
 
 .PHONY: ibmcloud-deploy
 ibmcloud-deploy:
+	@test -f .env || { echo "❌ Missing .env — run: cp .env.example .env"; exit 1; }
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
+	@# Verify the registry pull secret exists. Check CLI availability first so
+	@# infrastructure errors are distinguished from a genuinely absent secret.
+	@if ! command -v ibmcloud > /dev/null 2>&1; then \
+		echo "❌ ibmcloud CLI not found. Install it and the code-engine plugin first:"; \
+		echo "   make ibmcloud-cli-install"; \
+		exit 1; \
+	fi; \
+	if ! _secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); then \
+		if echo "$$_secret_err" | grep -qiF "Secret $(IBMCLOUD_REGISTRY_SECRET) not found"; then \
+			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
+			echo "   Create it first (first-time setup only):"; \
+			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
+			echo "       --format registry \\"; \
+			echo "       --server $$(echo $(IBMCLOUD_IMAGE_NAME) | cut -d/ -f1) \\"; \
+			echo "       --username iamapikey --password \$$IBMCLOUD_ICR_API_KEY"; \
+			echo "   (Use a long-lived IAM API key — IBMCLOUD_API_KEY may be blank for SSO users.)"; \
+			echo "   See the docs for service ID key setup and alternative credential types."; \
+		else \
+			echo "❌ Could not verify registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)'."; \
+			echo "   Diagnostic: $$_secret_err"; \
+			echo "   Check your IBM Cloud login, region, CE project selection, and plugin installation."; \
+		fi; \
+		exit 1; \
+	fi
+	@# Sync the runtime env secret from .env — create on first deploy, update thereafter.
+	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
+		echo "🔐 Creating runtime env secret from .env..."; \
+		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
+	else \
+		echo "🔐 Updating runtime env secret from .env..."; \
+		ibmcloud ce secret update --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
+	fi
 	@if ibmcloud ce application get --name $(IBMCLOUD_CODE_ENGINE_APP) > /dev/null 2>&1; then \
 		echo "🔁 Updating existing app..."; \
 		ibmcloud ce application update --name $(IBMCLOUD_CODE_ENGINE_APP) \
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
-			--registry-secret $(IBMCLOUD_REGISTRY_SECRET); \
+			--registry-secret $(IBMCLOUD_REGISTRY_SECRET) \
+			--env-from-secret $(IBMCLOUD_CODE_ENGINE_APP)-env; \
 	else \
 		echo "🆕 Creating new app..."; \
 		ibmcloud ce application create --name $(IBMCLOUD_CODE_ENGINE_APP) \
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
 			--port 4444 \
-			--registry-secret $(IBMCLOUD_REGISTRY_SECRET); \
+			--registry-secret $(IBMCLOUD_REGISTRY_SECRET) \
+			--env-from-secret $(IBMCLOUD_CODE_ENGINE_APP)-env; \
 	fi
 
 .PHONY: ibmcloud-ce-logs
@@ -6283,6 +6353,8 @@ ibmcloud-ce-status:
 ibmcloud-ce-rm:
 	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)..."
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
+	@echo "🗑️  Deleting runtime env secret: $(IBMCLOUD_CODE_ENGINE_APP)-env..."
+	@ibmcloud ce secret delete --name $(IBMCLOUD_CODE_ENGINE_APP)-env -f 2>/dev/null || true
 
 
 # =============================================================================
@@ -8745,3 +8817,45 @@ linting-workflow-commitlint:         ## 📝  Conventional Commits linting (togg
 .PHONY: conc-01-gateways
 conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh
+
+# Published full-stack MCP conformance harness.
+CF_INTEGRATION ?= cf-integration
+CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
+CF_CONTROLPLANE_REPO ?= $(CURDIR)
+CF_CONTROLPLANE_REF ?= $(shell git -C "$(CF_CONTROLPLANE_REPO)" rev-parse HEAD)
+CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
+CF_CONTROLPLANE_PULL_POLICY ?= never
+CF_COMPOSE_BUILD ?= true
+CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+
+# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
+# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+.PHONY: conformance conformance-bless
+
+# Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
+conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+# Exercise only the 2025-11-25 client against a legacy fixture.
+conformance conformance-bless:
+	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git -C "$(CF_CONTROLPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
+		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
+		exit 1; \
+	fi
+	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+	"$(CF_INTEGRATION)" conformance run \
+		--client-version 2025-11-25 \
+		--server-era legacy \
+		--lane builtin \
+		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+		$(if $(filter conformance-bless,$@),--bless)

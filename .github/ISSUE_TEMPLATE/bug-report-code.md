@@ -17,7 +17,6 @@ Select the area of the project impacted:
 
 - [ ] `mcpgateway` - API
 - [ ] `mcpgateway` - UI (admin panel)
-- [ ] `mcpgateway.wrapper` - stdio wrapper
 - [ ] Federation or Transports
 - [ ] CLI, Makefiles, or shell scripts
 - [ ] Container setup (Docker/Podman/Compose)

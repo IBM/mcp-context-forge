@@ -117,21 +117,23 @@ class TestGetAccessTokenTokenExchange:
         with pytest.raises(ValueError):
             await mgr.get_access_token({"grant_type": "bogus"})
 
-    async def test_token_exchange_routes_through_prepare_runtime_credentials(self):
-        # Fix 3: get_access_token TE branch must call _prepare_runtime_credentials so
-        # token_url gets validate_core_url applied at runtime (not only at config-save time).
+    async def test_token_exchange_routes_full_config_to_token_exchange(self):
+        # get_access_token passes the complete stored config via oauth_config so the
+        # token_endpoint_auth_method (e.g. private_key_jwt) is honored at exchange time
+        # and token_url is runtime-validated inside token_exchange.
         mgr = OAuthManager()
         mgr.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 3600})
-        prepared = {"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "client_secret": "s", "target_audience": "aud"}  # pragma: allowlist secret
-        mgr._prepare_runtime_credentials = AsyncMock(return_value=prepared)
+        mgr._prepare_runtime_credentials = AsyncMock()
 
         cfg = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "aud"}
         await mgr.get_access_token(cfg, subject_token="user-jwt")
 
-        mgr._prepare_runtime_credentials.assert_awaited_once_with(cfg, "token-exchange")
-        # token_exchange was called with the runtime-decrypted/validated values
+        mgr._prepare_runtime_credentials.assert_not_awaited()
         mgr.token_exchange.assert_awaited_once()
-        assert mgr.token_exchange.await_args.kwargs["token_url"] == "https://as/token"
+        kwargs = mgr.token_exchange.await_args.kwargs
+        assert kwargs["oauth_config"] is cfg
+        assert kwargs["subject_token"] == "user-jwt"
+        assert kwargs["audience"] == "aud"
 
     async def test_token_exchange_forwards_mtls_params(self):
         # Fix 4: ca_certificate/client_cert/client_key passed to get_access_token must be
@@ -148,17 +150,23 @@ class TestGetAccessTokenTokenExchange:
         assert kwargs["client_cert"] == "cert"
         assert kwargs["client_key"] == "key"
 
-    async def test_get_access_token_marks_client_secret_plaintext(self):
-        # _prepare_runtime_credentials already decrypts client_secret, so get_access_token
-        # must tell token_exchange() to skip the inline decrypt (client_secret_is_plaintext=True).
+    async def test_get_access_token_hands_decryption_to_token_exchange(self):
+        # Decryption and token_endpoint_auth dispatch now happen inside token_exchange
+        # via oauth_config, so get_access_token must not pre-decrypt the secret or pass
+        # client_id/client_secret arguments.
         mgr = OAuthManager()
         mgr.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 3600})
-        mgr._prepare_runtime_credentials = AsyncMock(return_value={"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "client_secret": "decrypted-secret", "target_audience": "aud"})  # pragma: allowlist secret
+        mgr._prepare_runtime_credentials = AsyncMock()
 
         cfg = {"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "target_audience": "aud"}
         await mgr.get_access_token(cfg, subject_token="user-jwt")
 
-        assert mgr.token_exchange.await_args.kwargs["client_secret_is_plaintext"] is True
+        kwargs = mgr.token_exchange.await_args.kwargs
+        assert kwargs["oauth_config"] is cfg
+        assert "client_secret_is_plaintext" not in kwargs
+        assert "client_id" not in kwargs
+        assert "client_secret" not in kwargs
+        assert "token_url" not in kwargs
 
     async def test_token_exchange_skips_inline_decrypt_when_plaintext(self):
         # When client_secret_is_plaintext=True, the inline decrypt block must not run,

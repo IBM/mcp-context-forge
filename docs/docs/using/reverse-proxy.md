@@ -104,7 +104,7 @@ python3 -m mcpgateway.reverse_proxy --config reverse-proxy.yaml
 FROM python:3.11-slim
 
 # Install MCP gateway and server
-RUN pip install mcp-gateway mcp-server-git
+RUN pip install mcp-contextforge-gateway mcp-server-git
 
 # Set environment
 ENV REVERSE_PROXY_GATEWAY=https://gateway.example.com

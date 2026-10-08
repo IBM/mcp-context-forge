@@ -20,6 +20,8 @@ from pydantic import HttpUrl
 # First-Party
 from mcpgateway.routers import sso as sso_router
 
+_TEST_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
+
 
 @pytest.mark.asyncio
 async def test_list_sso_providers_disabled(monkeypatch: pytest.MonkeyPatch):
@@ -289,11 +291,8 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     # Create a valid JWT token with admin status
     import jwt
-    admin_token = jwt.encode(
-        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    admin_token = jwt.encode({"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -335,11 +334,8 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     # Create a valid JWT token with admin status
     import jwt
-    admin_token = jwt.encode(
-        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    admin_token = jwt.encode({"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -382,11 +378,8 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     # Create a valid JWT token with admin status
     import jwt
-    admin_token = jwt.encode(
-        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    admin_token = jwt.encode({"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -419,6 +412,7 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
 
+
 @pytest.mark.asyncio
 async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeypatch: pytest.MonkeyPatch):
     """Test that non-admin users with teams are redirected to team-scoped admin."""
@@ -426,11 +420,8 @@ async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeyp
 
     # Create a valid JWT token for non-admin user
     import jwt
-    non_admin_token = jwt.encode(
-        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    non_admin_token = jwt.encode({"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -485,11 +476,8 @@ async def test_handle_sso_callback_non_admin_no_teams_redirects_to_admin_gateway
 
     # Create a valid JWT token for non-admin user
     import jwt
-    non_admin_token = jwt.encode(
-        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    non_admin_token = jwt.encode({"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -537,11 +525,8 @@ async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkey
 
     # Create a valid JWT token for non-admin user
     import jwt
-    non_admin_token = jwt.encode(
-        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    non_admin_token = jwt.encode({"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -580,6 +565,7 @@ async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkey
     assert response.status_code == 302
     assert response.headers.get("location", "") == "/admin"
     assert set_cookie.called
+
 
 @pytest.mark.asyncio
 async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypatch: pytest.MonkeyPatch):
@@ -631,8 +617,6 @@ async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypat
     # Should redirect to admin gateways view since user has no teams and is not admin
     assert response.headers.get("location", "") == "/admin/#gateways"
     assert set_cookie.called
-
-
 
 
 @pytest.mark.asyncio
@@ -1176,3 +1160,56 @@ async def test_handle_sso_callback_missing_state_no_error(monkeypatch: pytest.Mo
 
     assert isinstance(response, RedirectResponse)
     assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+
+
+def test_sso_provider_id_rejects_html_metacharacters():
+    """Issue #5856: stored-XSS defense-in-depth — HTML in provider id is rejected at ingestion."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    fields = dict(
+        name="Evil",
+        display_name="Evil",
+        provider_type="oidc",
+        client_id="cid",
+        client_secret="secret",  # pragma: allowlist secret
+        authorization_url="https://idp.example.com/auth",
+        token_url="https://idp.example.com/token",
+        userinfo_url="https://idp.example.com/userinfo",
+    )
+
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderCreateRequest(id="<script>alert(1)</script>", **fields)
+
+    # A safe identifier still validates.
+    assert sso_router.SSOProviderCreateRequest(id="keycloak.prod-1", **fields).id == "keycloak.prod-1"
+
+
+def test_sso_provider_name_and_display_name_reject_html_metacharacters():
+    """Issue #5856: name/display_name reach the login-page DOM sink — reject HTML at ingestion, allow spaces."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    base = dict(
+        id="keycloak",
+        provider_type="oidc",
+        client_id="cid",
+        client_secret="secret",  # pragma: allowlist secret
+        authorization_url="https://idp.example.com/auth",
+        token_url="https://idp.example.com/token",
+        userinfo_url="https://idp.example.com/userinfo",
+    )
+
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderCreateRequest(name="<img src=x onerror=alert(1)>", display_name="Ok", **base)
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderCreateRequest(name="Ok", display_name="<script>alert(1)</script>", **base)
+
+    # Human-facing names may contain spaces (regression guard for the narrowed charset).
+    req = sso_router.SSOProviderCreateRequest(name="Keycloak Prod", display_name="Keycloak Prod", **base)
+    assert req.display_name == "Keycloak Prod"
+
+    # Update payload validates the same fields.
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderUpdateRequest(display_name="<script>alert(1)</script>")
+    assert sso_router.SSOProviderUpdateRequest(display_name="Keycloak Prod").display_name == "Keycloak Prod"

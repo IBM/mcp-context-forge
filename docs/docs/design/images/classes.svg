@@ -9989,21 +9989,6 @@
 <polygon fill="gray" stroke="gray" points="51288.91,-8349 51296.1,-8349.43 51298.47,-8356.24 51291.28,-8355.81 51288.91,-8349"/>
 <text text-anchor="middle" x="51209.5" y="-8236.8" font-family="Arial" font-size="14.00" fill="green">settings</text>
 </g>
-<!-- mcpgateway.wrapper.Settings -->
-<g id="node532" class="node">
-<title>mcpgateway.wrapper.Settings</title>
-<polygon fill="white" stroke="#77aadd" points="159482.5,-4035.5 159482.5,-4179.5 159659.5,-4179.5 159659.5,-4035.5 159482.5,-4035.5"/>
-<text text-anchor="start" x="159546.5" y="-4164.3" font-family="Arial" font-size="14.00">Settings</text>
-<polyline fill="none" stroke="#77aadd" points="159482.5,-4156.5 159659.5,-4156.5 "/>
-<text text-anchor="start" x="159490.5" y="-4141.3" font-family="Arial" font-size="14.00">auth_header : Optional[str]</text>
-<text text-anchor="start" x="159490.5" y="-4126.3" font-family="Arial" font-size="14.00">concurrency : int</text>
-<text text-anchor="start" x="159490.5" y="-4111.3" font-family="Arial" font-size="14.00">connect_timeout : float</text>
-<text text-anchor="start" x="159490.5" y="-4096.3" font-family="Arial" font-size="14.00">log_level : Optional[str]</text>
-<text text-anchor="start" x="159490.5" y="-4081.3" font-family="Arial" font-size="14.00">response_timeout : float</text>
-<text text-anchor="start" x="159490.5" y="-4066.3" font-family="Arial" font-size="14.00">server_url : str</text>
-<polyline fill="none" stroke="#77aadd" points="159482.5,-4058.5 159659.5,-4058.5 "/>
-<text text-anchor="start" x="159569" y="-4043.3" font-family="Arial" font-size="14.00"> </text>
-</g>
 <!-- mcpgateway.services.http_client_service.SharedHttpClient -->
 <g id="node533" class="node">
 <title>mcpgateway.services.http_client_service.SharedHttpClient</title>

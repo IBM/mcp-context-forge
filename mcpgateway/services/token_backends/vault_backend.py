@@ -587,13 +587,26 @@ class VaultTokenBackend(AbstractTokenBackend):
     ) -> dict | None:
         """Get non-sensitive token metadata from Vault.
 
+        Returns ``None`` only when no token record exists for this
+        (gateway_id, app_user_email) pair. A Vault connectivity/auth failure
+        is logged and re-raised rather than swallowed to ``None``, matching
+        ``DatabaseTokenBackend.get_token_info`` - so callers exposing this
+        through a user-facing status field (see
+        ``mcpgateway.routers.oauth_router._get_caller_token_status``) can
+        distinguish "never authorized" from "lookup failed" instead of both
+        collapsing to the same "missing" state during an outage.
+
         Args:
             gateway_id: Gateway ID
             team_id: Team identifier
             app_user_email: ContextForge user email
 
         Returns:
-            Token info dict or None
+            Token info dict, or None if no token is stored.
+
+        Raises:
+            VaultConnectionError: Propagated when Vault is unreachable.
+            VaultAuthError: Propagated when Vault authentication fails.
         """
         try:
             mcp_url = self._resolve_mcp_url(gateway_id)
@@ -626,12 +639,12 @@ class VaultTokenBackend(AbstractTokenBackend):
 
         except (VaultConnectionError, VaultAuthError) as e:
             logger.warning(
-                "Vault unavailable in get_token_info for gateway %s, user %s: %s",
+                "Vault unavailable in get_token_info for gateway %s, user %s: %s — re-raising so callers can distinguish this from a genuinely missing token",
                 SecurityValidator.sanitize_log_message(gateway_id),
                 SecurityValidator.sanitize_log_message(app_user_email),
                 str(e),
             )
-            return None
+            raise
 
     async def revoke_user_tokens(
         self,

@@ -6,10 +6,23 @@ ContextForge invokes tools across several very different backends — federated 
 
 [#4202]: https://github.com/IBM/mcp-context-forge/issues/4202
 
+> **Scope note:** this document covers *output*-schema validation (Validators A/B/C below),
+> which runs after a tool actually dispatches. *Input*-schema validation — checking the
+> caller's `arguments` against the tool's `input_schema` before dispatch — is a separate,
+> earlier gate shared by `ToolService.invoke_tool` and the `POST /tools/preview/{name}`
+> dry-run endpoint via `_resolve_tool_for_invocation` / `_validate_tool_input_arguments`; see
+> [API Usage — Preview a Tool Call](../manage/api-usage.md#preview-a-tool-call-dry-run).
+>
+> **Schemas are untrusted input.** Both gates treat a tool's `input_schema` / `output_schema` as
+> tool-controlled data — a federated tool ships its own — so validation never reaches outside the
+> schema document. A `$ref`, `$dynamicRef`, or `$recursiveRef` that is not a same-document
+> reference is refused, and validators are built against a registry with no `retrieve` callable,
+> so an unresolvable reference fails validation closed rather than making the gateway fetch a URL.
+
 ## High-level flow
 
 ```
- Downstream MCP client (e.g. mcp-cli via mcpgateway.wrapper)
+ Downstream MCP client
                    │  tools/call (JSON-RPC)
                    ▼
  ┌──────────────────────────────────────────────────────────┐
@@ -97,7 +110,7 @@ ContextForge invokes tools across several very different backends — federated 
 | `structured_content` set but not a JSON object | Fast-fail with a structured `invalid_structured_content_type` error. |
 | `structured_content` absent → best-effort promote first parseable `TextContent` item | Parses both raw dicts and Pydantic `TextContent` (needed since `_coerce_to_tool_result` produces the latter for REST responses). |
 | No structured payload obtainable + `is_error=False` + schema declared | Currently `return True` — known **spec deviation** tracked in [#4208]. |
-| `jsonschema.validate` raises | Replace `tool_result.content` with a validation-error TextContent, set `is_error=True`, `return False`. |
+| `validate_safely` raises (inline or sandboxed, depending on schema content) | Replace `tool_result.content` with a validation-error TextContent, set `is_error=True`, `return False`. |
 
 **Failure mode:** In-place mutation of the passed `ToolResult`.
 
@@ -152,9 +165,11 @@ A2A tools do not currently route through Validator B. In practice this means gat
 
 ## Known gaps and follow-ups
 
-- **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-mcp-protocol-e2e` e2e tests.
+- **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-e2e` tests.
 
 - **[#4208] — success path with declared schema but empty output.** Validator B currently returns `True` when it cannot obtain any structured payload, even if an `outputSchema` is declared. The MCP spec says servers MUST provide conforming structured output in that case. Tightening requires deciding how to handle upstream servers that legitimately return empty success bodies (HTTP 204, REST tools without data shapes) — scoped out of #4202 because the blast radius is wider.
+
+- **Validator A validates a federated peer's `outputSchema` with stock `jsonschema`.** `ClientSession._validate_tool_result` (installed `mcp` client SDK) validates upstream `structuredContent` against the *upstream-advertised* `outputSchema` with a stock `jsonschema` validator, not `validate_safely`. A hostile federated MCP server controls both the schema and the instance on this path, so a `pattern` keyword there runs unbounded in the gateway process. Bounding this call requires either patching the installed SDK or wrapping `ClientSession`; tracked as a follow-up.
 
 - **[#4210] — Option B: unify the tool-invocation pipeline around a canonical `ToolResult`.** Each `integration_type` currently builds `ToolResult` differently, and only REST currently routes through Validator B. The PR that closed #4202 landed a first structural step — a single `_coerce_to_tool_result` helper — but it is only wired into two of the four paths today: the REST branch and the MCP **direct-proxy** sub-branch. The MCP **non-direct-proxy** branch still builds its own `ToolResult` inline (via `tool_call_result.model_dump(by_alias=True)` + manual field extraction), and the A2A branch has its own bespoke construction as well. The remaining option-B work is the broader refactor that routes all four paths through the helper and a shared post-invoke pipeline: extract a `_post_invoke_pipeline` that owns plugins → Validator B → metrics, route A2A and the MCP non-direct-proxy branch through it, and promote the direct-proxy bypass from a mid-dispatch `if` into a first-class entry point with a documented contract. That refactor is the permanent fix for the #4202 class of divergent-shape bugs. See <https://github.com/IBM/mcp-context-forge/issues/4210>.
 
@@ -168,10 +183,10 @@ Unit tests:
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress` — Validator C short-circuit, local (non-pooled) branch.
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_session_affinity_forwarded_preserves_is_error` — Validator C short-circuit, worker-forwarded branch.
 
-End-to-end (via `make test-mcp-protocol-e2e`):
+End-to-end (via `make test-e2e`):
 
-- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-time-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
-- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-time-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
+- `tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-time-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
+- `tests/live_gateway/e2e/test_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-time-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
 
 ## Adding a new backend
 

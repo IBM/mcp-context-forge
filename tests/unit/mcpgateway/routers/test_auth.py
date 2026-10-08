@@ -433,7 +433,7 @@ class TestLogout:
 class TestSessionRefreshAndValidate:
     """Tests for POST /auth/refresh and GET /auth/validate."""
 
-    SECRET = "test-secret-key"  # pragma: allowlist secret
+    SECRET = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
 
     @pytest.fixture
     def mock_user(self):
@@ -894,7 +894,7 @@ class TestGetSessionUser:
 class TestCookieOnlySessionSmoke:
     """Cookie-only requests reach the session endpoints through the full route path."""
 
-    SECRET = "test-secret-key"  # pragma: allowlist secret
+    SECRET = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
 
     def _payload(self):
         """Session JWT payload whose subject matches the smoke user."""

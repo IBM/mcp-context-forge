@@ -322,6 +322,8 @@ When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration rem
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
+Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](../../../CHANGELOG.md#unreleased).
+
 **Async create response example (`202 Accepted`):**
 
 ```json
@@ -366,6 +368,8 @@ Gateway name is the natural deduplication key for async lifecycle retries. With 
 
 Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. After each failed initialization attempt, the next delay is `min(2 ** (registrationAttempts - 1), 300)` seconds. `nextRetryAt` is the source of truth for when the worker may retry next.
 
+An async tool-name collision keeps the gateway `pending`, stores the generic collision message in `statusMessage` and `lastError`, and follows this retry schedule. Remove or rename the conflicting tool, then poll the gateway until initialization succeeds or delete the pending gateway.
+
 DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Retrying DELETE while the gateway is already `deleting` is safe: clients should treat the resource as still being removed and keep polling until `404 Not Found`. Once deleted, polling returns `404 Not Found`.
 
 **Pending retry response example (`200 OK`):**
@@ -387,7 +391,7 @@ DELETE changes `pending` or `active` gateways to `deleting`; the worker then sto
     - `STREAMABLEHTTP`: HTTP/SSE-based MCP server
     - `SSE`: Server-Sent Events transport
     - `STDIO`: Standard I/O (for local processes)
-    - `WEBSOCKET`: WebSocket transport
+    - `WEBSOCKET`: WebSocket transport (deprecated, sunsets 2027-01-18)
 
 #### Complete Example: Registering a Gateway
 
@@ -618,6 +622,59 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
+
+### Preview a Tool Call (Dry Run)
+
+`POST /tools/preview/{name}` validates and resolves a tool call without executing it — no
+REST/MCP/A2A/gRPC call is made, and no `TOOL_POST_INVOKE` hook runs. It shares tool
+resolution, RBAC, and input-schema validation with the live `tools/call` path (via
+`ToolService._resolve_tool_for_invocation`), so a `validated: true` preview is a reliable
+predictor of whether the same arguments would pass live invocation.
+
+Requires the `tools.preview` permission, which is distinct from `tools.execute` — a role
+holding `tools.preview` but not `tools.execute` can validate a call but never invoke it. The
+route 404s if `MCPGATEWAY_TOOL_PREVIEW_ENABLED=false`, using the same visibility rules as live
+invocation otherwise (a tool outside the caller's team also 404s, matching `tools/call`).
+
+```bash
+# Preview a tool call — validates arguments against the tool's input schema, resolves the
+# target (local vs. federated), and reports which preview_safe plugin hooks actually ran.
+jq -n --argjson args '{"param1":"value1"}' '{"arguments":$args}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/tools/preview/$TOOL_NAME" | jq
+```
+
+Response shape (`pre_hooks_run` lists the names of `preview_safe`-tagged plugins that actually
+ran — not a fixed set of built-in stages, so it's empty on a gateway with no such plugins
+configured):
+
+```json
+{
+  "validated": true,
+  "resolved_arguments": {"param1": "value1"},
+  "target": {"kind": "local", "gateway_name": null},
+  "annotations": {"readOnlyHint": true, "destructiveHint": null, "idempotentHint": null, "openWorldHint": null},
+  "pre_hooks_run": [],
+  "warnings": []
+}
+```
+
+For a federated tool (`target.kind == "federated"`), only the gateway's name is ever
+returned — never its URL, transport, or credentials — and no wire call to the remote gateway
+is made regardless of the tool's annotations. An empty request body defaults to
+`{"arguments": {}}`, so `POST /tools/preview/{name}` with no body is valid.
+
+!!! warning "Live invocation now enforces `input_schema`"
+    `tools/call` validates `arguments` against the tool's `input_schema` before dispatch and
+    fails the call on a mismatch. Earlier releases did not check the input schema at all, so a
+    tool whose published schema does not match what its callers actually send will now reject
+    calls it previously accepted.
+
+    Preview is the migration tool for this: run the same arguments through
+    `POST /tools/preview/{name}` and a `validated: false` response with an `invalid_arguments`
+    warning is exactly what live invocation will reject. Fix it by correcting the caller's
+    arguments, or by relaxing the tool's registered `input_schema` to match what it accepts.
 
 ### Update Tool
 

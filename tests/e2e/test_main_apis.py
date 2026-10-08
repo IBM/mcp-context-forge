@@ -254,17 +254,9 @@ async def temp_db(main_app_with_admin_api):
     sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
     sec_patcher.start()
 
-    # Expose full validation details so e2e tests can assert on specific error messages.
-    expose_patcher_main = patch("mcpgateway.main.should_expose_error_details", new=lambda: True)
-    expose_patcher_fmt = patch("mcpgateway.utils.error_formatter.should_expose_error_details", new=lambda: True)
-    expose_patcher_main.start()
-    expose_patcher_fmt.start()
-
     yield engine
 
     # Cleanup
-    expose_patcher_main.stop()
-    expose_patcher_fmt.stop()
     sec_patcher.stop()
     test_user_context_db.close()
     main_mod.SessionLocal = original_session_local
@@ -1487,10 +1479,6 @@ class TestGatewayAPIs:
         response = await client.post("/gateways", json={"name": long_name, "url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         assert "exceeds maximum length" in str(response.json())
-
-    @pytest.mark.skip(reason="Requires external gateway connectivity")
-    async def test_register_gateway(self, client: AsyncClient, mock_auth):
-        """Test POST /gateways - would require mocking external connections."""
 
     async def test_set_gateway_state(self, client: AsyncClient, mock_auth):
         """Test POST /gateways/{gateway_id}/state."""

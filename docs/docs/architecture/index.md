@@ -237,14 +237,6 @@ ContextForge ecosystem consists of **independently deployable modules** that can
 - `mcp-contextforge-plugins-python` - 40+ Python plugins
 - `mcp-contextforge-plugins-rust` - High-performance PyO3 plugins
 
-**MCP Servers (Zero Gateway Dependencies):**
-
-Sample servers:
-
-- `mcp-contextforge-mcp-servers-python` - 4 Python servers
-- `mcp-contextforge-mcp-servers-go` - Go servers (static binaries, 5-15 MB)
-- `mcp-contextforge-mcp-servers-rust` - Rust servers (static binaries, 3-10 MB)
-
 **Agent Runtimes:**
 
 Sample runtimes:

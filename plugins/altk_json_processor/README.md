@@ -13,7 +13,7 @@ Note that this plugin will require calling an LLM and will therefore require con
 ## Installation
 
 1. Enable the "ALTKJsonProcessor" plugin in `plugins/config.yaml`.
-2. Install the optional dependency `altk` (i.e. `pip install mcp-context-forge[altk]`)
+2. Install the optional dependency `altk` (i.e. `pip install mcp-contextforge-gateway[altk]`)
 3. Configure a LLM provider as described below.
 
 ## Configuration

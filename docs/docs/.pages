@@ -1,16 +1,25 @@
 nav:
   - "🏠 Home": index.md
-  - "⚠️ Deprecations": deprecations.md
-  - "🧭 Overview": overview
-  - "🧰 Use": using
-  - "🚀 Deploy": deployment
-  - "🛡️ Manage": manage
-  - "🔧 Operations": operations
-  - "💻 Develop": development
-  - "🧪 Test": testing
-  - "📐 Design & Roadmap": architecture
-  - "📰 Media": media
-  - "📖 Tutorials": tutorials
-  - "📝 How-To Guides": howto
-  - "⭐ Best Practices": best-practices
-  - "❓ FAQ": faq
+  - "🧭 Get Started":
+      - overview
+      - tutorials
+      - faq
+  - "🧰 Use":
+      - using
+      - howto
+      - best-practices
+  - "🛡️ Operate":
+      - deployment
+      - manage
+      - operations
+  - "💻 Develop":
+      - development
+      - testing
+      - api
+  - "📐 Architecture":
+      - architecture
+      - security
+  - "📖 Reference":
+      - reference
+      - "Deprecations": deprecations.md
+      - media

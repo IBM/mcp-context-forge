@@ -8,7 +8,7 @@ Tests for server service implementation.
 
 # Standard
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -737,14 +737,19 @@ class TestServerService:
         )
 
         test_user_email = "user@example.com"
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
         # Patch permission check to avoid consuming db.execute side-effects
-        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+        ):
             result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         server_service._notify_server_updated.assert_called_once()
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with("550e8400e29b41d4a716446655440001")  # pragma: allowlist secret
         assert result.name == "updated_server"
 
     @pytest.mark.asyncio
@@ -1052,13 +1057,16 @@ class TestServerService:
         test_db.delete = Mock()
         test_db.commit = Mock()
         server_service._notify_server_deleted = AsyncMock()
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
-        await server_service.delete_server(test_db, 1)
+        with patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache):
+            await server_service.delete_server(test_db, 1)
 
         test_db.get.assert_called_once_with(DbServer, 1)
         test_db.delete.assert_called_once_with(mock_server)
         test_db.commit.assert_called_once()
         server_service._notify_server_deleted.assert_called_once()
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with("550e8400e29b41d4a716446655440001")  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_delete_server_purge_metrics(self, server_service, mock_server, test_db):
@@ -1383,9 +1391,11 @@ class TestServerService:
         server_update = ServerUpdate(id=new_standard_uuid, name="Updated Server", description="Updated description")
 
         test_user_email = "user@example.com"
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
         # Call the service method
-        result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
+        with patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache):
+            result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
 
         # Verify UUID was set correctly (note: actual normalization happens at create time)
         # The update method currently just sets the ID directly
@@ -1393,6 +1403,7 @@ class TestServerService:
         assert result.id == expected_hex_uuid
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
+        assert tool_lookup_cache.invalidate_server.await_args_list == [call("oldserverid"), call(expected_hex_uuid)]
 
     def test_uuid_normalization_edge_cases(self, server_service):
         """Test edge cases in UUID normalization logic."""
@@ -3473,12 +3484,18 @@ class TestServerServiceCoverageMissingBranches:
 
         cache = AsyncMock()
         cache.invalidate_servers = AsyncMock()
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+        ):
             result = await server_service.set_server_state(db, "srv-1", True)
 
         assert result == "server_read"
         assert mock_server.enabled is True
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with(str(mock_server.id))
 
     @pytest.mark.asyncio
     async def test_set_server_state_no_change_skips_update_block(self, server_service, mock_server):
@@ -3787,3 +3804,92 @@ class TestConvertServerToReadAssociatedToolIds:
             assert len(server_result.associated_prompts) == 1
             assert "prompt-1" in server_result.associated_prompts
             assert "prompt-2" not in server_result.associated_prompts
+
+
+# --------------------------------------------------------------------------- #
+#  convert_server_to_read: url                                                #
+# --------------------------------------------------------------------------- #
+
+
+class TestConvertServerToReadUrl:
+    """Verify url is derived from APP_DOMAIN in convert_server_to_read, not the caller's Host header.
+
+    mcp-context-forge#6632: the web UI previously built this URL client-side
+    from window.location.origin, which is wrong in any split deployment where
+    the web UI's own origin differs from the gateway's public APP_DOMAIN.
+    """
+
+    @pytest.fixture
+    def server_service(self):
+        return ServerService()
+
+    def _make_server(self, server_id="srv-1"):
+        # Standard
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id=server_id,
+            name="test",
+            description="desc",
+            icon=None,
+            enabled=True,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+            team_id=None,
+            team=None,
+            owner_email=None,
+            visibility="public",
+            created_by="admin",
+            modified_by=None,
+            tags=[],
+            tools=[],
+            resources=[],
+            prompts=[],
+            a2a_agents=[],
+            metrics=[],
+            oauth_enabled=False,
+            oauth_config=None,
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+            version=1,
+        )
+
+    def test_url_derived_from_app_domain(self, server_service, monkeypatch):
+        """url is APP_DOMAIN + /servers/{id}/mcp, regardless of any request context."""
+        monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        monkeypatch.setattr(settings, "app_root_path", "")
+        server = self._make_server(server_id="srv-42")
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url == "https://gateway.example.com/servers/srv-42/mcp"
+
+    def test_url_includes_app_root_path(self, server_service, monkeypatch):
+        """url includes APP_ROOT_PATH so it's actually reachable when the gateway is mounted under a subpath."""
+        monkeypatch.setattr(settings, "app_domain", "https://gateway.example.com")
+        monkeypatch.setattr(settings, "app_root_path", "/gateway")
+        server = self._make_server(server_id="srv-42")
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url == "https://gateway.example.com/gateway/servers/srv-42/mcp"
+
+    def test_url_none_when_app_domain_unusable(self, server_service, monkeypatch):
+        """url is None (not a broken string) when APP_DOMAIN can't be stringified."""
+
+        class Exploding:
+            def __str__(self):
+                raise AttributeError("no __str__ for you")
+
+        monkeypatch.setattr(settings, "app_domain", Exploding())
+        server = self._make_server()
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.url is None

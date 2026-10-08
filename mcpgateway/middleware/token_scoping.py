@@ -152,6 +152,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # permissions list does not include gateways.read is rejected at the middleware
     # layer rather than reaching the handler and failing there.
     ("GET", re.compile(r"^/vault/authorize/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth per-caller token status (oauth_router, prefix="/oauth") - single-gateway
+    # and batch variants. The handler enforces gateway-level access via
+    # _enforce_gateway_access, so this entry adds defence-in-depth only: it ensures a
+    # server-scoped API token whose permissions list does not include gateways.read is
+    # rejected at the middleware layer rather than reaching the handler and failing there.
+    ("GET", re.compile(r"^/oauth/status(?:$|/)"), Permissions.GATEWAYS_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an
@@ -168,6 +174,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
+    # Invitee-facing team invitation routes
+    ("GET", re.compile(r"^/users/me/invitations/?$"), Permissions.TEAMS_JOIN),
+    ("POST", re.compile(r"^/teams/invitations/[^/]+/(?:accept|decline)/?$"), Permissions.TEAMS_JOIN),
     # Token permissions
     ("GET", re.compile(r"^/tokens(?:$|/)"), Permissions.TOKENS_READ),
     ("POST", re.compile(r"^/tokens/?$"), Permissions.TOKENS_CREATE),  # Only exact /tokens or /tokens/
@@ -904,7 +913,7 @@ class TokenScopingMiddleware:
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
     def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
-        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+        self, request_path: str, token_teams: list, db=None, _user_email: str = None, preloaded_gateway=None
     ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
@@ -932,6 +941,12 @@ class TokenScopingMiddleware:
             token_teams: List of team IDs from the token (empty list = public-only token)
             db: Optional database session. If provided, caller manages lifecycle.
                 If None, creates and manages its own session.
+            preloaded_gateway: Optional already-fetched ``Gateway`` row. When the
+                path resolves to a gateway resource and this row's ``id`` matches
+                the path's resource id, it is reused instead of issuing another
+                ``SELECT`` - lets a caller that already loaded the gateway (e.g. a
+                batch endpoint that bulk-fetched many gateways) avoid a redundant
+                per-id re-fetch here.
 
         Returns:
             ResourceOwnershipResult: Allowed, missing, or denied ownership result.
@@ -1199,7 +1214,10 @@ class TokenScopingMiddleware:
 
             # CHECK GATEWAYS
             if resource_type == "gateway":
-                gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
+                if preloaded_gateway is not None and getattr(preloaded_gateway, "id", None) == resource_id:
+                    gateway = preloaded_gateway
+                else:
+                    gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
 
                 if not gateway:
                     logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
