@@ -943,6 +943,7 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
+	@echo "   Modern MCP: set MCP_INBOUND_PROTOCOL_MODE=auto (with RUST_MCP_MODE=off) for both testing-up and this target; select with K=modern_logging"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
