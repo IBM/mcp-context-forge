@@ -367,6 +367,7 @@ class TestA2AInvokePreHook:
         assert headers.get("X-Custom") == "value"
         assert headers.get("X-Request-ID") == "plugin-req-123"
         assert {name.lower(): value for name, value in headers.items()}["authorization"] == "Bearer plugin"
+        assert sum(1 for name in headers if name.lower() == "authorization") == 1
         assert [(name, value) for name, value in headers.items() if name.lower() == "x-contextforge-uaid-hop"] == [("X-Contextforge-UAID-Hop", "1")]
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")

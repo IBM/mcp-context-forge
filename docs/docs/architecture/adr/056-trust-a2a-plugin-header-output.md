@@ -4,6 +4,9 @@
 - *Date:* 2026-10-06
 - *Deciders:* Platform Team
 
+!!! note
+    Returning an empty value for a received header is equivalent to omitting it.
+
 ## Context
 
 A2A plugins supply per-call downstream credentials. The existing A2A paths filter returned plugin headers as caller input. This drops plugin credentials and can produce duplicate logical headers when casing differs.
