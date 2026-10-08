@@ -20056,3 +20056,166 @@ async def test_affinity_span_attributes_no_owner(monkeypatch):
 
     assert captured.get("mcp.affinity.owner") == "none"
     assert captured.get("mcp.affinity.decision") == "local"
+
+
+class TestListCacheDirectives:
+    """The modern-path list adapters carry ttlMs (from the catalog TTL) and cacheScope=private."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "adapter, handler, payload, result_type",
+        [
+            ("_adapt_list_tools", "list_tools", [types.Tool(name="t", inputSchema={"type": "object"})], types.ListToolsResult),
+            ("_adapt_list_prompts", "list_prompts", [types.Prompt(name="p")], types.ListPromptsResult),
+            ("_adapt_list_resources", "list_resources", [types.Resource(name="r", uri="test://r")], types.ListResourcesResult),
+            ("_adapt_list_resource_templates", "list_resource_templates", [], types.ListResourceTemplatesResult),
+        ],
+    )
+    async def test_list_adapter_sets_ttl_and_private_scope(self, monkeypatch, adapter, handler, payload, result_type):
+        """Each list result carries the catalog TTL for the request's server scope and cacheScope=private."""
+
+        async def fake_handler():
+            return payload
+
+        ttl = AsyncMock(return_value=123_000)
+        monkeypatch.setattr(tr, handler, fake_handler)
+        monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
+        token = tr._request_server_id_var.set("srv-1")
+        try:
+            result = await getattr(tr, adapter)(object())
+        finally:
+            tr._request_server_id_var.reset(token)
+
+        assert isinstance(result, result_type)
+        assert result.ttl_ms == 123_000
+        assert result.cache_scope == "private"
+        ttl.assert_awaited_once_with("srv-1")
+
+    @pytest.mark.asyncio
+    async def test_discover_carries_the_cache_directive(self, monkeypatch):
+        """server/discover keeps the SDK's answer (versions, capabilities) and adds ttlMs and cacheScope=private."""
+        monkeypatch.setattr(tr, "_catalog_ttl_ms", AsyncMock(return_value=300_000))
+        ctx = SimpleNamespace(protocol_version="2026-07-28")
+
+        result = await tr._adapt_discover_with_ttl_cache_scope(ctx, None)
+
+        assert isinstance(result, types.DiscoverResult)
+        assert "2026-07-28" in result.supported_versions
+        assert result.capabilities is not None
+        assert result.ttl_ms == 300_000
+        assert result.cache_scope == "private"
+
+    @pytest.mark.asyncio
+    async def test_context_resolver_records_the_server_scope(self, monkeypatch):
+        """_get_request_context_or_default stores the resolved server id where the adapters read it."""
+        monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=("srv-9", {}, {})))
+
+        assert await tr._get_request_context_or_default() == ("srv-9", {}, {})
+        assert tr._request_server_id_var.get() == "srv-9"
+
+
+class TestReadCacheDirectives:
+    """resources/read relays the upstream's cache directive; DB-served content gets ttlMs 0 and private."""
+
+    @pytest.mark.asyncio
+    async def test_read_adapter_relays_the_upstream_directive(self, monkeypatch):
+        """When the service recorded an upstream directive, the result carries it."""
+        contents = [types.TextResourceContents(uri="test://r", text="hello")]
+        monkeypatch.setattr(tr, "read_resource", AsyncMock(return_value=contents))
+        token = tr.upstream_read_cache_var.set({"ttl_ms": 60_000, "cache_scope": "public"})
+        try:
+            result = await tr._adapt_read_resource(object(), SimpleNamespace(uri="test://r"))
+        finally:
+            tr.upstream_read_cache_var.reset(token)
+
+        assert result.contents == contents
+        assert result.ttl_ms == 60_000
+        assert result.cache_scope == "public"
+
+    @pytest.mark.asyncio
+    async def test_read_adapter_defaults_when_no_upstream_was_read(self, monkeypatch):
+        """Content served from the gateway's own store: ttlMs 0, cacheScope private, set explicitly."""
+        monkeypatch.setattr(tr, "read_resource", AsyncMock(return_value="hello"))
+        token = tr.upstream_read_cache_var.set(None)
+        try:
+            result = await tr._adapt_read_resource(object(), SimpleNamespace(uri="test://r"))
+        finally:
+            tr.upstream_read_cache_var.reset(token)
+
+        assert result.contents[0].text == "hello"
+        assert result.ttl_ms == 0
+        assert result.cache_scope == "private"
+
+    @pytest.mark.asyncio
+    async def test_read_handler_clears_a_stale_directive_before_reading(self, monkeypatch):
+        """A directive left over from an earlier read in the same context must not leak into this one."""
+        mock_db = MagicMock()
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield mock_db
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=(None, {}, {})))
+        monkeypatch.setattr(tr.resource_service, "read_resource", AsyncMock(return_value=SimpleNamespace(text="hello", blob=None, mime_type="text/plain", meta=None)))
+        token = tr.upstream_read_cache_var.set({"ttl_ms": 999, "cache_scope": "public"})
+        try:
+            await tr.read_resource("test://r")
+            assert tr.upstream_read_cache_var.get() is None
+        finally:
+            tr.upstream_read_cache_var.reset(token)
+
+
+class TestCatalogTtl:
+    """``ttlMs`` for the gateway's lists: the shortest effective refresh interval among the upstreams that feed them."""
+
+    _settings = SimpleNamespace(health_check_interval=60, gateway_auto_refresh_interval=300)
+
+    @staticmethod
+    def _fake_db(monkeypatch, server, intervals):
+        mock_db = MagicMock()
+        mock_db.get.return_value = server
+        mock_db.execute.return_value.scalars.return_value.all.return_value = intervals
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield mock_db
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+        return mock_db
+
+    @staticmethod
+    def _server(*gateway_ids):
+        tools = [SimpleNamespace(gateway_id=gateway_id) for gateway_id in gateway_ids]
+        return SimpleNamespace(tools=tools, resources=[], prompts=[])
+
+    @pytest.mark.asyncio
+    async def test_unscoped_request_uses_the_global_default(self, monkeypatch):
+        """No server scope: the global auto-refresh interval, in milliseconds."""
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
+            assert await tr._catalog_ttl_ms(None) == 300_000
+
+    @pytest.mark.asyncio
+    async def test_scoped_request_takes_the_shortest_effective_interval(self, monkeypatch):
+        """Two upstreams, one overriding to 900s and one on the default: the default wins as the shorter."""
+        self._fake_db(monkeypatch, self._server("gw-a", "gw-b"), intervals=[900, None])
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
+            assert await tr._catalog_ttl_ms("srv-1") == 300_000
+
+    @pytest.mark.asyncio
+    async def test_override_shorter_than_the_health_check_interval_is_floored_to_it(self, monkeypatch):
+        """A 30s override cannot refresh faster than the 60s loop that drives refreshes, so the TTL says 60s."""
+        self._fake_db(monkeypatch, self._server("gw-a"), intervals=[30])
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
+            assert await tr._catalog_ttl_ms("srv-1") == 60_000
+
+    @pytest.mark.asyncio
+    async def test_server_without_upstreams_or_lookup_failure_falls_back_to_the_default(self, monkeypatch):
+        """A server with no federated items, or a failing lookup, never breaks a list: the default applies."""
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
+            self._fake_db(monkeypatch, self._server(), intervals=[])
+            assert await tr._catalog_ttl_ms("srv-1") == 300_000
+
+            mock_db = self._fake_db(monkeypatch, self._server("gw-a"), intervals=[900])
+            mock_db.get.side_effect = RuntimeError("db down")
+            assert await tr._catalog_ttl_ms("srv-1") == 300_000

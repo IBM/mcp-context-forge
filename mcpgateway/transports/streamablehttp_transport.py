@@ -94,7 +94,7 @@ from mcpgateway.services.metrics import (
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, upstream_read_cache_var
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -2351,7 +2351,7 @@ async def call_tool(
         raise
 
 
-async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[str, Any]]:
+async def _resolve_request_context() -> Tuple[str, dict[str, Any], dict[str, Any]]:
     """Retrieves request context information for the current execution.
 
     This function resolves request context using the following precedence:
@@ -2483,6 +2483,17 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     except Exception as e:
         logger.exception("Error recovering context in stateful session: %s", e)
         return s_id, request_headers_var.get(), user_context_var.get()
+
+
+async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[str, Any]]:
+    """Resolve the request context and remember its server scope for the modern-path adapters.
+
+    Returns:
+        Tuple[str, dict[str, Any], dict[str, Any]]: ``(server_id, request_headers, user_context)``.
+    """
+    server_id, request_headers, user_context = await _resolve_request_context()
+    _request_server_id_var.set(server_id)
+    return server_id, request_headers, user_context
 
 
 async def _resolve_jwt_user_email_for_streamable(payload: dict[str, Any]) -> str | None:
@@ -3077,6 +3088,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
         >>> sig.return_annotation
         typing.Union[str, bytes, typing.List[typing.Any]]
     """
+    upstream_read_cache_var.set(None)  # only an upstream read made during this call may set it
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Token scope cap: deny early if scoped permissions exclude resources.read
@@ -3464,6 +3476,10 @@ async def complete(
 # themselves and delete these adapters + the property shim.
 # ============================================================================
 
+# Server scope of the request being served, as resolved by _get_request_context_or_default();
+# the modern-path list adapters read it to size ttlMs. None when unscoped.
+_request_server_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("request_server_id", default=None)
+
 _v2_request_ctx: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
     "_mcpgateway_v2_request_ctx",
     default=None,
@@ -3482,12 +3498,65 @@ if not hasattr(type(mcp_app), "request_context"):
     type(mcp_app).request_context = property(lambda _self: _get_v2_ctx())  # type: ignore[attr-defined]
 
 
+def _upstream_refresh_seconds(override: Optional[int]) -> int:
+    """Seconds between re-syncs of an upstream: its own interval (or the global default), never faster than the health-check interval that drives refreshes.
+
+    Args:
+        override: The upstream's ``refresh_interval_seconds``, or None.
+
+    Returns:
+        int: Seconds.
+    """
+    interval = override if override is not None else settings.gateway_auto_refresh_interval
+    return max(int(settings.health_check_interval), int(interval))
+
+
+async def _catalog_ttl_ms(server_id: Optional[str]) -> int:
+    """``ttlMs`` for a list: the shortest refresh interval among the upstreams feeding it (the global default when unscoped).
+
+    Args:
+        server_id: The virtual server the request is scoped to, or None.
+
+    Returns:
+        int: Milliseconds.
+    """
+    if server_id:
+        try:
+            async with get_db() as db:
+                server = db.get(DbServer, server_id)
+                if server is not None:
+                    gateway_ids = {getattr(item, "gateway_id", None) for group in (server.tools, server.resources, server.prompts) for item in group}
+                    gateway_ids.discard(None)
+                    if gateway_ids:
+                        intervals = db.execute(select(DbGateway.refresh_interval_seconds).where(DbGateway.id.in_(gateway_ids))).scalars().all()
+                        return min(_upstream_refresh_seconds(interval) for interval in intervals) * 1000
+        except Exception:  # noqa: BLE001 — the TTL is advisory; never fail a list over it
+            logger.debug("Could not derive the catalog TTL for server %s; using the global default", server_id, exc_info=True)
+    return _upstream_refresh_seconds(None) * 1000
+
+
+async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> "types.DiscoverResult":
+    """``server/discover`` with the cache directive set: the SDK's default answer plus ttlMs (catalog TTL) and cacheScope=private.
+
+    Args:
+        ctx: SDK request context.
+        params: Request params (unused by the default handler).
+
+    Returns:
+        types.DiscoverResult: The SDK's discover result carrying the cache directive.
+    """
+    result = await mcp_app._handle_discover(ctx, params)  # pylint: disable=protected-access  # the SDK's documented default, overridden here only to add the directive
+    result.ttl_ms = await _catalog_ttl_ms(_request_server_id_var.get())
+    result.cache_scope = "private"
+    return result
+
+
 async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsResult":
     """v2 (ctx, params) -> v1 list_tools() -> ListToolsResult."""
     token = _v2_request_ctx.set(ctx)
     try:
         tools = await list_tools()
-        return types.ListToolsResult(tools=tools)
+        return types.ListToolsResult(tools=tools, ttl_ms=await _catalog_ttl_ms(_request_server_id_var.get()), cache_scope="private")
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3520,7 +3589,7 @@ async def _adapt_list_prompts(ctx: Any, _params: Any = None) -> "types.ListPromp
     token = _v2_request_ctx.set(ctx)
     try:
         prompts = await list_prompts()
-        return types.ListPromptsResult(prompts=prompts)
+        return types.ListPromptsResult(prompts=prompts, ttl_ms=await _catalog_ttl_ms(_request_server_id_var.get()), cache_scope="private")
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3539,7 +3608,7 @@ async def _adapt_list_resources(ctx: Any, _params: Any = None) -> "types.ListRes
     token = _v2_request_ctx.set(ctx)
     try:
         resources = await list_resources()
-        return types.ListResourcesResult(resources=resources)
+        return types.ListResourcesResult(resources=resources, ttl_ms=await _catalog_ttl_ms(_request_server_id_var.get()), cache_scope="private")
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3555,8 +3624,12 @@ async def _adapt_read_resource(ctx: Any, params: Any) -> "types.ReadResourceResu
     try:
         uri = str(params.uri)
         result = await read_resource(uri)
+        # Relay the upstream's cache directive when an upstream was read; content served
+        # from the DB gets the SDK defaults (ttlMs 0) with the scope set explicitly.
+        upstream_cache_directive = upstream_read_cache_var.get() or {}
+        cache = {"ttl_ms": upstream_cache_directive.get("ttl_ms", 0), "cache_scope": upstream_cache_directive.get("cache_scope", "private")}
         if isinstance(result, list):
-            return types.ReadResourceResult(contents=result)
+            return types.ReadResourceResult(contents=result, **cache)
         if isinstance(result, bytes):
             return types.ReadResourceResult(
                 contents=[
@@ -3564,9 +3637,10 @@ async def _adapt_read_resource(ctx: Any, params: Any) -> "types.ReadResourceResu
                         uri=uri,
                         blob=base64.b64encode(result).decode("utf-8"),
                     )
-                ]
+                ],
+                **cache,
             )
-        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, text=str(result))])
+        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, text=str(result))], **cache)
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3580,7 +3654,7 @@ async def _adapt_list_resource_templates(ctx: Any, _params: Any = None) -> "type
     try:
         raw_templates = await list_resource_templates()
         templates = [types.ResourceTemplate.model_validate(t) if isinstance(t, dict) else t for t in raw_templates]
-        return types.ListResourceTemplatesResult(resourceTemplates=templates)
+        return types.ListResourceTemplatesResult(resourceTemplates=templates, ttl_ms=await _catalog_ttl_ms(_request_server_id_var.get()), cache_scope="private")
     finally:
         _v2_request_ctx.reset(token)
 
@@ -3597,6 +3671,7 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
 
 # Register all handlers via the v2 add_request_handler API. set_logging_level
 # was already migrated to (_ctx, params) form so it registers directly.
+mcp_app.add_request_handler("server/discover", types.RequestParams, _adapt_discover_with_ttl_cache_scope)
 mcp_app.add_request_handler("tools/list", types.PaginatedRequestParams, _adapt_list_tools)
 mcp_app.add_request_handler("tools/call", types.CallToolRequestParams, _adapt_call_tool)
 mcp_app.add_request_handler("prompts/list", types.PaginatedRequestParams, _adapt_list_prompts)
