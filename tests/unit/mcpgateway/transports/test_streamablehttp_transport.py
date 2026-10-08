@@ -38,6 +38,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp_types import PromptArgument
 import mcp_types as types
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
 import pytest
 from starlette.types import Scope
@@ -109,6 +110,46 @@ def test_streamable_server_capabilities_advertise_mcp_apps(monkeypatch):
         user_context_var.reset(token)
 
     assert MCP_UI_EXTENSION in capabilities.extensions
+
+
+@pytest.mark.parametrize("protocol_version", MODERN_PROTOCOL_VERSIONS)
+def test_streamable_server_capabilities_hide_logging_for_modern_protocols(protocol_version):
+    """Modern capability derivation does not advertise deprecated logging."""
+    capabilities = tr.mcp_app.get_capabilities(protocol_version=protocol_version)
+
+    assert capabilities.logging is None
+
+
+@pytest.mark.parametrize("protocol_version", (*HANDSHAKE_PROTOCOL_VERSIONS, None, "1999-01-01"))
+def test_streamable_server_capabilities_keep_logging_for_legacy_protocols(protocol_version):
+    """Legacy, absent, and unknown protocol versions keep the logging capability."""
+    capabilities = tr.mcp_app.get_capabilities(protocol_version=protocol_version)
+
+    assert isinstance(capabilities.logging, types.LoggingCapability)
+
+
+def test_streamable_server_capabilities_modern_keep_mcp_apps_and_hide_logging(monkeypatch):
+    """Modern capability derivation keeps MCP Apps extensions and hides logging."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+    token = user_context_var.set({"email": "admin@example.com", "is_admin": True})
+    try:
+        capabilities = tr.mcp_app.get_capabilities(protocol_version="2026-07-28")
+    finally:
+        user_context_var.reset(token)
+
+    assert capabilities.extensions is not None
+    assert MCP_UI_EXTENSION in capabilities.extensions
+    assert capabilities.logging is None
+
+
+async def test_streamable_server_discover_omits_logging_key_for_modern_protocol():
+    """Modern server/discover omits the logging key from the serialized result."""
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        raw_result = await modern_client.session.send_discover("2026-07-28")
+
+    assert "tools" in raw_result["capabilities"]
+    assert "logging" not in raw_result["capabilities"]
 
 
 # ---------------------------------------------------------------------------

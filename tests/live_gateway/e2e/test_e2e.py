@@ -60,9 +60,11 @@ import uuid
 import httpx
 import httpx2
 from mcp import ClientSession, MCPError as McpError
+from mcp.client import Client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.server.mcpserver import MCPServer
 from mcp.types import PaginatedRequestParams
+from mcp_types import LoggingMessageNotificationParams
 import pytest
 import uvicorn
 
@@ -130,6 +132,11 @@ _MCP_APPS_E2E_ENABLED = os.getenv("MCPGATEWAY_MCP_APPS_ENABLED", "false").strip(
 skip_no_mcp_apps = pytest.mark.skipif(
     not _MCP_APPS_E2E_ENABLED,
     reason="MCP Apps E2E requires a gateway started with MCPGATEWAY_MCP_APPS_ENABLED=true",
+)
+_MODERN_INBOUND_E2E_ENABLED = os.getenv("MCP_INBOUND_PROTOCOL_MODE", "legacy").strip().lower() == "auto"
+skip_no_modern_inbound = pytest.mark.skipif(
+    not _MODERN_INBOUND_E2E_ENABLED,
+    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto and RUST_MCP_MODE=off",
 )
 
 
@@ -372,6 +379,40 @@ class TestConnectivity:
         assert caps.prompts is not None, f"prompts capability missing: {caps}"
         advertised = [k for k in ("tools", "resources", "prompts", "logging", "completions") if getattr(caps, k, None) is not None]
         print(f"    -> Capabilities: {advertised}")
+
+    @skip_no_modern_inbound
+    @pytest.mark.flaky(reruns=1, reruns_delay=2)
+    async def test_modern_logging_is_not_advertised_or_emitted(self, jwt_token: str, mcp_url: str) -> None:
+        """Modern discovery omits logging, and debug opt-in requests receive no log message."""
+        received: list[LoggingMessageNotificationParams] = []
+
+        async def _collect(params: LoggingMessageNotificationParams) -> None:
+            received.append(params)
+
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        transport = streamable_http_client(mcp_url, http_client=http_client)
+        async with Client(transport, mode="2026-07-28", cache=None, log_level="debug", logging_callback=_collect) as modern_client:
+            raw_result = await modern_client.session.send_discover("2026-07-28")
+            assert "tools" in raw_result["capabilities"], f"unexpected discover result: {raw_result}"
+            assert "logging" not in raw_result["capabilities"], f"logging advertised to modern client: {raw_result['capabilities']}"
+
+            tools = (await modern_client.list_tools()).tools
+            assert any(tool.name == "a2a-a2a-echo-agent" for tool in tools), "echo agent tool unavailable for the modern call check"
+            tool_result = await modern_client.call_tool("a2a-a2a-echo-agent", {"query": "modern logging check"})
+            assert tool_result.is_error is False, f"modern tools/call failed (upstream may be down): {tool_result.content}"
+
+            for resource in (await modern_client.list_resources()).resources[:3]:
+                with suppress(McpError):
+                    await modern_client.read_resource(resource.uri)
+
+            for prompt in (await modern_client.list_prompts()).prompts:
+                if all(not argument.required for argument in prompt.arguments or []):
+                    with suppress(McpError):
+                        await modern_client.get_prompt(prompt.name)
+                    break
+
+        assert received == [], f"modern client received log notifications: {received}"
+        print(f"    -> Modern capabilities: {sorted(raw_result['capabilities'])}")
 
     async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""

@@ -1633,6 +1633,20 @@ class TestUtilityAPIs:
         result = response.json()
         assert result == {"jsonrpc": "2.0", "result": {}, "id": "test-123"}  # ping returns empty result
 
+    async def test_rpc_initialize_hides_logging_for_modern_protocol(self, client: AsyncClient, mock_auth):
+        """Test POST /rpc omits deprecated logging for modern MCP clients."""
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {"protocolVersion": "2026-07-28", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}},
+            "id": "modern-initialize",
+        }
+
+        response = await client.post("/rpc", json=rpc_request, headers=TEST_AUTH_HEADER)
+
+        assert response.status_code == 200
+        assert "logging" not in response.json()["result"]["capabilities"]
+
     async def test_rpc_list_tools(self, client: AsyncClient, mock_auth):
         """Test POST /rpc - tools/list method."""
         rpc_request = {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1}
