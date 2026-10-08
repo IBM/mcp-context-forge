@@ -2634,6 +2634,7 @@ version = "1.0.11"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "anyio" },
     { name = "argon2-cffi" },
     { name = "base58" },
     { name = "brotli" },
@@ -2832,6 +2833,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'aiosqlite'", specifier = ">=0.22.1" },
     { name = "alembic", specifier = ">=1.19.1" },
+    { name = "anyio", specifier = ">=4.15.0" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.31.0" },
     { name = "base58", specifier = ">=2.1.1" },
