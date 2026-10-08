@@ -4702,7 +4702,7 @@ class ToolService(BaseService):
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
-            tool, multiple_found = await self._select_invocable_tool(
+            tool, caller_dependent_resolution = await self._select_invocable_tool(
                 db,
                 name,
                 user_email=user_email,
@@ -4710,7 +4710,7 @@ class ToolService(BaseService):
                 server_id=server_id,
             )
             tool_membership_verified = bool(server_id)
-            negative_cache_allowed = not multiple_found
+            negative_cache_allowed = not caller_dependent_resolution
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
@@ -4730,7 +4730,7 @@ class ToolService(BaseService):
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+            if not caller_dependent_resolution and (server_id or tool_payload.get("visibility") == "public"):
                 gateway_id = tool_payload.get("gateway_id")
                 if server_id:
                     await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
@@ -5269,7 +5269,8 @@ class ToolService(BaseService):
             server_id: Optional virtual server identifier restricting candidates.
 
         Returns:
-            The selected tool and whether its lookup contained multiple raw candidates.
+            The selected tool and whether its resolution depends on caller-visible
+            candidates and therefore must not be shared through the lookup cache.
 
         Raises:
             ToolNotFoundError: If no accessible candidate exists.
@@ -5298,21 +5299,24 @@ class ToolService(BaseService):
 
         accessible_exact = await accessible_tools(exact_candidates)
         if accessible_exact:
-            multiple_found = len(exact_candidates) > 1
+            caller_dependent_resolution = len(exact_candidates) > 1
             visibility_priority = {"team": 0, "private": 1, "public": 2}
             best_priority = min(visibility_priority.get(candidate.visibility, 99) for candidate in accessible_exact)
             best_tools = [candidate for candidate in accessible_exact if visibility_priority.get(candidate.visibility, 99) == best_priority]
             if len(best_tools) > 1:
                 raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-            return best_tools[0], multiple_found
+            return best_tools[0], caller_dependent_resolution
 
         if server_id:
             fallback_candidates = self._load_invocable_tools(db, name, server_id=server_id, match_original_name=True)
             accessible_fallback = await accessible_tools(fallback_candidates)
             if len(accessible_fallback) > 1:
-                raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
+                raise ToolInvocationError(f"Multiple tools attached to this server share the upstream name '{name}'. Use a qualified tool name to select one.")
             if accessible_fallback:
-                return accessible_fallback[0], len(fallback_candidates) > 1
+                # Even an inaccessible exact-name candidate makes this fallback
+                # caller-dependent. Caching it would let a later caller who can
+                # access the exact candidate incorrectly reuse the fallback.
+                return accessible_fallback[0], bool(exact_candidates) or len(fallback_candidates) > 1
 
         raise ToolNotFoundError(f"Tool not found: {name}")
 
@@ -5600,7 +5604,7 @@ class ToolService(BaseService):
         if not tool_payload:
             # Each resolution stage eager-loads the gateway and uses scalars().all()
             # so duplicate names across teams remain deterministic.
-            tool, multiple_found = await self._select_invocable_tool(
+            tool, caller_dependent_resolution = await self._select_invocable_tool(
                 db,
                 name,
                 user_email=user_email,
@@ -5608,7 +5612,7 @@ class ToolService(BaseService):
                 server_id=server_id,
             )
             tool_membership_verified = bool(server_id)
-            negative_cache_allowed = not multiple_found
+            negative_cache_allowed = not caller_dependent_resolution
 
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -5629,9 +5633,9 @@ class ToolService(BaseService):
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            # Skip caching when multiple tools share a name — resolution is
-            # user-dependent, so a cached result could be wrong for other users.
-            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+            # Skip caching when candidate visibility makes resolution caller-dependent;
+            # a shared result could route a later caller to the wrong tool.
+            if not caller_dependent_resolution and (server_id or tool_payload.get("visibility") == "public"):
                 gateway_id = tool_payload.get("gateway_id")
                 if server_id:
                     await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)

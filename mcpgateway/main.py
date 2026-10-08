@@ -11622,7 +11622,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _tools_call_permission_checked = True
             auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
             try:
-                await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
+                await server_service.ensure_server_access(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
             except ServerNotFoundError as exc:
                 raise JSONRPCError(-32002, f"Server not found: {server_id}", {"server_id": server_id}) from exc
 
