@@ -122,6 +122,59 @@ class A2AServerService:
         if not _check_server_access(server, user_email, token_teams):
             return None
 
+        return self._build_server_card(db, server)
+
+    def get_server_agent_card_by_id(
+        self,
+        db: Session,
+        server_id: str,
+        *,
+        user_email: Optional[str] = None,
+        token_teams: Optional[list[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build an A2A v1 AgentCard for the virtual server with the given ID.
+
+        Mirrors :meth:`get_server_agent_card`, looking the server up by ID
+        instead of name. Used by the public ``GET /v1/a2a/{agent_id}/card``
+        route, which shares an ID namespace with standalone A2A agents.
+
+        Args:
+            db: Database session.
+            server_id: ID of the virtual server.
+            user_email: Caller's email for visibility scoping.
+            token_teams: Caller's teams for visibility scoping.
+
+        Returns:
+            AgentCard dict, or None if the server does not exist, is disabled,
+            is not visible to the caller, or has no enabled A2A interface.
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> service = A2AServerService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> service.get_server_agent_card_by_id(db, "no-such-server") is None
+            True
+        """
+        server_query = select(DbServer).where(DbServer.id == server_id, DbServer.enabled.is_(True))
+        server = db.execute(server_query).scalar_one_or_none()
+        if not server:
+            return None
+        if not _check_server_access(server, user_email, token_teams):
+            return None
+
+        return self._build_server_card(db, server)
+
+    def _build_server_card(self, db: Session, server: DbServer) -> Optional[Dict[str, Any]]:
+        """Build the AgentCard dict for an already-resolved, visible server.
+
+        Args:
+            db: Database session.
+            server: The enabled, visibility-checked server row.
+
+        Returns:
+            AgentCard dict, or None if the server has no enabled A2A interface.
+        """
         interface = self._find_a2a_interface(db, server.id)
         if not interface:
             return None
