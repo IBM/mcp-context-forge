@@ -27,6 +27,8 @@
 
 ### Security
 
+- **A2A agent and gateway credential rotation no longer fails silently** ([#6704](https://github.com/IBM/mcp-context-forge/issues/6704)) - `A2AAgentRead` and `GatewayRead` already masked stored `auth_password`/`auth_token`/`auth_header_value` before returning them through `a2a.read`/`gateways.read`; that contract is now documented and covered by regression tests for basic, bearer, and authheaders auth types. Fixed two related update-path bugs found during the audit: submitting `auth_password`/`auth_token`/`auth_header_value` without resubmitting `auth_type` used to silently keep the old A2A agent credential active, or silently wipe the gateway's stored credential entirely. `PUT /a2a/{agent_id}` and `PUT /gateways/{gateway_id}` (and the admin UI equivalents) now reject that combination with a 422 instead. Also fixed: updating an A2A agent's basic/bearer credential with a real new value never persisted it at all; it does now.
+
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
 
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage

@@ -3227,8 +3227,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         else:
                             header_dict[key] = value
                     gateway.auth_value = header_dict  # Store as dict for DB JSON field
-                elif settings.masked_auth_value not in (token, password, header_value):
-                    # Check if values differ from existing ones or if setting for first time
+                elif (gateway_update.auth_type is not None or token is not None or password is not None or header_value is not None) and settings.masked_auth_value not in (
+                    token,
+                    password,
+                    header_value,
+                ):
+                    # Only recompute auth_value when the caller actually submitted an
+                    # auth-related field. Without this guard, an update that only
+                    # touches an unrelated field (e.g. description) would still fall
+                    # through here with token/password/header_value all None, decode
+                    # a None auth_value to {}, and wipe the gateway's stored credential.
                     decoded_auth = decode_auth(gateway_update.auth_value) if gateway_update.auth_value else {}
                     current_auth = getattr(gateway, "auth_value", {}) or {}
                     if current_auth != decoded_auth:

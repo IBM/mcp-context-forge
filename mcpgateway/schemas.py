@@ -3990,6 +3990,27 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_auth_type_required_for_credential_rotation(self) -> "GatewayUpdate":
+        """Require `auth_type` when rotating a single-value credential field.
+
+        `auth_value` is only computed by `create_auth_value` when `auth_type` is present
+        in the request. Submitting `auth_token`/`auth_password`/`auth_header_value`
+        without `auth_type` left `GatewayService.update_gateway` unable to distinguish
+        "rotate the credential" from "leave it alone" and silently wiped the existing
+        credential to an empty value (issue #6704 follow-up). Reject the ambiguous
+        request instead of guessing.
+
+        Returns:
+            GatewayUpdate: The validated instance.
+
+        Raises:
+            ValueError: If a single-value credential field is set without `auth_type`.
+        """
+        if self.auth_type is None and any(v is not None for v in (self.auth_token, self.auth_password, self.auth_header_value)):
+            raise ValueError("auth_type is required when setting auth_token, auth_password, or auth_header_value.")
+        return self
+
 
 class GatewayOwnershipTransferRequest(BaseModel):
     """Request to transfer gateway ownership to another user."""
@@ -4220,6 +4241,14 @@ class GatewayRead(BaseModelWithConfigDict):
         - basic: Extracts username and password from Authorization header
         - bearer: Extracts token from Bearer Authorization header
         - authheaders: Extracts custom header key/value pair
+
+        Security (issue #6704): this validator intentionally decodes the real credential.
+        It never returns this instance to an API caller directly. Call `masked()` first.
+        `GatewayService.convert_gateway_to_read()` calls `masked()` on every path that
+        returns a gateway through `gateways.read`, so a caller holding only
+        `gateways.read` never receives a usable credential. `A2AAgentRead` repeats this
+        same contract for A2A agents; see `A2AAgentRead._populate_auth` and
+        `A2AAgentRead.masked`.
 
         Returns:
             Self: The instance with populated authentication fields:
@@ -5943,6 +5972,27 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_auth_type_required_for_credential_rotation(self) -> "A2AAgentUpdate":
+        """Require `auth_type` when rotating a single-value credential field.
+
+        `auth_value` is only computed by `create_auth_value` when `auth_type` is present
+        in the request. Submitting `auth_token`/`auth_password`/`auth_header_value`
+        without `auth_type` left `A2AAgentService.update_agent` unable to distinguish
+        "rotate the credential" from "leave it alone" and silently kept the old
+        credential active with no error (issue #6704 follow-up). Reject the ambiguous
+        request instead of guessing.
+
+        Returns:
+            A2AAgentUpdate: The validated instance.
+
+        Raises:
+            ValueError: If a single-value credential field is set without `auth_type`.
+        """
+        if self.auth_type is None and any(v is not None for v in (self.auth_token, self.auth_password, self.auth_header_value)):
+            raise ValueError("auth_type is required when setting auth_token, auth_password, or auth_header_value.")
+        return self
+
 
 class A2AAgentRead(BaseModelWithConfigDict):
     """Schema for reading A2A agent information.
@@ -6097,6 +6147,13 @@ class A2AAgentRead(BaseModelWithConfigDict):
         - basic: Extracts username and password from Authorization header
         - bearer: Extracts token from Bearer Authorization header
         - authheaders: Extracts custom header key/value pair
+
+        Security (issue #6704): this validator intentionally decodes the real credential.
+        It never returns this instance to an API caller directly. Call `masked()` first.
+        `A2AAgentService.convert_agent_to_read()` calls `masked()` on every path that
+        returns an A2A agent through `a2a.read`, so a caller holding only `a2a.read`
+        never receives a usable credential. `GatewayRead` repeats this same contract
+        for registered gateways; see `GatewayRead._populate_auth` and `GatewayRead.masked`.
 
         Returns:
             Self: The instance with populated authentication fields:
