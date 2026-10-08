@@ -2071,8 +2071,9 @@ async def call_tool(
 
             pool = get_session_affinity()
 
-            # Register session mapping BEFORE checking forwarding (same pattern as SSE)
-            # This ensures ownership is registered atomically so forward_request_to_owner() works
+            # Register session mapping BEFORE checking forwarding (same pattern as SSE).
+            # Cached metadata is only a routing hint. Owner-worker execution still runs
+            # ToolService resolution, Layer 1 visibility, and Layer 2 RBAC checks.
             try:
                 cached = await tool_lookup_cache.get(name, server_id=server_id)
                 if cached and cached.get("status") == "active":

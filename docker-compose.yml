@@ -258,6 +258,8 @@ services:
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
+      - TOOL_LOOKUP_CACHE_ENABLED=${TOOL_LOOKUP_CACHE_ENABLED:-true}
+      - TOOL_LOOKUP_CACHE_L2_ENABLED=${TOOL_LOOKUP_CACHE_L2_ENABLED:-true}
       # - REDIS_URL=rediss://redis:6380/0  # Redis with TLS (uncomment and configure certs for production)
       - REDIS_URL=redis://redis:6379/0
       # Redis TLS (disabled by default for local dev).

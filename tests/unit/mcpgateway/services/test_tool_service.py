@@ -11161,6 +11161,34 @@ class TestRustMcpExecutionPlan:
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
     @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_deprecated_db_tool(self, tool_service):
+        """Rust plan resolution must reject deprecated tools loaded from the database."""
+        cache = self._cache_mock(None)
+        tool = SimpleNamespace(
+            id="tool-1",
+            enabled=True,
+            deprecated=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway_id="gw-1",
+            gateway=SimpleNamespace(),
+        )
+        payload = self._cache_payload(deprecated=True)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=payload),
+        ):
+            with pytest.raises(ToolInvocationError, match="deprecated"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        caller_scope = tool_service._negative_cache_caller_scope(None, None)
+        cache.set_negative.assert_awaited_once_with("tool-one", "deprecated", caller_scope, gateway_id="gw-1", server_id=None)
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_caches_global_offline_result_with_gateway(self, tool_service):
         """Global offline lookups cache caller-scoped negatives with their gateway."""
         cache = self._cache_mock(None)
@@ -11305,6 +11333,85 @@ class TestRustMcpExecutionPlan:
         cache.set.assert_awaited_once_with("shared-tool", tenant_a_payload, gateway_id="gw-a", server_id="server-a")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("resolution_path", ["python", "rust"])
+    @pytest.mark.parametrize("invocation_order", [("tenant-a", "tenant-b"), ("tenant-b", "tenant-a")])
+    async def test_resolution_paths_isolate_same_name_private_tools_in_both_orders(self, tool_service, resolution_path, invocation_order):
+        """Both resolution paths must keep same-name private tools server-scoped."""
+        cache = ToolLookupCache()
+        cache._enabled = True
+        cache._l2_enabled = False
+        tenants = {
+            "tenant-a": {"server_id": "server-a", "tool_id": "tool-a", "gateway_id": "gw-a", "email": "a@example.com", "team_id": "team-a"},
+            "tenant-b": {"server_id": "server-b", "tool_id": "tool-b", "gateway_id": "gw-b", "email": "b@example.com", "team_id": "team-b"},
+        }
+        tools = {}
+        payloads = {}
+        for tenant in tenants.values():
+            gateway = SimpleNamespace(id=tenant["gateway_id"], auth_value=None, auth_query_params=None, oauth_config=None)
+            tools[tenant["server_id"]] = SimpleNamespace(
+                id=tenant["tool_id"],
+                name="shared-tool",
+                enabled=True,
+                deprecated=False,
+                reachable=True,
+                visibility="private",
+                team_id=tenant["team_id"],
+                owner_email=tenant["email"],
+                gateway_id=tenant["gateway_id"],
+                gateway=gateway,
+            )
+            payloads[tenant["tool_id"]] = self._cache_payload(
+                id=tenant["tool_id"],
+                visibility="private",
+                owner_email=tenant["email"],
+                team_id=tenant["team_id"],
+                gateway_id=tenant["gateway_id"],
+                gateway={"id": tenant["gateway_id"]},
+            )
+
+        def _load_tool(_db, _name, server_id=None):
+            return [tools[server_id]]
+
+        def _build_payload(tool, _gateway):
+            return payloads[tool.id]
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch.object(tool_service, "_load_invocable_tools", side_effect=_load_tool),
+            patch.object(tool_service, "_build_tool_cache_payload", side_effect=_build_payload),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            for tenant_label in invocation_order:
+                tenant = tenants[tenant_label]
+                if resolution_path == "python":
+                    resolved = await tool_service._resolve_tool_for_invocation(
+                        MagicMock(),
+                        "shared-tool",
+                        None,
+                        tenant["email"],
+                        [tenant["team_id"]],
+                        tenant["server_id"],
+                        False,
+                        False,
+                    )
+                    assert resolved.tool_payload["id"] == tenant["tool_id"]
+                else:
+                    plan = await tool_service.prepare_rust_mcp_tool_execution(
+                        MagicMock(),
+                        "shared-tool",
+                        user_email=tenant["email"],
+                        token_teams=[tenant["team_id"]],
+                        server_id=tenant["server_id"],
+                    )
+                    assert plan["toolId"] == tenant["tool_id"]
+
+        for tenant in tenants.values():
+            cached = await cache.get("shared-tool", server_id=tenant["server_id"])
+            assert cached["tool"]["id"] == tenant["tool_id"]
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_falls_back_for_server_scoped_cached_payload_without_tool_id(self, tool_service):
         """Malformed server-scoped cache entries must fall through to the DB lookup."""
         cache = self._cache_mock(self._cache_payload(id=None))
@@ -11319,6 +11426,47 @@ class TestRustMcpExecutionPlan:
         ):
             with pytest.raises(ToolNotFoundError, match="Tool not found"):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="srv-1")
+
+        load_invocable_tools.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_python_resolution_falls_back_for_server_scoped_cached_payload_without_tool_id(self, tool_service):
+        """Python resolution must ignore malformed scoped cache data and use the database."""
+        cache = self._cache_mock(self._cache_payload(id=None))
+        database_tool = SimpleNamespace(
+            id="tool-db",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway_id="gw-1",
+            gateway=SimpleNamespace(id="gw-1"),
+        )
+        database_payload = self._cache_payload(id="tool-db")
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[database_tool]) as load_invocable_tools,
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=database_payload),
+        ):
+            resolved = await tool_service._resolve_tool_for_invocation(MagicMock(), "tool-one", None, None, None, "srv-1", False, False)
+
+        assert resolved.tool_payload["id"] == "tool-db"
+        load_invocable_tools.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_python_resolution_fails_closed_for_cached_payload_without_tool_id(self, tool_service):
+        """Python resolution must fail closed when malformed cache data has no database match."""
+        cache = self._cache_mock(self._cache_payload(id=None))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]) as load_invocable_tools,
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service._resolve_tool_for_invocation(MagicMock(), "tool-one", None, None, None, "srv-1", False, False)
 
         load_invocable_tools.assert_called_once()
 
