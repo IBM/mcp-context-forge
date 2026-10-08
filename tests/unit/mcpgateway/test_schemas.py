@@ -55,6 +55,8 @@ def test_root_create_rejects_unknown_fields():
         RootCreate(uri="https://example.com/root", unexpected=True)
 
     assert excinfo.value.errors()[0]["type"] == "extra_forbidden"
+
+
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,

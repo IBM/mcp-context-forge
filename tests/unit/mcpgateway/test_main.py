@@ -3018,7 +3018,6 @@ class TestRootEndpoints:
         endpoint_logs = [record.getMessage() for record in caplog.records if record.name == "mcpgateway" and record.levelno >= logging.ERROR]
         assert endpoint_logs == ["Failed to remove root"]
 
-
     @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, _mock_root_admin, test_client, auth_headers):
@@ -3278,6 +3277,7 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
     def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
         """Test resources/read returns -32000 when ResourceError is raised."""
@@ -3317,7 +3317,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -3409,6 +3408,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
         """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
@@ -3469,7 +3469,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):
@@ -6384,11 +6383,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, 
 
     # Verify the warning was logged with correct calculation
     # workers=4, pool_size=50, max_overflow=10 -> total_pool=60, total_connections=240
-    warning_found = any(
-        "DATABASE POOL: Running with 4 gunicorn workers" in record.message
-        and "240" in record.message
-        for record in caplog.records
-    )
+    warning_found = any("DATABASE POOL: Running with 4 gunicorn workers" in record.message and "240" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
 
 
@@ -6461,11 +6456,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
         async with main_mod.lifespan(main_mod.app):
             await asyncio.sleep(0)
 
-    warning_found = any(
-        "DATABASE POOL: Running with 13 gunicorn workers" in record.message
-        and "1560" in record.message
-        for record in caplog.records
-    )
+    warning_found = any("DATABASE POOL: Running with 13 gunicorn workers" in record.message and "1560" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
 
 
