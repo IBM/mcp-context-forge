@@ -96,6 +96,32 @@ def test_ui_base_url_allows_path_prefix():
     assert str(configured.ui_base_url) == "https://ui.example.com/contextforge"
 
 
+@pytest.mark.parametrize(
+    "suffix, expected",
+    [
+        ("/app", "/"),
+        ("/app/", "/"),
+        ("/contextforge/app/", "/contextforge"),
+        ("/app/app", "/app"),
+        ("/app/app/", "/app"),
+        ("/contextforge/app/app", "/contextforge/app"),
+        ("/contextforge/app/app/app/", "/contextforge/app/app"),
+    ],
+)
+def test_ui_base_url_removes_only_frontend_mount(caplog, suffix, expected):
+    """Full frontend roots retain deployment path segments named app."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+    configured = Settings(ui_base_url=f"https://ui.example.com{suffix}", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == f"https://ui.example.com{expected}"
+    assert "removing the trailing /app" in caplog.text
+
+
+def test_ui_base_url_preserves_similar_path():
+    """Deployment prefixes that merely contain app remain unchanged."""
+    configured = Settings(ui_base_url="https://ui.example.com/myapp", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == "https://ui.example.com/myapp"
+
+
 def test_ui_base_url_treats_blank_string_as_unset():
     """Blank environment override preserves gateway UI fallback behavior."""
     configured = Settings(ui_base_url="", environment="development", _env_file=None)
@@ -106,7 +132,7 @@ def test_ui_base_url_treats_blank_string_as_unset():
     ("admin_api_enabled", "expected_password_route"),
     [
         (True, "legacy /admin routes"),
-        (False, "frontend /forgot-password and /reset-password/{token} routes"),
+        (False, "frontend /app/forgot-password and /app/reset-password/{token} routes"),
     ],
 )
 def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_enabled, expected_password_route):
@@ -117,7 +143,7 @@ def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_
 
     warnings = [record.getMessage() for record in caplog.records]
     assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
-    assert any("/accept-invitation/{token}" in message for message in warnings)
+    assert any("/app/accept-invitation/{token}" in message for message in warnings)
     assert any(expected_password_route in message for message in warnings)
 
 
