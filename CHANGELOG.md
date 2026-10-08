@@ -29,6 +29,13 @@
 
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
 
+## [Unreleased]
+
+### Fixed
+
+- **Modern MCP clients no longer see the deprecated logging capability** ([#6630](https://github.com/IBM/mcp-context-forge/issues/6630), [#6631](https://github.com/IBM/mcp-context-forge/issues/6631)) - `server/discover` responses for `2026-07-28` clients now omit `capabilities.logging`. MCP 2026-07-28 deprecates that capability (SEP-2577), and ContextForge sends no request-scoped log messages. Clients on `2025-11-25` and older still receive the capability and can call `logging/setLevel`. Use OpenTelemetry and structured logging for gateway observability. Modern clients reach the gateway only when `MCP_INBOUND_PROTOCOL_MODE=auto`; `docker-compose.yml` now passes that variable to the gateway, with a `legacy` default.
+
+
 ## [1.0.11] - 2026-09-28 - MCP Python SDK 2.x, Tool Preview, SSO Controls, and Live E2E Coverage
 
 ### Overview
@@ -51,6 +58,8 @@ Release 1.0.11 consolidates **57 PRs** focused on **the MCP Python SDK 2.x migra
 - **`APP_DOMAIN`-derived server URL** ([#6656](https://github.com/IBM/mcp-context-forge/pull/6656)) - `ServerRead` exposes a `url` built from `APP_DOMAIN`, so clients behind ingress proxies receive a reachable address.
 
 #### **Security & Auth**
+
+- **`private_key_jwt` token endpoint client authentication** ([#6988](https://github.com/IBM/mcp-context-forge/issues/6988)) - `oauth_config.token_endpoint_auth_method` now supports RFC 7523 `private_key_jwt`. Token requests on the client-credentials, authorization-code, refresh, and password flows include `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and a signed `client_assertion` carrying `iss`, `sub`, `aud`, `iat`, `exp`, `jti`, and an optional `kid`. Configuration is validated at the API boundary, and an unknown method now fails closed instead of silently falling back to `client_secret_post`. Supported signing algorithms are asymmetric only (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`); `token_endpoint_auth_signing_alg` and `private_key_jwt_kid` are optional.
 
 - **Passwordless SSO-only users** ([#6603](https://github.com/IBM/mcp-context-forge/pull/6603)) - Users provisioned through SSO exist without a local password instead of carrying an unusable placeholder credential.
 - **`SSO_ALLOW_PROVIDER_LINKING`** ([#6616](https://github.com/IBM/mcp-context-forge/pull/6616)) - Explicit, fail-closed setting (default `false`) that gates cross-provider sign-in for an already-linked email.

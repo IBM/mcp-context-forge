@@ -943,6 +943,7 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
+	@echo "   Modern MCP: set MCP_INBOUND_PROTOCOL_MODE=auto (with RUST_MCP_MODE=off) for both testing-up and this target; select with K=modern_logging"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
@@ -999,6 +1000,13 @@ test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] again
 	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
 		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
 	@echo "✅ OAuth status live tests passed!"
+
+test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt token auth against a running gateway
+	@echo "🧪 Running private_key_jwt live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack; stub AS/upstream run on host.docker.internal"
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
+		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
+	@echo "✅ private_key_jwt live tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."

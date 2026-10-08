@@ -55,7 +55,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import mcp_types as types
 from mcp_types import JSONRPCMessage
-from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 import orjson
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -461,8 +461,15 @@ class ContextForgeMCPServer(Server[Any]):
         *,
         protocol_version: Optional[str] = None,
     ) -> types.ServerCapabilities:
-        """Return SDK capabilities plus enabled ContextForge MCP extensions."""
+        """Return SDK capabilities plus enabled ContextForge MCP extensions.
+
+        Modern protocol versions omit the logging capability. MCP 2026-07-28
+        deprecates it (SEP-2577), and ContextForge sends no request-scoped logs.
+        The SDK derives it from the legacy ``logging/setLevel`` handler only.
+        """
         capabilities = super().get_capabilities(notification_options, experimental_capabilities, extensions, protocol_version=protocol_version)
+        if protocol_version in MODERN_PROTOCOL_VERSIONS:
+            capabilities.logging = None
         user_context = user_context_var.get()
         extra_extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
         if extra_extensions:
