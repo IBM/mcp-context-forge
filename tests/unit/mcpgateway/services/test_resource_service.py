@@ -15,11 +15,12 @@ This suite provides complete test coverage for:
 """
 
 # Standard
-from datetime import datetime, timezone
 import base64
+from datetime import datetime, timezone
 import logging
 import mimetypes
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -9074,3 +9075,35 @@ class TestResourceUriUniquenessScope:
         result = await service.update_resource(db, target.id, ResourceUpdate(name="Original"))
 
         assert result.name == "Original"
+
+
+class TestUpstreamReadCacheDirective:
+    """The cache directive of an upstream read is kept for the read adapter; cacheScope never wider than the gateway's own visibility."""
+
+    def _directive(self, result, resource):
+        # First-Party
+        from mcpgateway.services.resource_service import _set_upstream_cache_directive, upstream_read_cache_var
+
+        token = upstream_read_cache_var.set(None)
+        try:
+            _set_upstream_cache_directive(result, resource)
+            return upstream_read_cache_var.get()
+        finally:
+            upstream_read_cache_var.reset(token)
+
+    def test_modern_upstream_public_on_a_public_resource_stays_public(self):
+        """Upstream says public and the gateway's visibility is public: relay both fields as they are."""
+        result = SimpleNamespace(contents=[], ttl_ms=60_000, cache_scope="public")
+
+        assert self._directive(result, SimpleNamespace(visibility="public")) == {"ttl_ms": 60_000, "cache_scope": "public"}
+
+    @pytest.mark.parametrize("visibility", ["team", "private", None])
+    def test_modern_upstream_public_on_a_restricted_resource_is_clamped_to_private(self, visibility):
+        """The gateway adds access control the upstream does not know about, so public is narrowed to private."""
+        result = SimpleNamespace(contents=[], ttl_ms=60_000, cache_scope="public")
+
+        assert self._directive(result, SimpleNamespace(visibility=visibility)) == {"ttl_ms": 60_000, "cache_scope": "private"}
+
+    def test_legacy_upstream_without_the_fields_gives_the_defaults(self):
+        """A 2025-era upstream sends neither field: ttlMs 0, private."""
+        assert self._directive(SimpleNamespace(contents=[]), SimpleNamespace(visibility="public")) == {"ttl_ms": 0, "cache_scope": "private"}
