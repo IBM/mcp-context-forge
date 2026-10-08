@@ -375,64 +375,23 @@ def stub_services(monkeypatch):
     monkeypatch.setattr(f"{mod}.resource_service.list_server_resources", _return_items, raising=False)
 
 
-def test_redis_importerror_isolated():
-    # Backup original sys.modules state
-    original_redis_asyncio = sys.modules.get("redis.asyncio")
-    original_my_module = sys.modules.get("mcpgateway.cache.session_registry")
+@pytest.mark.parametrize("missing_module,availability", [("redis.asyncio", "REDIS_AVAILABLE"), ("sqlalchemy", "SQLALCHEMY_AVAILABLE")])
+def test_optional_dependency_importerror_isolated(monkeypatch, missing_module, availability):
+    """Cover missing dependencies without mutating the shared session registry module."""
+    from mcpgateway.cache import session_registry
 
-    # Simulate ImportError for redis.asyncio
-    with patch.dict(sys.modules, {"redis.asyncio": None}):
-        # if 'mcpgateway.cache.session_registry' in sys.modules:
-        #     del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
-
-        # First-Party
-        import mcpgateway.cache.session_registry
-
-        importlib.reload(mcpgateway.cache.session_registry)
-        assert not mcpgateway.cache.session_registry.REDIS_AVAILABLE
-
-    # Cleanup: restore the original sys.modules entries
-    if original_redis_asyncio is not None:
-        sys.modules["redis.asyncio"] = original_redis_asyncio
-    else:
-        sys.modules.pop("redis.asyncio", None)
-
-    if original_my_module is not None:
-        sys.modules["mcpgateway.cache.session_registry"] = original_my_module
-    else:
-        sys.modules.pop("mcpgateway.cache.session_registry", None)
-
-
-def test_sqlalchemy_importerror_isolated():
-    # Backup original sys.modules state
-    original_sqlalchemy = sys.modules.get("sqlalchemy")
-    original_my_module = sys.modules.get("mcpgateway.cache.session_registry")
-
-    # Simulate ImportError for redis.asyncio
-    with patch.dict(sys.modules, {"sqlalchemy": None}):
-        # if 'mcpgateway.cache.session_registry' in sys.modules:
-        # del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
-
-        # First-Party
-        import mcpgateway.cache.session_registry
-
-        importlib.reload(mcpgateway.cache.session_registry)
-        assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
-
-    # Cleanup: restore the original sys.modules entries and reload to reset SQLALCHEMY_AVAILABLE
-    if original_sqlalchemy is not None:
-        sys.modules["sqlalchemy"] = original_sqlalchemy
-    else:
-        sys.modules.pop("sqlalchemy", None)
-
-    if original_my_module is not None:
-        sys.modules["mcpgateway.cache.session_registry"] = original_my_module
-    else:
-        sys.modules.pop("mcpgateway.cache.session_registry", None)
-
-    import mcpgateway.cache.session_registry
-
-    importlib.reload(mcpgateway.cache.session_registry)
+    original_available = getattr(session_registry, availability)
+    original_registry = session_registry.SessionRegistry
+    name = f"{session_registry.__name__}_importerror_test"
+    spec = importlib.util.spec_from_file_location(name, session_registry.__file__)
+    assert spec is not None and spec.loader is not None
+    isolated = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, isolated)
+    with patch.dict(sys.modules, {missing_module: None}):
+        spec.loader.exec_module(isolated)
+        assert not getattr(isolated, availability)
+    assert getattr(session_registry, availability) is original_available
+    assert session_registry.SessionRegistry is original_registry
 
 
 # --------------------------------------------------------------------------- #
