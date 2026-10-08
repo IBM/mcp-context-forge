@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -3155,6 +3155,28 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class SSOUserProvisioningGateMiddleware(BaseHTTPMiddleware):
+    """Hide disabled provisioning POSTs before any authentication work.
+
+    The immutable startup decision also controls route registration. Other
+    methods retain their existing routing, including Admin UI user deletion.
+    """
+
+    def __init__(self, app: Any, *, enabled: bool) -> None:
+        """Initialize with the provisioning route's startup registration decision."""
+        super().__init__(app)
+        self.enabled = enabled
+
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        """Return the standard missing-route body for disabled provisioning POSTs."""
+        if not self.enabled and request.method == "POST":
+            path = _normalize_scope_path(request.scope.get("path", request.url.path), resolve_root_path(request))
+            if path in {"/v1/admin/users/sso", "/v1/admin/users/sso/"}:
+                # This response intentionally precedes inner security/CORS/header middleware.
+                return ORJSONResponse(status_code=404, content={"detail": "Not Found"})
+        return await call_next(request)
+
+
 _SERVER_MCP_PATH_RE = re.compile(r"/servers/([^/]+)/mcp/?")
 
 
@@ -3568,6 +3590,10 @@ if settings.db_query_log_enabled:
     logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
 else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
+
+# Snapshot once: the gate and v1 router must not diverge after runtime settings changes.
+SSO_USER_PROVISIONING_REGISTERED = bool(settings.mcpgateway_admin_api_enabled and settings.sso_user_provisioning_api_enabled and settings.sso_enabled)
+app.add_middleware(SSOUserProvisioningGateMiddleware, enabled=SSO_USER_PROVISIONING_REGISTERED)
 
 # Client disconnect middleware — MUST be outermost (added last, runs first).
 # Cancels in-flight request handlers when the client (nginx) closes the connection,
@@ -13117,6 +13143,7 @@ from mcpgateway.api.v1 import build_v1_router  # pylint: disable=import-outside-
 
 v1_router = build_v1_router(
     settings,
+    sso_user_provisioning_enabled=SSO_USER_PROVISIONING_REGISTERED,
     protocol_router=protocol_router,
     tool_router=tool_router,
     resource_router=resource_router,

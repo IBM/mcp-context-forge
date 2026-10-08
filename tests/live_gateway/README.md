@@ -136,6 +136,42 @@ to run them against a stack you've started.
 
 ## Adding new tests
 
+### SSO user provisioning API
+
+`sso/test_sso_user_provisioning_api.py` runs against an externally started gateway; it never
+restarts the stack. It needs no browser or running IdP. Enabled tests create a temporary
+provider through the SSO provider API and clean up their provider and users.
+
+Start the default stack with `SSO_USER_PROVISIONING_API_ENABLED=false`, then run:
+
+```bash
+SSO_PROVISIONING_TEST_MODE=disabled uv run pytest \
+  tests/live_gateway/sso/test_sso_user_provisioning_api.py -v -rs
+```
+
+For enabled coverage, start or recreate the gateway with:
+
+```bash
+MCPGATEWAY_ADMIN_API_ENABLED=true
+EMAIL_AUTH_ENABLED=true
+SSO_ENABLED=true
+SSO_USER_PROVISIONING_API_ENABLED=true
+```
+
+The main Compose gateway passes the provisioning flag through its environment. Recreate the
+gateway after changing flags; exporting them only in the test process does not enable routes.
+Use the running stack's `JWT_SECRET_KEY`, `PLATFORM_ADMIN_EMAIL`, and `MCP_CLI_BASE_URL` for tests:
+
+```bash
+SSO_PROVISIONING_TEST_MODE=enabled uv run pytest \
+  tests/live_gateway/sso/test_sso_user_provisioning_api.py -v -rs
+```
+
+The default `auto` mode probes OpenAPI registration and skips incompatible cases. Explicit
+`enabled`/`disabled` modes fail on an unexpected route-registration state. All modes retain
+the suite's unreachable-gateway skip behavior. The full startup-flag matrix and runtime
+flag-mutation checks run in isolated application tests.
+
 If you write a test that genuinely needs a live gateway or external service,
 add it under the appropriate subdirectory here. Tests that only need
 in-process FastAPI fixtures belong under `tests/e2e/` (top level) or
