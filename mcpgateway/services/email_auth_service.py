@@ -636,6 +636,7 @@ class EmailAuthService:
         passwordless: bool = False,
         email_verified: Optional[bool] = None,
         admin_origin_source: Optional[str] = None,
+        registration_events_best_effort: bool = False,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
@@ -659,6 +660,7 @@ class EmailAuthService:
             email_verified: Explicit email verification state. ``None`` keeps the
                 existing granted_by-derived behavior.
             admin_origin_source: Source to record when creating an administrator.
+            registration_events_best_effort: Log event-write failures without changing the account creation result. Defaults to existing error propagation.
 
         Returns:
             EmailUser: The created user object
@@ -804,9 +806,7 @@ class EmailAuthService:
                     # User can be assigned roles manually later
 
                 # Log registration event
-                registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
-                self.db.add(registration_event)
-                self.db.commit()
+                self._record_registration_event(email, success=True, best_effort=registration_events_best_effort)
 
             return user
 
@@ -819,11 +819,31 @@ class EmailAuthService:
             logger.error("Unexpected error creating user %s: %s", SecurityValidator.sanitize_log_message(email), e)
 
             # Log failed registration
-            registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=False, failure_reason=str(e))
-            self.db.add(registration_event)
-            self.db.commit()
+            self._record_registration_event(email, success=False, failure_reason=str(e), best_effort=registration_events_best_effort)
 
             raise
+
+    def _record_registration_event(self, user_email: str, success: bool, *, failure_reason: Optional[str] = None, best_effort: bool = False) -> None:
+        """Record registration without masking account outcomes when best-effort logging applies.
+
+        Args:
+            user_email: Email address of the account.
+            success: Whether account creation succeeded.
+            failure_reason: Account creation error, when applicable.
+            best_effort: Roll back and log event-write failures instead of propagating them.
+
+        Raises:
+            Exception: Event creation or persistence fails when best_effort is false.
+        """
+        try:
+            event = EmailAuthEvent.create_registration_event(user_email=user_email, success=success, failure_reason=failure_reason)
+            self.db.add(event)
+            self.db.commit()
+        except Exception:
+            if not best_effort:
+                raise
+            self.db.rollback()
+            logger.warning("Registration event write failed for %s", SecurityValidator.sanitize_log_message(user_email), exc_info=True)
 
     def _validate_enabled_sso_provider_id(self, provider_id: str) -> str:
         """Return the canonical ID for a configured, enabled SSO provider.
@@ -861,6 +881,8 @@ class EmailAuthService:
         It intentionally does not enforce browser JIT policies such as
         provider ``auto_create_users``, trusted-domain checks, or pending
         approval flows.
+        Manually provisioned administrators retain API origin across same-provider logins.
+        Registration-event writes are best-effort; account persistence errors still propagate.
 
         Args:
             email: User's email address.
@@ -882,10 +904,6 @@ class EmailAuthService:
         self.validate_email(normalized_email)
         canonical_provider_id = self._validate_enabled_sso_provider_id(auth_provider)
 
-        existing_user = await self.get_user_by_email(normalized_email)
-        if existing_user:
-            raise UserExistsError(f"User with email {normalized_email} already exists")
-
         return await self.create_user(
             email=normalized_email,
             password="",
@@ -898,7 +916,7 @@ class EmailAuthService:
             granted_by=granted_by,
             passwordless=True,
             email_verified=False,
-            admin_origin_source="sso" if is_admin else None,
+            registration_events_best_effort=True,
         )
 
     async def ensure_user_exists(

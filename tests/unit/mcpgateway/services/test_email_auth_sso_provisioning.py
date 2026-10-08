@@ -7,16 +7,20 @@ Tests for internal passwordless SSO user provisioning.
 """
 
 # Standard
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 # Third-Party
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth_user_helpers import is_passwordless_user, PASSWORDLESS_HASH_TYPE
-from mcpgateway.db import EmailUser, SSOProvider, utc_now
+from mcpgateway.db import EmailAuthEvent, EmailUser, Role, SSOProvider, UserRole, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService, SSOProviderValidationError, UserExistsError
+from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.sso_service import SSOService
 
 
 def _unique(prefix: str) -> str:
@@ -177,8 +181,8 @@ async def test_create_sso_user_ignores_auto_create_users_policy(test_db, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_create_sso_user_admin_origin_is_sso(test_db, monkeypatch) -> None:
-    """SSO-provisioned admins are marked as SSO-origin admins."""
+async def test_create_sso_user_admin_origin_is_api(test_db, monkeypatch) -> None:
+    """Manual provisioning records API origin for administrator grants."""
     monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.auto_create_personal_teams", False)
     provider_id = _unique("admin-provider")
     _add_provider(test_db, provider_id)
@@ -187,4 +191,174 @@ async def test_create_sso_user_admin_origin_is_sso(test_db, monkeypatch) -> None
     user = await service.create_sso_user(email=f"{_unique('sso-admin')}@example.com", auth_provider=provider_id, is_admin=True)
 
     assert user.is_admin is True
-    assert user.admin_origin == "sso"
+    assert user.admin_origin == "api"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_admin", [False, True])
+async def test_manual_provisioning_permissions_survive_same_provider_login(test_db, monkeypatch, is_admin) -> None:
+    """Same-provider login preserves manual grants and does not elevate ordinary users."""
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.auto_create_personal_teams", False)
+    monkeypatch.setattr("mcpgateway.services.sso_service.settings.sso_auto_admin_domains", [])
+    provider_id = _unique("manual-login")
+    provider = _add_provider(test_db, provider_id, auto_create_users=False)
+    role_name = _unique("manual-role")
+    provider.provider_metadata = {"role_mappings": {"Admins": role_name}, "sync_roles": True}
+    actor_email = f"{_unique('actor')}@example.com"
+    test_db.add(EmailUser(email=actor_email, password_hash="hash", auth_provider="local", is_admin=True))
+    test_db.commit()
+    role = Role(name=role_name, scope="global", permissions=["users.create"] if is_admin else ["tools.read"], created_by=actor_email)
+    test_db.add(role)
+    test_db.commit()
+    role_id = role.id
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.default_admin_role" if is_admin else "mcpgateway.services.email_auth_service.settings.default_user_role", role_name)
+    email = f"{_unique('manual-login-user')}@example.com"
+
+    user = await EmailAuthService(test_db).create_sso_user(email=email, auth_provider=provider_id, is_admin=is_admin, granted_by=actor_email)
+    assert user.is_admin is is_admin
+    assert user.admin_origin == ("api" if is_admin else None)
+    assignment = test_db.execute(select(UserRole).where(UserRole.user_email == email, UserRole.role_id == role_id)).scalar_one()
+    assignment_id = assignment.id
+    assert assignment.grant_source is None
+    assert assignment.granted_by == actor_email
+    assert assignment.is_active is True
+    assert await PermissionService(test_db, audit_enabled=False).check_permission(email, "users.create", allow_admin_bypass=False) is is_admin
+
+    token = await SSOService(test_db).authenticate_or_create_user({"email": email, "provider": provider_id, "email_verified": True, "groups": []})
+    assert token is not None
+
+    with Session(bind=test_db.get_bind()) as fresh_db:
+        stored = fresh_db.execute(select(EmailUser).where(EmailUser.email == email)).scalar_one()
+        retained = fresh_db.get(UserRole, assignment_id)
+        assert stored.is_admin is is_admin
+        assert stored.admin_origin == ("api" if is_admin else None)
+        assert retained is not None and retained.is_active is True
+        assert retained.grant_source is None
+        assert retained.granted_by == actor_email
+        assert await PermissionService(fresh_db, audit_enabled=False).check_permission(email, "users.create", allow_admin_bypass=False) is is_admin
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["add", "commit"])
+async def test_sso_registration_event_failure_preserves_success(test_db, monkeypatch, failure_stage) -> None:
+    """Event failures preserve the successful result, committed account, and duplicate retry behavior."""
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.auto_create_personal_teams", False)
+    provider_id = _unique("event-failure")
+    _add_provider(test_db, provider_id)
+    email = f"{_unique('event-failure-user')}@example.com"
+    original_add = test_db.add
+    original_commit = test_db.commit
+    event_failures = []
+
+    def failing_add(instance, **kwargs):
+        """Fail only registration event insertion."""
+        if failure_stage == "add" and isinstance(instance, EmailAuthEvent) and instance.event_type == "registration":
+            event_failures.append(instance.success)
+            raise RuntimeError("registration event insertion failed")
+        return original_add(instance, **kwargs)
+
+    def failing_commit():
+        """Fail only registration event commit after the account commits."""
+        if failure_stage == "commit" and any(isinstance(row, EmailAuthEvent) and row.event_type == "registration" for row in test_db.new):
+            event_failures.append(True)
+            raise RuntimeError("registration event commit failed")
+        return original_commit()
+
+    monkeypatch.setattr(test_db, "add", failing_add)
+    monkeypatch.setattr(test_db, "commit", failing_commit)
+    service = EmailAuthService(test_db)
+    user = await service.create_sso_user(email=email, auth_provider=provider_id, full_name="Persisted User")
+    assert user.email == email
+    assert event_failures == [True]
+    with Session(bind=test_db.get_bind()) as fresh_db:
+        stored = fresh_db.execute(select(EmailUser).where(EmailUser.email == email)).scalar_one()
+        assert stored.full_name == "Persisted User"
+        assert stored.password_hash is None
+        assert stored.auth_provider == provider_id
+        assert fresh_db.execute(select(EmailAuthEvent).where(EmailAuthEvent.user_email == email)).scalars().all() == []
+
+    with pytest.raises(UserExistsError):
+        await service.create_sso_user(email=email, auth_provider=provider_id, full_name="Changed User", is_admin=True)
+    with Session(bind=test_db.get_bind()) as fresh_db:
+        stored = fresh_db.execute(select(EmailUser).where(EmailUser.email == email)).scalar_one()
+        assert stored.full_name == "Persisted User"
+        assert stored.is_admin is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("audit_fails", [False, True])
+async def test_sso_account_commit_failure_preserves_original_error_and_retry(test_db, monkeypatch, audit_fails) -> None:
+    """Account commit failure leaves no account; event failure cannot replace the original error."""
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.auto_create_personal_teams", False)
+    provider_id = _unique("account-failure")
+    _add_provider(test_db, provider_id)
+    email = f"{_unique('account-failure-user')}@example.com"
+    original_commit = test_db.commit
+    account_error = RuntimeError("account persistence failed")
+    commits = 0
+
+    def failing_commit():
+        """Fail initial account persistence and optionally the failed-registration event."""
+        nonlocal commits
+        commits += 1
+        if commits == 1:
+            raise account_error
+        if audit_fails:
+            raise RuntimeError("failure event persistence failed")
+        return original_commit()
+
+    monkeypatch.setattr(test_db, "commit", failing_commit)
+    service = EmailAuthService(test_db)
+    with pytest.raises(RuntimeError, match="account persistence failed") as error:
+        await service.create_sso_user(email=email, auth_provider=provider_id)
+    assert error.value is account_error
+    assert commits == 2
+    with Session(bind=test_db.get_bind()) as fresh_db:
+        assert fresh_db.execute(select(EmailUser).where(EmailUser.email == email)).scalar_one_or_none() is None
+        events = fresh_db.execute(select(EmailAuthEvent).where(EmailAuthEvent.user_email == email)).scalars().all()
+        assert len(events) == (0 if audit_fails else 1)
+        if events:
+            assert events[0].success is False
+
+    monkeypatch.setattr(test_db, "commit", original_commit)
+    user = await service.create_sso_user(email=email, auth_provider=provider_id)
+    assert user.email == email
+    with Session(bind=test_db.get_bind()) as fresh_db:
+        assert fresh_db.execute(select(EmailUser).where(EmailUser.email == email)).scalar_one().password_hash is None
+
+
+@pytest.mark.asyncio
+async def test_sso_provisioning_uses_shared_duplicate_lookup(test_db, monkeypatch) -> None:
+    """Provisioning performs the duplicate lookup once through shared user creation."""
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.auto_create_personal_teams", False)
+    provider_id = _unique("one-lookup")
+    _add_provider(test_db, provider_id)
+    service = EmailAuthService(test_db)
+    lookup = AsyncMock(wraps=service.get_user_by_email)
+    monkeypatch.setattr(service, "get_user_by_email", lookup)
+    email = f"{_unique('one-lookup-user')}@example.com"
+    await service.create_sso_user(email=email, auth_provider=provider_id)
+    lookup.assert_awaited_once_with(email)
+
+
+@pytest.mark.asyncio
+async def test_local_registration_event_errors_keep_existing_behavior(test_db, monkeypatch) -> None:
+    """The new best-effort option leaves existing local creation behavior unchanged by default."""
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.settings.auto_create_personal_teams", False)
+    service = EmailAuthService(test_db)
+    monkeypatch.setattr(service.password_service, "hash_password_async", AsyncMock(return_value="hash"))
+    original_commit = test_db.commit
+    email = f"{_unique('local-event-failure')}@example.com"
+    commits = 0
+
+    def failing_event_commit():
+        """Allow the account commit, then fail only success-event persistence."""
+        nonlocal commits
+        commits += 1
+        if commits == 2:
+            raise RuntimeError("local registration event failed")
+        return original_commit()
+
+    monkeypatch.setattr(test_db, "commit", failing_event_commit)
+    with pytest.raises(RuntimeError, match="local registration event failed"):
+        await service.create_user(email=email, password="", skip_password_validation=True)
