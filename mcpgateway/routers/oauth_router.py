@@ -39,10 +39,10 @@ from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_s
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
-from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
@@ -1064,6 +1064,7 @@ async def oauth_callback(
         # OAuthManager.complete_authorization_code_flow and
         # token_validation_service._validate_audience for the full trust model.
         if app_user_email and result.get("success"):
+            # First-Party
             from mcpgateway.services.oauth_manager import parse_expires_in  # pylint: disable=import-outside-toplevel
 
             token_response = result.get("token_response", {})
@@ -1229,6 +1230,15 @@ async def oauth_callback(
                                 `;
                                 button.textContent = '✅ Tools Fetched';
                                 button.style.backgroundColor = '#059669';
+                                if (window.opener && !window.opener.closed) {{
+                                    window.opener.postMessage({{
+                                    type: 'oauth_callback',
+                                    status: 'tools_fetched',
+                                    gatewayId: {json.dumps(str(gateway_id))},
+                                    gatewayName: {json.dumps(str(gateway.name))}
+                                    }}, '*');
+                                    window.close();
+                                }}
                             }} else {{
                                 throw new Error(result.detail || 'Failed to fetch tools');
                             }}
