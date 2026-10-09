@@ -95,6 +95,7 @@ from mcpgateway.services.resource_service import ResourceNotFoundError, Resource
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
@@ -6126,6 +6127,16 @@ class _StreamableHttpAuthHandler:
                 "auth_method": "oauth_access_token",
             }
         )
+        # IdP tokens fail get_current_user in AuthContextMiddleware, which fills the plugin GlobalContext for JWTs.
+        # Direct proxy reads user_identity_var; tool_service reads GlobalContext.user_context.
+        _set_user_identity_from_dict(user_context_var.get())
+        state = self.scope.setdefault("state", {})
+        global_context = state.get("plugin_global_context")
+        if not isinstance(global_context, GlobalContext):
+            global_context = GlobalContext(request_id=get_correlation_id() or uuid4().hex)
+            state["plugin_global_context"] = global_context
+        if global_context.user_context is None:
+            global_context.user_context = user_identity_var.get()
         _oauth_checked_var.set(True)
         return OAuthAuthResult.SUCCESS
 
