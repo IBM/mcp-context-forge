@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e/test_upstream_connect_mode_e2e.py
+"""Location: ./tests/e2e/test_protocol_era_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-E2E proofs for the migrated upstream federation connect path
-(``MCP_CLIENT_CONNECT_MODE``, ``mcpgateway/services/upstream_session_registry.py``
-+ ``mcpgateway/utils/mcp_proxy_client.py`` on ``mcp==2.0.0b2``).
+E2E proofs for MCP era negotiation in both directions on ``mcp==2.0.0b2``:
+
+- Outbound (gateway -> upstream): ``MCP_CLIENT_CONNECT_MODE``,
+  ``mcpgateway/services/upstream_session_registry.py`` +
+  ``mcpgateway/utils/mcp_proxy_client.py``.
+- Inbound (client -> gateway): a legacy-era client keeps its stateful
+  ``mcp-session-id`` session, and a dual-era client that opens at
+  2026-07-28 is served the stateless modern path.
 
 One live upstream from the docker-compose ``testing`` profile is required
 (probed at module setup; the whole module skips with a readable reason when
@@ -67,6 +72,13 @@ TOOL_SYNC_DEADLINE_SECONDS = 90.0
 POLL_INTERVAL_SECONDS = 0.5
 
 LEGACY_VERSION = "2025-11-25"
+HANDSHAKE_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
+MODERN_VERSION = "2026-07-28"
+MODERN_META = {
+    "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
+    "io.modelcontextprotocol/clientInfo": {"name": "e2e-dual-era-client", "version": "0.1"},
+    "io.modelcontextprotocol/clientCapabilities": {},
+}
 
 
 def _health_url(mcp_url: str) -> str:
@@ -397,3 +409,119 @@ class TestLegacyModeGateway:
         pre-migration behavior is fully intact under the rollback flag."""
         result = await _call_federated_time_tool(gateway_legacy, gateway_legacy_legacy_federation)
         _assert_tool_call_ok(result)
+
+
+# ---------------------------------------------------------------------------
+# Inbound era proofs: what a client gets from the default (auto) gateway
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestInboundLegacyEraClient:
+    """A pre-2026 client keeps its stateful ``mcp-session-id`` session."""
+
+    @pytest.mark.parametrize("version", HANDSHAKE_VERSIONS)
+    async def test_legacy_client_session_is_unchanged(self, gateway_auto: GatewayHandle, gateway_auto_legacy_federation: Federation, version: str) -> None:
+        """Every handshake-era revision negotiates itself and routes on the session id.
+
+        The gateway runs the default ``MCP_INBOUND_PROTOCOL_MODE=auto``, so this
+        is the regression guard for pre-2026 clients after modern negotiation
+        became the default: the server answers at the exact revision asked for,
+        issues a session id, and every follow-up call is routed by that id.
+        """
+        url = f"{gateway_auto.base_url}/servers/{gateway_auto_legacy_federation.server_id}/mcp"
+        headers = {
+            **gateway_auto.headers,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": version,
+        }
+
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(60.0, connect=10.0)) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": version, "capabilities": {}, "clientInfo": {"name": "e2e-legacy-client", "version": "0.1"}}},
+            )
+            assert response.status_code == 200, f"initialize at {version} failed: {response.status_code} {response.text[:300]}"
+            assert _read_jsonrpc(response)["result"]["protocolVersion"] == version, f"gateway renegotiated {version} to something else: {response.text[:300]}"
+
+            session_id = response.headers.get("mcp-session-id")
+            assert session_id, f"no mcp-session-id issued for a {version} client: {dict(response.headers)}"
+            session_headers = {**headers, "mcp-session-id": session_id}
+
+            response = await client.post(url, headers=session_headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+            assert response.status_code in (200, 202), f"initialized notification failed: {response.status_code} {response.text[:300]}"
+
+            response = await client.post(url, headers=session_headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            assert response.status_code == 200, f"tools/list failed: {response.status_code} {response.text[:300]}"
+            tool_name = _time_tool_name([tool["name"] for tool in _read_jsonrpc(response)["result"]["tools"]])
+
+            response = await client.post(url, headers=session_headers, json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": tool_name, "arguments": {}}})
+            assert response.status_code == 200, f"tools/call failed: {response.status_code} {response.text[:300]}"
+            _assert_tool_call_ok(_read_jsonrpc(response)["result"])
+
+            # The session id is the routing key: the same call without it is refused.
+            response = await client.post(url, headers=headers, json={"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}})
+            assert response.status_code == 400, f"session-less call was served: {response.status_code} {response.text[:300]}"
+            assert "session" in response.text.lower(), response.text[:300]
+
+
+@pytest.mark.asyncio
+class TestInboundDualEraClient:
+    """A client that opens at 2026-07-28 is served the stateless modern path."""
+
+    async def test_modern_client_is_served_without_downgrade(self, gateway_auto: GatewayHandle, gateway_auto_legacy_federation: Federation) -> None:
+        """``server/discover`` -> ``tools/list`` -> ``tools/call``, no session id anywhere.
+
+        The tool is federated from a legacy 2025-11-25 upstream, so a passing
+        call also proves the gateway bridges a modern downstream client onto a
+        handshake-era upstream.
+        """
+        url = f"{gateway_auto.base_url}/servers/{gateway_auto_legacy_federation.server_id}/mcp"
+        headers = {
+            **gateway_auto.headers,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": MODERN_VERSION,
+        }
+
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(60.0, connect=10.0)) as client:
+            response = await client.post(
+                url,
+                headers={**headers, "Mcp-Method": "server/discover"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": MODERN_META}},
+            )
+            assert response.status_code == 200, f"server/discover rejected: {response.status_code} {response.text[:300]}"
+            discover = _read_jsonrpc(response)["result"]
+            assert MODERN_VERSION in discover["supportedVersions"], discover
+            assert response.headers.get("mcp-session-id") is None, "modern discover must stay stateless"
+
+            response = await client.post(
+                url,
+                headers={**headers, "Mcp-Method": "tools/list"},
+                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"_meta": MODERN_META}},
+            )
+            assert response.status_code == 200, f"stateless tools/list rejected: {response.status_code} {response.text[:300]}"
+            tool_name = _time_tool_name([tool["name"] for tool in _read_jsonrpc(response)["result"]["tools"]])
+
+            response = await client.post(
+                url,
+                headers={**headers, "Mcp-Method": "tools/call", "Mcp-Name": tool_name},
+                json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": tool_name, "arguments": {}, "_meta": MODERN_META}},
+            )
+            assert response.status_code == 200, f"stateless tools/call rejected: {response.status_code} {response.text[:300]}"
+            _assert_tool_call_ok(_read_jsonrpc(response)["result"])
+
+            # No handshake exists in this era: the gateway must not offer one.
+            response = await client.post(
+                url,
+                headers={**headers, "Mcp-Method": "initialize"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "initialize",
+                    "params": {"protocolVersion": MODERN_VERSION, "capabilities": {}, "clientInfo": {"name": "e2e-dual-era-client", "version": "0.1"}, "_meta": MODERN_META},
+                },
+            )
+            assert _read_jsonrpc(response)["error"]["code"] == -32601, f"modern initialize was served: {response.status_code} {response.text[:300]}"

@@ -12,6 +12,7 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
+from mcp_types import UNSUPPORTED_PROTOCOL_VERSION, UnsupportedProtocolVersionErrorData
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, LATEST_HANDSHAKE_VERSION, LATEST_PROTOCOL_VERSION
 from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -104,8 +105,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ...     "scheme": "http",
             ... }
             >>> bad_resp = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(Request(bad_scope), call_next))
-            >>> (bad_resp.status_code, b"Unsupported protocol version: bad" in bad_resp.body)
-            (400, True)
+            >>> import orjson; bad_err = orjson.loads(bad_resp.body)["error"]
+            >>> (bad_resp.status_code, bad_err["code"], bad_err["data"]["requested"])
+            (400, -32022, 'bad')
         """
         path = request.url.path
 
@@ -134,11 +136,18 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
 
         # Validate protocol version
         if protocol_version not in accepted_versions:
-            supported = ", ".join(accepted_versions)
             logger.warning("Unsupported protocol version: %s", protocol_version)
             return ORJSONResponse(
                 status_code=400,
-                content={"error": "Bad Request", "message": f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"},
+                content={
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": UNSUPPORTED_PROTOCOL_VERSION,
+                        "message": "Unsupported protocol version",
+                        "data": UnsupportedProtocolVersionErrorData(supported=list(accepted_versions), requested=protocol_version).model_dump(mode="json"),
+                    },
+                },
             )
 
         # Store validated version in request state for use by handlers
