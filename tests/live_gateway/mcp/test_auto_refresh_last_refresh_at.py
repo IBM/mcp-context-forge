@@ -223,7 +223,10 @@ def test_auto_refresh_writes_last_refresh_at(isolated_refresh_gateway):
     def _get_tool_names() -> list[str]:
         resp = httpx.get(f"{base}/v1/tools", headers=headers, timeout=10.0)
         assert resp.status_code == 200, resp.text
-        return [t["name"].rsplit("/", 1)[-1] for t in resp.json()]
+        # Tools from gateway "regression-7095" are stored as "regression-7095-{tool}"
+        # (gateway slug + separator + tool slug, default separator is "-").
+        # Filter to tools owned by this gateway and return their names as-is.
+        return [t["name"] for t in resp.json() if t.get("gatewayId") == gw_id or t.get("gateway_id") == gw_id]
 
     # Cycle 1: wait up to 1.5 × interval for the first auto-refresh write.
     window = _CYCLE_INTERVAL * 1.5
@@ -261,8 +264,10 @@ def test_auto_refresh_writes_last_refresh_at(isolated_refresh_gateway):
     )
 
     # Assert the catalog change was picked up in the same cycle.
+    # The gateway-prefixed name for tool "echo2" from gateway "regression-7095"
+    # is "regression-7095-echo2" (slugified-gateway + separator + slugified-tool).
     tool_names = _get_tool_names()
-    assert "echo2" in tool_names, (
-        f"Tool 'echo2' not found after cycle 2 (tools: {tool_names}); "
+    assert any("echo2" in name for name in tool_names), (
+        f"No tool containing 'echo2' found after cycle 2 (tools: {tool_names}); "
         "auto-refresh did not pick up the upstream catalog change"
     )
