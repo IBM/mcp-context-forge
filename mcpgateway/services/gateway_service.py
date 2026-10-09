@@ -101,6 +101,7 @@ from mcpgateway.db import server_prompt_association, server_resource_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
 from mcpgateway.schemas import (
     GATEWAY_SUPPORTED_TRANSPORTS,
     GatewayCreate,
@@ -4913,20 +4914,30 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 Any exceptions raised during the health check will be propagated to the caller.
             """
             async with semaphore:
+                check_started = time.monotonic()
+                outcome = "completed"
                 try:
                     await asyncio.wait_for(
                         self._check_single_gateway_health(gateway, user_email),
                         timeout=settings.gateway_health_check_timeout,
                     )
                 except asyncio.TimeoutError:
+                    outcome = "timeout"
                     logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
                     await self._handle_gateway_failure(gateway, error=asyncio.TimeoutError(f"health check timed out after {settings.gateway_health_check_timeout}s"))
+                except Exception:
+                    outcome = "error"
+                    raise
+                finally:
+                    gateway_health_checks_total.labels(outcome=outcome).inc()
+                    gateway_health_check_duration_seconds.labels(outcome=outcome).observe(time.monotonic() - check_started)
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
             # Chunk processing to avoid overload
             if not gateways:
+                gateway_health_check_batch_duration_seconds.observe(time.monotonic() - start_time)
                 return True
             chunk_size = concurrency_limit
             for i in range(0, len(gateways), chunk_size):
@@ -4941,6 +4952,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 await asyncio.sleep(0.05)  # small pause prevents network saturation
 
             elapsed = time.monotonic() - start_time
+            gateway_health_check_batch_duration_seconds.observe(elapsed)
 
             if batch_span:
                 set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))

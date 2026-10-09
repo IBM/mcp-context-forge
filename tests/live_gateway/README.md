@@ -140,3 +140,17 @@ If you write a test that genuinely needs a live gateway or external service,
 add it under the appropriate subdirectory here. Tests that only need
 in-process FastAPI fixtures belong under `tests/e2e/` (top level) or
 `tests/integration/` instead.
+
+## Request trace export policy
+
+Run the self-contained OTLP acceptance test with the observability extra:
+
+```bash
+uv run --extra plugins --extra observability pytest tests/live_gateway/mcp/test_request_trace_policy.py -v
+```
+
+The test starts an authenticated gateway, an MCP SDK upstream, and a recording OTLP/HTTP collector on loopback ports.
+It uses a temporary database and generated test secrets. No existing stack or credentials are required.
+Both request-only and system-tracing configurations run. The test verifies tenant baggage, sensitive baggage redaction,
+unsampled parents, health-cycle suppression, and the absence of empty exports.
+Gateway logs, upstream logs, and decoded collector batches remain in the pytest temporary directory after failures.

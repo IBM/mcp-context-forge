@@ -55,6 +55,7 @@ class TestObservability:
             "LANGFUSE_PUBLIC_KEY",
             "LANGFUSE_SECRET_KEY",
             "OTEL_COPY_RESOURCE_ATTRS_TO_SPANS",
+            "OTEL_SYSTEM_TRACES_ENABLED",
         ]
         for var in env_vars:
             os.environ.pop(var, None)
@@ -87,9 +88,10 @@ class TestObservability:
         result = init_telemetry()
         assert result is None
 
-    def test_observability_disabled_without_otlp_endpoint(self):
+    def test_observability_disabled_without_otlp_endpoint(self, monkeypatch):
         """Test that observability is disabled when OTLP endpoint is not configured."""
         self._enable_observability()
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
         get_settings.cache_clear()
         result = init_telemetry()
