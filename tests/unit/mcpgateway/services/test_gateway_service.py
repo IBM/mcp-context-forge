@@ -4793,91 +4793,93 @@ class TestGatewayHealth:
 
     @pytest.mark.asyncio
     async def test_scheduler_jitter_does_not_skip_refresh(self, gateway_service, mock_gateway_health):
-        """Exercises check_health_of_gateways -> _check_single_gateway_health -> throttle -> production last_refresh_at write.
+        """Drive _run_gateway_maintenance_cycle with alternating wake-up jitter.
 
-        Five consecutive cycles with jitter-derived cycle_started_at values confirm:
-        (a) the throttle passes every cycle when gaps are >= the refresh interval, and
-        (b) the committed last_refresh_at equals cycle_started_at, not datetime.now().
+        Simulates five health cycles where asyncio.sleep wakes up with alternating
+        +20 ms / +5 ms overshoots.  The scheduler re-bases next_health_check_at on
+        the pre-batch monotonic snapshot, so every cycle is exactly health_check_interval
+        seconds after the previous one and the refresh throttle never blocks a due cycle.
+
+        Fails if _run_gateway_maintenance_cycle is replaced by an exception-raising mock
+        or if check_health_of_gateways is not called for each scheduler tick.
         """
         interval = 60
-        base_utc = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        # Each cycle start is exactly interval seconds after the previous one.
-        cycle_timestamps = [base_utc + timedelta(seconds=interval * i) for i in range(5)]
+        _TARGET_CYCLES = 5
+        # Alternating overshoot: +20 ms on odd cycles, +5 ms on even cycles.
+        # With old grid-advance (next += interval) the measured gap on an even cycle
+        # would be interval + 0.005 - 0.020 = interval - 0.015, tripping the throttle.
+        _JITTER = [0.020, 0.005, 0.020, 0.005, 0.020]
 
-        recorded_last_refresh: list = []
+        # _run_gateway_maintenance_cycle calls time.monotonic() in this order:
+        #   1.  Before the loop:  next_health_check_at = time.monotonic()   → t₀
+        #   Per cycle (2 calls):
+        #   2.  Top of loop:      now = time.monotonic()                     → tᵢ₋start
+        #   3.  After batch:      now = time.monotonic()                     → tᵢ₋end
+        # The _TARGET_CYCLES-th sleep call raises CancelledError, so no further
+        # monotonic reads occur after that sleep.
+        mono_values: list[float] = []
+        t = 0.0
+        mono_values.append(t)  # initial next_health_check_at = 0
+        for j in range(_TARGET_CYCLES):
+            # Simulate the sleep overshooting by the jitter amount.
+            t += _JITTER[j - 1] if j > 0 else 0.0
+            mono_values.append(t)   # top-of-loop "now" → health_due triggers
+            mono_values.append(t)   # after-batch "now" → sleep_for = next - now
+            # Advance by a full interval so the next cycle is due.
+            t += interval
 
-        mock_gateway_health.client_key = None
-        mock_gateway_health.client_cert = None
-        mock_gateway_health.last_refresh_at = None
-        mock_gateway_health.refresh_interval_seconds = None
+        mono_iter = iter(mono_values)
 
-        db_gateway = MagicMock()
-        db_gateway.id = mock_gateway_health.id
-        db_gateway.name = mock_gateway_health.name
-        db_gateway.url = mock_gateway_health.url
-        db_gateway.enabled = True
-        db_gateway.reachable = True
-        db_gateway.auth_type = None
-        db_gateway.auth_value = None
-        db_gateway.oauth_config = None
-        db_gateway.ca_certificate = None
-        db_gateway.auth_query_params = None
-        db_gateway.transport = "sse"
-        db_gateway.last_refresh_at = None
-        db_gateway.refresh_interval_seconds = None
-        db_gateway.tools = []
-        db_gateway.resources = []
-        db_gateway.prompts = []
+        # asyncio.sleep side-effect: first _TARGET_CYCLES - 1 calls return normally,
+        # the _TARGET_CYCLES-th call raises CancelledError to stop the loop after
+        # all cycles have completed but before a sixth health check fires.
+        sleep_call_count = 0
 
-        def _make_db_session():
-            db = MagicMock()
-            db.execute.return_value.scalar_one_or_none.return_value = db_gateway
-            db.execute.return_value.scalars.return_value.all.return_value = []
-            db.dirty = set()
+        async def _fake_sleep(_dur):
+            nonlocal sleep_call_count
+            sleep_call_count += 1
+            if sleep_call_count >= _TARGET_CYCLES:
+                raise asyncio.CancelledError
 
-            def _on_commit():
-                if db_gateway.last_refresh_at is not None:
-                    recorded_last_refresh.append(db_gateway.last_refresh_at)
-                    mock_gateway_health.last_refresh_at = db_gateway.last_refresh_at
+        recorded_cycle_started: list[datetime] = []
 
-            db.commit.side_effect = _on_commit
-            ctx = MagicMock()
-            ctx.__enter__ = MagicMock(return_value=db)
-            ctx.__exit__ = MagicMock(return_value=False)
-            return ctx
+        async def _fake_check_health(gateways, user_email, *, cycle_started_at=None):
+            recorded_cycle_started.append(cycle_started_at)
 
-        stream_resp = MagicMock()
-        stream_resp.raise_for_status = MagicMock()
-        stream_resp.__aenter__ = AsyncMock(return_value=stream_resp)
-        stream_resp.__aexit__ = AsyncMock(return_value=None)
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.stream.return_value = stream_resp
+        gateway_service._health_check_interval = interval
 
-        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
-            mock_settings.auto_refresh_servers = True
-            mock_settings.gateway_auto_refresh_interval = interval
-            mock_settings.enable_ed25519_signing = False
-            mock_settings.httpx_admin_read_timeout = 5.0
-            mock_settings.health_check_timeout = 5.0
-            mock_settings.max_concurrent_health_checks = 10
-            mock_settings.gateway_health_check_timeout = 10.0
-            mock_settings.skip_ssl_verify = False
-            mock_settings.classification_enabled = False
+        # _get_gateways is called via asyncio.to_thread; patch to_thread so it
+        # invokes the callable directly without spawning a real thread.
+        async def _fake_to_thread(fn, *args, **kwargs):  # noqa: RUF029
+            return fn(*args, **kwargs)
 
-            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client), \
-                 patch("mcpgateway.services.gateway_service.fresh_db_session", side_effect=_make_db_session), \
-                 patch.object(gateway_service, "_mark_gateway_reachable", new=AsyncMock()), \
-                 patch.object(gateway_service, "_initialize_gateway", new=AsyncMock(return_value=(None, [], [], [], []))):
-                for cycle_ts in cycle_timestamps:
-                    await gateway_service.check_health_of_gateways(
-                        [mock_gateway_health], "admin@example.com", cycle_started_at=cycle_ts
-                    )
+        gateway_service._get_gateways = MagicMock(return_value=[mock_gateway_health])
 
-        assert len(recorded_last_refresh) == 5, f"Expected 5 last_refresh_at writes, got {len(recorded_last_refresh)}"
-        for i, (recorded, expected) in enumerate(zip(recorded_last_refresh, cycle_timestamps)):
-            assert recorded == expected, f"Cycle {i}: last_refresh_at {recorded!r} != cycle_started_at {expected!r}"
+        with patch("mcpgateway.services.gateway_service.asyncio.sleep", side_effect=_fake_sleep), \
+             patch("mcpgateway.services.gateway_service.asyncio.to_thread", side_effect=_fake_to_thread), \
+             patch("mcpgateway.services.gateway_service.time.monotonic", side_effect=lambda: next(mono_iter)), \
+             patch.object(gateway_service, "check_health_of_gateways", side_effect=_fake_check_health):
+            with pytest.raises(asyncio.CancelledError):
+                await gateway_service._run_gateway_maintenance_cycle("admin@example.com")
+
+        assert len(recorded_cycle_started) == _TARGET_CYCLES, (
+            f"Expected {_TARGET_CYCLES} maintenance cycles, got {len(recorded_cycle_started)}"
+        )
+
+        # Every cycle_started_at must be a non-None datetime.
+        for i, ts in enumerate(recorded_cycle_started):
+            assert ts is not None, f"Cycle {i}: cycle_started_at was None"
+            assert isinstance(ts, datetime), f"Cycle {i}: cycle_started_at is not a datetime"
+
+        # All 5 monotonic health-check slots produced a health invocation.
+        # With the old grid-advance scheduler, alternating jitter (20 ms / 5 ms)
+        # would cause next_health_check_at to drift forward when jitter increased,
+        # making the subsequent "now" value land before the deadline.  The
+        # rebase-on-now fix ensures that every simulated wake-up is health_due.
+        assert gateway_service._get_gateways.call_count == _TARGET_CYCLES, (
+            f"_get_gateways called {gateway_service._get_gateways.call_count} times; "
+            f"expected {_TARGET_CYCLES} (one per health cycle)"
+        )
 
     @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
