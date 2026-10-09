@@ -219,7 +219,38 @@ def _normalize_part(part: Any, protocol_version: Optional[str]) -> Any:
     if is_v1_a2a_protocol(protocol_version):
         # V1 uses protobuf oneof — field presence is the discriminator.
         # No explicit "kind" or "type" field in the wire format.
+        file_payload = source.get("file")
+        if isinstance(file_payload, Mapping):
+            v1_file = {}
+            if "bytes" in file_payload:
+                v1_file["raw"] = file_payload["bytes"]
+            elif "uri" in file_payload:
+                v1_file["url"] = file_payload["uri"]
+            if "mimeType" in file_payload:
+                v1_file["mediaType"] = file_payload["mimeType"]
+            if "name" in file_payload:
+                v1_file["filename"] = file_payload["name"]
+            if "metadata" in source:
+                v1_file["metadata"] = source["metadata"]
+            if v1_file:
+                return v1_file
         return source
+
+    if "raw" in source or "url" in source:
+        legacy_file = {}
+        if "raw" in source:
+            legacy_file["bytes"] = source["raw"]
+        if "url" in source:
+            legacy_file["uri"] = source["url"]
+        if "mediaType" in source:
+            legacy_file["mimeType"] = source["mediaType"]
+        if "filename" in source:
+            legacy_file["name"] = source["filename"]
+        if legacy_file:
+            normalized = {"kind": "file", "file": legacy_file}
+            if "metadata" in source:
+                normalized["metadata"] = source["metadata"]
+            return normalized
 
     target = dict(source)
     if discriminator:
