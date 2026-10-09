@@ -6,8 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 Vault token storage backend.
 
 Stores OAuth tokens in HashiCorp Vault KV v2 using httpx for HTTP API calls.
-Path structure: {mount}/data/{prefix}/{team_id}/{server_id}/{url-encoded-email}
-where server_id is SHA-256 hash of gateways.url (mcp_url).
+Path structure: {mount}/data/{prefix}/{team_id}/{gateway_id}/{url-encoded-email}
+
+The third segment identifies the gateway configuration. It was previously the SHA-256 hash of
+gateways.url, which collided whenever two gateways shared an upstream URL - a configuration the
+uniqueness constraint on gateways allows, and which #6353 (item 3) records. Reads fall back to the
+legacy URL-keyed path so records written before this change remain readable.
 """
 
 import asyncio
@@ -45,15 +49,15 @@ class VaultTokenBackend(AbstractTokenBackend):
     Vault KV v2 token storage backend.
 
     Features:
-    - Resolves gateway_id → gateways.url → server_id (SHA-256 hash)
-    - Constructs path: {mount}/data/{prefix}/{team_id}/{server_id}/{url-encoded-email}
+    - Keys the per-user path on gateway_id, so two gateways sharing an upstream URL stay separate
+    - Constructs path: {mount}/data/{prefix}/{team_id}/{gateway_id}/{url-encoded-email}
     - Stores tokens plain-text in Vault (Vault encrypts at rest)
     - Retry logic (3 attempts with exponential backoff)
     - Optional in-memory token cache with TTL (class-level so it persists across requests)
     """
 
     # Class-level token cache shared across all instances in the process.
-    # Keyed by (team_id, server_id, email); values are {token, cache_expires}.
+    # Keyed by (team_id, gateway_id, email); values are {token, cache_expires}.
     # Must be class-level: VaultTokenBackend is instantiated per-request, so an
     # instance-level cache would be discarded at the end of every request.
     # OrderedDict preserves insertion order AND supports move_to_end(), which is
@@ -103,12 +107,11 @@ class VaultTokenBackend(AbstractTokenBackend):
         self.cache_max_size = settings.vault_token_cache_max_size
 
     def _hash_server_id(self, mcp_url: str) -> str:
-        """Hash mcp_url to stable server_id (first 16 hex chars of SHA-256).
+        """Hash mcp_url to the LEGACY server_id (first 16 hex chars of SHA-256).
 
-        16 hex characters = 64-bit prefix, which provides ~2^32 birthday-collision
-        resistance (i.e., collisions become probable only around 4 billion distinct
-        gateway URLs). The previous 8-char (32-bit) truncation became probable
-        around 65,536 URLs for large deployments.
+        Retained only to read records written before the path keyed on gateway_id. Two gateways
+        that share an upstream URL hash to the same value here, so they shared one credential slot
+        - the collision recorded in #6353 item 3. New records use _server_segment() instead.
 
         Args:
             mcp_url: Gateway URL (e.g., https://mcp.github.acme.com)
@@ -118,43 +121,137 @@ class VaultTokenBackend(AbstractTokenBackend):
         """
         return hashlib.sha256(mcp_url.encode()).hexdigest()[:16]
 
-    def _construct_vault_path(self, team_id: str | None, mcp_url: str, app_user_email: str) -> str:
-        """Construct full Vault KV v2 path.
+    @staticmethod
+    def _server_segment(gateway_id: str) -> str:
+        """Return the path segment that identifies the gateway configuration.
+
+        The gateway id is used verbatim rather than hashed. It is already opaque, it matches how
+        DatabaseTokenBackend keys token rows - (gateway_id, app_user_email) - and it keeps the path
+        legible to an operator reading Vault directly. quote() guards a future caller that passes an
+        id containing a path separator.
+
+        Args:
+            gateway_id: Gateway identifier
+
+        Returns:
+            URL-encoded gateway id
+        """
+        return quote(gateway_id, safe="")
+
+    @staticmethod
+    def _team_segment(team_id: str | None) -> str:
+        """Return the team path segment, or the shared segment when there is no team.
+
+        URL-encoding prevents path traversal if a future caller passes a slug or display name
+        containing '/'. It is a no-op for the UUIDs current callers pass.
+
+        Args:
+            team_id: Team identifier, or None
+
+        Returns:
+            URL-encoded team id, or "shared"
+        """
+        return quote(team_id, safe="") if team_id else "shared"
+
+    def _construct_vault_path(self, team_id: str | None, gateway_id: str, app_user_email: str) -> str:
+        """Construct the full Vault KV v2 data path for a gateway-user pair.
 
         Args:
             team_id: Team identifier (or None for shared fallback path)
-            mcp_url: Gateway URL (will be hashed to server_id)
+            gateway_id: Gateway identifier
             app_user_email: User email (will be URL-encoded)
 
         Returns:
-            Full Vault path (e.g., secret/data/contextforge/oauth/engineering/647ad7b3/alice%40example.com)
-            or shared fallback path when team_id is None: secret/data/contextforge/oauth/shared/647ad7b3/alice%40example.com
+            Full Vault path (e.g., secret/data/contextforge/oauth/engineering/gw-123/alice%40example.com)
+            or shared fallback path when team_id is None
         """
-        server_id = self._hash_server_id(mcp_url)
-        email_encoded = quote(app_user_email, safe="")
-        # URL-encode team_id to prevent path traversal if a future caller passes a slug
-        # or display name containing '/' or other path separators. UUIDs (current callers)
-        # are unaffected — quote("uuid-string", safe="") is a no-op for hex-dash strings.
-        team_segment = quote(team_id, safe="") if team_id else "shared"
-        return f"{self.mount}/data/{self.prefix}/{team_segment}/{server_id}/{email_encoded}"
+        return f"{self.mount}/data/{self.prefix}/{self._team_segment(team_id)}/{self._server_segment(gateway_id)}/{quote(app_user_email, safe='')}"
 
-    def _construct_metadata_path(self, team_id: str | None, mcp_url: str, app_user_email: str) -> str:
-        """Construct Vault KV v2 metadata path (for hard delete).
+    def _construct_legacy_vault_path(self, team_id: str | None, mcp_url: str, app_user_email: str) -> str:
+        """Construct the pre-gateway_id data path, for reading records written before this change.
 
         Args:
             team_id: Team identifier (or None for shared fallback path)
-            mcp_url: Gateway URL
+            mcp_url: Gateway URL (hashed to the legacy server_id)
+            app_user_email: User email (will be URL-encoded)
+
+        Returns:
+            Legacy Vault data path
+        """
+        return f"{self.mount}/data/{self.prefix}/{self._team_segment(team_id)}/{self._hash_server_id(mcp_url)}/{quote(app_user_email, safe='')}"
+
+    def _construct_metadata_path(self, team_id: str | None, gateway_id: str, app_user_email: str) -> str:
+        """Construct the Vault KV v2 metadata path (for hard delete).
+
+        Args:
+            team_id: Team identifier (or None for shared fallback path)
+            gateway_id: Gateway identifier
             app_user_email: User email
 
         Returns:
-            Metadata path (e.g., secret/metadata/contextforge/oauth/engineering/647ad7b3/alice%40example.com)
-            or shared fallback path when team_id is None
+            Metadata path
         """
-        server_id = self._hash_server_id(mcp_url)
-        email_encoded = quote(app_user_email, safe="")
-        # URL-encode team_id for the same reason as _construct_vault_path above.
-        team_segment = quote(team_id, safe="") if team_id else "shared"
-        return f"{self.mount}/metadata/{self.prefix}/{team_segment}/{server_id}/{email_encoded}"
+        return f"{self.mount}/metadata/{self.prefix}/{self._team_segment(team_id)}/{self._server_segment(gateway_id)}/{quote(app_user_email, safe='')}"
+
+    def _construct_legacy_metadata_path(self, team_id: str | None, mcp_url: str, app_user_email: str) -> str:
+        """Construct the pre-gateway_id metadata path, so a revoke also clears a legacy record.
+
+        Args:
+            team_id: Team identifier (or None for shared fallback path)
+            mcp_url: Gateway URL (hashed to the legacy server_id)
+            app_user_email: User email
+
+        Returns:
+            Legacy Vault metadata path
+        """
+        return f"{self.mount}/metadata/{self.prefix}/{self._team_segment(team_id)}/{self._hash_server_id(mcp_url)}/{quote(app_user_email, safe='')}"
+
+    async def _read_user_record(self, team_id: str | None, gateway_id: str, app_user_email: str) -> dict | None:
+        """Read a per-user record, preferring the gateway-keyed path and falling back to the legacy one.
+
+        Args:
+            team_id: Team identifier (or None for the shared path)
+            gateway_id: Gateway identifier
+            app_user_email: ContextForge user email
+
+        Returns:
+            The record's inner data dict, or None when neither path holds a record.
+        """
+        record = self._inner_data(await self._vault_request("GET", self._construct_vault_path(team_id, gateway_id, app_user_email)))
+        if record is not None:
+            return record
+
+        legacy_path = self._construct_legacy_vault_path(team_id, self._resolve_mcp_url(gateway_id), app_user_email)
+        record = self._inner_data(await self._vault_request("GET", legacy_path))
+        if record is not None:
+            logger.info(
+                "Read credential from the legacy URL-keyed Vault path for gateway %s, team=%s, user=%s. It will move to the gateway-keyed path on next write.",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(str(team_id)),
+                SecurityValidator.sanitize_log_message(app_user_email),
+            )
+        return record
+
+    @staticmethod
+    def _inner_data(result: dict | None) -> dict | None:
+        """Unwrap a KV v2 read response to the fields the caller stored.
+
+        A KV v2 read nests those fields at ``data.data``. Either level is absent for a missing or
+        malformed record, so both are checked rather than indexed.
+
+        Args:
+            result: Raw Vault read response, or None for a 404
+
+        Returns:
+            The stored fields, or None when the response holds no usable record.
+        """
+        if not isinstance(result, dict):
+            return None
+        envelope = result.get("data")
+        if not isinstance(envelope, dict):
+            return None
+        fields = envelope.get("data")
+        return fields if isinstance(fields, dict) else None
 
     def _construct_credentials_path(self, team_id: str | None, mcp_url: str) -> str:
         """Construct Vault KV v2 path for OAuth credentials.
@@ -311,7 +408,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             TokenRecord with plain-text tokens
         """
         mcp_url = self._resolve_mcp_url(gateway_id)
-        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+        path = self._construct_vault_path(team_id, gateway_id, app_user_email)
 
         # Calculate expiration
         expires_at = None
@@ -324,12 +421,14 @@ class VaultTokenBackend(AbstractTokenBackend):
         # created_at: audit history and max-age policies see the original issuance timestamp.
         # learned_aud/iss: avoid erasing previously-learned values when caller passes None
         # (matches the DB backend's conditional-update pattern for consistency).
-        existing = await self._vault_request("GET", path)
+        # Reads only the gateway-keyed path: adding the legacy fallback here would put a second
+        # Vault read on every token write to recover metadata that the refresh path already
+        # forwards explicitly, and that the callback path supplies fresh.
+        existing_data = self._inner_data(await self._vault_request("GET", path))
         original_created_at: str | None = None
         existing_learned_aud: str | None = None
         existing_learned_iss: str | None = None
-        if existing and "data" in existing and "data" in existing["data"]:
-            existing_data = existing["data"]["data"]
+        if existing_data:
             original_created_at = existing_data.get("created_at")
             existing_learned_aud = existing_data.get("learned_aud")
             existing_learned_iss = existing_data.get("learned_iss")
@@ -339,7 +438,8 @@ class VaultTokenBackend(AbstractTokenBackend):
             "data": {
                 "email": app_user_email,
                 "team_id": team_id,
-                "mcp_url": mcp_url,  # ← Key difference: store mcp_url, not gateway_id
+                "gateway_id": gateway_id,  # the path is keyed on this; recorded so the row is self-describing
+                "mcp_url": mcp_url,
                 "token": {
                     "access_token": access_token,
                     "refresh_token": refresh_token,
@@ -391,8 +491,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         # most one cache-hit cycle (< cache_ttl seconds).
         # This is the same expire-in-place pattern used by revoke_user_tokens().
         if self.cache_enabled:
-            server_id = self._hash_server_id(mcp_url)
-            cache_key = (team_id, server_id, app_user_email)
+            cache_key = (team_id, gateway_id, app_user_email)
             if cache_key in VaultTokenBackend._token_cache:
                 VaultTokenBackend._token_cache[cache_key]["cache_expires"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
@@ -441,8 +540,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         """
         try:
             mcp_url = self._resolve_mcp_url(gateway_id)
-            server_id = self._hash_server_id(mcp_url)
-            cache_key = (team_id, server_id, app_user_email)
+            cache_key = (team_id, gateway_id, app_user_email)
 
             # Check cache first (class-level OrderedDict — persists across requests).
             # Move accessed entry to the end so the front always holds the LRU entry.
@@ -450,9 +548,9 @@ class VaultTokenBackend(AbstractTokenBackend):
                 cached = VaultTokenBackend._token_cache[cache_key]
                 if datetime.now(timezone.utc) < cached["cache_expires"]:
                     logger.debug(
-                        "Cache hit for token: team=%s, server_id=%s, email=%s",
+                        "Cache hit for token: team=%s, gateway_id=%s, email=%s",
                         SecurityValidator.sanitize_log_message(team_id),
-                        SecurityValidator.sanitize_log_message(server_id),
+                        SecurityValidator.sanitize_log_message(gateway_id),
                         SecurityValidator.sanitize_log_message(app_user_email),
                     )
                     VaultTokenBackend._token_cache.move_to_end(cache_key)
@@ -461,10 +559,9 @@ class VaultTokenBackend(AbstractTokenBackend):
                 VaultTokenBackend._token_cache.pop(cache_key, None)
 
             # Fetch from Vault
-            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-            result = await self._vault_request("GET", path)
+            data = await self._read_user_record(team_id, gateway_id, app_user_email)
 
-            if not result or "data" not in result:
+            if not data:
                 logger.debug(
                     "No OAuth tokens found in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
                     SecurityValidator.sanitize_log_message(gateway_id),
@@ -474,7 +571,6 @@ class VaultTokenBackend(AbstractTokenBackend):
                 )
                 return None
 
-            data = result["data"]["data"]
             token_data = data.get("token")
             if not token_data or not isinstance(token_data, dict):
                 # Record exists but has no OAuth token shape (e.g. ICA-written
@@ -557,12 +653,9 @@ class VaultTokenBackend(AbstractTokenBackend):
             The ``{header: value}`` dict, or None if no per-user record / no headers field.
         """
         try:
-            mcp_url = self._resolve_mcp_url(gateway_id)
-            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-            result = await self._vault_request("GET", path)
-            if not result or "data" not in result:
+            data = await self._read_user_record(team_id, gateway_id, app_user_email)
+            if not data:
                 return None
-            data = result["data"]["data"]
             headers = data.get("headers")
             if isinstance(headers, dict) and headers:
                 return {str(k): str(v) for k, v in headers.items() if k and v}
@@ -609,14 +702,11 @@ class VaultTokenBackend(AbstractTokenBackend):
             VaultAuthError: Propagated when Vault authentication fails.
         """
         try:
-            mcp_url = self._resolve_mcp_url(gateway_id)
-            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-            result = await self._vault_request("GET", path)
+            data = await self._read_user_record(team_id, gateway_id, app_user_email)
 
-            if not result or "data" not in result:
+            if not data:
                 return None
 
-            data = result["data"]["data"]
             expires_at_str = data.get("expires_at")
             updated_at_str = data.get("updated_at")
 
@@ -663,10 +753,15 @@ class VaultTokenBackend(AbstractTokenBackend):
             True if deleted, False if not found
         """
         mcp_url = self._resolve_mcp_url(gateway_id)
-        metadata_path = self._construct_metadata_path(team_id, mcp_url, app_user_email)
+        metadata_path = self._construct_metadata_path(team_id, gateway_id, app_user_email)
+        legacy_metadata_path = self._construct_legacy_metadata_path(team_id, mcp_url, app_user_email)
 
         try:
             result = await self._vault_request("DELETE", metadata_path)
+
+            # Also clear any record left at the legacy URL-keyed path, so a revoke cannot report
+            # success while a readable credential survives there (_read_user_record falls back to it).
+            legacy_result = await self._vault_request("DELETE", legacy_metadata_path)
 
             # Mark the cache entry as immediately expired rather than deleting it.
             # Deleting would only clear this worker's copy; other workers in a
@@ -676,8 +771,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             # workers that share the class-level cache, bounding the post-revocation
             # window to at most one cache-hit cycle (< cache_ttl seconds).
             if self.cache_enabled:
-                server_id = self._hash_server_id(mcp_url)
-                cache_key = (team_id, server_id, app_user_email)
+                cache_key = (team_id, gateway_id, app_user_email)
                 if cache_key in VaultTokenBackend._token_cache:
                     VaultTokenBackend._token_cache[cache_key]["cache_expires"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
@@ -688,7 +782,8 @@ class VaultTokenBackend(AbstractTokenBackend):
                 SecurityValidator.sanitize_log_message(team_id),
                 SecurityValidator.sanitize_log_message(app_user_email),
             )
-            return result is not None  # None = 404 (not found)
+            # Either path having held a record counts as a revocation. None = 404 (not found).
+            return result is not None or legacy_result is not None
 
         except (VaultConnectionError, VaultAuthError):
             # Vault is unhealthy — re-raise so the caller knows revocation may
@@ -762,11 +857,9 @@ class VaultTokenBackend(AbstractTokenBackend):
             no token record exists or if the fields were never populated.
         """
         try:
-            mcp_url = self._resolve_mcp_url(gateway_id)
-            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-            result = await self._vault_request("GET", path)
+            data = await self._read_user_record(team_id, gateway_id, app_user_email)
 
-            if not result or "data" not in result:
+            if not data:
                 logger.debug(
                     "No token record found in Vault for gateway %s, team=%s, user=%s",
                     SecurityValidator.sanitize_log_message(gateway_id),
@@ -775,7 +868,6 @@ class VaultTokenBackend(AbstractTokenBackend):
                 )
                 return (None, None)
 
-            data = result["data"]["data"]
             learned_aud = data.get("learned_aud")
             learned_iss = data.get("learned_iss")
 
@@ -974,11 +1066,8 @@ class VaultTokenBackend(AbstractTokenBackend):
             # Re-read under the lock.  If a concurrent waiter already completed the
             # refresh cycle the token will no longer be near-expiry — return it
             # without burning the (potentially one-use) refresh token a second time.
-            mcp_url_check = self._resolve_mcp_url(gateway_id)
-            path_check = self._construct_vault_path(team_id, mcp_url_check, app_user_email)
-            fresh_result = await self._vault_request("GET", path_check)
-            if fresh_result and "data" in fresh_result:
-                fresh_data = fresh_result["data"]["data"]
+            fresh_data = await self._read_user_record(team_id, gateway_id, app_user_email)
+            if fresh_data:
                 fresh_token = fresh_data.get("token", {}).get("access_token")
                 fresh_expires_str = fresh_data.get("expires_at")
                 if fresh_token:
