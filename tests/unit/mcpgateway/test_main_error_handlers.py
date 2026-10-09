@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 import jwt
 from pydantic import SecretStr
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 
 # First-Party
 from mcpgateway.config import settings
@@ -571,6 +571,34 @@ class TestA2AAgentErrorHandlers:
 
 class TestToolServiceErrorHandlers:
     """Tests for error handling in tool endpoints."""
+
+    @pytest.mark.parametrize("activate", [True, False])
+    def test_set_tool_state_database_error_is_sanitized(self, test_client, auth_headers, activate):
+        """Keep SQL statements and bound parameters out of tool state error responses."""
+        statement = "UPDATE tools SET description=:description WHERE id=:tool_id"
+        sensitive_parameter = "synthetic-private-description-marker"
+        database_error = StatementError(
+            "Synthetic database failure",
+            statement,
+            {"description": sensitive_parameter, "tool_id": "test-id"},
+            RuntimeError("Synthetic driver failure"),
+        )
+        assert statement in str(database_error)
+        assert sensitive_parameter in str(database_error)
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=database_error) as mock_lookup,
+            patch("mcpgateway.services.tool_service.structured_logger.log"),
+            patch("mcpgateway.main.logger.exception"),
+        ):
+            response = test_client.post(f"/tools/test-id/state?activate={str(activate).lower()}", headers=auth_headers)
+
+        mock_lookup.assert_called_once()
+        assert response.status_code == 400
+        assert statement not in response.text
+        assert sensitive_parameter not in response.text
+        assert "Synthetic driver failure" not in response.text
+        assert response.json()["detail"].startswith("Failed to set tool state: An unexpected error occurred")
 
     def test_update_tool_permission_error(self, test_client, auth_headers):
         """Test PermissionError handling in update_tool."""
