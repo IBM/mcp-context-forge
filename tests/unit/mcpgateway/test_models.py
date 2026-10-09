@@ -9,6 +9,7 @@ defined in the models.py module.
 """
 
 # Standard
+from datetime import datetime, timezone
 import json
 import os
 
@@ -20,6 +21,7 @@ import pytest
 from mcpgateway.common.models import (
     ClientCapabilities,
     CreateMessageResult,
+    Gateway,
     ImageContent,
     Implementation,
     InitializeRequest,
@@ -593,3 +595,35 @@ class TestMCPTypes:
         assert minimal.auth_username is None
         assert minimal.auth_password is None
         assert minimal.auth_token is None
+
+    def test_gateway(self):
+        """Test Gateway model."""
+        seen = datetime(2026, 9, 7, 19, 44, 36, tzinfo=timezone.utc)
+        gateway = Gateway(
+            id="gw-1",
+            name="example-gateway",
+            url="http://localhost:8000/gateway",
+            capabilities=ServerCapabilities(),
+            slug="example-gateway",
+            transport="HTTP",
+            last_seen=seen,
+            passthrough_headers=["X-Request-Id"],
+            auth_value=None,
+        )
+        assert gateway.id == "gw-1"
+        assert gateway.name == "example-gateway"
+        assert gateway.last_seen == seen
+
+        # ToolService caches gateway payloads without last_seen, so the field has to stay optional.
+        cached_payload = {
+            "id": "gw-1",
+            "name": "minimal-gateway",
+            "url": "http://localhost:8000/gateway",
+            "slug": "minimal-gateway",
+            "transport": "HTTP",
+            "capabilities": {},
+            "passthrough_headers": [],
+            "auth_value": None,
+        }
+        assert Gateway.model_validate(cached_payload).last_seen is None
+        assert not Gateway.model_fields["last_seen"].is_required()
