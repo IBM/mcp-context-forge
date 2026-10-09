@@ -522,6 +522,16 @@ An unserved version is rejected with HTTP `400` and a JSON-RPC error body. The e
   "data": {"supported": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"], "requested": "2099-01-01"}}}
 ```
 
+#### Cache Hints for Modern Clients
+
+When a client negotiates the `2026-07-28` protocol, the gateway marks its cacheable results so the client knows how long it may reuse them:
+
+- `server/discover`, `tools/list`, `resources/list`, `resources/templates/list` and `prompts/list` carry `ttlMs` and `cacheScope: "private"`.
+- `ttlMs` on a catalog result is the shortest refresh interval among the upstream gateways behind the virtual server being queried, floored at `HEALTH_CHECK_INTERVAL` because the gateway only refreshes upstreams inside its health-check loop. A request that is not scoped to a virtual server uses `GATEWAY_AUTO_REFRESH_INTERVAL`. If the interval cannot be derived, the gateway answers `ttlMs: 0` so the client does not cache.
+- `resources/read` relays the `ttlMs` the upstream server provided, or `0` when it provided none, and is always `private` because reads go through the caller's own authorization.
+
+A client that honours these hints will not see a catalog change (a new, removed or renamed tool) until its cached copy expires, so the refresh interval you configure is also the longest delay before such clients notice the change.
+
 #### Outbound MCP Connect Mode (Gateway → MCP Servers)
 
 `MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens **outbound** connections to upstream MCP servers. It applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
@@ -1177,6 +1187,7 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
+| `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs); also the catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
 | `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |

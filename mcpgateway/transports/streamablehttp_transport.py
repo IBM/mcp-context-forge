@@ -57,7 +57,7 @@ import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 import orjson
-from sqlalchemy import select
+from sqlalchemy import select, union
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -70,7 +70,11 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
@@ -94,7 +98,7 @@ from mcpgateway.services.metrics import (
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, upstream_read_cache_var
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, set_upstream_cache_directive, upstream_read_cache_var
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -514,6 +518,9 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
 
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
+# Server scope of the request being served, as resolved by _get_request_context_or_default();
+# the modern-path list/discover adapters read it to size ttlMs. None when unscoped.
+_request_server_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("request_server_id", default=None)
 
 
 class OAuthAuthResult(Enum):
@@ -1790,6 +1797,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 content_result = await client.read_resource(resource_uri)
 
             logger.info("Received %s content items from gateway %s for resource %s", len(content_result.contents), gateway.id, resource_uri)
+            set_upstream_cache_directive(content_result)
             return content_result.contents
 
     except Exception as e:
@@ -2492,7 +2500,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         Tuple[str, dict[str, Any], dict[str, Any]]: ``(server_id, request_headers, user_context)``.
     """
     server_id, request_headers, user_context = await _resolve_request_context()
-    _request_server_id_var.set(server_id)
+    _request_server_id_var.set(server_id if server_id and server_id != "default_server_id" else None)
     return server_id, request_headers, user_context
 
 
@@ -3476,10 +3484,6 @@ async def complete(
 # themselves and delete these adapters + the property shim.
 # ============================================================================
 
-# Server scope of the request being served, as resolved by _get_request_context_or_default();
-# the modern-path list adapters read it to size ttlMs. None when unscoped.
-_request_server_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("request_server_id", default=None)
-
 _v2_request_ctx: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
     "_mcpgateway_v2_request_ctx",
     default=None,
@@ -3522,16 +3526,22 @@ async def _catalog_ttl_ms(server_id: Optional[str]) -> int:
     """
     if server_id:
         try:
+            # One statement: the distinct refresh intervals of every upstream behind the
+            # server's tools, resources and prompts, through the association tables; no
+            # tool/resource/prompt objects are loaded.
+            upstream_ids = union(
+                select(DbTool.gateway_id).join(server_tool_association, server_tool_association.c.tool_id == DbTool.id).where(server_tool_association.c.server_id == server_id),
+                select(DbResource.gateway_id).join(server_resource_association, server_resource_association.c.resource_id == DbResource.id).where(server_resource_association.c.server_id == server_id),
+                select(DbPrompt.gateway_id).join(server_prompt_association, server_prompt_association.c.prompt_id == DbPrompt.id).where(server_prompt_association.c.server_id == server_id),
+            )
             async with get_db() as db:
-                server = db.get(DbServer, server_id)
-                if server is not None:
-                    gateway_ids = {getattr(item, "gateway_id", None) for group in (server.tools, server.resources, server.prompts) for item in group}
-                    gateway_ids.discard(None)
-                    if gateway_ids:
-                        intervals = db.execute(select(DbGateway.refresh_interval_seconds).where(DbGateway.id.in_(gateway_ids))).scalars().all()
-                        return min(_upstream_refresh_seconds(interval) for interval in intervals) * 1000
+                intervals = db.execute(select(DbGateway.refresh_interval_seconds).distinct().where(DbGateway.id.in_(upstream_ids))).scalars().all()
+            if intervals:
+                return min(_upstream_refresh_seconds(interval) for interval in intervals) * 1000
         except Exception:  # noqa: BLE001 — the TTL is advisory; never fail a list over it
-            logger.debug("Could not derive the catalog TTL for server %s; using the global default", server_id, exc_info=True)
+            # Nothing verifiable about the catalog's freshness: tell the client not to cache.
+            logger.warning("Could not derive the catalog TTL for server %s; answering ttlMs=0", server_id, exc_info=True)
+            return 0
     return _upstream_refresh_seconds(None) * 1000
 
 
@@ -3545,10 +3555,17 @@ async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> 
     Returns:
         types.DiscoverResult: The SDK's discover result carrying the cache directive.
     """
-    result = await mcp_app._handle_discover(ctx, params)  # pylint: disable=protected-access  # the SDK's documented default, overridden here only to add the directive
-    result.ttl_ms = await _catalog_ttl_ms(_request_server_id_var.get())
-    result.cache_scope = "private"
-    return result
+    token = _v2_request_ctx.set(ctx)
+    try:
+        # Resolve the request like the list handlers do, so a discover aimed at a
+        # virtual server gets that server's TTL rather than the global default.
+        await _get_request_context_or_default()
+        result = await mcp_app._handle_discover(ctx, params)  # pylint: disable=protected-access  # the SDK's documented default, overridden here only to add the directive
+        result.ttl_ms = await _catalog_ttl_ms(_request_server_id_var.get())
+        result.cache_scope = "private"
+        return result
+    finally:
+        _v2_request_ctx.reset(token)
 
 
 async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsResult":

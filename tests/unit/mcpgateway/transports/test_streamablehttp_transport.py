@@ -12148,6 +12148,31 @@ class TestProxyFunctions:
         mock_session.read_resource.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_proxy_read_resource_records_the_upstream_cache_directive(self):
+        """The header-based direct proxy keeps the upstream's ttlMs for the read adapter, scope private."""
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-789"
+        mock_gateway.url = "http://remote-gateway.example.com/mcp"
+        mock_gateway.passthrough_headers = None
+        mock_result = MagicMock()
+        mock_result.contents = [MagicMock(text="File content here")]
+        mock_result.ttl_ms = 60_000
+        mock_result.cache_scope = "public"
+        mock_session = AsyncMock()
+        mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        tr.request_headers_var.set({})
+        tr.upstream_read_cache_var.set(None)
+
+        with patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=mock_session):
+            with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                result = await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
+
+        assert len(result) == 1
+        assert tr.upstream_read_cache_var.get() == {"ttl_ms": 60_000, "cache_scope": "private"}
+
+    @pytest.mark.asyncio
     async def test_proxy_read_resource_with_meta(self):
         """Test proxy read_resource forwards _meta using send_request."""
         mock_gateway = MagicMock()
@@ -16011,7 +16036,7 @@ async def test_session_owner_mismatch_logs_warning(monkeypatch, caplog):
                 }
             )
             try:
-                with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
+                with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
                     await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
             finally:
                 tr.user_context_var.reset(token)
@@ -20092,9 +20117,18 @@ class TestListCacheDirectives:
         ttl.assert_awaited_once_with("srv-1")
 
     @pytest.mark.asyncio
-    async def test_discover_carries_the_cache_directive(self, monkeypatch):
-        """server/discover keeps the SDK's answer (versions, capabilities) and adds ttlMs and cacheScope=private."""
-        monkeypatch.setattr(tr, "_catalog_ttl_ms", AsyncMock(return_value=300_000))
+    @pytest.mark.parametrize(
+        "resolved_server_id, expected_scope",
+        [
+            pytest.param("srv-1", "srv-1", id="scoped-to-a-virtual-server"),
+            pytest.param("default_server_id", None, id="unscoped"),
+        ],
+    )
+    async def test_discover_resolves_the_request_scope_before_sizing_ttl(self, monkeypatch, resolved_server_id, expected_scope):
+        """server/discover resolves the request like the list handlers, so the TTL is sized for the request's server."""
+        monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=(resolved_server_id, {}, {})))
+        ttl = AsyncMock(return_value=300_000)
+        monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
         ctx = SimpleNamespace(protocol_version="2026-07-28")
 
         result = await tr._adapt_discover_with_ttl_cache_scope(ctx, None)
@@ -20104,6 +20138,52 @@ class TestListCacheDirectives:
         assert result.capabilities is not None
         assert result.ttl_ms == 300_000
         assert result.cache_scope == "private"
+        ttl.assert_awaited_once_with(expected_scope)
+        assert tr._v2_request_ctx.get() is None
+
+    @pytest.mark.asyncio
+    async def test_list_adapter_sizes_ttl_from_the_resolved_scope_through_the_real_helper(self, monkeypatch):
+        """No prepopulated scope and no mocked TTL: the handler resolves the request, the real helper queries the upstreams' intervals."""
+
+        async def fake_list_tools():
+            await tr._get_request_context_or_default()  # what the real handler does first
+            return []
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [900]
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield mock_db
+
+        monkeypatch.setattr(tr, "list_tools", fake_list_tools)
+        monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=("srv-1", {}, {})))
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", SimpleNamespace(health_check_interval=60, gateway_auto_refresh_interval=300)):
+            result = await tr._adapt_list_tools(object())
+
+        assert result.ttl_ms == 900_000
+        assert result.cache_scope == "private"
+        assert mock_db.execute.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_denied_list_never_computes_a_ttl(self, monkeypatch):
+        """Authentication and authorization run inside the handler; when they refuse, no TTL is derived and the refusal propagates."""
+        # Third-Party
+        from fastapi import HTTPException
+
+        async def refusing_list_tools():
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        ttl = AsyncMock(return_value=300_000)
+        monkeypatch.setattr(tr, "list_tools", refusing_list_tools)
+        monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
+
+        with pytest.raises(HTTPException):
+            await tr._adapt_list_tools(object())
+
+        ttl.assert_not_awaited()
+        assert tr._v2_request_ctx.get() is None
 
     @pytest.mark.asyncio
     async def test_context_resolver_records_the_server_scope(self, monkeypatch):
@@ -20113,16 +20193,21 @@ class TestListCacheDirectives:
         assert await tr._get_request_context_or_default() == ("srv-9", {}, {})
         assert tr._request_server_id_var.get() == "srv-9"
 
+        monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=("default_server_id", {}, {})))
+
+        assert await tr._get_request_context_or_default() == ("default_server_id", {}, {})
+        assert tr._request_server_id_var.get() is None
+
 
 class TestReadCacheDirectives:
-    """resources/read relays the upstream's cache directive; DB-served content gets ttlMs 0 and private."""
+    """resources/read relays the upstream's ttlMs, always with cacheScope private; DB-served content gets ttlMs 0."""
 
     @pytest.mark.asyncio
     async def test_read_adapter_relays_the_upstream_directive(self, monkeypatch):
         """When the service recorded an upstream directive, the result carries it."""
         contents = [types.TextResourceContents(uri="test://r", text="hello")]
         monkeypatch.setattr(tr, "read_resource", AsyncMock(return_value=contents))
-        token = tr.upstream_read_cache_var.set({"ttl_ms": 60_000, "cache_scope": "public"})
+        token = tr.upstream_read_cache_var.set({"ttl_ms": 60_000, "cache_scope": "private"})
         try:
             result = await tr._adapt_read_resource(object(), SimpleNamespace(uri="test://r"))
         finally:
@@ -20130,7 +20215,7 @@ class TestReadCacheDirectives:
 
         assert result.contents == contents
         assert result.ttl_ms == 60_000
-        assert result.cache_scope == "public"
+        assert result.cache_scope == "private"
 
     @pytest.mark.asyncio
     async def test_read_adapter_defaults_when_no_upstream_was_read(self, monkeypatch):
@@ -20145,6 +20230,40 @@ class TestReadCacheDirectives:
         assert result.contents[0].text == "hello"
         assert result.ttl_ms == 0
         assert result.cache_scope == "private"
+
+    @pytest.mark.asyncio
+    async def test_read_adapter_relays_the_directive_for_binary_content(self, monkeypatch):
+        """A binary resource read from an upstream carries the directive like a text one."""
+        monkeypatch.setattr(tr, "read_resource", AsyncMock(return_value=b"\x00\x01binary"))
+        token = tr.upstream_read_cache_var.set({"ttl_ms": 60_000, "cache_scope": "private"})
+        try:
+            result = await tr._adapt_read_resource(object(), SimpleNamespace(uri="test://blob"))
+        finally:
+            tr.upstream_read_cache_var.reset(token)
+
+        assert isinstance(result.contents[0], types.BlobResourceContents)
+        assert result.ttl_ms == 60_000
+        assert result.cache_scope == "private"
+
+    @pytest.mark.asyncio
+    async def test_read_handler_leaves_no_directive_when_the_read_raises(self, monkeypatch):
+        """A failing read must not leave an earlier directive behind for a later result."""
+        mock_db = MagicMock()
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield mock_db
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", AsyncMock(return_value=(None, {}, {})))
+        monkeypatch.setattr(tr.resource_service, "read_resource", AsyncMock(side_effect=RuntimeError("upstream down")))
+        token = tr.upstream_read_cache_var.set({"ttl_ms": 999, "cache_scope": "private"})
+        try:
+            with pytest.raises(Exception):
+                await tr.read_resource("test://r")
+            assert tr.upstream_read_cache_var.get() is None
+        finally:
+            tr.upstream_read_cache_var.reset(token)
 
     @pytest.mark.asyncio
     async def test_read_handler_clears_a_stale_directive_before_reading(self, monkeypatch):
@@ -20172,9 +20291,9 @@ class TestCatalogTtl:
     _settings = SimpleNamespace(health_check_interval=60, gateway_auto_refresh_interval=300)
 
     @staticmethod
-    def _fake_db(monkeypatch, server, intervals):
+    def _fake_db(monkeypatch, intervals):
+        """A db whose single query returns ``intervals`` (the distinct refresh intervals of the server's upstreams)."""
         mock_db = MagicMock()
-        mock_db.get.return_value = server
         mock_db.execute.return_value.scalars.return_value.all.return_value = intervals
 
         @asynccontextmanager
@@ -20184,38 +20303,55 @@ class TestCatalogTtl:
         monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
         return mock_db
 
-    @staticmethod
-    def _server(*gateway_ids):
-        tools = [SimpleNamespace(gateway_id=gateway_id) for gateway_id in gateway_ids]
-        return SimpleNamespace(tools=tools, resources=[], prompts=[])
-
     @pytest.mark.asyncio
     async def test_unscoped_request_uses_the_global_default(self, monkeypatch):
-        """No server scope: the global auto-refresh interval, in milliseconds."""
+        """No server scope: the global auto-refresh interval, in milliseconds, and no query."""
+        mock_db = self._fake_db(monkeypatch, intervals=[])
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
             assert await tr._catalog_ttl_ms(None) == 300_000
+        mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_scoped_request_takes_the_shortest_effective_interval(self, monkeypatch):
         """Two upstreams, one overriding to 900s and one on the default: the default wins as the shorter."""
-        self._fake_db(monkeypatch, self._server("gw-a", "gw-b"), intervals=[900, None])
+        self._fake_db(monkeypatch, intervals=[900, None])
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
             assert await tr._catalog_ttl_ms("srv-1") == 300_000
 
     @pytest.mark.asyncio
     async def test_override_shorter_than_the_health_check_interval_is_floored_to_it(self, monkeypatch):
         """A 30s override cannot refresh faster than the 60s loop that drives refreshes, so the TTL says 60s."""
-        self._fake_db(monkeypatch, self._server("gw-a"), intervals=[30])
+        self._fake_db(monkeypatch, intervals=[30])
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
             assert await tr._catalog_ttl_ms("srv-1") == 60_000
 
-    @pytest.mark.asyncio
-    async def test_server_without_upstreams_or_lookup_failure_falls_back_to_the_default(self, monkeypatch):
-        """A server with no federated items, or a failing lookup, never breaks a list: the default applies."""
+    def test_zero_override_means_refresh_every_loop_and_is_floored_to_the_health_check_interval(self):
+        """An override of 0 (not reachable via the API, whose minimum is 60) refreshes on every loop pass, so the TTL is the loop interval."""
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
-            self._fake_db(monkeypatch, self._server(), intervals=[])
-            assert await tr._catalog_ttl_ms("srv-1") == 300_000
+            assert tr._upstream_refresh_seconds(0) == 60
+            assert tr._upstream_refresh_seconds(None) == 300
 
-            mock_db = self._fake_db(monkeypatch, self._server("gw-a"), intervals=[900])
-            mock_db.get.side_effect = RuntimeError("db down")
-            assert await tr._catalog_ttl_ms("srv-1") == 300_000
+    @pytest.mark.asyncio
+    async def test_scoped_request_issues_exactly_one_query(self, monkeypatch):
+        """The intervals come from a single statement over the association tables; no item objects are loaded."""
+        mock_db = self._fake_db(monkeypatch, intervals=[900])
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
+            assert await tr._catalog_ttl_ms("srv-1") == 900_000
+        assert mock_db.execute.call_count == 1
+        mock_db.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_server_or_server_without_upstreams_falls_back_to_the_default(self, monkeypatch):
+        """An unknown server id, or a server with only local items, yields no intervals: the default applies."""
+        self._fake_db(monkeypatch, intervals=[])
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings):
+            assert await tr._catalog_ttl_ms("srv-unknown") == 300_000
+
+    @pytest.mark.asyncio
+    async def test_lookup_failure_means_no_caching_and_is_logged(self, monkeypatch, caplog):
+        """A failing lookup never breaks a list, but the client is told not to cache and a warning is logged."""
+        mock_db = self._fake_db(monkeypatch, intervals=[900])
+        mock_db.execute.side_effect = RuntimeError("db down")
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings), caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
+            assert await tr._catalog_ttl_ms("srv-1") == 0
+        assert any("Could not derive the catalog TTL" in r.getMessage() for r in caplog.records)
