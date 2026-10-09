@@ -698,8 +698,8 @@ def _reencrypt_value(
         try:
             new_svc.decrypt_secret(value)
             return value, "skipped_already_new"
-        except Exception:  # pylint: disable=broad-except
-            pass  # expected: encrypted under old key, not new — fall through
+        except Exception:  # pylint: disable=broad-exception-caught  # nosec B110 - A failed probe requires decryption with the old key.
+            pass
 
     # Decrypt with old key, re-encrypt with new key.
     try:

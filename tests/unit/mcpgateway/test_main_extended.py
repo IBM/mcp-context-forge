@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
+from cpex.framework import PluginError, PromptHookType, ResourceHookType
 from fastapi import HTTPException, Request
 from fastapi import Response as FastAPIResponse
 from fastapi.testclient import TestClient
@@ -33,16 +34,14 @@ from starlette.responses import Response as StarletteResponse
 from starlette.routing import Mount
 
 # First-Party
+from mcpgateway.auth import TokenValidationError
+from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 import mcpgateway.db as db_mod
-from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
-from mcpgateway.auth import TokenValidationError
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
-    decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
     _extract_scoped_permissions,
@@ -56,6 +55,7 @@ from mcpgateway.main import (
     create_prompt,
     create_resource,
     create_tool,
+    decode_internal_mcp_auth_context,
     delete_prompt,
     delete_resource,
     delete_tool,
@@ -114,7 +114,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from cpex.framework import PluginError, PromptHookType, ResourceHookType
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -903,11 +903,35 @@ class TestInternalTrustedMcpTransportBridge:
         assert auth_context["is_authenticated"] is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("exists, failure, expected_status", [(True, False, None), (False, False, 404), (True, True, 503)])
+    async def test_internal_mcp_authentication_validates_server(self, monkeypatch, exists, failure, expected_status):
+        """Authenticate before checking virtual server existence."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def database():
+            """Yield the isolated server validation session."""
+            yield MagicMock()
+
+        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", False)
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.main.get_plugin_manager", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", database)
+        check = AsyncMock(return_value=exists, side_effect=RuntimeError("database unavailable") if failure else None)
+        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", check)
+        response, _ = await _run_internal_mcp_authentication(method="POST", path="/servers/server-a/mcp", query_string="", headers={}, client_ip="127.0.0.1")
+        assert (response.status_code if response is not None else None) == expected_status
+        check.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_run_internal_mcp_authentication_runs_pre_request_hooks(self, monkeypatch):
         """HTTP_PRE_REQUEST plugin hooks should transform headers before auth runs."""
+        # Third-Party
+        from cpex.framework import HttpHookType
+
         # First-Party
         import mcpgateway.main as main_mod
-        from cpex.framework import HttpHookType
 
         async def _fake_streamable_http_auth(_scope, _receive, _send):
             user_context_var.set({"email": "hook-user@example.com", "teams": [], "is_authenticated": True})
@@ -6711,6 +6735,15 @@ class TestRpcHandling:
         request.state = MagicMock()
         return request
 
+    @staticmethod
+    def _catalog_result(key, value):
+        """Build MCP catalog payloads for route mocks."""
+        items, cursor = value if isinstance(value, tuple) else (value, None)
+        result = {key: [item if isinstance(item, dict) else item.model_dump() for item in items]}
+        if cursor is not None:
+            result["nextCursor"] = cursor
+        return result
+
     async def test_handle_rpc_parse_error(self):
         request = MagicMock(spec=Request)
         request.body = AsyncMock(return_value=b"{bad")
@@ -6728,12 +6761,12 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", [tool]))) as mock_list_server_tools,
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert len(result["result"]["tools"]) == 1
-            assert mock_list_server_tools.await_args.args[1] == "srv"
+            assert mock_list_server_tools.await_args.kwargs["server_id"] == "srv"
 
     async def test_handle_rpc_tools_list_uses_internal_rust_server_header(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {"server_id": "body-srv"}}
@@ -6748,13 +6781,13 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", [tool]))) as mock_list_server_tools,
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
 
         assert len(result["result"]["tools"]) == 1
-        assert mock_list_server_tools.await_args.args[1] == "header-srv"
+        assert mock_list_server_tools.await_args.kwargs["server_id"] == "header-srv"
 
     async def test_handle_rpc_ignores_internal_server_header_without_rust_runtime_marker(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
@@ -6768,7 +6801,7 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))) as mock_list_tools,
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", ([tool], None)))) as mock_list_tools,
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock()) as mock_list_server_tools,
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
@@ -6884,7 +6917,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", ([tool], None)))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_internal_mcp_rpc(request)
@@ -7279,7 +7312,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-1"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resources", ([resource], "next-1")))),
         ):
             response = await handle_internal_mcp_resources_list(request)
 
@@ -7407,7 +7440,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resourceTemplates", [template]))),
         ):
             response = await handle_internal_mcp_resource_templates_list(request)
 
@@ -7435,7 +7468,7 @@ class TestRpcHandling:
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
-            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resourceTemplates", [template]))),
         ):
             response = await handle_internal_mcp_resource_templates_list(request)
         assert response.status_code == 200
@@ -7447,7 +7480,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=err_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(side_effect=RuntimeError("boom"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             with pytest.raises(RuntimeError, match="boom"):
                 await handle_internal_mcp_resource_templates_list(request)
@@ -7627,7 +7660,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], "next-prompt"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("prompts", ([prompt], "next-prompt")))),
         ):
             response = await handle_internal_mcp_prompts_list(request)
 
@@ -8211,6 +8244,10 @@ class TestRpcHandling:
         elif handler is handle_internal_mcp_sampling_create_message:
             patch_value = {"messages": []}
 
+        if method_name in {"resources/list", "resources/templates/list", "prompts/list"}:
+            patch_target = "mcpgateway.main.list_catalog_page"
+            patch_value = expected_payload
+
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
@@ -8249,15 +8286,15 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"])),
             patch(
-                "mcpgateway.main.tool_service.list_server_mcp_tool_definitions",
-                new=AsyncMock(return_value=[{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]),
+                "mcpgateway.main.list_catalog_page",
+                new=AsyncMock(return_value=self._catalog_result("tools", [{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}])),
             ) as mock_list_defs,
         ):
             response = await handle_internal_mcp_tools_list(request)
 
         assert response.status_code == 200
         assert json.loads(response.body.decode()) == {"tools": [{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]}
-        assert mock_list_defs.await_args.args[1] == "srv-1"
+        assert mock_list_defs.await_args.kwargs["server_id"] == "srv-1"
 
     async def test_handle_internal_mcp_tools_list_authz_returns_no_content(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
@@ -8491,7 +8528,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=ok_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
-            patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(return_value=[])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", []))),
         ):
             response = await handle_internal_mcp_tools_list(request)
         assert response.status_code == 200
@@ -8522,7 +8559,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=generic_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(side_effect=RuntimeError("boom"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_tools_list(request_public)
         assert response.status_code == 500
@@ -8845,7 +8882,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
-            patch("mcpgateway.main.resource_service.list_server_resources", new=AsyncMock(return_value=[resource])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resources", [resource]))),
         ):
             response = await handle_internal_mcp_resources_list(request)
 
@@ -8869,7 +8906,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=list_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resources", ([resource], "next-cursor")))),
         ):
             response = await handle_internal_mcp_resources_list(request)
         assert json.loads(response.body.decode()) == {"resources": [{"uri": "resource://two"}], "nextCursor": "next-cursor"}
@@ -8881,7 +8918,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=error_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(side_effect=RuntimeError("boom"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_resources_list(request)
         assert response.status_code == 500
@@ -9024,7 +9061,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("prompts", [prompt]))),
         ):
             response = await handle_internal_mcp_prompts_list(request)
 
@@ -9048,7 +9085,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=admin_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
-            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], "next"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("prompts", ([prompt], "next")))),
         ):
             response = await handle_internal_mcp_prompts_list(request)
         assert json.loads(response.body.decode()) == {"prompts": [{"name": "prompt-two"}], "nextCursor": "next"}
@@ -9060,7 +9097,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.SessionLocal", return_value=error_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(side_effect=RuntimeError("boom"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             with pytest.raises(RuntimeError, match="boom"):
                 await handle_internal_mcp_prompts_list(request)
@@ -9635,7 +9672,7 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], "next-cursor"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", ([tool], "next-cursor")))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
@@ -9725,7 +9762,7 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resources", ([resource], "next-cursor")))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
@@ -9795,7 +9832,7 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("prompts", [prompt]))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
@@ -9826,7 +9863,7 @@ class TestRpcHandling:
         template.model_dump.return_value = {"uriTemplate": "resource://{id}"}
 
         with (
-            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resourceTemplates", [template]))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
@@ -10033,7 +10070,7 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([], None))) as list_tools,
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", ([], None)))) as list_tools,
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
@@ -10059,7 +10096,7 @@ class TestRpcHandling:
         resource.model_dump.return_value = {"id": "res-admin"}
 
         with (
-            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], None))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resources", ([resource], None)))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
@@ -10096,7 +10133,7 @@ class TestRpcHandling:
         prompt.model_dump.return_value = {"name": "prompt-admin"}
 
         with (
-            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], None))),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("prompts", ([prompt], None)))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
@@ -10174,7 +10211,7 @@ class TestRpcHandling:
         template.model_dump.return_value = {"uriTemplate": "resource://{id}"}
 
         with (
-            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("resourceTemplates", [template]))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})

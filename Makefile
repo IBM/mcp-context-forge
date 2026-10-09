@@ -947,8 +947,15 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
-		|| { echo "❌ E2E suite failed!"; exit 1; }
+	@if [ -n "$(K)" ]; then \
+		$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py -k "$(K)" -v -s --tb=short \
+		|| { echo "❌ E2E suite failed!"; exit 1; }; \
+	else \
+		for marker in asyncio "not asyncio"; do \
+			$(UV_BIN) run pytest -p playwright tests/live_gateway/e2e/test_e2e.py -m "$$marker" -v -s --tb=short \
+			|| { echo "❌ E2E suite failed!"; exit 1; }; \
+		done; \
+	fi
 	@echo "✅ E2E suite passed!"
 
 # deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (sunsets 2027-01-18)

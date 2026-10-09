@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+- **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — MCP list methods return bounded pages. Clients must follow `nextCursor` to retrieve complete catalogs. Multi-page direct-proxy lists require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and restart traversals after rotation or rollback. Keep traversals on one version during deployment. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
+
 - **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
 
 - **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.
