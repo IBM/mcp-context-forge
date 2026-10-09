@@ -1427,6 +1427,19 @@ class ToolService(BaseService):
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
 
+    @staticmethod
+    def _cache_has_gateway_credential_policy(payload: Dict[str, Any]) -> bool:
+        """Return whether a cache payload contains the current gateway policy.
+
+        Args:
+            payload: Cached tool lookup payload.
+
+        Returns:
+            True for tools without a gateway or gateways with an explicit policy.
+        """
+        gateway_payload = payload.get("gateway")
+        return gateway_payload is None or (isinstance(gateway_payload, dict) and "requires_user_credentials" in gateway_payload)
+
     def _pydantic_tool_from_payload(self, tool_payload: Dict[str, Any]) -> Optional[PydanticTool]:
         """Build Pydantic tool metadata from cache payload.
 
@@ -4684,8 +4697,9 @@ class ToolService(BaseService):
 
         if not is_direct_proxy:
             cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
+            cache_has_gateway_credential_policy = not cached_payload or self._cache_has_gateway_credential_policy(cached_payload)
 
-            if cached_payload and cached_payload.get("status", "active") == "active":
+            if cached_payload and cached_payload.get("status", "active") == "active" and cache_has_gateway_credential_policy:
                 cached_tool_payload = cached_payload.get("tool") or {}
                 if await self._cached_tool_is_usable(
                     db,
@@ -4700,7 +4714,7 @@ class ToolService(BaseService):
                     tool_payload = cached_tool_payload
                     gateway_payload = cached_payload.get("gateway")
 
-            if not tool_payload and tool_lookup_cache.enabled:
+            if not tool_payload and tool_lookup_cache.enabled and cache_has_gateway_credential_policy:
                 negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
                 if negative_payload:
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
@@ -5540,8 +5554,9 @@ class ToolService(BaseService):
         # Normal mode: look up tool in database/cache
         if not is_direct_proxy:
             cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
+            cache_has_gateway_credential_policy = not cached_payload or self._cache_has_gateway_credential_policy(cached_payload)
 
-            if cached_payload and cached_payload.get("status", "active") == "active":
+            if cached_payload and cached_payload.get("status", "active") == "active" and cache_has_gateway_credential_policy:
                 cached_tool_payload = cached_payload.get("tool") or {}
                 if await self._cached_tool_is_usable(
                     db,
@@ -5557,7 +5572,7 @@ class ToolService(BaseService):
                     tool_payload = cached_tool_payload
                     gateway_payload = cached_payload.get("gateway")
 
-            if not tool_payload and tool_lookup_cache.enabled:
+            if not tool_payload and tool_lookup_cache.enabled and cache_has_gateway_credential_policy:
                 negative_payload = await tool_lookup_cache.get_negative(name, negative_cache_caller_scope, server_id)
                 if negative_payload:
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
