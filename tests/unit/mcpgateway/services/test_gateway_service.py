@@ -2213,9 +2213,7 @@ class TestGatewayService:
         test_db.refresh = Mock()
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
-        gateway_service._initialize_gateway = AsyncMock(
-            side_effect=Exception("Connection refused: http://example.com?api_key=secret123")  # pragma: allowlist secret
-        )
+        gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("Connection refused: http://example.com?api_key=secret123"))  # pragma: allowlist secret
         gateway_service._notify_gateway_updated = AsyncMock()
         url = GatewayService.normalize_url("http://example.com/new-url")
         gateway_update = GatewayUpdate(url=url)
@@ -7919,6 +7917,72 @@ class TestCheckSingleGatewayHealth:
         # Counter must be reset after successful health check
         assert gateway_service._gateway_failure_counts["gw-reset"] == 0
 
+    @pytest.mark.asyncio
+    async def test_health_check_client_follows_redirects(self, gateway_service, monkeypatch):
+        """Health-check HTTP client must be created with follow_redirects=True.
+
+        A 307/301 redirect (e.g. /mcp -> /mcp/) is not a connectivity failure.
+        Without follow_redirects=True the gateway is permanently marked unreachable
+        whenever the upstream MCP server redirects the health-check GET.
+        """
+        gw = _make_gateway(
+            id="gw-redirect",
+            name="redirect-gw",
+            url="http://example.com/mcp",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+        )
+
+        captured_kwargs: dict = {}
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        def capturing_client(**kw):
+            captured_kwargs.update(kw)
+            return mock_ctx
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", capturing_client)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.create_span",
+            MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))),
+        )
+
+        await gateway_service._check_single_gateway_health(gw)
+
+        assert captured_kwargs.get("follow_redirects") is True, "Health-check client must set follow_redirects=True so 3xx redirects " "do not mark the gateway unreachable."
+
 
 # ---------------------------------------------------------------------------
 # list_gateways_for_user tests
@@ -10720,6 +10784,7 @@ class TestTokenExchangeWiring:
     @pytest.mark.asyncio
     async def test_register_rejects_invalid_token_exchange_config(self, gateway_service, test_db):
         """register_gateway must run _validate_token_exchange_config -> reject missing target_audience."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         # No existing gateway with the same slug
@@ -10827,6 +10892,7 @@ class TestTokenExchangeAdminOnlyGate:
     @pytest.mark.asyncio
     async def test_register_gateway_rejects_non_admin_owner(self, gateway_service, test_db):
         """End-to-end: register_gateway must refuse a token-exchange gateway from a non-admin owner_email."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -10905,12 +10971,14 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "unrelated-audience"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch("mcpgateway.services.token_validation_service.settings") as mock_settings, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect, \
-             patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()), \
-             patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)), \
-             patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"):
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch("mcpgateway.services.token_validation_service.settings") as mock_settings,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect,
+            patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()),
+            patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)),
+            patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"),
+        ):
             mock_settings.oauth_require_configured_resource = False
             mock_storage_cls.return_value = self._mock_storage(access_token)
 
@@ -10926,8 +10994,10 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "wrong-audience"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect:
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect,
+        ):
             mock_storage_cls.return_value = self._mock_storage(access_token)
 
             service = GatewayService()
@@ -10945,9 +11015,11 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "unrelated-audience"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch("mcpgateway.services.token_validation_service.settings") as mock_settings, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect:
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch("mcpgateway.services.token_validation_service.settings") as mock_settings,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect,
+        ):
             mock_settings.oauth_require_configured_resource = True
             mock_storage_cls.return_value = self._mock_storage(access_token)
 
@@ -10965,11 +11037,13 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "https://api.example.com"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect, \
-             patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()), \
-             patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)), \
-             patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"):
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect,
+            patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()),
+            patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)),
+            patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"),
+        ):
             mock_storage_cls.return_value = self._mock_storage(access_token)
 
             service = GatewayService()
@@ -10984,11 +11058,13 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "opaque-tenant-a-id"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect, \
-             patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()), \
-             patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)), \
-             patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"):
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect,
+            patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()),
+            patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)),
+            patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"),
+        ):
             mock_storage_cls.return_value = self._mock_storage(access_token, learned_aud="opaque-tenant-a-id")
 
             service = GatewayService()
@@ -11003,8 +11079,10 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "tenant-b-id"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect:
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect,
+        ):
             mock_storage_cls.return_value = self._mock_storage(access_token, learned_aud="tenant-a-id")
 
             service = GatewayService()
@@ -11022,8 +11100,10 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         # Token matches learned_aud but NOT the admin-configured resource.
         access_token = self._make_jwt({"aud": "opaque-tenant-a-id"})
 
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
-             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect:
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls,
+            patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect,
+        ):
             mock_storage_cls.return_value = self._mock_storage(access_token, learned_aud="opaque-tenant-a-id")
 
             service = GatewayService()
@@ -11152,6 +11232,7 @@ class TestGatewayHandshakeLegacyDiscoverSkip:
     @pytest.mark.asyncio
     async def test_legacy_mode_skips_discover_probe(self, monkeypatch):
         """ResilientHttpClient must NOT be entered for discover when mode is legacy."""
+        # First-Party
         from mcpgateway.schemas import GatewayHandshakeRequest  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.gateway_service import test_gateway_handshake  # pylint: disable=import-outside-toplevel
 
@@ -11180,6 +11261,7 @@ class TestGatewayHandshakeLegacyDiscoverSkip:
     @pytest.mark.asyncio
     async def test_auto_mode_attempts_discover_probe(self, monkeypatch):
         """ResilientHttpClient MUST be entered for discover when mode is auto."""
+        # First-Party
         from mcpgateway.schemas import GatewayHandshakeRequest  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.gateway_service import test_gateway_handshake  # pylint: disable=import-outside-toplevel
 

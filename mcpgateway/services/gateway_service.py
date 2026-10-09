@@ -5138,7 +5138,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Use isolated client for gateway health checks (each gateway may have custom CA cert)
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
-            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context, follow_redirects=False) as client:
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context, follow_redirects=True) as client:
                 logger.debug("Checking health of gateway: %s (%s)", gateway_name, gateway_url_sanitized)
                 try:
                     # Handle different authentication types
@@ -5156,7 +5156,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                 # Get user-specific OAuth token only if user_email is provided
                                 if user_email:
@@ -6088,7 +6088,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        target_user = db.execute(
+            select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)  # noqa: E712  # pylint: disable=singleton-comparison
+        ).scalar_one_or_none()
         if not target_user:
             raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
@@ -8542,7 +8544,7 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                     # SECURITY: Use token_teams from the authenticated user dict — this is
                     # already resolved by auth middleware and must not be widened by
