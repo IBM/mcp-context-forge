@@ -20,6 +20,7 @@ Examples:
 """
 
 # Standard
+import contextvars
 import asyncio
 import base64
 import binascii
@@ -136,6 +137,27 @@ def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadRe
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
     _rp_dict["_meta"] = meta_data
     return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
+
+
+# Cache directive of the upstream read that produced the content being served, for the
+# modern-path read adapter to put on the ReadResourceResult (2026-07-28 ttlMs/cacheScope).
+# Set only when an upstream was actually contacted; None for content served from the DB.
+upstream_read_cache_var: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("upstream_read_cache", default=None)
+
+
+def set_upstream_cache_directive(result: Any) -> None:
+    """Keep the upstream read result's ttlMs for the read adapter.
+
+    ``ttlMs`` is relayed as the upstream sent it (0 when absent, e.g. a legacy upstream).
+    ``cacheScope`` is always ``"private"``: the response was authorized, and possibly
+    rewritten by post-fetch plugins, for one principal, so a shared cache must never
+    serve it to another, whatever the upstream or the resource's visibility says.
+
+    Args:
+        result: The SDK ``ReadResourceResult`` returned by the upstream.
+    """
+    ttl_ms = getattr(result, "ttl_ms", 0)
+    upstream_read_cache_var.set({"ttl_ms": ttl_ms if isinstance(ttl_ms, int) and ttl_ms > 0 else 0, "cache_scope": "private"})
 
 
 async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
@@ -2076,6 +2098,7 @@ class ResourceService(BaseService):
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
                                     resource_response = await _read_resource_with_meta(session, uri, meta_data)
+                                    set_upstream_cache_directive(resource_response)
                                     return getattr(getattr(resource_response, "contents")[0], "text")
                                 except Exception as exc:
                                     if attempt == max_read_attempts:
@@ -2251,6 +2274,7 @@ class ResourceService(BaseService):
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as client:
                                         resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        set_upstream_cache_directive(resource_response)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -2586,6 +2610,7 @@ class ResourceService(BaseService):
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
                                 result = await _read_resource_with_meta(client.session, uri, meta_data)
+                                set_upstream_cache_directive(result)
 
                                 # Build the FINAL content shape (ResourceContent) directly: the
                                 # proxied read already returned the resolved content, so the
