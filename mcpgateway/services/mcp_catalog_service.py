@@ -16,7 +16,6 @@ import hashlib
 import logging
 import time
 from typing import Any
-import uuid
 
 # Third-Party
 import mcp_types as types
@@ -32,11 +31,15 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.gateway_access import check_gateway_access, extract_gateway_id_from_headers
-from mcpgateway.utils.mcp_cursor import decode_cursor, encode_cursor, scope_fingerprint
+from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.mcp_catalog_snapshot import publish_snapshot, read_snapshot, reserve_collection
+from mcpgateway.utils.mcp_cursor import catalog_session_id, decode_cursor, encode_cursor, scope_fingerprint
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 logger = logging.getLogger(__name__)
+# These headers carry tracing context, never catalog selection or authorization.
+_TRACING_HEADERS = frozenset({"traceparent", "tracestate", "x-trace-id", "x-request-id", "x-correlation-id", "b3", "x-b3-traceid", "x-b3-spanid", "x-b3-parentspanid", "x-b3-sampled", "x-b3-flags"})
 _CATALOGS: dict[str, tuple[type[Tool] | type[Resource] | type[Prompt], type[ToolService] | type[ResourceService] | type[PromptService], Any, str, str]] = {
     "tools/list": (Tool, ToolService, server_tool_association, "tool_id", "tools"),
     "resources/list": (Resource, ResourceService, server_resource_association, "resource_id", "resources"),
@@ -45,20 +48,19 @@ _CATALOGS: dict[str, tuple[type[Tool] | type[Resource] | type[Prompt], type[Tool
 }
 
 
-def _serialize(method: str, row: Any, service: Any) -> dict[str, Any] | None:
+def _serialize(method: str, row: Any) -> dict[str, Any] | None:
     """Convert one database row into its MCP wire representation.
 
     Args:
         method: MCP list method.
         row: Catalog database row.
-        service: Resource service used for conversion.
 
     Returns:
         Wire representation, or None for a model-hidden tool.
     """
     # Import after transport initialization to reuse its canonical MCP serializers.
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import _to_mcp_prompt, _to_mcp_resource, _tools_for_client  # pylint: disable=import-outside-toplevel
+    from mcpgateway.transports.streamablehttp_transport import _to_mcp_resource, _tools_for_client  # pylint: disable=import-outside-toplevel
 
     item: types.Tool | types.Resource | types.Prompt | types.ResourceTemplate | None
     if method == "tools/list":
@@ -67,7 +69,12 @@ def _serialize(method: str, row: Any, service: Any) -> dict[str, Any] | None:
     elif method == "resources/list":
         item = _to_mcp_resource(row)
     elif method == "prompts/list":
-        item = _to_mcp_prompt(service.convert_prompt_to_read(row, include_metrics=False))
+        schema = row.argument_schema or {}
+        item = types.Prompt(
+            name=row.name,
+            description=row.description,
+            arguments=[types.PromptArgument(name=name, description=prop.get("description") or "", required=name in schema.get("required", [])) for name, prop in schema.get("properties", {}).items()],
+        )
     else:
         item = types.ResourceTemplate(uri_template=row.uri_template, name=row.name, title=row.title, description=row.description, mime_type=row.mime_type)
     return item.model_dump(by_alias=True, exclude_none=True, mode="json") if item is not None else None
@@ -93,7 +100,7 @@ async def collect_proxy_catalog(client: Any, method: str, meta: Any) -> list[Any
     seen_cursors: set[str] = set()
     seen_items: set[str] = set()
     result = []
-    byte_count = 0
+    byte_count = 2
     async with asyncio.timeout(settings.mcpgateway_direct_proxy_timeout):
         for _ in range(10000):
             kwargs = {"meta": meta} if meta is not None else {}
@@ -105,7 +112,7 @@ async def collect_proxy_catalog(client: Any, method: str, meta: Any) -> list[Any
                 if identity in seen_items:
                     raise JSONRPCError(-32000, "Upstream MCP catalog contains duplicate identifiers")
                 seen_items.add(identity)
-                byte_count += len(orjson.dumps(item.model_dump(by_alias=True, mode="json", exclude_none=True)))
+                byte_count += len(orjson.dumps(item.model_dump(by_alias=True, mode="json", exclude_none=True))) + 1
                 if byte_count > settings.mcp_proxy_list_max_snapshot_bytes:
                     raise JSONRPCError(-32000, "Direct-proxy MCP catalog exceeds the snapshot byte limit")
                 result.append(item)
@@ -143,11 +150,11 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
     )
 
     upstream_headers = _build_proxy_list_headers(gateway, headers)
-    binding = orjson.dumps([scope, gateway.id, gateway.url, str(gateway.updated_at), sorted(upstream_headers.items())])
+    bound_headers = sorted((name.lower(), value) for name, value in upstream_headers.items() if name.lower() not in _TRACING_HEADERS)
+    binding = orjson.dumps([scope, gateway.id, gateway.url, str(gateway.updated_at), bound_headers])
     scope = hashlib.sha256(binding).hexdigest()
     key = _CATALOGS[method][4]
     redis = await get_redis_client()
-    prefix = f"{settings.cache_prefix}mcp-list:"
     if cursor is not None:
         position = decode_cursor(cursor, scope)
         snapshot, page_index = position.get("snapshot"), position.get("page")
@@ -156,8 +163,9 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
         if redis is None:
             raise JSONRPCError(-32000, "MCP proxy pagination requires Redis")
         try:
-            manifest, page = await redis.mget(f"{prefix}{snapshot}:manifest", f"{prefix}{snapshot}:{page_index}")
+            manifest, page = await read_snapshot(redis, snapshot, page_index)
         except Exception as exc:
+            log_proxy_catalog_failure(gateway.id, method, exc)
             raise JSONRPCError(-32000, "MCP proxy snapshot storage is unavailable") from exc
         if manifest is None or page is None:
             raise JSONRPCError(-32602, "Invalid or expired MCP snapshot cursor")
@@ -170,26 +178,38 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
         return result
 
     proxy = _proxy_list_tools_to_gateway if method == "tools/list" else _proxy_list_resources_to_gateway
-    upstream_items = await proxy(gateway, headers, {}, meta, paginate=True)
-    items = [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]
-    size = settings.mcp_list_page_size
-    if len(items) <= size:
-        return {key: items}
-    if redis is None:
-        raise JSONRPCError(-32000, "Multi-page MCP proxy catalogs require Redis")
-    snapshot = uuid.uuid4().hex
-    expires = int(time.time()) + settings.mcp_list_cursor_ttl_seconds
-    next_cursor = encode_cursor(scope, expires, {"snapshot": snapshot, "page": 1})
-    pages = [items[start : start + size] for start in range(0, len(items), size)]
     try:
-        async with redis.pipeline(transaction=True) as pipeline:
-            for index, page in enumerate(pages):
-                pipeline.set(f"{prefix}{snapshot}:{index}", orjson.dumps(page), ex=settings.mcp_list_cursor_ttl_seconds)
-            pipeline.set(f"{prefix}{snapshot}:manifest", orjson.dumps({"scope": scope, "pages": len(pages)}), ex=settings.mcp_list_cursor_ttl_seconds)
-            await pipeline.execute()
+        async with reserve_collection(redis) as snapshot:
+            async with asyncio.timeout(settings.mcpgateway_direct_proxy_timeout):
+                upstream_items = await proxy(gateway, headers, {}, meta, paginate=True)
+            items = [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]
+            size = settings.mcp_list_page_size
+            if len(items) <= size:
+                return {key: items}
+            if redis is None:
+                raise JSONRPCError(-32000, "Multi-page MCP proxy catalogs require Redis")
+            expires = int(time.time()) + settings.mcp_list_cursor_ttl_seconds
+            next_cursor = encode_cursor(scope, expires, {"snapshot": snapshot, "page": 1})
+            pages = [orjson.dumps(items[start : start + size]) for start in range(0, len(items), size)]
+            await publish_snapshot(redis, snapshot, scope, pages)
+            return {key: items[:size], "nextCursor": next_cursor}
+    except JSONRPCError:
+        raise
     except Exception as exc:
+        log_proxy_catalog_failure(gateway.id, method, exc)
         raise JSONRPCError(-32000, "MCP proxy snapshot storage is unavailable") from exc
-    return {key: pages[0], "nextCursor": next_cursor}
+
+
+def log_proxy_catalog_failure(gateway_id: str, method: str, error: Exception) -> None:
+    """Record sanitized catalog diagnostics without exception contents.
+
+    Args:
+        gateway_id: Gateway identifier.
+        method: MCP list method.
+        error: Failure used only for its exception category.
+    """
+    diagnostic = {"gateway_id": gateway_id, "method": method, "correlation_id": get_correlation_id(), "category": type(error).__name__}
+    logger.warning("MCP proxy catalog failed: %s", orjson.dumps(diagnostic).decode())
 
 
 async def list_catalog_page(
@@ -224,7 +244,7 @@ async def list_catalog_page(
     operation = {"tools/list": "tool.list", "prompts/list": "prompt.list"}.get(method, "resource.list")
     with create_span(operation, {"mcp.method": method, "mcp.catalog.page_size": settings.mcp_list_page_size, "mcp.catalog.continuation": cursor is not None}) as span:
         headers = {name.lower(): value for name, value in (request_headers or {}).items()}
-        scope = scope_fingerprint(method, server_id, user_email, token_teams, headers.get("mcp-session-id"))
+        scope = scope_fingerprint(method, server_id, user_email, token_teams, catalog_session_id(headers))
         model, service_type, association, association_key, result_key = _CATALOGS[method]
         if server_id and method in ("tools/list", "resources/list"):
             gateway_id = extract_gateway_id_from_headers(headers)
@@ -263,7 +283,7 @@ async def list_catalog_page(
                 break
             for row in rows:
                 after = row.id
-                item = _serialize(method, row, service)
+                item = _serialize(method, row)
                 if item is not None:
                     items.append((row.id, item))
                 if len(items) > size:

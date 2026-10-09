@@ -9,6 +9,7 @@ Encode authenticated, scope-bound MCP catalog cursors.
 # Standard
 import base64
 import binascii
+from collections.abc import Mapping
 import hashlib
 import hmac
 import os
@@ -29,6 +30,19 @@ from mcpgateway.config import settings
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 _DOMAIN = b"contextforge:mcp-list:v1"
+
+
+def catalog_session_id(headers: Mapping[str, str]) -> str | None:
+    """Resolve protocol and forwarded session headers with consistent precedence.
+
+    Args:
+        headers: Request headers from the authenticated transport context.
+
+    Returns:
+        Forwarded session identifier, or the protocol session identifier.
+    """
+    normalized = {name.lower(): value for name, value in headers.items()}
+    return normalized.get("x-mcp-session-id") or normalized.get("mcp-session-id")
 
 
 def scope_fingerprint(method: str, server_id: str | None, user_email: str | None, token_teams: list[str] | None, session_id: str | None) -> str:

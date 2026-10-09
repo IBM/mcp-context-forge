@@ -2823,9 +2823,6 @@ class ResourceService(BaseService):
                     # Fallback to stringified content
                     content = ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
 
-                if resource_db is not None and resource_db.uri_template and getattr(content, "uri", None) == resource_db.uri_template:
-                    content.uri = original_uri
-
                 # ═══════════════════════════════════════════════════════════════════════════
                 # POST-FETCH HOOKS: Now called AFTER content is resolved from gateway
                 # ═══════════════════════════════════════════════════════════════════════════

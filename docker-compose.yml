@@ -354,6 +354,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
@@ -1086,6 +1089,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["python", "-m", "mcpgateway.bootstrap_db"]
     depends_on:
@@ -1347,6 +1353,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -1606,6 +1615,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -1945,6 +1957,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2073,6 +2088,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2152,6 +2170,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
@@ -2330,6 +2351,9 @@ services:
       - MCP_LIST_PAGE_SIZE=${MCP_LIST_PAGE_SIZE:-100}
       - MCP_LIST_CURSOR_TTL_SECONDS=${MCP_LIST_CURSOR_TTL_SECONDS:-900}
       - MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES=${MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES:-67108864}
+      - MCP_PROXY_LIST_MAX_TOTAL_BYTES=${MCP_PROXY_LIST_MAX_TOTAL_BYTES:-134217728}
+      - MCP_PROXY_LIST_MAX_COLLECTORS=${MCP_PROXY_LIST_MAX_COLLECTORS:-2}
+      - MCP_PROXY_LIST_MAX_SNAPSHOTS=${MCP_PROXY_LIST_MAX_SNAPSHOTS:-64}
       # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
       # platform_admin_password/default_user_password once email_auth_enabled (default true).
       - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"

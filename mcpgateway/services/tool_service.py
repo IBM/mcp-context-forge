@@ -3390,12 +3390,10 @@ class ToolService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Return server-scoped MCP tool definitions without building full ToolRead models.
+        """Return complete server-scoped MCP tool definitions for compatibility callers.
 
-        This is a hot-path helper for the internal Rust -> Python seam. It keeps
-        auth and visibility semantics aligned with ``list_server_tools`` while
-        avoiding the heavier ``ToolRead`` conversion that is only needed for the
-        admin/API surfaces.
+        Registered MCP adapters use ``list_catalog_page()``.
+        This helper preserves the complete-list contract for existing imports.
 
         Args:
             db: Active database session.

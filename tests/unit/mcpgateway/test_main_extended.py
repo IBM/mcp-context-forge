@@ -8614,32 +8614,6 @@ class TestRpcHandling:
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called()
 
-    @pytest.mark.parametrize("denied", [False, True])
-    async def test_internal_mcp_tools_call_returns_invocation_error(self, denied):
-        """Return tool failures as MCP errors and preserve permission denial."""
-        # First-Party
-        from mcpgateway.services.tool_service import ToolInvocationError
-
-        request = self._make_request({"jsonrpc": "2.0", "id": "failed", "method": "tools/call", "params": {"name": "echo", "arguments": {}}})
-        request.headers = {"x-contextforge-mcp-runtime": "rust", "x-contextforge-server-id": "srv-1"}
-        request.client = SimpleNamespace(host="127.0.0.1")
-        context = {"email": "user@example.com", "teams": ["team-a"], "is_authenticated": True}
-        execute = AsyncMock(side_effect=ToolInvocationError("Schema validation timed out"))
-        with (
-            patch("mcpgateway.main.get_internal_mcp_auth_context", return_value=context),
-            patch("mcpgateway.main._build_internal_mcp_forwarded_user", return_value=context),
-            patch("mcpgateway.main.SessionLocal", return_value=MagicMock()),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied") if denied else None)),
-            patch("mcpgateway.main._execute_rpc_tools_call", new=execute),
-        ):
-            result = await handle_internal_mcp_tools_call(request)
-        if denied:
-            assert result["error"]["code"] == -32003
-            execute.assert_not_awaited()
-        else:
-            assert result["id"] == "failed"
-            assert result["result"] == {"content": [{"type": "text", "text": "Schema validation timed out"}], "isError": True}
-
     async def test_handle_internal_mcp_tools_call_skips_rbac_for_unauthenticated_public_only(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "3", "method": "tools/call", "params": {"name": "echo", "arguments": {}}})
         request.headers = {

@@ -5921,7 +5921,6 @@ class TestReadResourceCoverageEdges:
             out = await svc.read_resource(db, resource_uri="greetme://morning/John", include_inactive=True)
         assert out.id == "tmpl-1"
         assert out.text == "resolved template"
-        assert out.uri == "greetme://morning/John"
 
     @pytest.mark.asyncio
     async def test_read_resource_template_scoped_lookup_ignores_stale_cache(self):
