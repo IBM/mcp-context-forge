@@ -39,7 +39,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
+from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
@@ -1970,43 +1970,6 @@ class A2AAgentService(BaseService):
 
         return plugin_headers, downstream_headers
 
-    def _refilter_plugin_headers(
-        self,
-        plugin_headers: Dict[str, str],
-        agent: DbA2AAgent,
-        feature_flag_enabled: bool,
-    ) -> Dict[str, str]:
-        """Re-apply header filtering to plugin-returned headers.
-
-        Plugins receive sanitized headers (via _filter_sensitive_headers), but
-        when they return modified headers, those must be re-validated against
-        the same security boundaries to prevent malicious plugins from injecting
-        sensitive headers into downstream requests.
-
-        Related to issue #3621 (Phase 1) - PR #5183 security review fix.
-
-        Args:
-            plugin_headers: Headers returned by plugin in modified_payload.headers
-            agent: Target A2A agent with passthrough_headers whitelist
-            feature_flag_enabled: Value of ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
-
-        Returns:
-            Filtered and whitelisted headers safe for downstream forwarding
-        """
-        # If no whitelist configured, block all headers (matches _prepare_header_flows)
-        if not agent.passthrough_headers:
-            return {}
-
-        # Layer 1: Apply agent's passthrough whitelist
-        whitelist_lower = {h.lower() for h in agent.passthrough_headers}
-        whitelisted = {k: v for k, v in plugin_headers.items() if k.lower() in whitelist_lower}
-
-        # Layer 2: Strip sensitive headers if feature flag is disabled
-        # When flag is enabled, sensitive headers are allowed if whitelisted
-        if not feature_flag_enabled:
-            return _filter_sensitive_headers(whitelisted)
-        return whitelisted
-
     async def invoke_agent(
         self,
         db: Session,
@@ -2279,6 +2242,7 @@ class A2AAgentService(BaseService):
         agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
         plugin_manager = await self._get_plugin_manager(agent_context_id)
         context_table: Dict[str, Any] = {}
+        plugin_returned_headers: Optional[Dict[str, str]] = None
 
         # Build GlobalContext for plugin hooks
         global_context = GlobalContext(
@@ -2329,71 +2293,28 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
                     if pre_result.modified_payload.headers is not None:
-                        # Security: Re-filter plugin-returned headers to prevent malicious
-                        # plugins from injecting sensitive headers into downstream requests
-                        # (PR #5183 review fix)
                         plugin_returned = pre_result.modified_payload.headers.model_dump()
-
-                        # Defense in depth: a plugin (e.g. Vault) that determined the
-                        # destination requires managed credentials it couldn't supply signals
-                        # this by returning "authorization": "" -- read here, off the plugin's
-                        # raw returned headers, since checking only the post-_refilter_plugin_headers
-                        # `safe_headers` below would silently drop the sentinel (and thus never
-                        # strip the real header) whenever Authorization isn't in this agent's
-                        # passthrough_headers or sensitive passthrough is disabled. A real bearer
-                        # token is never empty, so this is unambiguous. The plugin never receives
-                        # the real Authorization value on this path (filtered out of
-                        # plugin_headers before this hook runs, by design, per #4925), so it can
-                        # only ever emit this sentinel, never a real value, through this channel.
-                        auth_mismatch = plugin_returned.get("authorization") == ""
-
-                        safe_headers = self._refilter_plugin_headers(
-                            plugin_headers=plugin_returned,
-                            agent=agent,
-                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
-                        )
-
-                        # Honor header REMOVALS as well as additions. ``prepared.headers`` was
-                        # built from the passthrough set, so a plugin that drops a header (e.g.
-                        # the Vault plugin stripping ``X-Vault-Tokens``) would otherwise leak it
-                        # upstream, since ``.update()`` cannot delete keys. Reconcile removals
-                        # against the sanitized set the plugin was actually given
-                        # (``plugin_headers``) so a plugin can only remove headers it saw.
-                        plugin_returned_lower = {k.lower() for k in plugin_returned}
-                        for received_key in plugin_headers:
-                            rk = received_key.lower()
-                            if rk not in plugin_returned_lower:
-                                # Plugin removed this header — drop it from the outbound set.
-                                for existing_key in [k for k in prepared.headers if k.lower() == rk]:
-                                    del prepared.headers[existing_key]
-
-                        prepared.headers.update(safe_headers)
-
-                        # Apply the Authorization-mismatch strip last, after the update() above,
-                        # so it can't be undone by that merge re-adding the sentinel itself -- and
-                        # so the header is actually removed rather than left present with an
-                        # empty value, which some downstream servers treat differently from an
-                        # absent header. Unconditional: applies regardless of allowlist/flag
-                        # state.
-                        if auth_mismatch:
-                            for existing_key in [hk for hk in prepared.headers if hk.lower() == "authorization"]:
-                                del prepared.headers[existing_key]
-
-                        # Log security-blocked headers for forensic awareness
-                        if plugin_returned.keys() - safe_headers.keys():
-                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
-                            logger.warning(
-                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
-                                removed,
-                                agent.name,
-                                settings.enable_sensitive_header_passthrough,
-                            )
+                        plugin_returned_headers = {str(key): str(value) for key, value in plugin_returned.items()}
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {unexpected_error_detail(e)}") from e
             except Exception as e:
                 logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Pre-invoke plugin error: {unexpected_error_detail(e)}") from e
+
+        if plugin_returned_headers is not None:
+            prepared.headers.clear()
+            prepared.headers.update(
+                resolve_a2a_headers(
+                    caller_headers=prepared.caller_headers,
+                    configured_headers=prepared.configured_headers,
+                    plugin_input_headers=plugin_headers,
+                    plugin_output_headers=plugin_returned_headers,
+                    uses_jsonrpc=prepared.uses_jsonrpc,
+                    protocol_version_header=prepared.protocol_version_header,
+                    correlation_id=prepared.correlation_id,
+                )
+            )
 
         # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
         # headers. The Vault plugin removes this header when it processes the token,

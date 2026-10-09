@@ -326,12 +326,14 @@ class TestA2AInvokePreHook:
 
         # Add headers to passthrough whitelist so they pass Layer 1 filtering
         mock_agent.passthrough_headers = ["x-custom", "x-request-id"]
+        mock_agent.auth_type = "authheaders"
+        mock_agent.auth_value = {"Authorization": "Bearer configured"}
 
         pm = _make_plugin_manager()
         modified = SimpleNamespace(
             modified_payload=SimpleNamespace(
                 parameters=None,
-                headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123"}),
+                headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123", "authorization": "Bearer plugin", "x-contextforge-uaid-hop": "99"}),
             ),
             retry_delay_ms=0,
             metadata=None,
@@ -364,6 +366,8 @@ class TestA2AInvokePreHook:
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("X-Custom") == "value"
         assert headers.get("X-Request-ID") == "plugin-req-123"
+        assert {name.lower(): value for name, value in headers.items()}["authorization"] == "Bearer plugin"
+        assert [(name, value) for name, value in headers.items() if name.lower() == "x-contextforge-uaid-hop"] == [("X-Contextforge-UAID-Hop", "1")]
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")

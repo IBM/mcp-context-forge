@@ -8541,7 +8541,7 @@ class TestInvokeToolA2A:
         assert result is not None
         assert "Authorization" not in captured_headers
         assert "authorization" not in {k.lower() for k in captured_headers}
-        assert captured_headers.get("X-Tenant-Id") == "tenant-123"
+        assert {name.lower(): value for name, value in captured_headers.items()}["x-tenant-id"] == "tenant-123"
 
     @pytest.mark.asyncio
     async def test_a2a_final_strip_removes_vault_tokens_from_prepared_headers(self, tool_service):
@@ -8688,8 +8688,8 @@ class TestInvokeToolA2A:
         assert captured_headers["X-Tenant-Id"] == "tenant-123"
 
     @pytest.mark.asyncio
-    async def test_a2a_pre_invoke_modified_headers_are_refiltered(self, tool_service):
-        """A2A tool pre-invoke modified headers cannot bypass downstream filtering."""
+    async def test_a2a_pre_invoke_trusts_modified_headers(self, tool_service):
+        """A2A tool pre-invoke output bypasses caller-header filtering."""
         # Third-Party
         from cpex.framework import PluginResult, ToolHookType
 
@@ -8701,6 +8701,8 @@ class TestInvokeToolA2A:
         db = MagicMock()
         a2a_agent = _make_a2a_agent(agent_type="custom")
         a2a_agent.passthrough_headers = ["Authorization", "X-Tenant-Id"]
+        a2a_agent.auth_type = "authheaders"
+        a2a_agent.auth_value = {"Authorization": "Bearer configured-token"}
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
 
         plugin_manager = MagicMock()
@@ -8757,12 +8759,12 @@ class TestInvokeToolA2A:
             )
 
         assert captured_headers["X-Tenant-Id"] == "tenant-from-plugin"
-        assert "Authorization" not in captured_headers
-        assert "X-Other" not in captured_headers
+        assert captured_headers["Authorization"] == "Bearer plugin-token"
+        assert captured_headers["X-Other"] == "drop-me"
 
     @pytest.mark.asyncio
-    async def test_a2a_pre_invoke_blocks_headers_when_agent_allowlist_unset(self, tool_service):
-        """A2A tool invocation matches the direct A2A default-deny behavior when the agent allowlist is unset."""
+    async def test_a2a_pre_invoke_trusts_headers_when_agent_allowlist_unset(self, tool_service):
+        """A2A plugin output does not require a caller-header allowlist."""
         # Third-Party
         from cpex.framework import PluginResult, ToolHookType
 
@@ -8774,6 +8776,8 @@ class TestInvokeToolA2A:
         db = MagicMock()
         a2a_agent = _make_a2a_agent(agent_type="custom")
         a2a_agent.passthrough_headers = None
+        a2a_agent.auth_type = "authheaders"
+        a2a_agent.auth_value = {"Authorization": "Bearer configured-token"}
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
 
         plugin_manager = MagicMock()
@@ -8831,9 +8835,9 @@ class TestInvokeToolA2A:
 
         payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
         assert payload.headers.root == {"Content-Type": "application/json"}
-        assert "X-Tenant-Id" not in captured_headers
-        assert "Authorization" not in captured_headers
-        assert "X-Other" not in captured_headers
+        assert captured_headers["X-Tenant-Id"] == "tenant-from-plugin"
+        assert captured_headers["Authorization"] == "Bearer plugin-token"
+        assert captured_headers["X-Other"] == "drop-me"
 
     @pytest.mark.asyncio
     async def test_a2a_with_api_key_auth(self, tool_service):
