@@ -15,7 +15,34 @@ import {
   showErrorMessage,
   decodeHtml,
   makeCopyIdButton,
+  getCurrentTeamId,
 } from "./utils.js";
+
+/**
+ * Resolve team id from API payload (camelCase or snake_case).
+ */
+export const teamIdFromServer = function (server) {
+  if (!server) {
+    return "";
+  }
+  return server.teamId || server.team_id || "";
+};
+
+/**
+ * Set the virtual-server team select to a preferred value.
+ */
+export const setServerTeamSelect = function (selectId, preferredTeamId) {
+  const select = safeGetElement(selectId);
+  if (!select) {
+    return "";
+  }
+  const fallbackTeamId = getCurrentTeamId() || "";
+  const teamId = preferredTeamId || fallbackTeamId;
+  if (teamId) {
+    select.value = teamId;
+  }
+  return teamId;
+};
 
 /**
  * SECURE: View Server function
@@ -96,6 +123,7 @@ export const viewServer = async function (serverId) {
       const fields = [
         { label: "URL", value: getCatalogUrl(server) || "N/A" },
         { label: "Type", value: "Virtual Server" },
+        { label: "Team", value: server.team || teamIdFromServer(server) || "N/A" },
         { label: "Visibility", value: server.visibility || "private" },
       ];
 
@@ -726,18 +754,13 @@ export const editServer = async function (serverId) {
       }
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    const scopedTeamId =
+      setServerTeamSelect("edit-server-team-id", teamIdFromServer(server)) ||
+      getCurrentTeamId() ||
+      new URL(window.location.href).searchParams.get("team_id");
 
     // Initialize View Public toggle for Edit Server modal
-    if (teamId) {
+    if (scopedTeamId) {
       const viewPublicCheckbox = document.getElementById(
         "edit-server-view-public"
       );
@@ -752,7 +775,7 @@ export const editServer = async function (serverId) {
           "edit-server-resources",
           "edit-server-prompts",
         ],
-        teamId
+        scopedTeamId
       );
     }
 
@@ -968,7 +991,7 @@ export const editServer = async function (serverId) {
     }, 350);
 
     // Auto-enable "View Public" if server has public associations not visible in team-filtered selectors
-    if (teamId) {
+    if (scopedTeamId) {
       setTimeout(() => {
         const viewPublicCheckbox = document.getElementById(
           "edit-server-view-public"
