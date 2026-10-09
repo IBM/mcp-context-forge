@@ -9,7 +9,7 @@ Unit tests for PermissionService.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -292,16 +292,16 @@ async def test_has_admin_permission_with_team_id(svc):
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value={"admin.dashboard", "tools.read"}) as mock_get_perms:
             assert await svc.has_admin_permission("user@test.com", team_id="team-123") is True
-            mock_get_perms.assert_awaited_once_with("user@test.com", team_id="team-123", token_teams=None)
+            mock_get_perms.assert_awaited_once_with("user@test.com", team_id="team-123", include_all_teams=False, token_teams=None)
 
 
 @pytest.mark.asyncio
 async def test_has_admin_permission_no_team_id_no_admin_perm(svc):
-    """Without team_id, team-scoped permissions are not checked (global only)."""
+    """Without team_id the lookup widens to real team roles, but no admin.* means denied."""
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value={"tools.read"}) as mock_get_perms:
             assert await svc.has_admin_permission("user@test.com") is False
-            mock_get_perms.assert_awaited_once_with("user@test.com", team_id=None, token_teams=None)
+            mock_get_perms.assert_awaited_once_with("user@test.com", team_id=None, include_all_teams=True, token_teams=None)
 
 
 # ---------- get_user_permissions ----------
@@ -797,3 +797,81 @@ def test_get_roles_for_audit_empty(svc):
     """Empty cache returns empty roles."""
     result = svc._get_roles_for_audit("user@test.com", None)
     assert result == {"roles": []}
+
+
+# ---------------------------------------------------------------------------
+# Admin UI access for team-scoped roles
+#
+# Regression tests: a team-scoped ``team_admin`` holds ``admin.dashboard`` and
+# per docs/docs/manage/rbac.md the Admin UI uses permission-based rendering, so
+# such a user must be able to reach the admin UI. The bare ``/admin`` entry
+# point supplies no team_id, so has_admin_permission must widen the lookup to
+# the user's real (non-personal) team roles.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_has_admin_permission_includes_team_roles_when_no_team_context(svc):
+    """team_id=None must consider real team-scoped roles (include_all_teams=True)."""
+    captured = {}
+
+    async def fake_get_user_permissions(user_email, team_id=None, include_all_teams=False, token_teams=None):
+        captured["include_all_teams"] = include_all_teams
+        captured["team_id"] = team_id
+        return {"admin.dashboard", "tools.read"}
+
+    with patch.object(svc, "_is_user_admin", AsyncMock(return_value=False)):
+        svc.get_user_permissions = fake_get_user_permissions
+        granted = await svc.has_admin_permission("team.admin@example.com", team_id=None, token_teams=None)
+
+    assert granted is True
+    assert captured["include_all_teams"] is True, "bare /admin must widen to the user's team roles"
+
+
+@pytest.mark.asyncio
+async def test_has_admin_permission_scopes_to_team_when_team_context_given(svc):
+    """An explicit team_id keeps the lookup scoped to that team, not all teams."""
+    captured = {}
+
+    async def fake_get_user_permissions(user_email, team_id=None, include_all_teams=False, token_teams=None):
+        captured["include_all_teams"] = include_all_teams
+        captured["team_id"] = team_id
+        return {"admin.dashboard"}
+
+    with patch.object(svc, "_is_user_admin", AsyncMock(return_value=False)):
+        svc.get_user_permissions = fake_get_user_permissions
+        granted = await svc.has_admin_permission("team.admin@example.com", team_id="team-123", token_teams=["team-123"])
+
+    assert granted is True
+    assert captured["include_all_teams"] is False
+    assert captured["team_id"] == "team-123"
+
+
+@pytest.mark.asyncio
+async def test_has_admin_permission_denied_without_any_admin_permission(svc):
+    """A user whose roles carry no admin.* permission is still denied."""
+
+    async def fake_get_user_permissions(user_email, team_id=None, include_all_teams=False, token_teams=None):
+        return {"tools.read", "servers.use"}
+
+    with patch.object(svc, "_is_user_admin", AsyncMock(return_value=False)):
+        svc.get_user_permissions = fake_get_user_permissions
+        granted = await svc.has_admin_permission("plain.user@example.com", team_id=None, token_teams=None)
+
+    assert granted is False
+
+
+@pytest.mark.asyncio
+async def test_has_admin_permission_public_only_token_does_not_widen(svc):
+    """Public-only tokens (token_teams=[]) must not gain team roles."""
+    captured = {}
+
+    async def fake_get_user_permissions(user_email, team_id=None, include_all_teams=False, token_teams=None):
+        captured["include_all_teams"] = include_all_teams
+        return {"tools.read"}
+
+    svc.get_user_permissions = fake_get_user_permissions
+    granted = await svc.has_admin_permission("team.admin@example.com", team_id=None, token_teams=[])
+
+    assert granted is False
+    assert captured.get("include_all_teams") is not True, "public-only tokens must not widen to team roles"
