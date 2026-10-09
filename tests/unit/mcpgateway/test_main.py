@@ -825,13 +825,23 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
+    @patch("mcpgateway.middleware.rbac.check_permission_inline", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.completion_service.handle_completion")
+    def test_handle_completion_endpoint_denied_by_rbac(self, mock_completion, mock_permission, test_client, auth_headers):
+        """Reject completion before service access when RBAC denies tools.read."""
+        response = test_client.post("/protocol/completion/complete", json={"ref": {"type": "ref/prompt", "name": "test"}}, headers=auth_headers)
+        assert response.status_code == 403
+        mock_permission.assert_awaited_once()
+        assert mock_permission.await_args.args[1] == "tools.read"
+        mock_completion.assert_not_called()
+
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Test completion handling endpoint."""
         mock_filter_context.return_value = ("scoped@example.com", ["team-1"])
         mock_completion.return_value = {"result": "completion_result"}
-        req = {"ref": {"type": "ref/prompt", "name": "test"}}
+        req = {"ref": {"type": "ref/prompt", "name": "test"}, "_meta": {"trace": "completion-1"}}
         response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="scoped@example.com", token_teams=["team-1"])
@@ -865,7 +875,13 @@ class TestProtocolEndpoints:
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
-        """Protocol completion endpoint should map completion validation errors to 400."""
+        """Protocol completion endpoint maps an unclassified CompletionError to 500.
+
+        completion_error_code() defaults an unclassified CompletionError to
+        -32603 (Internal error); the REST mapping mirrors that by returning
+        500 for anything that isn't CompletionInvalidParamsError/
+        CompletionNotSupportedError (#6629).
+        """
         # First-Party
         from mcpgateway.services.completion_service import CompletionError
 
@@ -875,8 +891,53 @@ class TestProtocolEndpoints:
         req = {"ref": {"type": "ref/prompt", "name": "test"}}
         response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
 
-        assert response.status_code == 400
+        assert response.status_code == 500
         assert "invalid completion request" in response.json()["detail"]
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
+    @patch("mcpgateway.main.completion_service.handle_completion")
+    def test_handle_completion_endpoint_maps_not_supported_to_400(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """Protocol completion endpoint maps CompletionNotSupportedError to 400 (#6629)."""
+        # First-Party
+        from mcpgateway.services.completion_service import CompletionNotSupportedError
+
+        mock_filter_context.return_value = ("viewer@example.com", ["team-1"])
+        mock_completion.side_effect = CompletionNotSupportedError("nope")
+
+        req = {"ref": {"type": "ref/prompt", "name": "test"}}
+        response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
+
+        assert response.status_code == 400
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
+    @patch("mcpgateway.main.completion_service.handle_completion")
+    def test_handle_completion_endpoint_maps_invalid_params_to_400(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """Protocol completion endpoint maps CompletionInvalidParamsError to 400 (#6629)."""
+        # First-Party
+        from mcpgateway.services.completion_service import CompletionInvalidParamsError
+
+        mock_filter_context.return_value = ("viewer@example.com", ["team-1"])
+        mock_completion.side_effect = CompletionInvalidParamsError("bad params")
+
+        req = {"ref": {"type": "ref/prompt", "name": "test"}}
+        response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
+
+        assert response.status_code == 400
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
+    @patch("mcpgateway.main.completion_service.handle_completion")
+    def test_handle_completion_endpoint_maps_internal_error_to_500(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """Protocol completion endpoint maps CompletionInternalError to 500 (#6629)."""
+        # First-Party
+        from mcpgateway.services.completion_service import CompletionInternalError
+
+        mock_filter_context.return_value = ("viewer@example.com", ["team-1"])
+        mock_completion.side_effect = CompletionInternalError("boom")
+
+        req = {"ref": {"type": "ref/prompt", "name": "test"}}
+        response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
+
+        assert response.status_code == 500
 
     @patch("mcpgateway.main.sampling_handler.create_message")
     def test_handle_sampling_endpoint(self, mock_sampling, test_client, auth_headers):
@@ -3655,7 +3716,7 @@ class TestRPCEndpoints:
         """Test completion/complete JSON-RPC method."""
         mock_filter_context.return_value = ("rpc-user@example.com", ["team-2"])
         mock_completion.return_value = {"result": "done"}
-        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}, "_meta": {"trace": "completion-1"}}}
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
@@ -3697,7 +3758,11 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
-        """RPC completion/complete should map CompletionError to JSON-RPC -32602."""
+        """RPC completion/complete maps an unclassified CompletionError to -32603 (#6629).
+
+        completion_error_code() defaults an unclassified CompletionError to
+        -32603 (Internal error) rather than the pre-#6629 hardcoded -32602.
+        """
         # First-Party
         from mcpgateway.services.completion_service import CompletionError
 
@@ -3709,8 +3774,42 @@ class TestRPCEndpoints:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["error"]["code"] == -32602
+        assert body["error"]["code"] == -32603
         assert "invalid ref" in body["error"]["message"]
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
+    @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
+    def test_rpc_completion_complete_maps_not_supported_to_dash32601(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """RPC completion/complete maps CompletionNotSupportedError to its upstream JSON-RPC code -32601 (#6629)."""
+        # First-Party
+        from mcpgateway.services.completion_service import CompletionNotSupportedError
+
+        mock_filter_context.return_value = ("user@example.com", ["t1"])
+        mock_completion.side_effect = CompletionNotSupportedError("nope")
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32601
+
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
+    @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
+    def test_rpc_completion_complete_maps_invalid_params_to_dash32602(self, mock_completion, mock_filter_context, test_client, auth_headers):
+        """RPC completion/complete maps CompletionInvalidParamsError to -32602 (#6629)."""
+        # First-Party
+        from mcpgateway.services.completion_service import CompletionInvalidParamsError
+
+        mock_filter_context.return_value = ("user@example.com", ["t1"])
+        mock_completion.side_effect = CompletionInvalidParamsError("bad params")
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32602
 
     def test_rpc_completion_other_method(self, test_client, auth_headers):
         """Test completion/* catch-all JSON-RPC method."""

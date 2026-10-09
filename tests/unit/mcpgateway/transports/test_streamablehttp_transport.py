@@ -5284,7 +5284,7 @@ async def test_list_resource_templates_outer_exception(monkeypatch, caplog):
 async def test_set_logging_level_debug():
     """Test set_logging_level with debug level."""
     # Third-Party
-    import mcp_types as mcp_types
+    import mcp_types
 
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import set_logging_level
@@ -5495,8 +5495,34 @@ async def test_complete_dict_result(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_complete_forwards_request_metadata(monkeypatch):
+    """Forward request metadata to the completion service."""
+    # Third-Party
+    import mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(return_value={"completion": {"values": [], "total": 0, "hasMore": False}})
+        await complete(
+            mcp_types.PromptReference(type="ref/prompt", name="test"),
+            {"name": "arg", "value": "v"},
+            meta={"trace": "completion-1"},
+        )
+
+    assert mock_cs.handle_completion.await_args.args[1]["_meta"] == {"trace": "completion-1"}
+
+
+@pytest.mark.asyncio
 async def test_complete_defaults_non_admin_without_teams_to_public_only_scope(monkeypatch):
     """Completion should use public-only scope when non-admin context has teams=None."""
+    monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
     # Third-Party
     import mcp_types as mcp_types
 
@@ -5569,6 +5595,7 @@ async def test_complete_preserves_admin_bypass_for_null_teams_context(monkeypatc
 @pytest.mark.asyncio
 async def test_complete_preserves_explicit_team_scope(monkeypatch):
     """Completion should preserve explicit token team scope from user context."""
+    monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
     # Third-Party
     import mcp_types as mcp_types
 
@@ -5865,6 +5892,46 @@ async def test_complete_exception(monkeypatch):
     assert isinstance(result, mcp_types.CompleteResult)
     assert result.completion.values == []
     assert result.completion.total == 0
+
+
+@pytest.mark.asyncio
+async def test_complete_raises_mcperror_instead_of_swallowing_completion_error(monkeypatch):
+    """complete() surfaces a CompletionError as an MCPError instead of a fail-open empty result (#6629).
+
+    Before #6629 this path swallowed every exception, including a
+    CompletionError, into a *successful* empty CompleteResult (spec §8.5) —
+    a federated-forwarding failure was invisible to the client. This is a
+    deliberate, visible behavior change: a completion failure now surfaces
+    as a proper JSON-RPC error carrying the upstream-derived code.
+    """
+    # Third-Party
+    import mcp_types as mcp_types
+
+    # First-Party
+    from mcp.shared.exceptions import MCPError
+    from mcpgateway.services.completion_service import CompletionInternalError
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(side_effect=CompletionInternalError("boom"))
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        with pytest.raises(MCPError) as exc_info:
+            await complete(ref, argument)
+
+    assert exc_info.value.error.code == -32603
+    assert "boom" in exc_info.value.error.message
 
 
 # ---------------------------------------------------------------------------
@@ -15690,6 +15757,7 @@ async def test_set_logging_level_oauth_enforcement_with_authenticated_context(mo
 @pytest.mark.asyncio
 async def test_complete_oauth_enforcement_with_authenticated_context(monkeypatch):
     """complete calls _check_server_oauth_enforcement in permissive mode."""
+    monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import complete
 
@@ -17027,6 +17095,28 @@ async def test_complete_denied_by_token_scope(monkeypatch):
 
     with pytest.raises(PermissionError, match="Access denied"):
         await complete(ref, argument)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_id", [None, "server-1"])
+async def test_complete_denied_by_rbac(monkeypatch, server_id):
+    """Reject completion when token scope permits tools.read but RBAC denies it."""
+    user_context = _scoped_user_context(["tools.read"])
+    monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=(server_id, None, user_context)))
+    permission = AsyncMock(return_value=False)
+    monkeypatch.setattr(tr, "_check_streamable_permission", permission)
+    completion = AsyncMock()
+    monkeypatch.setattr(tr.completion_service, "handle_completion", completion)
+
+    with pytest.raises(PermissionError, match="Access denied"):
+        await tr.complete({"type": "ref/prompt", "name": "test"}, {"name": "arg", "value": "val"})
+
+    permission.assert_awaited_once_with(
+        user_context=user_context,
+        permission="tools.read",
+        check_any_team=tr._check_any_team_for_server_scoped_rbac(user_context, server_id),
+    )
+    completion.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -19113,12 +19203,16 @@ class TestV2HandlerAdapters:
     async def test_adapt_complete_delegates(self, monkeypatch):
         expected = types.CompleteResult(completion=types.Completion(values=["a"], total=1, hasMore=False))
 
-        async def fake_complete(ref, argument, context):
+        async def fake_complete(ref, argument, context, meta):
             assert context is None
+            assert meta == {"trace": "completion-1"}
             return expected
 
         monkeypatch.setattr(tr, "complete", fake_complete)
-        result = await tr._adapt_complete(object(), SimpleNamespace(ref={"type": "ref/prompt", "name": "p"}, argument={"name": "a", "value": ""}))
+        result = await tr._adapt_complete(
+            object(),
+            SimpleNamespace(ref={"type": "ref/prompt", "name": "p"}, argument={"name": "a", "value": ""}, meta={"trace": "completion-1"}),
+        )
 
         assert result is expected
 
