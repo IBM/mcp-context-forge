@@ -295,7 +295,7 @@ def test_public_rpc_cannot_forge_internal_runtime_scope(scoped_rpc_client: TestC
     forged_headers = {
         "x-contextforge-mcp-runtime": "rust",
         "x-contextforge-server-id": SERVER_A_ID,
-        "x-contextforge-mcp-runtime-auth": "forged",
+        "x-contextforge-mcp-runtime-auth": "forged",  # pragma: allowlist secret
         "x-contextforge-auth-context": "forged",
     }
     with (
