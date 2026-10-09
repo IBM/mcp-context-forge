@@ -2094,13 +2094,36 @@ class TestServerService:
         with pytest.raises(ServerNotFoundError):
             server_service.get_oauth_protected_resource_metadata(db, "550e8400e29b41d4a716446655440001", "https://gw.com/1")  # pragma: allowlist secret
 
-    def test_get_oauth_metadata_non_public(self, server_service, mock_server):
-        """Raises ServerNotFoundError for non-public server."""
+    def test_get_oauth_metadata_non_public_without_oauth(self, server_service, mock_server):
+        """Raises ServerNotFoundError for non-public server without OAuth."""
         mock_server.visibility = "private"
+        mock_server.oauth_enabled = False
         db = MagicMock()
         db.get.return_value = mock_server
         with pytest.raises(ServerNotFoundError):
             server_service.get_oauth_protected_resource_metadata(db, "550e8400e29b41d4a716446655440001", "https://gw.com/1")  # pragma: allowlist secret
+
+    @pytest.mark.parametrize("visibility", ["private", "team"])
+    def test_get_oauth_metadata_non_public_with_oauth(self, server_service, mock_server, visibility):
+        """Returns only RFC 9728 fields for a non-public server with OAuth enabled."""
+        mock_server.visibility = visibility
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {
+            "authorization_servers": ["https://idp.example.com"],
+            "scopes_supported": ["openid"],
+            "client_id": "gateway-client",
+            "client_secret": "must-not-be-exposed",  # pragma: allowlist secret
+            "token_endpoint": "https://idp.example.com/token",
+        }
+        db = MagicMock()
+        db.get.return_value = mock_server
+        result = server_service.get_oauth_protected_resource_metadata(db, "550e8400e29b41d4a716446655440001", "https://gw.com/1")  # pragma: allowlist secret
+        assert result == {
+            "resource": "https://gw.com/1",
+            "authorization_servers": ["https://idp.example.com"],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["openid"],
+        }
 
     def test_get_oauth_metadata_oauth_not_enabled(self, server_service, mock_server):
         """Raises ServerError when OAuth not enabled."""
