@@ -70,6 +70,22 @@ def _make_fake_server() -> SimpleNamespace:
     return SimpleNamespace(log=MagicMock())
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("true", True),
+        ("false", False),
+        ("TRUE", True),
+        ("FALSE", False),
+    ],
+)
+def test_preload_app_honors_environment(monkeypatch, value, expected):
+    """GUNICORN_PRELOAD_APP controls preload in both launcher and config."""
+    monkeypatch.setenv("GUNICORN_PRELOAD_APP", value)
+
+    assert _load_gunicorn_config().preload_app is expected
+
+
 @pytest.fixture
 def fake_worker() -> SimpleNamespace:
     """A gunicorn-worker stand-in with a stable PID."""

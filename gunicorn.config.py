@@ -40,9 +40,12 @@ max_requests = 100000  # The maximum number of requests a worker will process be
 max_requests_jitter = 100  # The maximum jitter to add to the max_requests setting.
 
 # Optimization https://docs.gunicorn.org/en/stable/settings.html#preload-app
-# Disable preload on macOS due to fork-safety issues with async libraries
-# On macOS, fork is unsafe with many async frameworks (SQLAlchemy, uvicorn, etc.)
-preload_app = platform.system() != "Darwin"
+# Keep the config and run-gunicorn.sh on one source of truth. Without this,
+# setting GUNICORN_PRELOAD_APP=false only omits the CLI flag while this config
+# silently turns preload back on.
+preload_app = (
+    os.environ.get("GUNICORN_PRELOAD_APP", "false" if platform.system() == "Darwin" else "true").lower() == "true"
+)
 
 reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 
