@@ -14,7 +14,7 @@ Covers the deny paths CLAUDE.md requires for security-sensitive changes:
 
 The endpoints are called directly so the suite runs without docker-compose
 or NGINX. ``PermissionService`` is patched via ``monkeypatch`` — the same
-pattern used by ``tests/unit/mcpgateway/routers/test_runtime_admin_router.py``.
+pattern used across the router test suites.
 """
 
 # Standard
