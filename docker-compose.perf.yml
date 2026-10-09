@@ -1,0 +1,47 @@
+###############################################################################
+#  Benchmark resource overrides
+#
+#  Pins every long-running service to the same 4 CPU / 4 G limit and
+#  reservation so benchmark runs compare like with like. This raises pgbouncer,
+#  redis and nginx above their docker-compose.yml defaults, and fixes the
+#  gateway at 4 CPU / 4 G regardless of the GATEWAY_*_LIMIT env knobs.
+#  Docker ignores `reservations.cpus` outside swarm mode.
+#  Usage:  make perf-up         (layers this on top of docker-compose.yml)
+#          make perf-down
+###############################################################################
+
+x-perf-resources: &perf-resources
+  limits:
+    cpus: '4'
+    memory: 4G
+  reservations:
+    cpus: '4'
+    memory: 4G
+
+services:
+
+  nginx:
+    deploy:
+      resources: *perf-resources
+
+  gateway:
+    deploy:
+      mode: replicated
+      replicas: ${GATEWAY_REPLICAS:-3}
+      resources: *perf-resources
+
+  postgres:
+    deploy:
+      resources: *perf-resources
+
+  pgbouncer:
+    deploy:
+      resources: *perf-resources
+
+  redis:
+    deploy:
+      resources: *perf-resources
+
+  fast_time_server:
+    deploy:
+      resources: *perf-resources
