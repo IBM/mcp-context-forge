@@ -51,6 +51,40 @@ def _gateway_reachable() -> bool:
         return False
 
 
+def _live_gateway_required() -> bool:
+    """Return whether an unreachable gateway must fail instead of skip.
+
+    A self-skipping suite reports success when nothing ran, so a Makefile target
+    that exists to prove live behavior can pass while testing nothing. Targets
+    that make that claim set ``LIVE_GATEWAY_REQUIRED=1`` to turn the skip into a
+    hard failure.
+
+    Returns:
+        bool: True when ``LIVE_GATEWAY_REQUIRED`` is set to a truthy value.
+    """
+    return os.getenv("LIVE_GATEWAY_REQUIRED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def live_gateway_requirement_error() -> str | None:
+    """Return why a required live gateway is unusable, or ``None`` when fine.
+
+    Returns a message rather than raising so the caller chooses the failure
+    mechanism. ``tests/live_gateway/conftest.py`` turns it into a
+    ``pytest.UsageError``, which reports one actionable line instead of an
+    INTERNALERROR traceback.
+
+    The reachability probe runs only in required mode, so the default path adds
+    no HTTP request at collection time.
+
+    Returns:
+        str | None: Message when ``LIVE_GATEWAY_REQUIRED`` is set and the gateway
+        at ``BASE_URL`` does not answer ``GET /health`` with 200, else ``None``.
+    """
+    if _live_gateway_required() and not _gateway_reachable():
+        return f"LIVE_GATEWAY_REQUIRED is set but ContextForge is not reachable at {BASE_URL}. Start the stack (e.g. 'make testing-up') or unset LIVE_GATEWAY_REQUIRED to allow skipping."
+    return None
+
+
 def _rust_mcp_gateway_active() -> bool:
     try:
         # Third-Party

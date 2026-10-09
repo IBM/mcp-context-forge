@@ -84,6 +84,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, validate_private_key_material
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
@@ -145,7 +146,8 @@ from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.ssrf_pinning import resolve_pinned_target, SniPinningTransport as _SniPinningTransport
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
+from mcpgateway.utils.ssrf_pinning import SniPinningTransport as _SniPinningTransport
 from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
@@ -991,6 +993,76 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return oauth_config
 
     @staticmethod
+    def _validate_private_key_jwt_config(oauth_config: Optional[dict], existing_oauth_config: Optional[dict] = None) -> None:
+        """Validate the *effective* ``private_key_jwt`` key before persistence. No-op for other methods.
+
+        Validates the key the gateway will actually sign with, not the value the
+        request happened to carry. A request may name the key three ways, and the
+        earlier version of this gate returned early on two of them:
+
+        - A masked placeholder means "keep the stored key". Resolved against
+          ``existing_oauth_config`` and validated against the *requested*
+          algorithm, so a masked update cannot switch an RSA gateway to ``ES256``
+          and persist a configuration that can never sign. A placeholder with no
+          stored key to preserve is rejected, because
+          ``protect_oauth_config_for_storage`` turns it into ``None`` and the
+          gateway silently loses its key.
+        - Stored ciphertext is decrypted and validated, so malformed material
+          cannot ride through inside an encrypted envelope. Authorization-code and
+          token-exchange gateways defer their first token fetch, so registration
+          would otherwise never surface the failure.
+        - Raw PEM is validated directly.
+
+        Runs here rather than in the Pydantic schema because only this layer can
+        reach the encryption service. A schema-side check would need a weaker
+        heuristic and could disagree with this one.
+
+        Args:
+            oauth_config: Raw gateway oauth_config dict being applied (create or update).
+            existing_oauth_config: The gateway's stored oauth_config on an update,
+                read before any field assignment, or ``None`` on create.
+
+        Raises:
+            ValueError: If ``token_endpoint_auth_method`` is ``private_key_jwt`` and the
+                effective private key is missing, unresolvable, malformed,
+                passphrase-protected, undersized, or mismatched with
+                ``token_endpoint_auth_signing_alg``. ``register_gateway``
+                re-raises it, so creates return HTTP 400; ``update_gateway`` wraps it in
+                ``GatewayError``, exactly as it already does for
+                ``_validate_token_exchange_config``'s rejections.
+        """
+        if not oauth_config:
+            return
+
+        # One policy point for this field, shared with the schema and the signing
+        # path, so a config this gate skips can never be one the runtime signs
+        # with private_key_jwt.
+        if normalize_token_endpoint_auth_method(oauth_config.get("token_endpoint_auth_method")) != "private_key_jwt":
+            return
+
+        private_key = oauth_config.get("private_key")
+        if not isinstance(private_key, str) or not private_key.strip():
+            raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
+
+        signing_alg = oauth_config.get("token_endpoint_auth_signing_alg")
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        effective_key = private_key
+
+        if private_key == settings.masked_auth_value:
+            stored_key = (existing_oauth_config or {}).get("private_key")
+            if not isinstance(stored_key, str) or not stored_key.strip():
+                raise ValueError("oauth_config.private_key is the masked placeholder but no stored key exists to preserve; supply the private key material")
+            effective_key = stored_key
+
+        if encryption.is_encrypted(effective_key):
+            decrypted = encryption.decrypt_secret_or_plaintext(effective_key)
+            if not isinstance(decrypted, str) or not decrypted.strip():
+                raise ValueError("oauth_config.private_key could not be decrypted for validation; re-supply the private key material")
+            effective_key = decrypted
+
+        validate_private_key_material(effective_key, signing_alg if isinstance(signing_alg, str) else None)
+
+    @staticmethod
     async def _enforce_token_exchange_admin_only(db: Session, oauth_config: Optional[dict], requester_email: Optional[str]) -> None:
         """Restrict creating/modifying a token-exchange gateway to platform admins.
 
@@ -1052,6 +1124,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         await self._enforce_token_exchange_admin_only(db, raw_oauth_config, requester_email)
         raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
         raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
+        self._validate_private_key_jwt_config(raw_oauth_config)
         return await protect_oauth_config_for_storage(raw_oauth_config)
 
     @staticmethod
@@ -3196,6 +3269,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     await self._enforce_token_exchange_admin_only(db, raw_oauth_update, user_email)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
+                    self._validate_private_key_jwt_config(raw_oauth_update, existing_oauth_config=original_oauth_config)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
@@ -5156,7 +5230,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                 # Get user-specific OAuth token only if user_email is provided
                                 if user_email:
@@ -8542,7 +8616,7 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
 
                     # SECURITY: Use token_teams from the authenticated user dict — this is
                     # already resolved by auth middleware and must not be widened by

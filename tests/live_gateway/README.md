@@ -78,7 +78,16 @@ export MCP_TEMPLATE_UPSTREAM_HOST=host.docker.internal
 make test-e2e K=resource_template
 ```
 
-Supply `JWT_SECRET_KEY` for the test gateway through the environment.
+Supply `JWT_SECRET_KEY` for the test gateway through the environment. It must be
+the value the running gateway uses, or every request returns 401 and the failure
+reads like a code defect rather than a configuration mismatch. Read it from the
+container rather than guessing:
+
+```bash
+export JWT_SECRET_KEY=$(docker exec mcp-context-forge-gateway-1 sh -c 'echo -n $JWT_SECRET_KEY')
+make test-private-key-jwt-live
+```
+
 Enable `MCP_REQUIRE_AUTH` on the gateway for the unauthenticated denial case.
 Use `RATE_LIMITING_ENABLED=false` only on an isolated test gateway, or configure
 limits that accommodate the suite. Allow the fixture host through the test gateway's SSRF policy.
