@@ -11059,8 +11059,6 @@ async def handle_internal_mcp_tools_call(request: Request):
             db.close()
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
-    except ToolInvocationError as exc:
-        return {"jsonrpc": "2.0", "result": {"content": [{"type": "text", "text": str(exc)}], "isError": True}, "id": req_id}
     except PluginViolationError as exc:
         # Use violation's codes if present, otherwise JSON-RPC defaults
         error_code = -32602  # Invalid params (JSON-RPC standard)
@@ -11550,8 +11548,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 if not _trusted_internal_mcp_dispatch:
                     # /rpc is a 2025-era wire; an owner-worker dispatch is internal and keeps the value for the originating worker
                     result = _object_only_structured_content(result)
-            except ToolInvocationError as exc:
-                result = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
             finally:
                 # Release transaction after tools/call completes
                 db.commit()

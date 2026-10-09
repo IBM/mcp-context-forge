@@ -4392,7 +4392,7 @@ async fn elicitation_create_forwards_to_backend_rpc_endpoint() {
 }
 
 #[tokio::test]
-async fn server_scoped_tools_list_delegates_to_python_with_db_pool() {
+async fn server_scoped_tools_list_db_mode_falls_back_to_python_data_endpoint_on_db_failure() {
     let authz_calls = Arc::new(Mutex::new(0usize));
     let list_calls = Arc::new(Mutex::new(0usize));
     let rpc_calls = Arc::new(Mutex::new(0usize));
@@ -4488,7 +4488,7 @@ async fn server_scoped_tools_list_delegates_to_python_with_db_pool() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["tools"][0]["name"], "echo");
-    assert_eq!(*authz_calls.lock().expect("lock"), 0);
+    assert_eq!(*authz_calls.lock().expect("lock"), 1);
     assert_eq!(*list_calls.lock().expect("lock"), 1);
     assert_eq!(*rpc_calls.lock().expect("lock"), 0);
 }

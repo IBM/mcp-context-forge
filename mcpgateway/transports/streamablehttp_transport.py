@@ -86,7 +86,7 @@ from mcpgateway.services.mcp_apps import (
     filter_model_visible_tools,
     serialize_resource_content_for_mcp,
 )
-from mcpgateway.services.mcp_catalog_service import collect_proxy_catalog, list_catalog_page
+from mcpgateway.services.mcp_catalog_service import collect_proxy_catalog, list_catalog_page, log_proxy_catalog_failure
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -110,6 +110,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
+from mcpgateway.utils.mcp_cursor import catalog_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     get_auth_header_value,
@@ -1559,6 +1560,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
 
     except Exception as e:
         if paginate:
+            log_proxy_catalog_failure(gateway.id, "tools/list", e)
             if isinstance(e, JSONRPCError):
                 raise
             raise JSONRPCError(-32000, "Direct-proxy MCP catalog collection failed") from e
@@ -1609,6 +1611,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
 
     except Exception as e:
         if paginate:
+            log_proxy_catalog_failure(gateway.id, "resources/list", e)
             if isinstance(e, JSONRPCError):
                 raise
             raise JSONRPCError(-32000, "Direct-proxy MCP catalog collection failed") from e
@@ -2038,7 +2041,7 @@ async def call_tool(
     mcp_session_id = None
     if request_headers:
         request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
-        mcp_session_id = request_headers_lower.get("x-mcp-session-id") or request_headers_lower.get("mcp-session-id")
+        mcp_session_id = catalog_session_id(request_headers_lower)
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
         try:
             # First-Party
@@ -2690,6 +2693,8 @@ async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
 
+    Compatibility API. Registered MCP adapters use ``list_catalog_page()``.
+
     Supports two modes based on gateway's gateway_mode:
     - 'cache': Returns tools from database (default behavior)
     - 'direct_proxy': Proxies the request directly to the remote MCP server
@@ -2794,6 +2799,8 @@ async def list_tools() -> List[types.Tool]:
 async def list_prompts() -> List[types.Prompt]:
     """
     Lists all prompts available to the MCP Server.
+
+    Compatibility API. Registered MCP adapters use ``list_catalog_page()``.
 
     Returns:
         A list of Prompt objects containing metadata such as name, description, and arguments.
@@ -2956,6 +2963,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 async def list_resources() -> List[types.Resource]:
     """
     Lists all resources available to the MCP Server.
+
+    Compatibility API. Registered MCP adapters use ``list_catalog_page()``.
 
     Returns:
         A list of Resource objects containing metadata such as uri, name, description, and mimeType.
@@ -3200,6 +3209,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
 async def list_resource_templates() -> List[Dict[str, Any]]:
     """
     Lists all resource templates available to the MCP Server.
+
+    Compatibility API. Registered MCP adapters use ``list_catalog_page()``.
 
     Returns:
         List[types.ResourceTemplate]: A list of resource templates with their URIs and metadata.
@@ -3549,32 +3560,6 @@ async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> 
         return result
     finally:
         _v2_request_ctx.reset(token)
-
-
-async def _initialize_mcp_apps_capabilities(ctx: Any, call_next: Any) -> Any:
-    """Add MCP Apps capabilities from the authenticated HTTP request context.
-
-    Args:
-        ctx: SDK request context with the original HTTP request.
-        call_next: Next SDK middleware or handler.
-
-    Returns:
-        SDK result with capabilities for the authenticated caller.
-    """
-    result = await call_next(ctx)
-    if ctx.method != "initialize" or not isinstance(result, dict):
-        return result
-    request = ctx.request
-    scope_context = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY, {})
-    user_context = scope_context.get("user_context", {})
-    extensions = build_mcp_apps_capabilities(authorized=bool(user_context.get("email")) and user_context.get("is_authenticated", True))
-    if extensions:
-        capabilities = result.setdefault("capabilities", {})
-        capabilities.setdefault("extensions", {}).update(extensions)
-    return result
-
-
-mcp_app.middleware.append(_initialize_mcp_apps_capabilities)
 
 
 async def _list_catalog_page(method: str, params: Any) -> dict[str, Any]:
@@ -4784,7 +4769,7 @@ class SessionManagerWrapper:
         is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
 
         # Log session info for debugging stateful sessions
-        mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
+        mcp_session_id = catalog_session_id(headers) or "not-provided"
         if mcp_session_id != "not-provided":
             set_trace_session_id(mcp_session_id)
         method = scope.get("method", "UNKNOWN")
