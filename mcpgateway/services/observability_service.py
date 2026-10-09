@@ -1792,8 +1792,8 @@ class ObservabilityService:
             interval_minutes: Bucket width in minutes
 
         Returns:
-            Dict with ``buckets`` (ISO-8601 UTC strings) and ``values`` (counts).
-            Buckets are sparse: only buckets containing traces are present.
+            Dict with ``buckets`` (ISO-8601 UTC strings), ``values`` (counts),
+            ``success_count``, and ``error_count``. Buckets are sparse.
         """
         if db.get_bind().dialect.name == "postgresql":
             return _execution_timeseries_postgresql(db, cutoff_time, interval_minutes)
@@ -1825,13 +1825,15 @@ def _execution_timeseries_postgresql(db: Session, cutoff_time: datetime, interva
         interval_minutes: Bucket size in minutes
 
     Returns:
-        Dict with ``buckets`` and ``values``.
+        Dict with ``buckets``, ``values``, ``success_count``, and ``error_count``.
     """
     stats_sql = text(
         """
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
-            COUNT(*) as total
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) as success,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error
         FROM observability_traces
         WHERE start_time >= :cutoff_time
         GROUP BY bucket
@@ -1843,15 +1845,19 @@ def _execution_timeseries_postgresql(db: Session, cutoff_time: datetime, interva
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
 
     if not results:
-        return {"buckets": [], "values": []}
+        return {"buckets": [], "values": [], "success_count": [], "error_count": []}
 
     buckets = []
     values = []
+    success_counts = []
+    error_counts = []
     for row in results:
         buckets.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         values.append(row.total if row.total is not None else 0)
+        success_counts.append(row.success if row.success is not None else 0)
+        error_counts.append(row.error if row.error is not None else 0)
 
-    return {"buckets": buckets, "values": values}
+    return {"buckets": buckets, "values": values, "success_count": success_counts, "error_count": error_counts}
 
 
 def _execution_timeseries_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
@@ -1863,24 +1869,34 @@ def _execution_timeseries_python(db: Session, cutoff_time: datetime, interval_mi
         interval_minutes: Bucket size in minutes
 
     Returns:
-        Dict with ``buckets`` and ``values``.
+        Dict with ``buckets``, ``values``, ``success_count``, and ``error_count``.
     """
-    traces = db.query(ObservabilityTrace.start_time).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
+    traces = db.query(ObservabilityTrace.start_time, ObservabilityTrace.status).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
 
     if not traces:
-        return {"buckets": [], "values": []}
+        return {"buckets": [], "values": [], "success_count": [], "error_count": []}
 
     interval_seconds = interval_minutes * 60
-    counts: Dict[datetime, int] = defaultdict(int)
+    counts: Dict[datetime, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "error": 0})
     for trace in traces:
         trace_time = trace.start_time
         if trace_time.tzinfo is None:
             trace_time = trace_time.replace(tzinfo=timezone.utc)
         bucket_epoch = (trace_time.timestamp() // interval_seconds) * interval_seconds
-        counts[datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)] += 1
+        bucket = counts[datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)]
+        bucket["total"] += 1
+        if trace.status == "ok":
+            bucket["success"] += 1
+        elif trace.status == "error":
+            bucket["error"] += 1
 
     ordered = sorted(counts.keys())
-    return {"buckets": [b.isoformat() for b in ordered], "values": [counts[b] for b in ordered]}
+    return {
+        "buckets": [bucket.isoformat() for bucket in ordered],
+        "values": [counts[bucket]["total"] for bucket in ordered],
+        "success_count": [counts[bucket]["success"] for bucket in ordered],
+        "error_count": [counts[bucket]["error"] for bucket in ordered],
+    }
 
 
 def _latency_percentiles_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:

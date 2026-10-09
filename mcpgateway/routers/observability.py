@@ -865,10 +865,17 @@ def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int
 
 
 class TimeseriesResponse(BaseModel):
-    """Execution counts bucketed over time."""
+    """Index-aligned execution and status counts.
+
+    ``values`` counts every trace. ``success_count`` and ``error_count`` count
+    only explicit ``ok`` and ``error`` statuses. Other statuses, including
+    ``unset``, are included only in ``values``.
+    """
 
     buckets: list[str]
     values: list[int]
+    success_count: list[int]
+    error_count: list[int]
 
 
 class PercentilesResponse(BaseModel):
@@ -899,14 +906,14 @@ async def get_metrics_timeseries(
         db: Database session
 
     Returns:
-        TimeseriesResponse: Sparse buckets with one execution count each. Empty
-        series when observability is disabled.
+        TimeseriesResponse: Sparse buckets with aligned execution, success, and
+        error counts. Empty series when observability is disabled.
 
     Raises:
         HTTPException: 500 if aggregation fails
     """
     if not settings.observability_enabled:
-        return TimeseriesResponse(buckets=[], values=[])
+        return TimeseriesResponse(buckets=[], values=[], success_count=[], error_count=[])
 
     try:
         service = ObservabilityService()
