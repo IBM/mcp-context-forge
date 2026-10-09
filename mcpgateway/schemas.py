@@ -4665,7 +4665,7 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
-class ServerCreate(BaseModel):
+class ServerCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new server.
 
@@ -4679,6 +4679,8 @@ class ServerCreate(BaseModel):
         associated_prompts (Optional[List[str]]): Optional list of associated prompt IDs.
     """
 
+    # Inherit alias_generator / populate_by_name from BaseModelWithConfigDict so camelCase
+    # request fields (associatedTools, etc.) are accepted the same way as ServerUpdate/ServerRead.
     model_config = ConfigDict(str_strip_whitespace=True)
 
     id: Optional[str] = Field(None, description="Custom UUID for the server (if not provided, one will be generated)")

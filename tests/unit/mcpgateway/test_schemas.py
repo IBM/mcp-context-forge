@@ -1599,6 +1599,70 @@ class TestGatewayCreateCamelCase:
             assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
 
 
+class TestServerCreateCamelCase:
+    """Verify ServerCreate accepts camelCase association fields.
+
+    Regression tests for #6956 — ServerCreate previously extended BaseModel
+    directly, so associatedTools / associatedResources were silently ignored
+    while snake_case worked and responses already used camelCase.
+    """
+
+    _TOOL_ID = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
+    _RESOURCE_ID = "6ba7b8109dad11d180b400c04fd430c8"  # pragma: allowlist secret
+
+    def test_accepts_camel_case_associated_tools(self):
+        """ServerCreate must accept associatedTools (camelCase)."""
+        # First-Party
+        from mcpgateway.schemas import ServerCreate
+
+        server = ServerCreate.model_validate(
+            {
+                "name": "test-server",
+                "associatedTools": [self._TOOL_ID],
+                "associatedResources": [self._RESOURCE_ID],
+            }
+        )
+        assert server.associated_tools == [self._TOOL_ID]
+        assert server.associated_resources == [self._RESOURCE_ID]
+
+    def test_accepts_snake_case_associated_tools(self):
+        """ServerCreate must still accept snake_case association fields."""
+        # First-Party
+        from mcpgateway.schemas import ServerCreate
+
+        server = ServerCreate(
+            name="test-server",
+            associated_tools=[self._TOOL_ID],
+            associated_resources=[self._RESOURCE_ID],
+        )
+        assert server.associated_tools == [self._TOOL_ID]
+        assert server.associated_resources == [self._RESOURCE_ID]
+
+    def test_serializes_to_camel_case(self):
+        """ServerCreate.model_dump(by_alias=True) must use camelCase keys."""
+        # First-Party
+        from mcpgateway.schemas import ServerCreate
+
+        server = ServerCreate(
+            name="test-server",
+            associated_tools=[self._TOOL_ID],
+        )
+        data = server.model_dump(by_alias=True)
+        assert "associatedTools" in data
+        assert data["associatedTools"] == [self._TOOL_ID]
+        assert "associated_tools" not in data
+
+    def test_consistent_with_server_update(self):
+        """ServerCreate and ServerUpdate must both accept camelCase associations."""
+        # First-Party
+        from mcpgateway.schemas import ServerCreate, ServerUpdate
+
+        create = ServerCreate.model_validate({"name": "srv", "associatedTools": [self._TOOL_ID]})
+        update = ServerUpdate.model_validate({"associatedTools": [self._TOOL_ID]})
+        assert create.associated_tools == [self._TOOL_ID]
+        assert update.associated_tools == [self._TOOL_ID]
+
+
 class TestTitleSchemas:
     """Test title field in schema models."""
 
