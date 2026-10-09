@@ -97,6 +97,9 @@ class PreparedA2AInvocation:
     base_endpoint_url: Optional[str] = None
     auth_value_encrypted: Optional[str] = None
     auth_query_params_encrypted: Optional[Dict[str, str]] = None
+    caller_headers: Optional[Dict[str, str]] = None
+    configured_headers: Optional[Dict[str, str]] = None
+    correlation_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,69 @@ class PinnedA2AInvocation:
     endpoint_url: str
     headers: Dict[str, str]
     extensions: Dict[str, str]
+
+
+def _normalize_headers(headers: Optional[Mapping[str, str]]) -> Dict[str, tuple[str, str]]:
+    """Return one header per case-insensitive name, keeping the final value."""
+    normalized: Dict[str, tuple[str, str]] = {}
+    for key, value in (headers or {}).items():
+        header_name = str(key)
+        normalized[header_name.lower()] = (header_name, str(value))
+    return normalized
+
+
+def _header_dict(headers: Dict[str, tuple[str, str]]) -> Dict[str, str]:
+    """Convert normalized headers to an HTTP header mapping."""
+    return dict(headers.values())
+
+
+def _set_header(headers: Dict[str, tuple[str, str]], name: str, value: str) -> None:
+    """Set a header with case-insensitive replacement."""
+    headers[name.lower()] = (name, value)
+
+
+def resolve_a2a_headers(
+    *,
+    caller_headers: Optional[Mapping[str, str]],
+    configured_headers: Optional[Mapping[str, str]],
+    plugin_input_headers: Optional[Mapping[str, str]],
+    plugin_output_headers: Optional[Mapping[str, str]],
+    uses_jsonrpc: bool,
+    protocol_version_header: str,
+    correlation_id: Optional[str],
+) -> Dict[str, str]:
+    """Resolve outbound A2A headers from caller, agent, plugin, and protocol sources."""
+    caller = _normalize_headers(caller_headers)
+    configured = _normalize_headers(configured_headers)
+    plugin = _normalize_headers(plugin_output_headers)
+
+    if plugin_output_headers is not None:
+        for header_name in _normalize_headers(plugin_input_headers):
+            returned = plugin.get(header_name)
+            if returned is None or returned[1] == "":
+                caller.pop(header_name, None)
+
+    headers = dict(caller)
+    headers.update(configured)
+
+    if plugin_output_headers is not None:
+        authorization = plugin.get("authorization")
+        authorization_removed = authorization is not None and authorization[1] == ""
+        for header_name, (name, value) in plugin.items():
+            if value:
+                headers[header_name] = (name, value)
+        if authorization_removed:
+            headers.pop("authorization", None)
+
+    _set_header(headers, "Content-Type", "application/json")
+    if correlation_id:
+        _set_header(headers, "X-Correlation-ID", correlation_id)
+    if uses_jsonrpc:
+        _set_header(headers, _A2A_VERSION_HEADER, protocol_version_header)
+        headers.setdefault("accept", ("Accept", "application/json, text/event-stream"))
+
+    headers.pop("x-vault-tokens", None)
+    return _header_dict(headers)
 
 
 async def prepare_pinned_a2a_invocation(prepared: PreparedA2AInvocation, field_name: str = "A2A agent URL") -> PinnedA2AInvocation:
@@ -409,13 +475,13 @@ def prepare_a2a_invocation(
     auth_value: Any = None,
     auth_query_params: Optional[Dict[str, str]] = None,
     base_headers: Optional[Mapping[str, str]] = None,
+    plugin_input_headers: Optional[Mapping[str, str]] = None,
+    plugin_output_headers: Optional[Mapping[str, str]] = None,
     correlation_id: Optional[str] = None,
 ) -> PreparedA2AInvocation:
     """Prepare endpoint, headers, and request body for an outbound A2A invocation."""
-    headers = {str(key): str(value) for key, value in dict(base_headers or {}).items()}
-    headers.setdefault("Content-Type", "application/json")
-    if correlation_id:
-        headers["X-Correlation-ID"] = correlation_id
+    caller_headers = {str(key): str(value) for key, value in dict(base_headers or {}).items()}
+    configured_headers: Dict[str, str] = {}
 
     if auth_type in {"basic", "bearer", "authheaders", "api_key"} and auth_value:
         if isinstance(auth_value, str):
@@ -426,28 +492,28 @@ def prepare_a2a_invocation(
                     if isinstance(decoded, Mapping):
                         # Extract the actual key value from the decoded dict
                         api_key = next(iter(decoded.values())) if decoded else auth_value
-                        headers["Authorization"] = f"Bearer {api_key}"
+                        configured_headers["Authorization"] = f"Bearer {api_key}"
                     else:
                         # Fallback if decode returns a string directly
-                        headers["Authorization"] = f"Bearer {decoded}"
+                        configured_headers["Authorization"] = f"Bearer {decoded}"
                 except (InvalidTag, binascii.Error, orjson.JSONDecodeError, IndexError, ValueError):
                     # If decoding fails (corrupted data, wrong key, invalid encoding, truncated input,
                     # or invalid nonce/cipher parameters), use the raw value as the API key
                     #
                     # Keep backward compatibility with older raw API key rows.
-                    headers["Authorization"] = f"Bearer {auth_value}"
+                    configured_headers["Authorization"] = f"Bearer {auth_value}"
             else:
                 decoded = decode_auth(auth_value)
                 if not isinstance(decoded, Mapping):
                     raise ValueError("Decoded A2A authentication payload must be a mapping")
-                headers.update({str(key): str(value) for key, value in decoded.items()})
+                configured_headers.update({str(key): str(value) for key, value in decoded.items()})
         elif isinstance(auth_value, Mapping):
             if auth_type == "api_key":
                 # Extract the actual key value from the mapping
                 api_key = next(iter(auth_value.values()), "") if auth_value else ""
-                headers["Authorization"] = f"Bearer {api_key}"
+                configured_headers["Authorization"] = f"Bearer {api_key}"
             else:
-                headers.update({str(key): str(value) for key, value in auth_value.items()})
+                configured_headers.update({str(key): str(value) for key, value in auth_value.items()})
 
     auth_query_params_decrypted: Dict[str, str] = {}
     target_endpoint_url = endpoint_url
@@ -469,9 +535,16 @@ def prepare_a2a_invocation(
 
     uses_jsonrpc = is_jsonrpc_a2a_agent(agent_type, endpoint_url)
     protocol_version_header = normalize_a2a_version_header(protocol_version)
+    headers = resolve_a2a_headers(
+        caller_headers=caller_headers,
+        configured_headers=configured_headers,
+        plugin_input_headers=plugin_input_headers,
+        plugin_output_headers=plugin_output_headers,
+        uses_jsonrpc=uses_jsonrpc,
+        protocol_version_header=protocol_version_header,
+        correlation_id=correlation_id,
+    )
     if uses_jsonrpc:
-        headers[_A2A_VERSION_HEADER] = protocol_version_header
-        headers.setdefault("Accept", "application/json, text/event-stream")
         request_data = build_a2a_jsonrpc_request(parameters or {}, protocol_version)
     else:
         request_data = {
@@ -492,4 +565,7 @@ def prepare_a2a_invocation(
         base_endpoint_url=endpoint_url,
         auth_value_encrypted=auth_value if isinstance(auth_value, str) and auth_type in {"basic", "bearer", "authheaders", "api_key"} else None,
         auth_query_params_encrypted=dict(auth_query_params) if auth_type == "query_param" and auth_query_params else None,
+        caller_headers=caller_headers,
+        configured_headers=configured_headers,
+        correlation_id=correlation_id,
     )
