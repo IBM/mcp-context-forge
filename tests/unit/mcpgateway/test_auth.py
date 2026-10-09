@@ -131,6 +131,38 @@ class TestGetCurrentUser:
                     assert user.full_name == mock_user.full_name
 
     @pytest.mark.asyncio
+    async def test_external_idp_session_payload_resolves_user(self):
+        """A trusted external-IdP session payload from verify_credentials_cached resolves the local user."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="external_token")  # pragma: allowlist secret
+
+        external_payload = {
+            "sub": "external@example.com",
+            "email": "external@example.com",
+            "token_use": "session",
+            "teams": [],
+            "is_admin": False,
+            "auth_provider": "keycloak",
+        }
+        mock_user = EmailUser(
+            email="external@example.com",
+            password_hash="hash",
+            full_name="External User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_credentials_cached", AsyncMock(return_value=external_payload)):
+            with patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[])):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        assert user.email == "external@example.com"
+
+    @pytest.mark.asyncio
     async def test_auth_method_set_on_cache_hit(self, monkeypatch):
         """Ensure auth_method is set when auth cache returns early."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret

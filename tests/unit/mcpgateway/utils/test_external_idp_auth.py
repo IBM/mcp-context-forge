@@ -102,6 +102,7 @@ def _fake_provider(issuer, enabled=True, trusted=True):
     p.issuer = issuer
     p.is_enabled = enabled
     p.trusted_for_api_auth = trusted
+    p.jwks_uri = None
     return p
 
 
@@ -224,11 +225,13 @@ async def test_verify_external_idp_token_valid(monkeypatch):
     token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, _TEST_SIGNING_KEY, algorithm="HS256")
     prov = _fake_provider("https://kc/realms/m")
     prov.api_audience = "api://my-app"
+    prov.jwks_uri = "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
         assert authorization_servers == ["https://kc/realms/m"]
         assert expected_audience == "api://my-app"
+        assert jwks_uri_override == "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
         return {"iss": "https://kc/realms/m", "sub": "agent"}
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
@@ -337,7 +340,7 @@ async def test_verify_external_idp_token_verification_fails(monkeypatch):
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
@@ -976,7 +979,7 @@ async def test_deny_id_token_rejected(monkeypatch):
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
     # verify_oauth_access_token rejects nonce/at_hash -> returns None
-    async def fake_oauth(tok, authorization_servers, *, expected_audience=None):
+    async def fake_oauth(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_oauth)
@@ -1907,7 +1910,7 @@ async def test_alternate_claim_token_rejected_for_disabled_or_untrusted_provider
         sso_service.invalidate_trusted_provider_cache()
         oauth_calls = []
 
-        async def fake_oauth(token, authorization_servers, *, expected_audience=None):
+        async def fake_oauth(token, authorization_servers, *, expected_audience=None, jwks_uri_override=None):
             oauth_calls.append(authorization_servers)
             return _alt_claims()
 

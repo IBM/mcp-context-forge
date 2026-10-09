@@ -1343,6 +1343,108 @@ async def test_require_admin_auth_email_auth_non_admin_json_gets_403(monkeypatch
     assert "Admin privileges required" in exc.value.detail
 
 
+def _setup_admin_auth_external_idp(monkeypatch, *, flag_enabled: bool, db_user_is_admin: bool, external_result):
+    """Wire require_admin_auth for an external-IdP bearer token.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        flag_enabled: Value for SSO_API_TOKEN_AUTH_ENABLED.
+        db_user_is_admin: DB admin flag of the resolved local user.
+        external_result: (claims, provider) returned by verify_external_idp_token.
+
+    Returns:
+        tuple: (bearer credentials, request, external verifier mock, internal verifier mock).
+    """
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", flag_enabled, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([MagicMock()]))
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+    monkeypatch.setattr(vc, "get_redis_client", AsyncMock(return_value=None))
+    monkeypatch.setattr(vc, "_enforce_revocation_and_active_user", AsyncMock())
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return MagicMock(email=email, is_admin=db_user_is_admin, is_active=True)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+
+    external = AsyncMock(return_value=external_result)
+    monkeypatch.setattr(vc, "verify_external_idp_token", external)
+    monkeypatch.setattr(vc, "build_external_identity", AsyncMock(return_value={"sub": "agent@corp.com", "token_use": "session"}))
+    internal = AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"))
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", internal)
+
+    request = Mock(spec=Request)
+    request.headers = {"accept": "application/json"}
+    request.scope = {"root_path": ""}
+    token = jwt.encode({"iss": "https://kc.example.com/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token), request, external, internal
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_accepts_trusted_external_idp_admin(monkeypatch):
+    """A trusted external-IdP token for a DB admin passes require_admin_auth without internal JWT verification."""
+    await vc.invalidate_external_identity_cache()
+    creds, request, external, internal = _setup_admin_auth_external_idp(
+        monkeypatch, flag_enabled=True, db_user_is_admin=True, external_result=({"iss": "https://kc.example.com/realms/m", "sub": "agent"}, MagicMock())
+    )
+
+    result = await vc.require_admin_auth(request=request, credentials=creds, jwt_token=None, basic_credentials=None)
+
+    assert result == "agent@corp.com"
+    external.assert_awaited_once()
+    internal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_external_idp_non_admin_gets_403(monkeypatch):
+    """A trusted external-IdP token for a non-admin DB user gets 403."""
+    await vc.invalidate_external_identity_cache()
+    creds, request, _external, _internal = _setup_admin_auth_external_idp(
+        monkeypatch, flag_enabled=True, db_user_is_admin=False, external_result=({"iss": "https://kc.example.com/realms/m", "sub": "agent"}, MagicMock())
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=request, credentials=creds, jwt_token=None, basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_external_idp_rejected_when_flag_disabled(monkeypatch):
+    """With SSO_API_TOKEN_AUTH_ENABLED off, an external-IdP token is never verified externally and gets 401."""
+    await vc.invalidate_external_identity_cache()
+    creds, request, external, internal = _setup_admin_auth_external_idp(
+        monkeypatch, flag_enabled=False, db_user_is_admin=True, external_result=({"iss": "https://kc.example.com/realms/m", "sub": "agent"}, MagicMock())
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=request, credentials=creds, jwt_token=None, basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    external.assert_not_called()
+    internal.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_rejects_untrusted_external_idp_token(monkeypatch):
+    """An external-IdP token that fails verification falls through to internal verification and gets 401."""
+    await vc.invalidate_external_identity_cache()
+    creds, request, external, internal = _setup_admin_auth_external_idp(monkeypatch, flag_enabled=True, db_user_is_admin=True, external_result=(None, None))
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=request, credentials=creds, jwt_token=None, basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    external.assert_awaited_once()
+    internal.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_require_admin_auth_email_auth_user_not_found_falls_back_to_basic(monkeypatch):
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
