@@ -321,7 +321,7 @@ def test_endpoint_rbac_denial_after_admin_middleware(harness, monkeypatch, mock_
     """A caller with another admin permission still needs user management."""
     harness.context["is_admin"] = False
     identity = SimpleNamespace(email=harness.context["email"], is_admin=False)
-    monkeypatch.setattr(main, "validate_token_user", AsyncMock(return_value=identity))
+    monkeypatch.setattr("mcpgateway.middleware.ui_auth.validate_token_user", AsyncMock(return_value=identity))
     monkeypatch.setattr(main, "settings", SimpleNamespace(auth_required=True))
     admin_permission = AsyncMock(return_value=True)
     monkeypatch.setattr(PermissionService, "has_admin_permission", admin_permission)
