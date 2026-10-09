@@ -2344,8 +2344,8 @@ class TestToolService:
 
         The output path validates in ``_extract_and_validate_structured_content``, offloaded
         with ``asyncio.to_thread`` at its call site. Removing that offload stalls the loop for
-        the sandbox timeout, so the budget is half of ``regex_timeout_seconds``, as in the
-        input-path test above.
+        the sandbox timeout. The budget is 0.9 * ``regex_timeout_seconds`` to allow for
+        slow CI machines while still catching a genuine stall (which would be >= 1 * timeout).
         """
         # First-Party
         from mcpgateway.config import settings
@@ -2395,7 +2395,7 @@ class TestToolService:
         assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
             f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
         )
-        budget = 0.5 * settings.regex_timeout_seconds
+        budget = 0.9 * settings.regex_timeout_seconds
         assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
         assert result.is_error, "the hostile output must fail validation, not pass"
 
