@@ -5837,17 +5837,17 @@ compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
-PROD_COMPOSE_FILE := docker-compose.prod.yml
-PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
+PERF_COMPOSE_FILE := docker-compose.perf.yml
+PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(PROFILE)
 REPLICA ?= 3
 
 perf-up: compose-validate                  ## Start stack with pinned benchmark resource overrides (REPLICA=3)
-	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
-		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PERF_COMPOSE_FILE)"; \
 		exit 1; \
 	fi
-	@echo "🚀  Using $(COMPOSE_CMD) + $(PROD_COMPOSE_FILE); starting production stack ($(REPLICA) gateway replica(s))..."
-	IMAGE_LOCAL=$(call get_image_name) GATEWAY_REPLICAS=$(REPLICA) $(PROD_COMPOSE) up -d
+	@echo "🚀  Using $(COMPOSE_CMD) + $(PERF_COMPOSE_FILE); starting production stack ($(REPLICA) gateway replica(s))..."
+	IMAGE_LOCAL=$(call get_image_name) GATEWAY_REPLICAS=$(REPLICA) $(PERF_COMPOSE) up -d
 
 # Signing secret of the running gateway container; empty when no gateway is up.
 # The container wins over .env: compose lets a shell JWT_SECRET_KEY override the
@@ -5861,13 +5861,13 @@ create-token:                             ## Print a bare admin JWT signed with 
 	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
 
 perf-down: compose-validate                ## Stop the pinned benchmark stack
-	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
-		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
+	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PERF_COMPOSE_FILE)"; \
 		exit 1; \
 	fi
 	@echo "🛑 Stopping benchmark stack..."
-	@$(PROD_COMPOSE) stop -t 10 2>/dev/null || true
-	$(PROD_COMPOSE) down --remove-orphans
+	@$(PERF_COMPOSE) stop -t 10 2>/dev/null || true
+	$(PERF_COMPOSE) down --remove-orphans
 	@echo "✅ Benchmark stack stopped."
 
 compose-sso: compose-validate
