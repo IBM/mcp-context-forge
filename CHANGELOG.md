@@ -11,6 +11,7 @@
 
 ### Added
 
+- **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added `A2AInvokeResponse` and `A2AJsonRpcResponse` response models for `/agents/{id}/invoke` and `/agents/{id}/jsonrpc` routes, replacing anonymous `Dict[str, Any]` in the generated OpenAPI schema so client generators produce typed component definitions while preserving passthrough semantics with `response_model_exclude_unset=True` and `extra="allow"`.
 - **Tool preview endpoint** ([#6443](https://github.com/IBM/mcp-context-forge/pull/6443)) - Added `POST /tools/preview/{name}` (and its `/v1` mount), a dry-run counterpart to tool invocation that validates arguments against the tool's `input_schema`, resolves local vs. federated targeting, and reports which plugin pre-invoke hooks would run, without ever dispatching the tool. Gated behind `MCPGATEWAY_TOOL_PREVIEW_ENABLED` (off by default) and the `tools.preview` RBAC permission. Only plugins tagged `preview_safe` actually run during a preview; every other hook that would run live is reported as a warning instead.
 
 ### Breaking Changes
