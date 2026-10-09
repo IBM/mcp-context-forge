@@ -1,0 +1,16 @@
+{
+    "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+    "files": {
+        "includes": ["mcpgateway/static/*.css"]
+    },
+    "formatter": { "enabled": false },
+    "assist": { "enabled": false },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+            "complexity": { "noImportantStyles": "off" },
+            "style": { "noDescendingSpecificity": "off" }
+        }
+    }
+}

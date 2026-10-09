@@ -148,7 +148,7 @@ If not using Dev Containers, set up manually:
 ???+ check "Frontend linting"
 
     - [ ] `make eslint` - JavaScript linting
-    - [ ] `make lint-web` - ESLint + HTMLHint + Stylelint
+    - [ ] `make lint-web` - ESLint + HTMLHint + Biome (CSS)
     - [ ] `make format-web` - Prettier formatting
     - [ ] Note: JS unit tests not yet implemented
 

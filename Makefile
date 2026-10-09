@@ -4515,7 +4515,7 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
-# help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: lint-web             - Run HTMLHint, Biome (CSS), ESLint, Retire.js, nodejsscan and npm audit
 # help: eslint               - Run ESLint for JavaScript standard style and prettifying
 # help: jshint               - Run JSHint for additional JavaScript analysis
 # help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
@@ -4536,7 +4536,7 @@ lint-web: eslint nodejsscan
 	@echo "🔍 Linting HTML files..."
 	@find mcpgateway/templates -name "*.html" -exec npx htmlhint {} + 2>/dev/null || true
 	@echo "🔍 Linting CSS files..."
-	@find mcpgateway/static -name "*.css" -exec npx stylelint {} + 2>/dev/null || true
+	@npx biome lint mcpgateway/static || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
 	@cd mcpgateway/static && npx retire . 2>/dev/null || true
 	@if [ -f package.json ]; then \

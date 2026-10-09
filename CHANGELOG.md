@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+- **CSS linting moves from Stylelint to Biome** - `make lint-web` and the `lint-web` CI job now lint `mcpgateway/static/*.css` with Biome, configured in `biome.json`. The CI matrix entry is renamed from `stylelint` to `biome-css`. Stylelint and its configs leave the dev dependencies, which removes the `braces` advisory (GHSA-vfj7-8cjw-p6xm) from `npm audit`.
+
 - **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
 
 - **JWT lifecycle clarification after database reset** - Local JWTs remain cryptographically valid when database storage is lost but the signing key remains unchanged. Database cleanup is not credential rotation. Destructive resets must rotate `JWT_SECRET_KEY` when old-token invalidation is required. Persistent database storage and short-lived local tokens remain recommended for production deployments.

@@ -196,7 +196,7 @@ exclude .coverage.*
 exclude .eslintrc.json
 exclude eslint.config.js
 exclude vitest.config.js
-exclude .stylelintrc.json
+exclude biome.json
 exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt
 exclude .hadolint.yaml
