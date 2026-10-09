@@ -476,6 +476,7 @@ class Settings(BaseSettings):
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
+    sso_user_provisioning_api_enabled: bool = Field(default=False, description="Enable the admin SSO user provisioning API; requires SSO and admin API enabled. Changes require restart.")
     sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
     sso_github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     sso_github_client_secret: Optional[SecretStr] = Field(default=None, description="GitHub OAuth client secret")
