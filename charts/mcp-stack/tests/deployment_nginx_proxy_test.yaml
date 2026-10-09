@@ -1,76 +1,18 @@
-suite: redis deployment
+suite: nginx-proxy deployment scheduling
 templates:
-  - templates/deployment-redis.yaml
+  - templates/deployment-nginx-proxy.yaml
 
 tests:
-  - it: renders when redis enabled and not external
-    set:
-      redis.enabled: true
-      redis.external.enabled: false
-    asserts:
-      - isKind:
-          of: Deployment
-
-  - it: does not render when redis disabled
-    set:
-      redis.enabled: false
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: does not render when external redis enabled
-    set:
-      redis.enabled: true
-      redis.external.enabled: true
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: passes --maxclients flag with default value when persistence disabled
-    set:
-      redis.enabled: true
-      redis.external.enabled: false
-      redis.persistence.enabled: false
-    asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "--maxclients 15000"
-
-  - it: passes --maxclients flag with custom value when persistence disabled
-    set:
-      redis.enabled: true
-      redis.external.enabled: false
-      redis.persistence.enabled: false
-      redis.maxclients: 20000
-    asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "--maxclients 20000"
-
-  - it: mounts redis-config volume when persistence enabled
-    set:
-      redis.enabled: true
-      redis.external.enabled: false
-      redis.persistence.enabled: true
-    asserts:
-      - contains:
-          path: spec.template.spec.containers[0].volumeMounts
-          content:
-            name: redis-config
-            mountPath: /usr/local/etc/redis
-
   - it: no nodeSelector rendered by default
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
     asserts:
       - notExists:
           path: spec.template.spec.nodeSelector
 
   - it: global nodeSelector is applied when set
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       nodeSelector:
         kubernetes.io/os: linux
     asserts:
@@ -81,30 +23,27 @@ tests:
 
   - it: component nodeSelector overrides global
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       nodeSelector:
         kubernetes.io/os: linux
-      redis.nodeSelector:
-        node-role: redis
+      nginxProxy.nodeSelector:
+        node-role: nginx-proxy
     asserts:
       - equal:
           path: spec.template.spec.nodeSelector
           value:
-            node-role: redis
+            node-role: nginx-proxy
 
   - it: no tolerations rendered by default
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
     asserts:
       - notExists:
           path: spec.template.spec.tolerations
 
   - it: global tolerations are applied when set
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       tolerations:
         - key: dedicated
           operator: Equal
@@ -121,24 +60,23 @@ tests:
 
   - it: component tolerations override global
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       tolerations:
         - key: global-key
           operator: Exists
           effect: NoSchedule
-      redis.tolerations:
-        - key: redis-key
+      nginxProxy.tolerations:
+        - key: nginx-key
           operator: Equal
-          value: redis
+          value: nginx
           effect: NoSchedule
     asserts:
       - contains:
           path: spec.template.spec.tolerations
           content:
-            key: redis-key
+            key: nginx-key
             operator: Equal
-            value: redis
+            value: nginx
             effect: NoSchedule
       - notContains:
           path: spec.template.spec.tolerations
@@ -149,16 +87,14 @@ tests:
 
   - it: no podAnnotations rendered by default
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
     asserts:
       - notExists:
           path: spec.template.metadata.annotations
 
   - it: global podAnnotations applied when set
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       podAnnotations:
         com.rapid7.insightops/log: app.log
     asserts:
@@ -169,27 +105,25 @@ tests:
 
   - it: component podAnnotations merged with global
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       podAnnotations:
         com.rapid7.insightops/log: app.log
-      redis.podAnnotations:
-        app-specific: redis
+      nginxProxy.podAnnotations:
+        app-specific: nginxProxy
     asserts:
       - equal:
           path: spec.template.metadata.annotations["com.rapid7.insightops/log"]
           value: app.log
       - equal:
           path: spec.template.metadata.annotations["app-specific"]
-          value: redis
+          value: nginxProxy
 
   - it: component podAnnotations override global on same key
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       podAnnotations:
         shared-key: global-value
-      redis.podAnnotations:
+      nginxProxy.podAnnotations:
         shared-key: component-value
     asserts:
       - equal:
@@ -198,8 +132,7 @@ tests:
 
   - it: global podLabels applied to pod template
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       podLabels:
         env: production
     asserts:
@@ -209,9 +142,8 @@ tests:
 
   - it: deployment annotations rendered when set
     set:
-      redis.enabled: true
-      redis.external.enabled: false
-      redis.annotations:
+      nginxProxy.enabled: true
+      nginxProxy.annotations:
         example.com/owner: platform
     asserts:
       - equal:
@@ -220,35 +152,32 @@ tests:
 
   - it: no deployment annotations rendered by default
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
     asserts:
       - notExists:
           path: metadata.annotations
 
   - it: global annotations merged with component annotations
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       annotations:
         example.com/owner: platform-team
-      redis.annotations:
-        example.com/component: redis
+      nginxProxy.annotations:
+        example.com/component: nginxProxy
     asserts:
       - equal:
           path: metadata.annotations["example.com/owner"]
           value: platform-team
       - equal:
           path: metadata.annotations["example.com/component"]
-          value: redis
+          value: nginxProxy
 
   - it: component annotations override global on same key
     set:
-      redis.enabled: true
-      redis.external.enabled: false
+      nginxProxy.enabled: true
       annotations:
         example.com/owner: global-value
-      redis.annotations:
+      nginxProxy.annotations:
         example.com/owner: component-value
     asserts:
       - equal:
