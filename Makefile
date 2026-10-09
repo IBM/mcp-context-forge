@@ -2791,7 +2791,7 @@ PROD_BENCH_USER ?= admin@example.com
 # Reports carry the commit they measured, so a rerun of the same commit overwrites
 # its own report instead of clobbering another commit's numbers.
 PROD_BENCH_COMMIT ?= $(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit)
-PROD_BENCH_HTML_REPORT ?= reports/prod_benchmark_tools_$(PROD_BENCH_COMMIT).html
+PROD_BENCH_HTML_REPORT ?= reports/benchmark_tools_$(PROD_BENCH_COMMIT).html
 # Compose project label of the running stack; its containers carry the resource table.
 PROD_BENCH_PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
 # Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
@@ -2885,11 +2885,11 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
-# help: prod-benchmark-tools     - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
-.PHONY: prod-benchmark-tools
-prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
+# help: benchmark-tools     - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
+.PHONY: benchmark-tools
+benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
 	@case "$(MODE)" in legacy|modern) ;; *) echo "❌ MODE must be legacy or modern (got: $(MODE))"; exit 1 ;; esac
-	@echo "📊 Running production tool benchmark..."
+	@echo "📊 Running fixed-tool benchmark..."
 	@echo "🔑 Token: run \`export TOKEN=\$$(make create-token)\`"
 	@echo "   Mode: $(MODE) (handshake: $(if $(filter modern,$(MODE)),skipped,initialize))"
 	@echo "   Host: $(PROD_BENCH_HOST)"
@@ -2914,7 +2914,7 @@ prod-benchmark-tools:                       ## Fixed-tool-list MCP benchmark aga
 				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
 				exit 1 ;; \
 			000) \
-				echo "Preflight failed: no HTTP response from $(PROD_BENCH_HOST). Start the stack with: make prod-up"; \
+				echo "Preflight failed: no HTTP response from $(PROD_BENCH_HOST). Start the stack with: make bench-up"; \
 				exit 1 ;; \
 			*) \
 				echo "Preflight failed (HTTP $$CODE) from $(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp"; \
@@ -5697,8 +5697,8 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
-# help: prod-up              - Start stack with production resource overrides (REPLICA=3)
-# help: prod-down             - Stop production-override stack
+# help: bench-up              - Start stack with pinned 4 CPU / 4 G benchmark resources (REPLICA=3)
+# help: bench-down            - Stop the pinned benchmark stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
@@ -5786,7 +5786,7 @@ endef
 	monitoring-lite-up monitoring-lite-down \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
 	compose-ui-config-check \
-	prod-up prod-down
+	bench-up bench-down
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5843,7 +5843,7 @@ PROD_COMPOSE_FILE := docker-compose.prod.yml
 PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
 REPLICA ?= 3
 
-prod-up: compose-validate                 ## Start stack with production resource overrides (REPLICA=3)
+bench-up: compose-validate                 ## Start stack with pinned benchmark resource overrides (REPLICA=3)
 	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
 		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
 		exit 1; \
@@ -5862,15 +5862,15 @@ create-token:                             ## Print a bare admin JWT signed with 
 	@SECRET="$(gateway_jwt_secret)"; \
 	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
 
-prod-down: compose-validate               ## Stop production-override stack
+bench-down: compose-validate               ## Stop the pinned benchmark stack
 	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
 		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
 		exit 1; \
 	fi
-	@echo "🛑 Stopping production stack..."
+	@echo "🛑 Stopping benchmark stack..."
 	@$(PROD_COMPOSE) stop -t 10 2>/dev/null || true
 	$(PROD_COMPOSE) down --remove-orphans
-	@echo "✅ Production stack stopped."
+	@echo "✅ Benchmark stack stopped."
 
 compose-sso: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
