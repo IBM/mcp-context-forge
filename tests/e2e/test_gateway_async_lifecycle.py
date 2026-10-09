@@ -219,6 +219,68 @@ async def lifecycle_client(main_app_with_admin_api):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("grant_type", ["authorization_code", "token-exchange"])
+async def test_update_deferred_oauth_gateway_preserves_catalog(lifecycle_client: tuple[AsyncClient, object], monkeypatch: pytest.MonkeyPatch, grant_type: str) -> None:
+    """A PUT before user-authenticated discovery must preserve the saved catalog."""
+    # First-Party
+    import mcpgateway.main as main_mod
+    from mcpgateway.db import Gateway, Tool
+
+    client, _ = lifecycle_client
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
+    session_factory = getattr(main_mod, "SessionLocal")
+    db = session_factory()
+    try:
+        gateway = Gateway(
+            id=f"deferred-oauth-{grant_type}",
+            name="deferred_oauth_gateway",
+            slug="deferred_oauth_gateway",
+            url="http://example.com/mcp",
+            transport="SSE",
+            description="before update",
+            capabilities={"tools": {"listChanged": True}},
+            auth_type="oauth",
+            oauth_config={"grant_type": grant_type},
+            owner_email="testuser@example.com",
+        )
+        gateway.tools.append(
+            Tool(
+                original_name="existing_tool",
+                custom_name="existing_tool",
+                custom_name_slug="existing_tool",
+                name="deferred_oauth_gateway_existing_tool",
+                input_schema={"type": "object", "properties": {}},
+                created_via="register",
+                owner_email="testuser@example.com",
+            )
+        )
+        db.add(gateway)
+        db.commit()
+        gateway_id = gateway.id
+    finally:
+        db.close()
+
+    response = await client.put(
+        f"/gateways/{gateway_id}",
+        json={"description": "updated description"},
+        headers=TEST_ADMIN_AUTH_HEADER,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["description"] == "updated description"
+
+    db = session_factory()
+    try:
+        persisted_gateway = db.get(Gateway, gateway_id)
+        assert persisted_gateway is not None
+        assert persisted_gateway.description == "updated description"
+        assert persisted_gateway.capabilities == {"tools": {"listChanged": True}}
+        assert [tool.original_name for tool in persisted_gateway.tools] == ["existing_tool"]
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_sqlite_async_gateway_lifecycle_happy_path(lifecycle_client):
     client, live_gateway_service = lifecycle_client
 

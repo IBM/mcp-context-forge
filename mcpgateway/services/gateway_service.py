@@ -3391,6 +3391,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # so they can't affect connection re-init success/failure.
                 init_affecting_changed = any(new != old for new, old in _connection_field_pairs(include_signing=False))
 
+                oauth_grant_type = gateway.oauth_config.get("grant_type") if isinstance(gateway.oauth_config, dict) else None
+                deferred_oauth_discovery = gateway.auth_type == "oauth" and oauth_grant_type in {"authorization_code", "token-exchange"} and not gateway_update.one_time_auth
+
                 try:
                     ca_certificate = getattr(gateway, "ca_certificate", None)
                     connection_material = await self._prepare_gateway_connection_material(
@@ -3425,41 +3428,47 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             safe_msg = _safe_connection_error_text(init_err)
                             raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
                         raise
-                    if gateway_update.one_time_auth:
-                        # For one-time auth, clear auth_type and auth_value after initialization
-                        gateway.auth_type = "one_time_auth"
-                        gateway.auth_value = None
-                        gateway.oauth_config = None
+                    if deferred_oauth_discovery:
+                        # These OAuth grants need a user token before the upstream catalog can
+                        # be discovered. An empty result here means "not discovered", not that
+                        # the gateway removed every tool/resource/prompt.
+                        logger.info("Skipping gateway catalog refresh for deferred OAuth discovery: %s", SecurityValidator.sanitize_log_message(gateway.name))
+                    else:
+                        if gateway_update.one_time_auth:
+                            # For one-time auth, clear auth_type and auth_value after initialization
+                            gateway.auth_type = "one_time_auth"
+                            gateway.auth_value = None
+                            gateway.oauth_config = None
 
-                    _vis_changed = gateway_update.visibility is not None
-                    catalog_sync = self._sync_gateway_catalog(
-                        db,
-                        gateway=gateway,
-                        tools=tools,
-                        resources=resources,
-                        prompts=prompts,
-                        created_via="update",
-                        update_visibility=_vis_changed,
-                        project_gateway_rename=gateway_name_changed,
-                    )
-                    self._reconcile_gateway_catalog(
-                        db,
-                        gateway=gateway,
-                        catalog_sync=catalog_sync,
-                        log_context="gateway update",
-                    )
+                        _vis_changed = gateway_update.visibility is not None
+                        catalog_sync = self._sync_gateway_catalog(
+                            db,
+                            gateway=gateway,
+                            tools=tools,
+                            resources=resources,
+                            prompts=prompts,
+                            created_via="update",
+                            update_visibility=_vis_changed,
+                            project_gateway_rename=gateway_name_changed,
+                        )
+                        self._reconcile_gateway_catalog(
+                            db,
+                            gateway=gateway,
+                            catalog_sync=catalog_sync,
+                            log_context="gateway update",
+                        )
 
-                    gateway.capabilities = capabilities
+                        gateway.capabilities = capabilities
 
-                    # Register capabilities for notification-driven actions
-                    register_gateway_capabilities_for_notifications(gateway.id, capabilities)
+                        # Register capabilities for notification-driven actions
+                        register_gateway_capabilities_for_notifications(gateway.id, capabilities)
 
-                    gateway.last_seen = datetime.now(timezone.utc)
+                        gateway.last_seen = datetime.now(timezone.utc)
 
-                    # Update tracking with new URL
-                    self._active_gateways.discard(gateway.url)
-                    self._active_gateways.add(gateway.url)
-                    reinit_succeeded = True
+                        # Update tracking with new URL
+                        self._active_gateways.discard(gateway.url)
+                        self._active_gateways.add(gateway.url)
+                        reinit_succeeded = True
                 except GatewayToolNameConflictError:
                     raise
                 except (GatewayConnectionError, GatewayCredentialError) as gce:
