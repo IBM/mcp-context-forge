@@ -181,6 +181,57 @@ async def test_get_redis_client_returns_none_on_connection_error():
             assert client is None
 
 
+@pytest.mark.asyncio
+async def test_get_redis_client_returns_none_on_ping_timeout(monkeypatch):
+    """A blackholed Redis (ping never returns) must not hang startup.
+
+    get_redis_client wraps the availability ping in asyncio.wait_for; on
+    timeout it must close the client and return None instead of hanging
+    indefinitely.
+    """
+    import asyncio
+    import time
+
+    never = asyncio.Event()  # never set — simulates a blackholed Redis
+
+    async def hanging_ping():
+        await never.wait()
+
+    mock_redis = AsyncMock()
+    mock_redis.ping = hanging_ping
+    mock_redis.aclose = AsyncMock()
+
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_decode_responses = True
+        mock_settings.redis_max_connections = 10
+        mock_settings.redis_socket_timeout = 5.0
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_retry_on_timeout = True
+        mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
+        mock_settings.redis_ssl = False
+
+        # Shrink the wait_for timeout so the test doesn't take the full 10s.
+        real_wait_for = asyncio.wait_for
+
+        async def short_wait_for(awaitable, timeout):
+            return await real_wait_for(awaitable, 0.05)
+
+        monkeypatch.setattr(asyncio, "wait_for", short_wait_for)
+
+        with patch("redis.asyncio.from_url", return_value=mock_redis):
+            start = time.monotonic()
+            client = await get_redis_client()
+            elapsed = time.monotonic() - start
+
+    assert client is None
+    assert elapsed < 10.0
+    mock_redis.aclose.assert_awaited_once()
+
+
+
 # ---------------------------------------------------------------------------
 # Tests for close_redis_client
 # ---------------------------------------------------------------------------
