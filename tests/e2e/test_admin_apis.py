@@ -980,6 +980,25 @@ class TestAdminGatewayAPIs:
             assert response_data["statusCode"] == 400
             assert response_data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
 
+    async def test_admin_add_gateway_ca_signing_failure_returns_500(self, client: AsyncClient, mock_settings):
+        """A signing-key fault is a server fault: 500 with the signing reason code, and no gateway stored."""
+        name = f"ca-signing-fault-{uuid.uuid4().hex[:8]}"
+        form = {
+            "name": name,
+            "url": "https://example.com/mcp",
+            "transport": "STREAMABLEHTTP",
+            "ca_certificate": "-----BEGIN CERTIFICATE-----\nbm90LWEtY2VydA==\n-----END CERTIFICATE-----",
+        }
+
+        with patch.object(settings, "enable_ed25519_signing", True), patch.object(settings, "ed25519_private_key", SecretStr("not-a-pem-key")):
+            response = await client.post("/admin/gateways", data=form, headers=TEST_AUTH_HEADER)
+
+        assert response.status_code == 500, response.text
+        assert response.json()["reason_code"] == "gateway_ca_signing_failed"
+
+        listed = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+        assert name not in listed.text
+
 
 # -------------------------
 # Test Root Admin APIs

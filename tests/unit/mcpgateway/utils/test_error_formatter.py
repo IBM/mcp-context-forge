@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.exc import DatabaseError, IntegrityError
 
 # First-Party
+from mcpgateway.common.validators import UrlPolicyError
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 
 
@@ -400,3 +401,46 @@ def test_sanitize_validation_error_for_log_bad_errors_method():
     bad.errors = Mock(side_effect=RuntimeError("boom"))
     result = sanitize_validation_error_for_log(bad)
     assert "could not extract detail" in result
+
+
+class ReasonCodeModel(BaseModel):
+    """Model whose validator raises reason-coded URL policy errors."""
+
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def reject(cls, v):
+        """Raise a policy error whose reason code is the submitted value."""
+        raise UrlPolicyError(v, "rejected by policy")
+
+
+def _url_error(reason_code: str) -> ValidationError:
+    """Build a ValidationError carrying the given reason code."""
+    with pytest.raises(ValidationError) as exc:
+        ReasonCodeModel(url=reason_code)
+    return exc.value
+
+
+def test_sanitize_validation_error_for_log_includes_reason_code():
+    """Distinct URL failures are distinguishable in logs by reason code."""
+    blocked = sanitize_validation_error_for_log(_url_error("url_destination_blocked"))
+    dns = sanitize_validation_error_for_log(_url_error("url_dns_resolution_failed"))
+    assert "reason_code=url_destination_blocked" in blocked
+    assert "reason_code=url_dns_resolution_failed" in dns
+    assert blocked != dns
+
+
+def test_sanitize_validation_error_for_log_rejects_non_code_attribute():
+    """Only lowercase snake-case codes are logged, so arbitrary text cannot be injected."""
+    result = sanitize_validation_error_for_log(_url_error("Not A Code\nINJECTED"))
+    assert "reason_code=" not in result
+    assert "INJECTED" not in result
+
+
+def test_format_validation_error_withholds_destination_reason_codes():
+    """Destination and DNS codes stay out of responses: echoing them is an SSRF oracle."""
+    blocked = ErrorFormatter.format_validation_error(_url_error("url_private_network_blocked"))
+    syntax = ErrorFormatter.format_validation_error(_url_error("url_invalid_syntax"))
+    assert "reason_code" not in blocked
+    assert syntax["reason_code"] == "url_invalid_syntax"

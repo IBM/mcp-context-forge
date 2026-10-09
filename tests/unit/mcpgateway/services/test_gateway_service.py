@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
+import ssl
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
@@ -24,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 # Third-Party
+import anyio
 import httpx
 from pydantic import ValidationError
 import pytest
@@ -8394,6 +8396,60 @@ class TestInitializeGateway:
         gateway_service.connect_to_sse_server = AsyncMock(side_effect=ConnectionError("refused"))
         with pytest.raises(GatewayConnectionError, match="Failed to initialize gateway"):
             await gateway_service._initialize_gateway(url="http://example.com", transport="SSE")
+
+    @pytest.mark.asyncio
+    async def test_tls_failure_classified_separately_from_connect_failure(self, gateway_service, monkeypatch):
+        """A TLS fault wrapped by httpx must report gateway_tls_failed, not a generic connect failure."""
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+
+        try:
+            raise ssl.SSLCertVerificationError("certificate verify failed")
+        except ssl.SSLError as inner:
+            wrapped = httpx.ConnectError("TLS handshake failed")
+            wrapped.__cause__ = inner
+
+        gateway_service.connect_to_sse_server = AsyncMock(side_effect=wrapped)
+        with pytest.raises(GatewayConnectionError) as tls_exc:
+            await gateway_service._initialize_gateway(url="https://example.com", transport="SSE")
+        assert tls_exc.value.reason_code == "gateway_tls_failed"
+
+        gateway_service.connect_to_sse_server = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+        with pytest.raises(GatewayConnectionError) as connect_exc:
+            await gateway_service._initialize_gateway(url="https://example.com", transport="SSE")
+        assert connect_exc.value.reason_code == "gateway_connection_failed"
+
+    @pytest.mark.asyncio
+    async def test_grouped_tls_failure_classified_at_sse_transport_boundary(self, gateway_service, monkeypatch):
+        """The SDK runs the SSE client inside a task group, so the TLS fault arrives as an ExceptionGroup.
+
+        This drives the real ``_connect_to_sse_server_without_validation`` boundary instead of
+        mocking the connect method, which is where the group wrapper is lost.
+        """
+
+        async def _raise_tls():
+            try:
+                raise ssl.SSLCertVerificationError("certificate verify failed")
+            except ssl.SSLError as inner:
+                raise httpx.ConnectError("TLS handshake failed") from inner
+
+        class _TaskGroupClient:
+            """Stand-in for mcp_proxy_client that fails the way an anyio task group does."""
+
+            async def __aenter__(self):
+                async with anyio.create_task_group() as task_group:
+                    task_group.start_soon(_raise_tls)
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: _TaskGroupClient())
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+
+        with pytest.raises(GatewayConnectionError) as tls_exc:
+            await gateway_service._connect_to_sse_server_without_validation("https://test.example.com/sse")
+        assert tls_exc.value.reason_code == "gateway_tls_failed"
 
     @pytest.mark.asyncio
     async def test_invalid_transport_raises_error(self, gateway_service, monkeypatch):
