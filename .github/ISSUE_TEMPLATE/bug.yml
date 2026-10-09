@@ -1,0 +1,95 @@
+name: Bug report
+description: Report behavior that works incorrectly.
+labels: ["triage"]
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Maintainers fix reproducible reports faster. Fill every required field.
+
+        Bugs stand alone or nest under an Epic, Feature, Story, or Task.
+        Link this bug as a sub-issue of the work it blocks.
+
+        Never paste secrets, credentials, or tokens.
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issue check
+      description: Search open and closed issues before filing.
+      options:
+        - label: I searched the existing issues for this bug
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug summary
+      description: State what works incorrectly and where.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the gateway with this configuration: ...
+        2. Call this endpoint or run this command: ...
+        3. Observe: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: The behavior you expect.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened. Include the full error text.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Select every area involved.
+      multiple: true
+      options:
+        - Gateway core (API, services, middleware)
+        - Admin UI
+        - Federation or transports (SSE, WebSocket, stdio, gRPC)
+        - Auth, RBAC, or security
+        - Rust runtime (crates/mcp_runtime)
+        - CLI, Makefile, or scripts
+        - Containers or CI
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: Paste stack traces or log lines. GitHub formats this field as code. Never paste secrets.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: The `/version` endpoint reports most values.
+      value: |
+        - Version or commit:
+        - Runtime:
+        - Platform / OS:
+        - Container:
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Configuration details, workarounds tried, related issues.
