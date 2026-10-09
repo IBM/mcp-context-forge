@@ -6,8 +6,8 @@
 #  redis and nginx above their docker-compose.yml defaults, and fixes the
 #  gateway at 4 CPU / 4 G regardless of the GATEWAY_*_LIMIT env knobs.
 #  Docker ignores `reservations.cpus` outside swarm mode.
-#  Usage:  make bench-up         (layers this on top of docker-compose.yml)
-#          make bench-down
+#  Usage:  make perf-up         (layers this on top of docker-compose.yml)
+#          make perf-down
 ###############################################################################
 
 x-prod-resources: &prod-resources

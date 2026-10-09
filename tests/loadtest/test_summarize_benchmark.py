@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/loadtest/test_summarize_prod_benchmark.py
+"""Location: ./tests/loadtest/test_summarize_benchmark.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
@@ -12,7 +12,7 @@ import subprocess
 from xml.etree import ElementTree
 
 # Local
-from tests.loadtest.summarize_prod_benchmark import docker_resources, summarize_reports
+from tests.loadtest.summarize_benchmark import docker_resources, summarize_reports
 
 
 def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:

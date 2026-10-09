@@ -60,11 +60,11 @@ These wrappers target the nginx-exposed compose stack on
 `http://localhost:8080` and use the MCP protocol Locust file under
 `tests/loadtest/locustfile_mcp_protocol.py`.
 
-For the fixed-tool workload, run `make benchmark-tools TIME=10s`.
+For the fixed-tool workload, run `make perf-benchmark-tools TIME=10s`.
 The default duration is 30 minutes. The default `MODE=legacy` sends `initialize`;
 `MODE=modern` skips it. Any other value stops the target.
 The target checks the gateway with one `initialize` request and stops on any non-2xx reply.
-Locust exits 1 when any request failed; set `PROD_BENCH_EXIT_CODE_ON_ERROR=0` to exit 0 instead.
+Locust exits 1 when any request failed; set `EXIT_ON_ERROR=0` to exit 0 instead.
 The summary and the report paths print in both cases.
 
 The HTML report starts with a centered, single-row table of final aggregate RPS, error percentage, request counts,
@@ -80,7 +80,7 @@ outside swarm, so the declared value never reaches a container.
 The table is omitted when docker is unreachable or the stack is down.
 The Locust table in the report labels percentile columns `p50` through `p100`, not `50%ile (ms)`.
 The report includes initialization requests in legacy mode.
-The run writes one file: `reports/benchmark_tools_<commit>.html`, where `<commit>`
+The run writes one file: `reports/perf_benchmark_tools_<commit>.html`, where `<commit>`
 is the short SHA of `HEAD`. A rerun of the same commit overwrites its own report,
 in either mode; the run context table names the mode that produced it.
 Locust also writes a stats CSV, but into a temp dir that the run deletes.

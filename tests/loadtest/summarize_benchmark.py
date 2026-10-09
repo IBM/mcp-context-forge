@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/loadtest/summarize_prod_benchmark.py
+"""Location: ./tests/loadtest/summarize_benchmark.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 

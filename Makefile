@@ -2774,30 +2774,28 @@ MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 MODE ?= legacy
 # modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
 # proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
-PROD_BENCH_HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
-PROD_BENCH_SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
-PROD_BENCH_USERS ?= 125
-PROD_BENCH_SPAWN_RATE ?= 30
+HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
+SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
+USERS ?= 125
+SPAWN_RATE ?= 30
 # Locust exits 1 when any request failed. Set 0 to report numbers regardless.
-PROD_BENCH_EXIT_CODE_ON_ERROR ?= 1
+EXIT_ON_ERROR ?= 1
 TIME ?= 1800s
 
 # TOKEN wins, from the command line or the environment, then MCPGATEWAY_BEARER_TOKEN.
 # With both empty, legacy mode mints a fresh token from the running gateway; modern
 # mode cannot mint, because the Rust dataplane verifies RS256 against its JWKS.
 # A token that went stale on a stack restart stops at the 401 preflight below.
-PROD_BENCH_TOKEN = $(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))
-PROD_BENCH_USER ?= admin@example.com
+JWT_USER ?= admin@example.com
 # Reports carry the commit they measured, so a rerun of the same commit overwrites
 # its own report instead of clobbering another commit's numbers.
-PROD_BENCH_COMMIT ?= $(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit)
-PROD_BENCH_HTML_REPORT ?= reports/benchmark_tools_$(PROD_BENCH_COMMIT).html
+HTML_REPORT ?= reports/perf_benchmark_tools_$(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit).html
 # Compose project label of the running stack; its containers carry the resource table.
-PROD_BENCH_PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
+PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
 # Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
 # summary and the history row, so it is deleted when the run ends.
 # Appended one row per run, tracked in git so results are comparable across commits.
-PROD_BENCH_HISTORY_CSV ?= tests/loadtest/historic_load_data.csv
+HISTORY_CSV ?= tests/loadtest/historic_load_data.csv
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2885,26 +2883,26 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
-# help: benchmark-tools     - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
-.PHONY: benchmark-tools
-benchmark-tools:                       ## Fixed-tool-list MCP benchmark against legacy or modern gateway
+# help: perf-benchmark-tools  - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
+.PHONY: perf-benchmark-tools
+perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against legacy or modern gateway
 	@case "$(MODE)" in legacy|modern) ;; *) echo "❌ MODE must be legacy or modern (got: $(MODE))"; exit 1 ;; esac
 	@echo "📊 Running fixed-tool benchmark..."
 	@echo "🔑 Token: run \`export TOKEN=\$$(make create-token)\`"
 	@echo "   Mode: $(MODE) (handshake: $(if $(filter modern,$(MODE)),skipped,initialize))"
-	@echo "   Host: $(PROD_BENCH_HOST)"
-	@echo "   Server: $(PROD_BENCH_SERVER_ID)"
-	@echo "   Users: $(PROD_BENCH_USERS), Spawn: $(PROD_BENCH_SPAWN_RATE)/s, Duration: $(TIME)"
+	@echo "   Host: $(HOST)"
+	@echo "   Server: $(SERVER_ID)"
+	@echo "   Users: $(USERS), Spawn: $(SPAWN_RATE)/s, Duration: $(TIME)"
 	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		GW_SECRET="$(gateway_jwt_secret)" && \
-		BENCH_TOKEN="$(PROD_BENCH_TOKEN)" && \
+		BENCH_TOKEN="$(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))" && \
 		if [ -z "$$BENCH_TOKEN" ] && [ -n "$$GW_SECRET" ]; then \
-			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(PROD_BENCH_USER) --exp 10080 2>/dev/null); \
+			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(JWT_USER) --exp 10080 2>/dev/null); \
 		fi; \
-		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp" \
+		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(HOST)/servers/$(SERVER_ID)/mcp" \
 			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
 			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
 		case "$$CODE" in \
@@ -2914,36 +2912,36 @@ benchmark-tools:                       ## Fixed-tool-list MCP benchmark against 
 				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
 				exit 1 ;; \
 			000) \
-				echo "Preflight failed: no HTTP response from $(PROD_BENCH_HOST). Start the stack with: make bench-up"; \
+				echo "Preflight failed: no HTTP response from $(HOST). Start the stack with: make perf-up"; \
 				exit 1 ;; \
 			*) \
-				echo "Preflight failed (HTTP $$CODE) from $(PROD_BENCH_HOST)/servers/$(PROD_BENCH_SERVER_ID)/mcp"; \
+				echo "Preflight failed (HTTP $$CODE) from $(HOST)/servers/$(SERVER_ID)/mcp"; \
 				exit 1 ;; \
 		esac; \
 		STATS_DIR=$$(mktemp -d); trap "rm -rf $$STATS_DIR" EXIT; \
 		STATUS=0; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
-		MCP_SERVER_ID=$(PROD_BENCH_SERVER_ID) \
-		PROD_BENCH_MODE=$(MODE) \
+		MCP_SERVER_ID=$(SERVER_ID) \
+		TOOL_BENCH_MODE=$(MODE) \
 		JWT_SECRET_KEY=$${GW_SECRET:-$${JWT_SECRET_KEY:-}} \
 		MCPGATEWAY_BEARER_TOKEN=$$BENCH_TOKEN \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
-			--host=$(PROD_BENCH_HOST) \
-			--users=$(PROD_BENCH_USERS) \
-			--spawn-rate=$(PROD_BENCH_SPAWN_RATE) \
+			--host=$(HOST) \
+			--users=$(USERS) \
+			--spawn-rate=$(SPAWN_RATE) \
 			--run-time=$(TIME) \
 			--headless \
-			--exit-code-on-error=$(PROD_BENCH_EXIT_CODE_ON_ERROR) \
-			--html=$(PROD_BENCH_HTML_REPORT) \
+			--exit-code-on-error=$(EXIT_ON_ERROR) \
+			--html=$(HTML_REPORT) \
 			--csv="$$STATS_DIR/stats" \
 			--only-summary \
-			ProdToolUser || STATUS=$$?; \
-		$(VENV_DIR)/bin/python tests/loadtest/summarize_prod_benchmark.py "$(PROD_BENCH_HTML_REPORT)" "$$STATS_DIR/stats_stats.csv" \
-			--mode "$(MODE)" --host "$(PROD_BENCH_HOST)" --server "$(PROD_BENCH_SERVER_ID)" --project "$(PROD_BENCH_PROJECT)" \
-			--history "$(PROD_BENCH_HISTORY_CSV)"; \
+			ToolUser || STATUS=$$?; \
+		$(VENV_DIR)/bin/python tests/loadtest/summarize_benchmark.py "$(HTML_REPORT)" "$$STATS_DIR/stats_stats.csv" \
+			--mode "$(MODE)" --host "$(HOST)" --server "$(SERVER_ID)" --project "$(PROJECT)" \
+			--history "$(HISTORY_CSV)"; \
 		echo ""; \
-		echo "📄 HTML Report: $(PROD_BENCH_HTML_REPORT)"; \
-		echo "🗂  History:     $(PROD_BENCH_HISTORY_CSV)"; \
+		echo "📄 HTML Report: $(HTML_REPORT)"; \
+		echo "🗂  History:     $(HISTORY_CSV)"; \
 		exit $$STATUS'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
@@ -5697,8 +5695,8 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
-# help: bench-up              - Start stack with pinned 4 CPU / 4 G benchmark resources (REPLICA=3)
-# help: bench-down            - Stop the pinned benchmark stack
+# help: perf-up               - Start stack with pinned 4 CPU / 4 G benchmark resources (REPLICA=3)
+# help: perf-down             - Stop the pinned benchmark stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
@@ -5786,7 +5784,7 @@ endef
 	monitoring-lite-up monitoring-lite-down \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
 	compose-ui-config-check \
-	bench-up bench-down
+	perf-up perf-down
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5843,7 +5841,7 @@ PROD_COMPOSE_FILE := docker-compose.prod.yml
 PROD_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PROD_COMPOSE_FILE) $(PROFILE)
 REPLICA ?= 3
 
-bench-up: compose-validate                 ## Start stack with pinned benchmark resource overrides (REPLICA=3)
+perf-up: compose-validate                  ## Start stack with pinned benchmark resource overrides (REPLICA=3)
 	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
 		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
 		exit 1; \
@@ -5862,7 +5860,7 @@ create-token:                             ## Print a bare admin JWT signed with 
 	@SECRET="$(gateway_jwt_secret)"; \
 	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
 
-bench-down: compose-validate               ## Stop the pinned benchmark stack
+perf-down: compose-validate                ## Stop the pinned benchmark stack
 	@if [ ! -f "$(PROD_COMPOSE_FILE)" ]; then \
 		echo "❌ Compose override file not found: $(PROD_COMPOSE_FILE)"; \
 		exit 1; \

@@ -122,26 +122,26 @@ except ValueError:
 # Legacy gateways require the initialize handshake before tools/call and accept
 # bare JSON-RPC. The modern dataplane is stateless and speaks MCP 2026-07-28:
 # per-request _meta, routing headers, and SSE replies.
-PROD_BENCH_MODE = _cfg("PROD_BENCH_MODE", "legacy").strip().lower()
-PROD_BENCH_MODERN = PROD_BENCH_MODE == "modern"
-PROD_BENCH_HANDSHAKE = not PROD_BENCH_MODERN
-PROD_BENCH_PROTOCOL_VERSION = _cfg("PROD_BENCH_PROTOCOL_VERSION", "2026-07-28")
-PROD_BENCH_META = {
-    "io.modelcontextprotocol/protocolVersion": PROD_BENCH_PROTOCOL_VERSION,
+TOOL_BENCH_MODE = _cfg("TOOL_BENCH_MODE", "legacy").strip().lower()
+TOOL_BENCH_MODERN = TOOL_BENCH_MODE == "modern"
+TOOL_BENCH_HANDSHAKE = not TOOL_BENCH_MODERN
+TOOL_BENCH_PROTOCOL_VERSION = _cfg("TOOL_BENCH_PROTOCOL_VERSION", "2026-07-28")
+TOOL_BENCH_META = {
+    "io.modelcontextprotocol/protocolVersion": TOOL_BENCH_PROTOCOL_VERSION,
     "io.modelcontextprotocol/clientCapabilities": {},
 }
-# Fixed tool pool for ProdToolUser. The fast-time-server inventory is stable, so
+# Fixed tool pool for ToolUser. The fast-time-server inventory is stable, so
 # names and arguments are pinned here instead of discovered per run. The legacy
 # gateway federates them under a `fast-time-` prefix; the dataplane virtual
 # server routes on the upstream tool names directly.
-_PROD_BENCH_ARGS: dict[str, dict] = {
+_TOOL_BENCH_ARGS: dict[str, dict] = {
     "get_system_time": {"timezone": "America/New_York"},
     "convert_time": {"time": "09:00", "source_timezone": "Europe/London", "target_timezone": "Asia/Tokyo"},
-    "echo": {"message": "prod-benchmark"},
+    "echo": {"message": "benchmark"},
     "get_stats": {},
 }
-PROD_BENCH_TOOLS: list[tuple[str, dict]] = [
-    (tool if PROD_BENCH_MODERN else "fast-time-" + tool.replace("_", "-"), args) for tool, args in _PROD_BENCH_ARGS.items()
+TOOL_BENCH_TOOLS: list[tuple[str, dict]] = [
+    (tool if TOOL_BENCH_MODERN else "fast-time-" + tool.replace("_", "-"), args) for tool, args in _TOOL_BENCH_ARGS.items()
 ]
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
@@ -480,7 +480,7 @@ def on_locust_init(environment, **kwargs):
     _configure_log_levels()
 
 
-def _write_final_prod_stats(environment) -> None:
+def _write_final_stats(environment) -> None:
     """Export final statistics after Locust closes its periodic CSV writer.
 
     Args:
@@ -495,13 +495,13 @@ def _write_final_prod_stats(environment) -> None:
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     host = environment.host or "http://localhost:4444"
-    # ProdToolUser runs against a pinned tool list, so skip the REST discovery
+    # ToolUser runs against a pinned tool list, so skip the REST discovery
     # sweep entirely. Every other class needs it in every process (master,
     # workers, standalone) to populate _server_id / _tool_names.
-    if not (environment.user_classes and all(cls is ProdToolUser for cls in environment.user_classes)):
+    if not (environment.user_classes and all(cls is ToolUser for cls in environment.user_classes)):
         _ensure_detected(host)
     else:
-        atexit.register(_write_final_prod_stats, environment)
+        atexit.register(_write_final_stats, environment)
     # Only log banner from master / standalone
     if not isinstance(environment.runner, WorkerRunner):
         logger.info("=" * 70)
@@ -765,11 +765,11 @@ class BaseMCPUser(FastHttpUser):
         }
         if self._mcp_session_id:
             headers["Mcp-Session-Id"] = self._mcp_session_id
-        if PROD_BENCH_MODERN:
+        if TOOL_BENCH_MODERN:
             # MCP 2026-07-28 stateless routing: the dataplane requires both content
             # types, the negotiated version, and the target method/name up front.
             headers["Accept"] = "application/json, text/event-stream"
-            headers["MCP-Protocol-Version"] = PROD_BENCH_PROTOCOL_VERSION
+            headers["MCP-Protocol-Version"] = TOOL_BENCH_PROTOCOL_VERSION
             headers["Mcp-Method"] = method
             target = (params or {}).get("name") or (params or {}).get("uri")
             if target:
@@ -781,8 +781,8 @@ class BaseMCPUser(FastHttpUser):
 
         Returns the 'result' field on success, None on error.
         """
-        if PROD_BENCH_MODERN:
-            params = {**(params or {}), "_meta": PROD_BENCH_META}
+        if TOOL_BENCH_MODERN:
+            params = {**(params or {}), "_meta": TOOL_BENCH_META}
         payload = _jsonrpc(method, params)
         try:
             with self.client.post(
@@ -1253,15 +1253,15 @@ class RESTBaselineUser(FastHttpUser):
 
 
 # =============================================================================
-# User 7: ProdToolUser — Pinned tool list, no discovery, legacy or modern spec
+# User 7: ToolUser — Pinned tool list, no discovery, legacy or modern spec
 # =============================================================================
 
 
-class ProdToolUser(BaseMCPUser):
+class ToolUser(BaseMCPUser):
     """Calls a fixed set of fast-time-server tools with no discovery phase.
 
     Legacy gateways require the ``initialize`` handshake before ``tools/call``.
-    Modern stateless gateways do not. ``PROD_BENCH_MODE=modern`` skips it.
+    Modern stateless gateways do not. ``TOOL_BENCH_MODE=modern`` skips it.
     """
 
     weight = 1
@@ -1270,12 +1270,12 @@ class ProdToolUser(BaseMCPUser):
     def on_start(self):
         """Pin the target server and run the handshake only for legacy mode."""
         self._server_id = MCP_SERVER_ID
-        if PROD_BENCH_HANDSHAKE:
+        if TOOL_BENCH_HANDSHAKE:
             self._ensure_initialized()
 
     @task
     @tag("prod", "call")
     def call_tool(self):
         """Call one pinned tool with its pinned arguments."""
-        tool, args = random.choice(PROD_BENCH_TOOLS)
+        tool, args = random.choice(TOOL_BENCH_TOOLS)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, f"MCP tools/call [{tool}]")
