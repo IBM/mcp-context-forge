@@ -256,6 +256,34 @@ def _validate_audience(
         result.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
 
 
+# Scopes that shape the authorization request but are never granted into an
+# access token's ``scope``/``scp`` claim: OIDC request-only scopes (a refresh
+# token, ID token claims) and the Microsoft Entra ``<resource>/.default``
+# directive. They can never be "missing" from the token, so checking them made
+# every Entra gateway that requests ``offline_access`` refuse to forward.
+_REQUEST_ONLY_SCOPES = frozenset({"openid", "offline_access", "profile", "email"})
+
+
+def _is_request_only_scope(scope: str) -> bool:
+    """Return True for scopes that never appear in an access token's scope claim.
+
+    Args:
+        scope: A configured OAuth scope.
+
+    Returns:
+        True for OIDC request-only scopes and Entra ``<resource>/.default``.
+
+    Examples:
+        >>> _is_request_only_scope("offline_access")
+        True
+        >>> _is_request_only_scope("https://graph.microsoft.com/.default")
+        True
+        >>> _is_request_only_scope("api://app-a/Tools.Read")
+        False
+    """
+    return scope in _REQUEST_ONLY_SCOPES or scope.endswith("/.default")
+
+
 def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gateway_name: str, result: TokenValidationResult) -> None:
     """Check the ``scope`` / ``scp`` claim against configured scopes.
 
@@ -282,6 +310,8 @@ def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
     granted_scopes = _normalize_scope(token_scope_value)
     missing = []
     for cfg_scope in configured_scopes:
+        if _is_request_only_scope(cfg_scope):
+            continue
         short = cfg_scope.rsplit("/", 1)[-1] if "/" in cfg_scope else cfg_scope
         if cfg_scope not in granted_scopes and short not in granted_scopes:
             missing.append(cfg_scope)
