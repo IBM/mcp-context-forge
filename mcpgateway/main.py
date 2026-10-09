@@ -245,6 +245,13 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, 
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
+from mcpgateway.utils.meta_protocol import (
+    CAPABILITY_NOT_SUPPORTED,
+    check_capability,
+    has_modern_meta_attempt,
+    is_modern_meta,
+    stamp_server_info_meta,
+)
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
@@ -11631,6 +11638,28 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     raise JSONRPCError(-32002, "Session not found", {"method": method}) from exc
                 raise JSONRPCError(-32003, str(exc.detail), {"method": method}) from exc
 
+        # MCP 2026-07-28: validate mandatory _meta protocol keys on modern requests.
+        # Legacy connections (handshake-era) carry no protocol keys and must not be rejected.
+        # initialize is exempt — it IS the handshake that declares capabilities.
+        if method != "initialize":
+            _request_meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+            if has_modern_meta_attempt(_request_meta):
+                # Both mandatory keys must be present on modern requests.
+                if "io.modelcontextprotocol/protocolVersion" not in _request_meta:
+                    return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Missing required _meta key: io.modelcontextprotocol/protocolVersion"}, "id": req_id}
+                if "io.modelcontextprotocol/clientCapabilities" not in _request_meta:
+                    return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Missing required _meta key: io.modelcontextprotocol/clientCapabilities"}, "id": req_id}
+                # Capability-gated methods: check elicitation and sampling against what
+                # the client declared either in per-request _meta or at handshake time.
+                _declared_caps = _request_meta.get("io.modelcontextprotocol/clientCapabilities") or {}
+                if not _declared_caps and mcp_session_id:
+                    _declared_caps = (await session_registry.get_client_capabilities(mcp_session_id)) or {}
+                _capability_gated: Dict[str, str] = {"elicitation/create": "elicitation", "sampling/createMessage": "sampling"}
+                if method in _capability_gated:
+                    _required_cap = _capability_gated[method]
+                    if not check_capability(_declared_caps, _required_cap):
+                        return {"jsonrpc": "2.0", "error": {"code": CAPABILITY_NOT_SUPPORTED, "message": f"Client did not declare required capability: {_required_cap}"}, "id": req_id}
+
         if method == "initialize":
             result = await _execute_rpc_initialize(
                 request,
@@ -12065,6 +12094,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 logger.error("Unexpected error invoking method %s: %s", method, exc)
                 raise JSONRPCError(-32603, "Internal error", {})
 
+        # MCP 2026-07-28: stamp serverInfo on every modern response result._meta.
+        # Only modern requests carry the namespaced protocol key; legacy requests
+        # must not have _meta injected into their responses.
+        if isinstance(result, dict) and is_modern_meta(params.get("_meta") if isinstance(params.get("_meta"), dict) else {}):
+            stamp_server_info_meta(result, settings.app_name, __version__)
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
     except (PluginError, PluginViolationError):
