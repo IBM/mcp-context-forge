@@ -13,10 +13,12 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 import json
 import logging
+import re
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 from urllib.parse import urlparse
+import uuid
 
 # Third-Party
 from cpex.framework import PluginManager, PluginMode
@@ -32,6 +34,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import ToolLookupCache, tool_lookup_cache
 from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
+from mcpgateway.db import EmailTeam, EmailUser
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
@@ -59,6 +62,7 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
+from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -1107,10 +1111,11 @@ class TestToolService:
             visibility="private",
             owner_email="user@example.com",
         )
-        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name, owner_email", None, None))
-        with pytest.raises(IntegrityError) as exc_info:
+        test_db.commit = Mock()
+        with pytest.raises(ToolNameConflictError) as exc_info:
             await tool_service.register_tool(test_db, tool_create_private)
-        assert "UNIQUE constraint failed: tools.name, owner_email" in str(exc_info.value)
+        assert "Private Tool already exists with name: private_tool" in str(exc_info.value)
+        test_db.commit.assert_not_called()
 
         # --- Team visibility: conflict if name and team_id match ---
         mock_tool.name = "team_tool"
@@ -9277,7 +9282,7 @@ class TestToolServiceBulkImport:
 
         result = service._process_single_tool_for_bulk(
             tool=tool,
-            existing_tools_map={tool.name: existing_tool},
+            existing_tool=existing_tool,
             conflict_strategy="update",
             visibility="public",
             team_id=None,
@@ -9321,7 +9326,7 @@ class TestToolServiceBulkImport:
 
         result_skip = service._process_single_tool_for_bulk(
             tool=tool,
-            existing_tools_map={tool.name: existing_tool},
+            existing_tool=existing_tool,
             conflict_strategy="skip",
             visibility="public",
             team_id=None,
@@ -9342,7 +9347,7 @@ class TestToolServiceBulkImport:
 
             result_rename = service._process_single_tool_for_bulk(
                 tool=tool,
-                existing_tools_map={tool.name: existing_tool},
+                existing_tool=existing_tool,
                 conflict_strategy="rename",
                 visibility="public",
                 team_id=None,
@@ -9362,7 +9367,7 @@ class TestToolServiceBulkImport:
 
         result_fail = service._process_single_tool_for_bulk(
             tool=tool,
-            existing_tools_map={tool.name: existing_tool},
+            existing_tool=existing_tool,
             conflict_strategy="fail",
             visibility="public",
             team_id=None,
@@ -9383,7 +9388,7 @@ class TestToolServiceBulkImport:
 
         result_add = service._process_single_tool_for_bulk(
             tool=tool,
-            existing_tools_map={},
+            existing_tool=None,
             conflict_strategy="skip",
             visibility="private",
             team_id="team-1",
@@ -9401,7 +9406,7 @@ class TestToolServiceBulkImport:
         with patch.object(service, "_create_tool_object", side_effect=ValueError("boom")):
             result_fail = service._process_single_tool_for_bulk(
                 tool=tool,
-                existing_tools_map={},
+                existing_tool=None,
                 conflict_strategy="skip",
                 visibility="public",
                 team_id=None,
@@ -9590,6 +9595,244 @@ class TestToolServiceBulkImport:
         result = await service.register_tools_bulk(db=MagicMock(), tools=[])
 
         assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+
+class TestStoredToolNameConflict:
+    """Tool registration, update, and bulk import compare the stored, normalized tool name in each visibility scope (#6189)."""
+
+    @pytest.fixture
+    def scope(self, test_db):
+        """Create two teams and a unique name suffix, then remove every row the test creates.
+
+        Args:
+            test_db: Real database session.
+
+        Yields:
+            SimpleNamespace: ``uid`` name suffix and ``team_ids`` for two distinct teams.
+        """
+        uid = uuid.uuid4().hex[:8]
+        creator = f"creator-{uid}@example.com"
+        team_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        test_db.add(EmailUser(email=creator, full_name="Creator"))
+        test_db.flush()
+        test_db.add_all([EmailTeam(id=team_id, name=f"Team {index} {uid}", slug=f"team-{index}-{uid}", created_by=creator, is_personal=False) for index, team_id in enumerate(team_ids)])
+        test_db.commit()
+        yield SimpleNamespace(uid=uid, team_ids=team_ids)
+        test_db.rollback()
+        test_db.query(DbTool).filter(DbTool.custom_name.contains(uid)).delete(synchronize_session=False)
+        test_db.query(DbGateway).filter(DbGateway.name.contains(uid)).delete(synchronize_session=False)
+        test_db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids)).delete(synchronize_session=False)
+        test_db.query(EmailUser).filter(EmailUser.email == creator).delete(synchronize_session=False)
+        test_db.commit()
+
+    @staticmethod
+    def _stored_rows(test_db, stored_name: str) -> int:
+        return test_db.query(DbTool).filter(DbTool.name == stored_name).count()  # pylint: disable=comparison-with-callable
+
+    @staticmethod
+    def _add_gateway(test_db, name: str) -> DbGateway:
+        gateway = DbGateway(id=uuid.uuid4().hex, name=name, slug=slugify(name), url=f"https://{slugify(name)}.example.com/mcp", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+        return gateway
+
+    @pytest.mark.asyncio
+    async def test_public_slug_equivalent_name_conflicts_across_owners(self, tool_service, test_db, scope):
+        """A public name that differs only in case and separators conflicts across owners."""
+        stored_name = slugify(f"my-tool-{scope.uid}")
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"my-tool-{scope.uid}"), owner_email="a@example.com", visibility="public")
+
+        with pytest.raises(ToolNameConflictError, match=re.escape(f"Public Tool already exists with name: {stored_name}")):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(f"My_Tool_{scope.uid}"), owner_email="b@example.com", visibility="public")
+
+        assert self._stored_rows(test_db, stored_name) == 1
+
+    @pytest.mark.asyncio
+    async def test_public_exact_repeat_without_team_conflicts(self, tool_service, test_db, scope):
+        """An exact repeat of a public name with ``_`` conflicts when ``team_id`` is NULL."""
+        name = f"get_weather_{scope.uid}"
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(name), owner_email="a@example.com", visibility="public")
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(name), owner_email="a@example.com", visibility="public")
+
+        assert self._stored_rows(test_db, slugify(name)) == 1
+
+    @pytest.mark.asyncio
+    async def test_private_same_owner_conflicts(self, tool_service, test_db, scope):
+        """A private name conflicts with a private tool of the same owner."""
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"my_tool_{scope.uid}"), owner_email="a@example.com", visibility="private")
+
+        with pytest.raises(ToolNameConflictError, match="Private Tool already exists"):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(f"My.Tool_{scope.uid}"), owner_email="a@example.com", visibility="private")
+
+        assert self._stored_rows(test_db, slugify(f"my_tool_{scope.uid}")) == 1
+
+    @pytest.mark.asyncio
+    async def test_private_owner_defaults_to_creator(self, tool_service, test_db, scope):
+        """Without ``owner_email``, the check uses the private scope of the creator."""
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"my_tool_{scope.uid}"), created_by="a@example.com", visibility="private")
+
+        with pytest.raises(ToolNameConflictError, match="Private Tool already exists"):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(f"My.Tool_{scope.uid}"), created_by="a@example.com", visibility="private")
+
+        assert self._stored_rows(test_db, slugify(f"my_tool_{scope.uid}")) == 1
+
+    @pytest.mark.asyncio
+    async def test_private_same_name_different_owners_succeeds(self, tool_service, test_db, scope):
+        """Private tools of different owners keep separate namespaces."""
+        name = f"my_tool_{scope.uid}"
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(name), owner_email="a@example.com", visibility="private")
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(name), owner_email="b@example.com", visibility="private")
+
+        assert self._stored_rows(test_db, slugify(name)) == 2
+
+    @pytest.mark.asyncio
+    async def test_team_slug_equivalent_name_conflicts_only_within_team(self, tool_service, test_db, scope):
+        """A team name conflicts in the same team and succeeds in a different team."""
+        team_one, team_two = scope.team_ids
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"my_tool_{scope.uid}"), team_id=team_one, owner_email="a@example.com", visibility="team")
+
+        with pytest.raises(ToolNameConflictError, match="Team-level Tool already exists"):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(f"My.Tool_{scope.uid}"), team_id=team_one, owner_email="b@example.com", visibility="team")
+
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"My.Tool_{scope.uid}"), team_id=team_two, owner_email="b@example.com", visibility="team")
+        assert self._stored_rows(test_db, slugify(f"my_tool_{scope.uid}")) == 2
+
+    @pytest.mark.asyncio
+    async def test_legacy_duplicate_rows_raise_conflict(self, tool_service, test_db, scope):
+        """Existing duplicate rows produce a name conflict, not ``MultipleResultsFound``."""
+        name = f"legacy-dup-{scope.uid}"
+        for owner in ("a@example.com", "b@example.com"):
+            test_db.add(
+                tool_service._create_tool_object(  # pylint: disable=protected-access
+                    _make_bulk_tool_create(name),
+                    name=name,
+                    auth_type=None,
+                    auth_value=None,
+                    tool_team_id=None,
+                    tool_owner_email=owner,
+                    tool_visibility="public",
+                    created_by=owner,
+                    created_from_ip=None,
+                    created_via=None,
+                    created_user_agent=None,
+                    import_batch_id=None,
+                    federation_source=None,
+                )
+            )
+        test_db.commit()
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(name), owner_email="c@example.com", visibility="public")
+
+    @pytest.mark.asyncio
+    async def test_gateway_tool_conflicts_on_prefixed_name(self, tool_service, test_db, scope):
+        """A gateway tool conflicts on its gateway-prefixed stored name."""
+        gateway = self._add_gateway(test_db, f"GW One {scope.uid}")
+        prefixed_name = build_gateway_tool_invocation_name(gateway.name, f"Search_{scope.uid}")
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(prefixed_name), owner_email="a@example.com", visibility="public")
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(test_db, _make_bulk_tool_create(f"Search_{scope.uid}", gateway_id=gateway.id), owner_email="b@example.com", visibility="public")
+
+        assert self._stored_rows(test_db, prefixed_name) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("field", ["name", "custom_name"])
+    async def test_update_rename_to_slug_equivalent_name_conflicts(self, tool_service, test_db, scope, field):
+        """A rename to a name whose stored name another tool of the scope uses conflicts."""
+        stored_name = slugify(f"my-tool-{scope.uid}")
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"my-tool-{scope.uid}"), owner_email="a@example.com", visibility="public")
+        other = await tool_service.register_tool(test_db, _make_bulk_tool_create(slugify(f"other_{scope.uid}")), owner_email="b@example.com", visibility="public")
+
+        with pytest.raises(ToolNameConflictError, match=re.escape(f"Public Tool already exists with name: {stored_name}")):
+            await tool_service.update_tool(test_db, other.id, ToolUpdate(**{field: f"My_Tool_{scope.uid}"}))
+
+        assert self._stored_rows(test_db, stored_name) == 1
+
+    @pytest.mark.asyncio
+    async def test_update_visibility_change_conflicts_on_stored_name(self, tool_service, test_db, scope):
+        """A visibility change conflicts when the target scope already uses the stored name."""
+        stored_name = slugify(f"vis-tool-{scope.uid}")
+        private_tool = await tool_service.register_tool(test_db, _make_bulk_tool_create(f"Vis_Tool_{scope.uid}"), owner_email="a@example.com", visibility="private")
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"vis-tool-{scope.uid}"), owner_email="b@example.com", visibility="public")
+
+        with pytest.raises(ToolNameConflictError, match="Public Tool already exists"):
+            await tool_service.update_tool(test_db, private_tool.id, ToolUpdate(visibility="public"))
+
+        assert test_db.query(DbTool).filter(DbTool.name == stored_name, DbTool.visibility == "public").count() == 1  # pylint: disable=comparison-with-callable
+
+    @pytest.mark.asyncio
+    async def test_update_rename_to_own_slug_equivalent_name_succeeds(self, tool_service, test_db, scope):
+        """A rename that keeps the stored name of the tool itself does not conflict."""
+        tool = await tool_service.register_tool(test_db, _make_bulk_tool_create(f"own_tool_{scope.uid}"), owner_email="a@example.com", visibility="public")
+
+        await tool_service.update_tool(test_db, tool.id, ToolUpdate(custom_name=f"Own.Tool_{scope.uid}"))
+
+        assert self._stored_rows(test_db, slugify(f"own_tool_{scope.uid}")) == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_import_skips_slug_equivalent_name(self, tool_service, test_db, scope):
+        """Bulk import with ``skip`` skips names whose stored name already exists."""
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(f"bulk_dup_{scope.uid}"), owner_email="a@example.com", visibility="public")
+
+        result = await tool_service.register_tools_bulk(
+            test_db,
+            [_make_bulk_tool_create(f"bulk_dup_{scope.uid}"), _make_bulk_tool_create(f"Bulk.Dup_{scope.uid}")],
+            created_by="b@example.com",
+            visibility="public",
+            conflict_strategy="skip",
+        )
+
+        assert result["skipped"] == 2
+        assert result["created"] == 0
+        assert self._stored_rows(test_db, slugify(f"bulk_dup_{scope.uid}")) == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_import_skips_slug_equivalent_name_in_same_batch(self, tool_service, test_db, scope):
+        """Bulk import with ``skip`` skips a later tool whose stored name an earlier tool of the batch uses."""
+        result = await tool_service.register_tools_bulk(
+            test_db,
+            [_make_bulk_tool_create(f"Batch_Dup_{scope.uid}"), _make_bulk_tool_create(f"batch-dup-{scope.uid}")],
+            created_by="a@example.com",
+            visibility="public",
+            conflict_strategy="skip",
+        )
+
+        assert result["created"] == 1
+        assert result["skipped"] == 1
+        assert self._stored_rows(test_db, slugify(f"batch-dup-{scope.uid}")) == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_import_matches_conflicts_per_gateway(self, tool_service, test_db, scope):
+        """Bulk import matches each tool on its own gateway-prefixed stored name."""
+        gateway_a = self._add_gateway(test_db, f"GW A {scope.uid}")
+        gateway_b = self._add_gateway(test_db, f"GW B {scope.uid}")
+        name = f"search_{scope.uid}"
+        await tool_service.register_tool(test_db, _make_bulk_tool_create(name, gateway_id=gateway_a.id), owner_email="a@example.com", visibility="public")
+
+        result = await tool_service.register_tools_bulk(
+            test_db,
+            [_make_bulk_tool_create(name, gateway_id=gateway_a.id), _make_bulk_tool_create(name, gateway_id=gateway_b.id)],
+            created_by="a@example.com",
+            visibility="public",
+            conflict_strategy="skip",
+        )
+
+        assert result["skipped"] == 1
+        assert result["created"] == 1
+        assert self._stored_rows(test_db, build_gateway_tool_invocation_name(gateway_a.name, name)) == 1
+        assert self._stored_rows(test_db, build_gateway_tool_invocation_name(gateway_b.name, name)) == 1
+
+    @pytest.mark.parametrize(("visibility", "team_id", "owner_email"), [("team", None, "a@example.com"), ("private", None, None)])
+    def test_scope_without_identity_runs_no_query(self, visibility, team_id, owner_email):
+        """Team scope without a team and private scope without an owner run no conflict query."""
+        db = MagicMock()
+
+        ToolService._check_new_tool_name_conflict(db, "my-tool", visibility, team_id=team_id, owner_email=owner_email)  # pylint: disable=protected-access
+
+        db.execute.assert_not_called()
 
 
 class TestConvertToolToReadHeaderMasking:
