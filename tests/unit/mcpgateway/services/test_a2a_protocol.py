@@ -252,11 +252,32 @@ class TestNormalizeTaskState:
         assert _normalize_task_state("completed", "1.0") == "TASK_STATE_COMPLETED"
         assert _normalize_task_state("working", "1.0") == "TASK_STATE_WORKING"
         assert _normalize_task_state("input-required", "1.0") == "TASK_STATE_INPUT_REQUIRED"
+        assert _normalize_task_state("input_required", "1.0") == "TASK_STATE_INPUT_REQUIRED"
+        assert _normalize_task_state("auth-required", "1.0") == "TASK_STATE_AUTH_REQUIRED"
+        assert _normalize_task_state("auth_required", "1.0") == "TASK_STATE_AUTH_REQUIRED"
         assert _normalize_task_state("cancelled", "1.0") == "TASK_STATE_CANCELED"
 
     def test_v1_to_legacy(self):
         assert _normalize_task_state("TASK_STATE_COMPLETED", "0.3") == "completed"
         assert _normalize_task_state("TASK_STATE_WORKING", "0.3") == "working"
+        assert _normalize_task_state("TASK_STATE_INPUT_REQUIRED", "0.3") == "input-required"
+        assert _normalize_task_state("TASK_STATE_AUTH_REQUIRED", "0.3") == "auth-required"
+
+    def test_supported_states_round_trip(self):
+        states = {
+            "TASK_STATE_SUBMITTED": "submitted",
+            "TASK_STATE_WORKING": "working",
+            "TASK_STATE_INPUT_REQUIRED": "input-required",
+            "TASK_STATE_COMPLETED": "completed",
+            "TASK_STATE_CANCELED": "canceled",
+            "TASK_STATE_FAILED": "failed",
+            "TASK_STATE_AUTH_REQUIRED": "auth-required",
+            "TASK_STATE_REJECTED": "rejected",
+        }
+
+        for v1_state, legacy_state in states.items():
+            assert _normalize_task_state(v1_state, "0.3") == legacy_state
+            assert _normalize_task_state(legacy_state, "1.0") == v1_state
 
     def test_unknown_state_passes_through(self):
         assert _normalize_task_state("custom_state", "1.0") == "custom_state"
