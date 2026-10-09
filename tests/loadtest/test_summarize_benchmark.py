@@ -51,7 +51,7 @@ def test_empty_report_preserves_unavailable_percentiles(tmp_path: Path) -> None:
 
 def test_docker_resources_groups_replicas_and_renders_limits(monkeypatch) -> None:
     """Count one row per service, convert docker's raw limits, and read compose CPU reservations."""
-    labels = "/stack/docker-compose.yml,/stack/docker-compose.prod.yml\t/stack"
+    labels = "/stack/docker-compose.yml,/stack/docker-compose.perf.yml\t/stack"
     inspected = "\n".join(
         (
             f"gateway\t4000000000\t0\t100000\t4294967296\t4294967296\t{labels}",
@@ -79,7 +79,7 @@ def test_docker_resources_groups_replicas_and_renders_limits(monkeypatch) -> Non
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     assert docker_resources("proj") == [("gateway", "2", "4", "4", "4G", "4G"), ("redis", "1", "0.5", "-", "512M", "-")]
-    assert seen["compose"] == ["docker", "compose", "-f", "/stack/docker-compose.yml", "-f", "/stack/docker-compose.prod.yml", "config", "--format", "json", "/stack"]
+    assert seen["compose"] == ["docker", "compose", "-f", "/stack/docker-compose.yml", "-f", "/stack/docker-compose.perf.yml", "config", "--format", "json", "/stack"]
 
 
 def test_docker_resources_without_docker(monkeypatch) -> None:

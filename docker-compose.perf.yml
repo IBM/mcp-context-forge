@@ -1,5 +1,5 @@
 ###############################################################################
-#  Production resource overrides
+#  Benchmark resource overrides
 #
 #  Pins every long-running service to the same 4 CPU / 4 G limit and
 #  reservation so benchmark runs compare like with like. This raises pgbouncer,
@@ -10,7 +10,7 @@
 #          make perf-down
 ###############################################################################
 
-x-prod-resources: &prod-resources
+x-perf-resources: &perf-resources
   limits:
     cpus: '4'
     memory: 4G
@@ -22,26 +22,26 @@ services:
 
   nginx:
     deploy:
-      resources: *prod-resources
+      resources: *perf-resources
 
   gateway:
     deploy:
       mode: replicated
       replicas: ${GATEWAY_REPLICAS:-3}
-      resources: *prod-resources
+      resources: *perf-resources
 
   postgres:
     deploy:
-      resources: *prod-resources
+      resources: *perf-resources
 
   pgbouncer:
     deploy:
-      resources: *prod-resources
+      resources: *perf-resources
 
   redis:
     deploy:
-      resources: *prod-resources
+      resources: *perf-resources
 
   fast_time_server:
     deploy:
-      resources: *prod-resources
+      resources: *perf-resources
