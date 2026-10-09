@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 import jsonschema
 import orjson
 import pytest
+from mcp.shared.exceptions import MCPError
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 # First-Party
@@ -35,6 +36,7 @@ from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
 from mcpgateway.transports.context import request_headers_var
 
 from mcpgateway.services.tool_service import (
+    UPSTREAM_ERROR_CODE,
     _canonicalize_schema,
     _get_registry_cache,
     _get_tool_lookup_cache,
@@ -11278,3 +11280,81 @@ class TestXMcpHeaderMirroring:
         call_upstream.assert_not_awaited()
         proxy_client.assert_not_called()
         registry.acquire.assert_not_called()
+
+
+class TestUpstreamErrorRelay:
+    """A JSON-RPC error answered by the upstream stays today's isError result; its code is preserved in _meta."""
+
+    @staticmethod
+    async def _invoke(tool_service, failure, plugin_manager=None):
+        """Run invoke_tool against a mocked upstream session whose call_tool raises ``failure``."""
+        tool_payload = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gateway_payload = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="token")
+        session = AsyncMock()
+        session.call_tool = AsyncMock(side_effect=failure)
+        connected = MagicMock()
+        connected.__aenter__.return_value = SimpleNamespace(session=session)
+        headers_token = request_headers_var.set({})  # no downstream Mcp-Session-Id: per-call session via mcp_proxy_client
+        try:
+            with (
+                _setup_cache_for_invoke(tool_payload, gateway_payload),
+                patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=connected),
+                patch("mcpgateway.services.tool_service.get_upstream_session_registry", return_value=MagicMock()),
+            ):
+                return await tool_service.invoke_tool(MagicMock(), "test_tool", {"region": "eu"})
+        finally:
+            request_headers_var.reset(headers_token)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            pytest.param(MCPError(code=-32602, message="Unknown tool: routed"), id="bare"),
+            pytest.param(ExceptionGroup("task group", [MCPError(code=-32602, message="Unknown tool: routed")]), id="task-group-wrapped"),
+        ],
+    )
+    async def test_upstream_json_rpc_error_keeps_text_and_preserves_code_in_meta(self, tool_service, failure):
+        """-32602 from upstream: today's isError result, with the code under the gateway's _meta key."""
+        result = await self._invoke(tool_service, failure)
+
+        assert result.is_error is True
+        assert result.content[0].text == "MCP server error: Unknown tool: routed"
+        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+
+    @pytest.mark.asyncio
+    async def test_other_upstream_failures_keep_todays_result_without_meta(self, tool_service):
+        """A non-protocol failure is still the gateway's own 'MCP server error' result, with no _meta entry."""
+        result = await self._invoke(tool_service, RuntimeError("connection dropped"))
+
+        assert result.is_error is True
+        assert result.content[0].text == "MCP server error: connection dropped"
+        assert not (result.meta or {}).get(UPSTREAM_ERROR_CODE)
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_plugin_rewrites_the_text_and_the_code_survives(self, tool_service):
+        """A post-invoke plugin (e.g. a PII filter) rewrites the result text; the preserved code stays in _meta."""
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(
+            side_effect=[
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}),  # pre-invoke
+                (
+                    SimpleNamespace(
+                        modified_payload=SimpleNamespace(result={"content": [{"type": "text", "text": "Unknown tool: [REDACTED]"}], "isError": True}),
+                        retry_delay_ms=0,
+                        metadata=None,
+                        executions=[],
+                    ),
+                    {},
+                ),  # post-invoke
+            ]
+        )
+
+        result = await self._invoke(tool_service, MCPError(code=-32602, message="Unknown tool: routed"), plugin_manager=plugin_manager)
+
+        assert result.is_error is True
+        assert result.content[0].text == "Unknown tool: [REDACTED]"
+        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
