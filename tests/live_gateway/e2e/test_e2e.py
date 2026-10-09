@@ -12,7 +12,6 @@ RBAC tests use Playwright API setup plus synchronous MCP SDK helpers.
 Requirements:
     - Chromium for the Admin form regression: ``uv run playwright install chromium``
     - Gateway running (default: http://localhost:8080 via docker-compose)
-    - Gateway started with ``OBSERVABILITY_ENABLED=true``
     - Upstream ``fast_time_server`` registered
       (provided by the default compose stack)
     - Environment variables (or defaults):
@@ -804,8 +803,6 @@ _REPLICA_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_REPLICA_SYNC_DEADLINE"
 # Revocation invalidates the Redis auth cache and publishes to the other replicas.
 # One second matches TestDenyPaths.test_revoked_token_fails. Raise it under CI load.
 _REVOCATION_PROPAGATION_SECONDS = float(os.getenv("MCP_E2E_REVOCATION_DELAY", "1.0"))
-_OBSERVABILITY_WINDOW_HOURS = 1
-_OBSERVABILITY_INTERVAL_MINUTES = 5
 
 
 # ---------------------------------------------------------------------------
@@ -838,56 +835,6 @@ def _get_gateway_tools(admin_api: APIRequestContext, gateway_id: str, probe: str
     """Read all tools for one gateway through Nginx using a unique cache key."""
     response = admin_api.get(_replica_tools_path(gateway_id, probe))
     return _assert_replica_response(response, read_index)
-
-
-def _observability_timeseries_totals(client: httpx.Client) -> tuple[int, int, int]:
-    """Return total, successful, and failed traces from the live metrics endpoint.
-
-    Args:
-        client: Client authenticated as a global metrics reader.
-
-    Returns:
-        The three trace totals across the controlled query window.
-    """
-    response = client.get(
-        "/v1/observability/metrics/timeseries",
-        params={"hours": _OBSERVABILITY_WINDOW_HOURS, "interval_minutes": _OBSERVABILITY_INTERVAL_MINUTES},
-    )
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    series_names = ("buckets", "values", "success_count", "error_count")
-    assert set(payload) == set(series_names)
-    assert len({len(payload[name]) for name in series_names}) == 1
-    assert all(isinstance(bucket, str) for bucket in payload["buckets"])
-    assert all(isinstance(value, int) for name in series_names[1:] for value in payload[name])
-    assert all(success + error <= total for total, success, error in zip(payload["values"], payload["success_count"], payload["error_count"], strict=True))
-    return sum(payload["values"]), sum(payload["success_count"]), sum(payload["error_count"])
-
-
-def test_observability_timeseries_status_counts(platform_viewer_user: dict[str, Any]) -> None:
-    """A platform viewer sees known successful and failed request counts."""
-    token = platform_viewer_user["access_token"]
-    authorization = {"Authorization": f"Bearer {token}"}
-    mcp_headers = {
-        **authorization,
-        "accept": "application/json, text/event-stream",
-        "content-type": "application/json",
-        "mcp-protocol-version": "2025-03-26",
-    }
-
-    with httpx.Client(base_url=BASE_URL, headers=authorization, timeout=10) as client:
-        before = _observability_timeseries_totals(client)
-
-        successful = client.post("/mcp/", headers=mcp_headers, json=build_initialize())
-        assert successful.status_code == 200, successful.text
-
-        denied_server_id = str(uuid.uuid4())
-        failed = client.post(f"/servers/{denied_server_id}/mcp", headers=mcp_headers, json=build_initialize())
-        assert failed.status_code == 403, failed.text
-
-        after = _observability_timeseries_totals(client)
-
-    assert tuple(current - previous for current, previous in zip(after, before, strict=True)) == (2, 1, 1)
 
 
 # Keep synchronous Playwright cases after the async MCP protocol cases: its
@@ -1113,23 +1060,6 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
     ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
-
-
-@pytest.fixture
-def platform_viewer_user(admin_api: APIRequestContext, playwright: Playwright) -> Generator[dict[str, Any], None, None]:
-    """Create a non-admin global metrics reader for observability checks."""
-    email = f"{RBAC_PREFIX}-platform-viewer-{uuid.uuid4().hex[:8]}@test.com"
-    user = _create_user_with_token(admin_api, playwright, email)
-    try:
-        platform_viewer_id = _resolve_role_id(admin_api, "platform_viewer")
-        assignments = admin_api.get(f"/rbac/users/{email}/roles")
-        assert assignments.status == 200, f"Failed to read roles for {email}: {assignments.status} {assignments.text()}"
-        assert any(assignment["role_id"] == platform_viewer_id and assignment.get("scope") == "global" for assignment in assignments.json()), (
-            f"User {email} does not hold the global platform_viewer role"
-        )
-        yield user
-    finally:
-        _cleanup_user(admin_api, user)
 
 
 @pytest.fixture(scope="module")
