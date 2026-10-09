@@ -518,7 +518,7 @@ class Settings(BaseSettings):
     validation_middleware_enabled: bool = Field(default=False, description="Deprecated. Enable validation middleware for all requests")
     client_disconnect_middleware_enabled: bool = Field(default=True, description="Enable client disconnect middleware to cancel handlers on connection close")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
-    sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
+    sanitize_output: bool = Field(default=True, description="Deprecated and inert: output sanitization was unreachable in production; retained for environment compatibility")
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
     max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
     max_param_length: int = Field(default=10000, description="Maximum parameter length")
@@ -2185,6 +2185,7 @@ class Settings(BaseSettings):
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
     log_requests: bool = Field(default=False, description="Enable request payload logging with sensitive data masking")
+    log_boundary_enabled: bool = Field(default=True, description="Register the request-logging middleware (gateway boundary logs). When false the middleware is not added to the stack at all")
     log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
     log_filemode: str = "a+"  # append or overwrite

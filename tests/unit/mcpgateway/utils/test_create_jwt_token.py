@@ -36,16 +36,25 @@ import pytest
 from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
 
 # --------------------------------------------------------------------------- #
-# Patch module-level constants **before** we start calling helpers            #
+# Test-local config: pin jwt_util to the test secret per test, never globally #
 # --------------------------------------------------------------------------- #
 TEST_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 TEST_ALGO = "HS256"
 
-jwt_util.DEFAULT_SECRET = TEST_SECRET
-jwt_util.DEFAULT_ALGO = TEST_ALGO
-# NB: settings.jwt_secret_key is read at *runtime* in _decode(), so patch too
-jwt_util.settings.jwt_secret_key = TEST_SECRET
-jwt_util.settings.jwt_algorithm = TEST_ALGO
+
+@pytest.fixture(autouse=True)
+def _jwt_util_test_config(monkeypatch):
+    """Point jwt_util and settings at the test secret for one test, then restore.
+
+    Module-level assignment leaked the test secret into process-global settings
+    for the rest of the suite; full-suite collection imports this module after
+    the e2e modules, whose tokens are minted with a different secret.
+    """
+    monkeypatch.setattr(jwt_util, "DEFAULT_ALGO", TEST_ALGO)
+    # NB: settings.jwt_secret_key is read at *runtime* in _decode(), so patch too
+    monkeypatch.setattr(jwt_util.settings, "jwt_secret_key", TEST_SECRET)
+    monkeypatch.setattr(jwt_util.settings, "jwt_algorithm", TEST_ALGO)
+
 
 # Short aliases keep test lines tidy
 _create: Any = jwt_util._create_jwt_token  # pylint: disable=protected-access
