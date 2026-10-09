@@ -1876,6 +1876,22 @@ def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
     return _run_async(_async_mcp_initialize(access_token, server_url))
 
 
+def _public_rpc_tool_call(server_id: str, tool_name: str, arguments: dict[str, Any], access_token: str | None = None) -> httpx.Response:
+    """Call a tool through the public JSON-RPC endpoint."""
+    headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
+    return httpx.post(
+        f"{BASE_URL}/rpc",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": f"scoped-rpc-{uuid.uuid4().hex}",
+            "method": "tools/call",
+            "params": {"name": tool_name, "server_id": server_id, "arguments": arguments},
+        },
+        timeout=_CLIENT_TIMEOUT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test: REST API server visibility
 # ---------------------------------------------------------------------------
@@ -2208,6 +2224,67 @@ class TestMcpPerServerEndpoint:
         with pytest.raises(Exception) as excinfo:
             _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
         print(f"    -> Outsider denied private server: {excinfo.value}")
+
+
+class TestPublicRpcScopedAuthorization:
+    """Public ``/rpc`` enforces authentication, token permissions, and server visibility."""
+
+    tool_name = f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time"
+
+    def test_unauthenticated_call_is_rejected(self, visibility_servers: dict) -> None:
+        """A scoped public tool call requires a bearer token."""
+        response = _public_rpc_tool_call(visibility_servers["public"]["id"], self.tool_name, {"timezone": "UTC"})
+        assert response.status_code == 401, f"Unauthenticated POST /rpc returned {response.status_code}: {response.text[:500]}"
+
+    def test_read_only_token_cannot_execute(self, scoped_token_read_only: dict, visibility_servers: dict) -> None:
+        """MCP transport access does not imply ``tools.execute``."""
+        response = _public_rpc_tool_call(
+            visibility_servers["public"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            scoped_token_read_only["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert body.get("error", {}).get("code") == -32003, f"Read-only token returned the wrong error: {body}"
+
+    def test_cross_team_developer_cannot_probe_team_server(
+        self,
+        admin_api: APIRequestContext,
+        playwright: Playwright,
+        create_team: Any,
+        visibility_servers: dict,
+    ) -> None:
+        """A caller with execute permission in another team sees generic not-found."""
+        _, other_team = _created_team(create_team, name=f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}")
+        caller = _create_user_with_token(
+            admin_api,
+            playwright,
+            f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}@test.com",
+            team_id=other_team["id"],
+            rbac_role="developer",
+        )
+        server_id = visibility_servers["team"]["id"]
+        try:
+            response = _public_rpc_tool_call(server_id, self.tool_name, {"timezone": "UTC"}, caller["access_token"])
+            assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+            body = response.json()
+            assert body.get("error") == {"code": -32002, "message": f"Server not found: {server_id}", "data": {"server_id": server_id}}, f"Hidden server returned the wrong error: {body}"
+        finally:
+            _cleanup_user(admin_api, caller)
+
+    def test_team_developer_can_invoke(self, test_users: dict, visibility_servers: dict) -> None:
+        """A team member with ``tools.execute`` can invoke an attached tool."""
+        response = _public_rpc_tool_call(
+            visibility_servers["team"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            test_users["developer"]["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert "error" not in body, f"Authorized scoped invocation failed: {body}"
+        assert body.get("result", {}).get("content"), f"Authorized scoped invocation returned no content: {body}"
 
 
 # ---------------------------------------------------------------------------
@@ -3117,6 +3194,68 @@ class TestVirtualServerLifecycle:
 
         assert detached.is_error, f"Detached tool remained invocable: {detached}"
         assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
+
+    def test_public_rpc_tools_call_honors_server_attachment(
+        self,
+        create_server: Any,
+        lifecycle_tools: list[dict[str, Any]],
+        admin_token: str,
+    ) -> None:
+        """Public /rpc should invoke an attached tool and reject an unassociated one.
+
+        Args:
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        unassociated_tool = next((tool for tool in lifecycle_tools if tool["id"] != (echo_tool or {}).get("id")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+        assert unassociated_tool, "The live gateway fixture must expose an unassociated tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        invoked = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-call",
+                "method": "tools/call",
+                "params": {
+                    "name": echo_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {"message": "scoped-rpc-live"},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert invoked.status_code == 200, f"POST /rpc returned {invoked.status_code}: {invoked.text[:500]}"
+        invoked_body = invoked.json()
+        assert "error" not in invoked_body, f"Attached tool invocation failed: {invoked_body}"
+        assert "scoped-rpc-live" in json.dumps(invoked_body["result"]), f"Attached tool returned the wrong result: {invoked_body}"
+
+        rejected = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-rejection",
+                "method": "tools/call",
+                "params": {
+                    "name": unassociated_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert rejected.status_code == 200, f"POST /rpc returned {rejected.status_code}: {rejected.text[:500]}"
+        rejected_body = rejected.json()
+        assert rejected_body.get("error", {}).get("code") == -32601, f"Unassociated tool returned the wrong error: {rejected_body}"
 
     @pytest.mark.parametrize(
         ("first_tenant", "second_tenant"),
@@ -4337,6 +4476,7 @@ class TestGatewayLifecycle:
                 if gateway_id:
                     with suppress(Exception):
                         admin_api.delete(f"/gateways/{gateway_id}")
+
 
 # ---------------------------------------------------------------------------
 # Schema ReDoS: a hostile input-schema pattern must not stall the gateway
