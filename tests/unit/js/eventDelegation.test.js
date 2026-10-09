@@ -59,6 +59,25 @@ describe("eventDelegation", () => {
       expect(mockAdminFunction).toHaveBeenCalledWith("test-value", expect.any(MouseEvent));
     });
 
+    it("toggles an element class through the registered helper", () => {
+      const dropdown = document.createElement("div");
+      dropdown.id = "bulk-import-dropdown";
+      dropdown.classList.add("hidden");
+      container.appendChild(dropdown);
+
+      const button = document.createElement("button");
+      button.setAttribute("data-action-click", "toggleElementClass");
+      button.setAttribute("data-arg0", "bulk-import-dropdown");
+      button.setAttribute("data-arg1", "hidden");
+      container.appendChild(button);
+
+      button.click();
+      expect(dropdown.classList.contains("hidden")).toBe(false);
+
+      button.click();
+      expect(dropdown.classList.contains("hidden")).toBe(true);
+    });
+
     it("handles click with multiple arguments", () => {
       const button = document.createElement("button");
       button.setAttribute("data-action-click", "testFunction");
