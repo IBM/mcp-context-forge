@@ -145,21 +145,19 @@ def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadRe
 upstream_read_cache_var: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("upstream_read_cache", default=None)
 
 
-def _set_upstream_cache_directive(result: Any, resource: Any) -> None:
-    """Keep the upstream read result's ttlMs/cacheScope for the read adapter.
+def set_upstream_cache_directive(result: Any) -> None:
+    """Keep the upstream read result's ttlMs for the read adapter.
 
     ``ttlMs`` is relayed as the upstream sent it (0 when absent, e.g. a legacy upstream).
-    ``cacheScope`` is ``"public"`` only if the upstream said so *and* the gateway's own
-    visibility for the resource is public;
+    ``cacheScope`` is always ``"private"``: the response was authorized, and possibly
+    rewritten by post-fetch plugins, for one principal, so a shared cache must never
+    serve it to another, whatever the upstream or the resource's visibility says.
 
     Args:
         result: The SDK ``ReadResourceResult`` returned by the upstream.
-        resource: The gateway's resource row (for its ``visibility``), or None.
     """
-    ttl_ms = getattr(result, "ttl_ms", 0) or 0
-    upstream_public = getattr(result, "cache_scope", "private") == "public"
-    gateway_public = getattr(resource, "visibility", None) == "public"
-    upstream_read_cache_var.set({"ttl_ms": int(ttl_ms), "cache_scope": "public" if upstream_public and gateway_public else "private"})
+    ttl_ms = getattr(result, "ttl_ms", 0)
+    upstream_read_cache_var.set({"ttl_ms": ttl_ms if isinstance(ttl_ms, int) and ttl_ms > 0 else 0, "cache_scope": "private"})
 
 
 async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
@@ -2100,7 +2098,7 @@ class ResourceService(BaseService):
                             for attempt in range(1, max_read_attempts + 1):
                                 try:
                                     resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                    _set_upstream_cache_directive(resource_response, resource_obj)
+                                    set_upstream_cache_directive(resource_response)
                                     return getattr(getattr(resource_response, "contents")[0], "text")
                                 except Exception as exc:
                                     if attempt == max_read_attempts:
@@ -2276,6 +2274,7 @@ class ResourceService(BaseService):
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as client:
                                         resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        set_upstream_cache_directive(resource_response)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -2611,7 +2610,7 @@ class ResourceService(BaseService):
                                 transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
                                 result = await _read_resource_with_meta(client.session, uri, meta_data)
-                                _set_upstream_cache_directive(result, resource_db)
+                                set_upstream_cache_directive(result)
 
                                 # Build the FINAL content shape (ResourceContent) directly: the
                                 # proxied read already returned the resolved content, so the

@@ -414,6 +414,33 @@ class TestConnectivity:
         assert received == [], f"modern client received log notifications: {received}"
         print(f"    -> Modern capabilities: {sorted(raw_result['capabilities'])}")
 
+    @skip_no_modern_inbound
+    async def test_modern_cacheable_results_carry_ttl_and_private_scope(self, jwt_token: str, mcp_url: str) -> None:
+        """2026-era discover, lists and reads carry ttlMs and cacheScope=private (issue #6627)."""
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        transport = streamable_http_client(mcp_url, http_client=http_client)
+        async with Client(transport, mode="2026-07-28", cache=None) as modern_client:
+            discover = await modern_client.session.send_discover("2026-07-28")
+            assert discover.get("cacheScope") == "private", f"discover cacheScope: {discover}"
+            assert isinstance(discover.get("ttlMs"), int) and discover["ttlMs"] > 0, f"discover ttlMs: {discover}"
+
+            for name, listing in (
+                ("tools", await modern_client.list_tools()),
+                ("prompts", await modern_client.list_prompts()),
+                ("resources", await modern_client.list_resources()),
+            ):
+                assert listing.cache_scope == "private", f"{name}/list cacheScope: {listing.cache_scope}"
+                # Lists are good for the catalog's refresh interval, which is at least the 60s minimum.
+                assert listing.ttl_ms >= 60_000, f"{name}/list ttlMs: {listing.ttl_ms}"
+
+            resources = (await modern_client.list_resources()).resources
+            if resources:
+                with suppress(McpError):
+                    read = await modern_client.read_resource(resources[0].uri)
+                    assert read.cache_scope == "private", f"resources/read cacheScope: {read.cache_scope}"
+                    assert read.ttl_ms >= 0, f"resources/read ttlMs: {read.ttl_ms}"
+        print(f"    -> discover ttlMs={discover['ttlMs']} cacheScope={discover['cacheScope']}")
+
     async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""
         tools = (await client.list_tools()).tools
