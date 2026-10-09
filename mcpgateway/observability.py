@@ -979,11 +979,15 @@ class OpenTelemetryRequestMiddleware:
 
         try:
             span_context_manager = _TRACER.start_as_current_span(span_name, **start_span_kwargs)
-        except TypeError:
+        except TypeError as exc:
             # Some tracer implementations (e.g. Instana < 3.12) don't accept the
             # `context` keyword argument even though it is part of the
-            # OpenTelemetry Tracer API. Retry without an explicit parent context
-            # so tracer incompatibilities never break inbound requests.
+            # OpenTelemetry Tracer API. Retry only for that known incompatibility;
+            # unrelated TypeErrors must retain their original behavior.
+            error_message = str(exc)
+            rejected_context = "context" in start_span_kwargs and "unexpected keyword argument" in error_message and ("'context'" in error_message or '"context"' in error_message)
+            if not rejected_context:
+                raise
             compatible_kwargs = {key: value for key, value in start_span_kwargs.items() if key != "context"}
             span_context_manager = _TRACER.start_as_current_span(span_name, **compatible_kwargs)
             logger.debug(
