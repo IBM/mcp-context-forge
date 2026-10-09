@@ -134,6 +134,84 @@ won't fail catastrophically on a clean checkout — it just collects and skips.
 The opt-in subsuites are still the right entry point when you actually want
 to run them against a stack you've started.
 
+## Pre-provisioned users with external IdP authentication
+
+`sso/test_preprovisioned_idp_auth.py` validates issue #6583 against real HTTPS Keycloak and gateway
+processes. It creates unique, email-verified Keycloak users and provisions matching gateway accounts
+through `POST /v1/admin/users/sso`. It obtains access tokens through Keycloak's password grant;
+it does not use browser Admin UI login. A missing-account control verifies that bearer authentication
+does not create users when `auto_create_users=false`.
+
+Use the HTTPS setup in `sso/test_external_idp_rest_auth_e2e.py`. Export matching issuer/client values
+for the gateway and tests: `KEYCLOAK_URL`, `KEYCLOAK_INTERNAL_URL`, `KEYCLOAK_REALM`,
+`KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, and `SSL_CERT_FILE`. The issuer and JWKS URLs
+must use HTTPS. Provide Keycloak administrator access through `KEYCLOAK_ADMIN` and
+`KEYCLOAK_ADMIN_PASSWORD`, plus the gateway's `JWT_SECRET_KEY` and `PLATFORM_ADMIN_EMAIL`.
+Set `SSO_TEST_DATABASE_URL` to the isolated gateway database. Functional checks use HTTP/MCP.
+Teardown uses this database only to remove the fixture users' membership-history references before
+deleting accounts through the API. It verifies each account exists in that database first.
+
+Export these settings before starting the isolated gateways and pytest:
+
+```bash
+export MCPGATEWAY_ADMIN_API_ENABLED=true EMAIL_AUTH_ENABLED=true
+export SSO_ENABLED=true SSO_KEYCLOAK_ENABLED=true SSO_API_TOKEN_AUTH_ENABLED=true
+export SSO_ALLOW_PROVIDER_LINKING=false EXTERNAL_IDENTITY_CACHE_TTL=2
+export SSO_AUTO_ADMIN_DOMAINS='[]'
+export AUTH_CACHE_ENABLED=false AUTH_CACHE_TEAMS_ENABLED=false REGISTRY_CACHE_ENABLED=false
+```
+
+Set the same cache/auth settings in the pytest environment. Configure the gateway's
+`SSO_KEYCLOAK_BASE_URL`, realm, and client values to match Keycloak. `SSO_TEST_PROVIDER_ID` defaults
+to the bootstrapped `keycloak` provider. A local HTTPS IdP can require a test-only localhost egress
+allowance; retain normal HTTPS certificate verification.
+
+For flag-disabled coverage, start a second gateway with the same database, JWT secret, encryption
+secret, SSO settings, and trusted certificate. Set only its `SSO_USER_PROVISIONING_API_ENABLED=false`
+and give it a separate port. Tests create users through the primary gateway, then verify `404` for
+provisioning POSTs and successful REST/MCP authentication through the second gateway.
+Neither gateway starts or restarts from inside pytest. Start each in a separate terminal with the
+exported settings and the same isolated `DATABASE_URL`:
+
+```bash
+SSO_USER_PROVISIONING_API_ENABLED=true uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8080
+SSO_USER_PROVISIONING_API_ENABLED=false uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8081
+```
+
+Use Compose overrides to pass these settings when using containers. Host exports alone do not
+override settings omitted from the Compose service's environment.
+
+```bash
+MCP_CLI_BASE_URL=http://127.0.0.1:8080 \
+SSO_PROVISIONING_DISABLED_BASE_URL=http://127.0.0.1:8081 \
+SSO_API_TOKEN_AUTH_ENABLED=true EXTERNAL_IDENTITY_CACHE_TTL=2 AUTH_CACHE_ENABLED=false \
+uv run pytest tests/live_gateway/sso/test_preprovisioned_idp_auth.py -v -rs
+```
+
+The suite temporarily changes the bootstrapped provider's auto-creation, trust, audience,
+domain, and mapping settings. It restores these fields and removes its unique audience mapper
+on teardown. It also removes its users, roles, team, tool, virtual server, and mismatch provider.
+Run serially, without xdist, and do not run another suite against the shared provider/client
+until teardown completes. The fixture rejects parallel execution.
+
+REST checks use `GET /v1/tools` and assert the protected tool's UUID. MCP checks initialize a real
+SDK session at `/servers/{id}/mcp/`, call `tools/list`, and assert the corresponding tool name.
+The fixture virtual server is public and OAuth-enabled, with the Keycloak issuer and test audience.
+Its associated tool belongs to a dedicated non-personal team. Tests remove automatic
+onboarding/membership roles before assigning explicit DB permissions. REST requires `tools.read`;
+MCP initialization requires `servers.use`. A separate `tools/call` denial checks `tools.execute`
+without contacting the tool URL. Revocation tests remove the DB read and transport grants.
+
+The external identity cache stores synthesized identities per token. Its configured TTL can delay
+refresh of cached identity/team information; this suite does not change that behavior. Role/team
+mutation cases reuse the same unexpired token after the fixed TTL. Active-user and RBAC checks
+also run independently of that cache. Tests never update a provider merely to invalidate identity
+caches. Separate auth/registry caches are disabled to keep the observation window controlled.
+
+HTTPS/IdP prerequisites follow the live suite's opt-in skip conventions. Missing
+`SSO_PROVISIONING_DISABLED_BASE_URL` skips only the second-gateway case. Export it and run both
+gateways to exercise every acceptance criterion.
+
 ## Adding new tests
 
 ### SSO user provisioning API
