@@ -2424,7 +2424,16 @@ class TestGatewayEndpoints:
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
     def test_create_gateway_accepts_private_key_jwt_config(self, mock_create, test_client, auth_headers):
-        """Valid private_key_jwt config passes schema validation and reaches the service."""
+        """Schema layer accepts a private_key_jwt config and forwards it to the service.
+
+        The private key here is opaque placeholder text, not real PEM. This asserts
+        only that the schema's string/presence/type checks pass and that the parsed
+        fields reach the service; ``register_gateway`` is mocked, so no key parsing
+        happens. Deep PEM validation is covered in
+        ``test_gateway_private_key_jwt_validation.py``, and
+        ``test_create_gateway_rejects_malformed_private_key`` asserts the unmocked
+        rejection path.
+        """
         mock_create.return_value = MOCK_GATEWAY_READ
         req = {
             "name": "test_gateway",
@@ -2444,6 +2453,123 @@ class TestGatewayEndpoints:
         assert parsed.oauth_config["token_endpoint_auth_method"] == "private_key_jwt"
         assert parsed.oauth_config["token_endpoint_auth_signing_alg"] == "ES256"
         assert parsed.oauth_config["private_key_jwt_kid"] == "kid-1"
+
+    def test_create_gateway_rejects_malformed_private_key(self, test_client, auth_headers):
+        """POST /gateways returns 400 for a private_key that is not parseable PEM.
+
+        Deliberately does not mock ``register_gateway``: the service-layer validator
+        is the only layer that can tell raw PEM from a masked placeholder or stored
+        ciphertext, so the rejection must be exercised through it. Pinning 400 here
+        keeps a later refactor from quietly turning this into a 500.
+        """
+        req = {
+            "name": "malformed_pk_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "client_id": "client-1",
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": "private_key_jwt",
+                "private_key": "dummy-private-key-material",  # pragma: allowlist secret
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 400
+        # The handler returns a generic message; the key must never be echoed back.
+        assert "dummy-private-key-material" not in response.text
+
+    def test_create_gateway_rejects_undersized_rsa_key(self, test_client, auth_headers):
+        """POST /gateways returns 400 for an RSA key below the JWS minimum.
+
+        RFC 7518 Sections 3.3 and 3.5 require at least 2048 bits. PyJWT only
+        warns on a smaller key and signs a verifiable assertion anyway, so the
+        rejection has to happen here rather than at the provider.
+        """
+        # Third-Party
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        undersized = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        pem = undersized.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+        req = {
+            "name": "undersized_pk_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "client_id": "client-1",
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": "private_key_jwt",
+                "private_key": pem,
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 400
+        assert "BEGIN" not in response.text
+
+    def test_create_gateway_rejects_masked_private_key(self, test_client, auth_headers):
+        """POST /gateways returns 400 for the masked placeholder.
+
+        On create there is no stored key to preserve, and the storage helper turns
+        the placeholder into ``None``, so the gateway would persist unable to
+        sign. Authorization-code gateways defer their first token fetch, so
+        registration would otherwise look successful.
+        """
+        # First-Party
+        from mcpgateway.config import settings
+
+        req = {
+            "name": "masked_pk_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "client_id": "client-1",
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": "private_key_jwt",
+                "private_key": settings.masked_auth_value,
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize("method", ["", "   "])
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_accepts_legacy_empty_auth_method(self, mock_create, method, test_client, auth_headers):
+        """An empty or whitespace-only method is the legacy POST default, not an error.
+
+        The schema previously compared the raw string and returned 422, while the
+        runtime defaulted the same value to ``client_secret_post``. A working
+        configuration broke the moment a client resubmitted it.
+        """
+        mock_create.return_value = MOCK_GATEWAY_READ
+        req = {
+            "name": "legacy_method_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "grant_type": "client_credentials",
+                "client_id": "client-1",
+                "client_secret": "secret-1",  # pragma: allowlist secret
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": method,
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 200, response.text
+
+    @pytest.mark.parametrize("method", [["private_key_jwt"], {"m": "x"}, 123])
+    def test_create_gateway_rejects_non_string_auth_method_with_422(self, method, test_client, auth_headers):
+        """A list, dict, or int method must not reach set membership (CWE-20).
+
+        An unhashable value raised TypeError there, which surfaced as a 500
+        instead of a validation error.
+        """
+        req = {
+            "name": "bad_method_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "client_id": "client-1",
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": method,
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 422, response.text
 
     @pytest.mark.parametrize(
         "oauth_config",
