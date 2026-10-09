@@ -194,8 +194,11 @@ override settings omitted from the Compose service's environment.
 MCP_CLI_BASE_URL=http://127.0.0.1:8080 \
 SSO_PROVISIONING_DISABLED_BASE_URL=http://127.0.0.1:8081 \
 SSO_API_TOKEN_AUTH_ENABLED=true EXTERNAL_IDENTITY_CACHE_TTL=2 AUTH_CACHE_ENABLED=false \
-uv run pytest tests/live_gateway/sso/test_preprovisioned_idp_auth.py -v -rs
+uv run pytest tests/live_gateway/sso/test_preprovisioned_idp_auth.py --allow-external-db -v -rs
 ```
+
+Use `--allow-external-db` only with the isolated test database. The shared test bootstrap disables
+external IdP authentication without this explicit opt-in, which makes these live cases skip.
 
 The suite temporarily changes the bootstrapped provider's auto-creation, trust, audience,
 domain, and mapping settings. It restores these fields and removes its unique audience mapper

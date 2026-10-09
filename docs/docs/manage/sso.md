@@ -520,6 +520,10 @@ authentication or body validation. This early response bypasses inner middleware
 can differ from an ordinary routed `404`. Other methods retain their existing behavior.
 There is no unversioned provisioning POST alias.
 
+The provisioning flag leaves local auth, Admin UI creation, browser SSO/JIT, and existing external
+IdP authentication unchanged. An already-created SSO user can authenticate when
+`SSO_USER_PROVISIONING_API_ENABLED=false`, provided the existing authentication configuration permits it.
+
 The caller needs `admin.user_management`. API-token permission restrictions apply independently
 of the caller's admin status; empty token permissions inherit RBAC permissions at runtime.
 Bearer-only requests do not require CSRF tokens. Requests carrying session cookies require a
@@ -532,18 +536,154 @@ curl --request POST "$GATEWAY_URL/v1/admin/users/sso" \
   --data '{"email":"user@example.com","auth_provider":"keycloak","full_name":"Example User"}'
 ```
 
-The provider must exist as an enabled SSO provider. `azure-ad` is accepted as an alias for `entra`;
-custom configured provider IDs are supported. Optional `is_admin` and `is_active` default to
-`false` and `true`, respectively. Authorized callers can set `is_admin=true`, matching existing
-administrator user creation.
+Optional `is_admin` and `is_active` default to `false` and `true`, respectively. Authorized callers
+can set `is_admin=true`, matching existing administrator user creation.
 
 Successful creation returns `201` with `EmailUserResponse`. The account has no password hash,
 is not email-verified, and does not require a password change. Provisioning deliberately bypasses
 browser JIT policies such as automatic creation, trusted-domain checks, and pending approval.
-Existing browser login and local-password creation paths are unchanged.
+
+### Provider identifiers
+
+The provider must exist as an enabled `SSOProvider` row. Use its configured `id`, such as `keycloak`,
+`google`, or a custom provider ID, rather than its name or display name. Input IDs are trimmed and
+lowercased before lookup. `azure-ad`, including case variants such as `AZURE-AD`, maps to the canonical
+ID `entra`; the account stores and the response returns `auth_provider="entra"`. The configured
+`entra` provider must be enabled for that alias to succeed.
+
+List enabled provider IDs with `GET /v1/auth/sso/providers`. Administrators can inspect all configured
+rows with `GET /v1/auth/sso/admin/providers`, subject to provider-management permissions.
+See [Provider configuration](#provider-configuration) for provider setup.
+
+### Enterprise onboarding without Admin UI login
+
+1. Configure an enabled provider and enable the provisioning API with the three startup flags above.
+2. Create the user through `POST /v1/admin/users/sso` using an administrator token.
+3. Inspect the created account and its role/team assignments before granting additional access.
+4. Configure external-token authentication for the intended REST or MCP endpoint.
+5. Obtain an access token from the IdP through the supported IDE/client login flow and send it as
+   `Authorization: Bearer <access_token>`. The user does not need browser Admin UI login.
+
+Creation attempts the configured default global role and, when `AUTO_CREATE_PERSONAL_TEAMS=true`,
+a personal team with its owner role. These onboarding operations are best-effort: `201` confirms
+the account exists, not that every role/team assignment succeeded. Check
+`GET /v1/rbac/users/{user_email}/roles` and the relevant team membership before relying on access.
+Use the existing [RBAC](rbac.md#permission-system) and [team-management APIs](teams.md) to assign
+the required permissions and memberships. A valid IdP token alone does not grant protected actions.
+
+#### REST bearer-token prerequisites
+
+Enable `SSO_API_TOKEN_AUTH_ENABLED=true` and set the provider's `trusted_for_api_auth=true` and
+`api_audience` to an audience present in the IdP access token. Configure HTTPS issuer/JWKS URLs.
+See [External IdP bearer authentication](#machine-to-machine-api-auth-with-external-idp-tokens)
+for provider trust and audience configuration.
+
+For a pre-provisioned human user, configure the token's `email` claim to match the provisioned email
+after normalization and include `email_verified=true`. The REST SSO resolution path still checks
+the IdP verification claim even though the account already exists; changing the local account's
+verification flag does not replace that claim. If the provider has a non-empty `trusted_domains`
+list, the email domain must appear in it. The account must be active and bound to the same provider
+under the existing linking policy.
+
+This workflow works with provider `auto_create_users=false`: the account already exists, so no
+JIT account creation is required. Authentication still runs the existing SSO normalization and
+policy checks. Provider mappings can update DB access state on an uncached authentication pass;
+see the [Role-sync caveat](#role-sync-caveat). Configure role, team, and admin-group mappings
+to match the intended access policy rather than assuming manual assignments suppress mapping.
+Same-provider login preserves API-origin administrator grants; SSO-managed privileges continue
+to follow the existing mapping rules.
+
+The external-identity cache can reuse a resolved principal until `EXTERNAL_IDENTITY_CACHE_TTL`
+expires. Allow for that window when checking changes with the same token; see
+[Identity caching](#identity-caching) and the existing authentication-cache configuration.
+
+#### MCP and IDE virtual-server configuration
+
+For an IdP-issued token on Streamable HTTP, connect the client to
+`/servers/{server_id}/mcp/` for an OAuth-enabled virtual server. Configure the server with:
+
+```json
+{
+  "oauth_enabled": true,
+  "oauth_config": {
+    "authorization_servers": ["https://idp.example.com/realms/company"],
+    "resource": "https://gateway.example.com/servers/SERVER_ID/mcp"
+  }
+}
+```
+
+Use the configured IdP issuer in `authorization_servers` and an expected `resource` audience that
+matches the token's `aud`; replace `SERVER_ID` with the virtual server's ID. Configure the IdP's
+audience mapping accordingly. See [OAuth resource configuration](oauth-resource-configuration.md)
+and [protected resource metadata](../architecture/rfc9728-compliance.md#implementation).
+
+This MCP OAuth path verifies the server's issuer allowlist and audience, then resolves an existing
+active DB user and its DB-backed access. The REST provider-trust flags alone do not configure this
+virtual-server path. Plain `/mcp` has no per-server OAuth configuration and rejects IdP-issued
+tokens under the default internal-issuer verification setting. Provisioning API availability
+does not control authentication of an already-created user on a configured virtual server.
+
+### Directory sync through repeated single-user calls
+
+Submit one `POST /v1/admin/users/sso` per directory user. Each call has an independent outcome;
+earlier successful calls remain committed when a later call fails. This is not atomic bulk
+provisioning, an upsert API, or SCIM synchronization.
+
+For example, put one request object per line in `directory-users.jsonl`, then record each result:
+
+```python
+import json
+import os
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+endpoint = os.environ["GATEWAY_URL"].rstrip("/") + "/v1/admin/users/sso"
+headers = {
+    "Authorization": "Bearer " + os.environ["MCPGATEWAY_BEARER_TOKEN"],
+    "Content-Type": "application/json",
+}
+with open("directory-users.jsonl", encoding="utf-8") as users:
+    with open("provisioning-results.jsonl", "a", encoding="utf-8") as results:
+        for line in users:
+            user = json.loads(line)
+            request = Request(endpoint, data=json.dumps(user).encode("utf-8"), headers=headers, method="POST")
+            try:
+                with urlopen(request, timeout=30) as response:
+                    status = response.status
+            except HTTPError as error:
+                status = error.code
+            except (URLError, TimeoutError):
+                status = "transport-error"
+            results.write(json.dumps({"email": user["email"], "status": status}) + "\n")
+```
+
+`201` means the account was created. `409` means the email already exists and its account remains
+unchanged; it does not update the name, provider binding, permissions, or active status. Inspect
+the account with `GET /v1/auth/email/admin/users/{user_email}`. Use the existing
+`PATCH /v1/auth/email/admin/users/{user_email}` endpoint for supported updates, including
+`{"is_active":false}` to deactivate an account. This update endpoint does not rebind its SSO provider.
+For administrator status changes, see [Password and administrator management](password-management.md).
+Inspect an account after a transport error before deciding whether to retry: the server can have
+committed creation even when the client did not receive the response.
+
+### Provisioning logs and registration records
+
+Successful API provisioning emits an actor/target message at INFO. The default `LOG_LEVEL=ERROR`
+filters out that message; set `LOG_LEVEL=INFO` when those messages are required. Onboarding role
+grants that succeed record the provisioning administrator in `UserRole.granted_by`. This describes
+the default global and optional personal-team owner grants, not later role assignments.
+
+The service attempts a generic `EmailAuthEvent` registration row with best-effort writes.
+Event-write failure does not turn a committed account into a failed creation result. The service
+rolls back the event write and logs a WARNING, subject to the configured logging level.
+Administrators with `admin.user_management` can read existing rows through
+`GET /v1/auth/email/admin/events?user_email=user@example.com`. A missing registration row does not
+prove the account was not created. Check the account and its actual grants separately.
+
+### Provisioning response codes
 
 | Condition | Response |
-|-----------|----------|
+| --------- | -------- |
 | Unsupported or missing Content-Type | `415` |
 | Empty or malformed JSON with JSON Content-Type | `400`, `Invalid JSON in request body` |
 | Any `password` key, including `null` | `400`, `password not allowed for SSO users` |
@@ -824,7 +964,12 @@ curl -I https://api.github.com/user
 
 ## Machine-to-machine API auth with external IdP tokens
 
-In addition to browser-based SSO login, ContextForge can accept access tokens issued directly by a trusted external SSO provider as `Bearer` credentials on API and MCP endpoints — alongside the internally-minted JWTs from `/auth/login` and the SSO callback flows. This lets service accounts and automation clients authenticate to ContextForge using tokens obtained directly from the IdP (typically via `client_credentials`), without ever performing a browser login.
+ContextForge can accept access tokens issued directly by a trusted external SSO provider as
+`Bearer` credentials on REST endpoints that use the shared SSO authentication path. These tokens
+work alongside internally minted JWTs from `/auth/login` and SSO callbacks. Service accounts and
+automation clients can obtain tokens directly from the IdP, typically through `client_credentials`,
+without browser login. MCP virtual servers use the separate
+[per-server OAuth configuration](#mcp-and-ide-virtual-server-configuration) described above.
 
 This is opt-in at two levels:
 
@@ -872,11 +1017,15 @@ A successful external-identity resolution is cached per-token (keyed by a hash o
 !!! warning "Revocation caveat"
     ContextForge cannot revoke an external token early — it remains valid until the IdP's own expiry, regardless of `EXTERNAL_IDENTITY_CACHE_TTL`. Only local user-deactivation and team-membership changes (checked against the local DB on every request) take effect immediately. Use short-lived tokens at the IdP for service accounts that may need to be revoked quickly.
 
+### Role-sync caveat
+
 !!! warning "Role-sync caveat"
     If role-sync/group-mapping is enabled for the provider, a loose group/role → team or admin mapping at the IdP grants broad access to ContextForge continuously, for every token that IdP issues with that claim. Keep mappings conservative and audit them regularly.
 
 !!! note "ID tokens are rejected"
-    Only OAuth2 access tokens are accepted for API/MCP auth. ID tokens (which assert authentication, not authorization) fail validation with `external-idp auth denied: token validation failed`.
+    This REST authentication path accepts only OAuth2 access tokens. ID tokens, which assert
+    authentication rather than authorization, fail validation with
+    `external-idp auth denied: token validation failed`.
 
 See also: [Keycloak M2M setup](sso-keycloak-tutorial.md#machine-to-machine-service-account-api-access), [Entra ID M2M setup](sso-microsoft-entra-id-tutorial.md), [Generic OIDC](sso-generic-oidc-tutorial.md), and [OAuth troubleshooting](oauth-troubleshooting.md#external-idp-bearer-token-rejected-on-apimcp).
 
