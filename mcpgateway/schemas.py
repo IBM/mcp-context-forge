@@ -8989,7 +8989,7 @@ class ObservabilitySpanBase(BaseModel):
     start_time: datetime = Field(..., description="Span start timestamp")
     end_time: Optional[datetime] = Field(None, description="Span end timestamp")
     duration_ms: Optional[float] = Field(None, description="Span duration in milliseconds")
-    status: str = Field("unset", description="Span status (unset, ok, error)")
+    status: str = Field("unset", description="Span status (unset, ok, error, cancelled)")
     status_message: Optional[str] = Field(None, description="Status message")
     attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Span attributes")
     resource_name: Optional[str] = Field(None, description="Resource name")

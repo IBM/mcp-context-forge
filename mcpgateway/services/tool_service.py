@@ -5715,7 +5715,7 @@ class ToolService(BaseService):
         request_state: Optional[str] = None,
     ) -> ToolResult:
         """
-        Invoke a registered tool and record execution metrics.
+        Invoke a registered tool and record execution metrics, except for a call cancelled in flight.
 
         Args:
             db: Database session.
@@ -5759,6 +5759,8 @@ class ToolService(BaseService):
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
+            asyncio.CancelledError: Propagated unchanged. A call cancelled before an upstream
+                result exists logs at INFO and records no execution metric.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -6040,6 +6042,7 @@ class ToolService(BaseService):
 
         start_time = time.monotonic()
         success = False
+        cancelled = False
         error_message = None
         tool_result: Optional[ToolResult] = None
         tool_team_scope = format_trace_team_scope(token_teams)
@@ -7664,6 +7667,8 @@ class ToolService(BaseService):
                 raise
             except asyncio.CancelledError:
                 # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
+                # Once an upstream result exists, its success or failure stays the recorded outcome.
+                cancelled = tool_result is None
                 raise
             except ToolInputRequired:
                 # 2026 MRTR control flow, not a failure - let the transport handle it.
@@ -7751,10 +7756,11 @@ class ToolService(BaseService):
                     try:
                         observability_service.end_span(
                             span_id=db_span_id,
-                            status="ok" if success else "error",
+                            status="cancelled" if cancelled else ("ok" if success else "error"),
                             status_message=error_message if error_message else None,
                             attributes={
                                 "success": success,
+                                "cancelled": cancelled,
                                 "duration_ms": duration_ms,
                             },
                         )
@@ -7766,6 +7772,7 @@ class ToolService(BaseService):
                 # Add final span attributes for OpenTelemetry
                 if span:
                     set_span_attribute(span, "success", success)
+                    set_span_attribute(span, "cancelled", cancelled)
                     set_span_attribute(span, "duration.ms", duration_ms)
                     if success and tool_result and is_output_capture_enabled("tool.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(tool_result))
@@ -7773,8 +7780,9 @@ class ToolService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 # PHASE 4: Record metrics via buffered service (batches writes for performance)
                 # ═══════════════════════════════════════════════════════════════════════════
-                # Only record metrics if tool_id is valid (skip for direct_proxy mode)
-                if tool_id:
+                # Only record metrics if tool_id is valid (skip for direct_proxy mode).
+                # ToolMetric and ServerMetric have no cancelled outcome, so a cancellation records no metric.
+                if tool_id and not cancelled:
                     try:
                         metrics_buffer.record_tool_metric(
                             tool_id=tool_id,
@@ -7788,7 +7796,7 @@ class ToolService(BaseService):
                 # Record server metrics ONLY when invoked through a specific virtual server
                 # When server_id is provided, it means the tool was called via a virtual server endpoint
                 # Direct tool calls via /rpc should NOT populate server metrics
-                if tool_id and server_id:
+                if tool_id and server_id and not cancelled:
                     try:
                         # Record server metric only for the specific virtual server being accessed
                         metrics_buffer.record_server_metric(
@@ -7801,7 +7809,17 @@ class ToolService(BaseService):
                         logger.warning("Failed to record server metric: %s", metric_error)
 
                 # Log structured message with performance tracking (using local variables)
-                if success:
+                if cancelled:
+                    structured_logger.info(
+                        f"Tool '{name}' invocation cancelled",  # noqa: G004
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=tool_id,
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "cancelled": True},
+                    )
+                elif success:
                     structured_logger.info(
                         f"Tool '{name}' invoked successfully",  # noqa: G004
                         user_id=app_user_email,
