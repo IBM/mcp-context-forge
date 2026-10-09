@@ -2936,6 +2936,89 @@ class TestListServerPrompts:
         assert mock_prompt.team == "Engineering"
 
     @pytest.mark.asyncio
+    async def test_gateway_backed_prompt_template_fetched_live(self, prompt_service):
+        """Gateway-backed prompts with an empty local template must have their
+        content fetched live from the upstream gateway, mirroring the
+        ``_should_fetch_gateway_prompt`` / ``_fetch_gateway_prompt_result`` behaviour
+        already used by ``get_prompt()`` for the single-prompt endpoint
+        (issue #6440). A custom (non-gateway) prompt's local template must be
+        left untouched.
+        """
+        db = MagicMock()
+
+        gateway_prompt = MagicMock()
+        gateway_prompt.team_id = None
+        gateway_prompt.gateway_id = "gw-1"
+        gateway_prompt.template = ""
+
+        local_prompt = MagicMock()
+        local_prompt.team_id = None
+        local_prompt.gateway_id = None
+        local_prompt.template = "Local template text"
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [gateway_prompt, local_prompt]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        remote_result = PromptResult(
+            messages=[Message(role=Role.USER, content=TextContent(type="text", text="Live upstream content"))],
+            description="Overview of all GitHub tools",
+        )
+        prompt_service._fetch_gateway_prompt_result = AsyncMock(return_value=remote_result)
+
+        read_by_prompt = {}
+
+        def _fake_convert(prompt, include_metrics=False):
+            read = MagicMock()
+            read.template = prompt.template
+            read_by_prompt[id(prompt)] = read
+            return read
+
+        prompt_service.convert_prompt_to_read = MagicMock(side_effect=_fake_convert)
+
+        await prompt_service.list_server_prompts(db, "server-1")
+
+        prompt_service._fetch_gateway_prompt_result.assert_awaited_once_with(gateway_prompt, None, meta_data=None)
+        assert read_by_prompt[id(gateway_prompt)].template == "Live upstream content"
+        # Local (non-gateway) prompt's template must be untouched.
+        assert read_by_prompt[id(local_prompt)].template == "Local template text"
+
+    @pytest.mark.asyncio
+    async def test_gateway_backed_prompt_fetch_failure_leaves_template_empty(self, prompt_service):
+        """A failed upstream fetch for one gateway-backed prompt must not break the
+        listing, and must leave that prompt's template as the empty string it
+        already was (graceful degradation, not a 500)."""
+        db = MagicMock()
+
+        gateway_prompt = MagicMock()
+        gateway_prompt.team_id = None
+        gateway_prompt.gateway_id = "gw-1"
+        gateway_prompt.template = ""
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [gateway_prompt]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        prompt_service._fetch_gateway_prompt_result = AsyncMock(side_effect=PromptError("upstream unreachable"))
+
+        read_by_prompt = {}
+
+        def _fake_convert(prompt, include_metrics=False):
+            read = MagicMock()
+            read.template = prompt.template
+            read_by_prompt[id(prompt)] = read
+            return read
+
+        prompt_service.convert_prompt_to_read = MagicMock(side_effect=_fake_convert)
+
+        result = await prompt_service.list_server_prompts(db, "server-1")
+
+        assert len(result) == 1
+        assert read_by_prompt[id(gateway_prompt)].template == ""
+
+    @pytest.mark.asyncio
     async def test_with_token_teams_public_only(self, prompt_service):
         """token_teams=[] restricts to public-only prompts."""
         db = MagicMock()
