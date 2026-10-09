@@ -74,6 +74,15 @@ class _AssociationType(NamedTuple):
     label: str
 
 
+class _ServerAccessRecord(NamedTuple):
+    """Minimal server fields required for a Layer 1 visibility decision."""
+
+    id: str
+    visibility: str
+    team_id: Optional[str]
+    owner_email: Optional[str]
+
+
 _server_rels: dict[type[Base], Any] = {rel.mapper.class_: rel for rel in sa_inspect(DbServer).relationships if rel.mapper.class_ in set(SERVER_ASSOCIABLE_ENTITY_MODELS)}
 _LABEL_OVERRIDES: dict[type[Base], str] = {DbA2AAgent: "A2A Agent"}
 
@@ -1020,7 +1029,7 @@ class ServerService(BaseService):
     async def _check_server_access(
         self,
         db: Session,
-        server: DbServer,
+        server: Union[DbServer, _ServerAccessRecord],
         user_email: Optional[str],
         token_teams: Optional[List[str]],
         *,
@@ -1077,6 +1086,66 @@ class ServerService(BaseService):
                 return True
 
         return False
+
+    async def ensure_server_access(
+        self,
+        db: Session,
+        server_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
+        """Verify server visibility without hydrating its associated entities.
+
+        This is intended for request preflights that only need the server's
+        Layer 1 visibility decision. It deliberately avoids the resource graph
+        loading, schema conversion, and view audit emitted by :meth:`get_server`.
+
+        Args:
+            db: Database session.
+            server_id: The server identifier to authorize.
+            user_email: Effective requester email for visibility checks.
+            token_teams: Team scope from the caller token.
+
+        Raises:
+            ServerNotFoundError: If the server does not exist or is not visible
+                to the caller. Both cases use the same response to avoid
+                disclosing server existence.
+        """
+        row = db.execute(
+            select(
+                DbServer.id,
+                DbServer.visibility,
+                DbServer.team_id,
+                DbServer.owner_email,
+            ).where(DbServer.id == server_id)
+        ).one_or_none()
+        if not row:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+        server = _ServerAccessRecord(
+            id=str(row.id),
+            visibility=row.visibility,
+            team_id=row.team_id,
+            owner_email=row.owner_email,
+        )
+
+        if await self._check_server_access(db, server, user_email, token_teams):
+            return
+
+        self._structured_logger.log(
+            level="INFO",
+            message="Server access denied",
+            event_type="server_access_denied",
+            component="server_service",
+            resource_type="server",
+            resource_id=str(server.id),
+            team_id=server.team_id,
+            user_email=user_email,
+            custom_fields={
+                "visibility": server.visibility,
+                "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
+            },
+        )
+        raise ServerNotFoundError(f"Server not found: {server_id}")
 
     async def get_server(
         self,

@@ -11567,7 +11567,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             return lowered_headers
 
         _trusted_internal_mcp_dispatch = get_internal_mcp_auth_context(request) is not None
-        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        _tools_call_permission_checked = False
+        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if _trusted_internal_mcp_dispatch and request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
         if not _trusted_internal_mcp_dispatch:
             try:
@@ -11611,6 +11612,19 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
         elif _token_server_id is not None:
             server_id = _token_server_id
+
+        # Public /rpc tools/call accepts an explicit virtual-server scope. Verify
+        # resource visibility before affinity forwarding or local invocation. The
+        # trusted internal transport path enforces its own server scope and must not
+        # pay for the full server graph hydration on every MCP tool call.
+        if method == "tools/call" and server_id and not _trusted_internal_mcp_dispatch:
+            await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
+            _tools_call_permission_checked = True
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+            try:
+                await server_service.ensure_server_access(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
+            except ServerNotFoundError as exc:
+                raise JSONRPCError(-32002, f"Server not found: {server_id}", {"server_id": server_id}) from exc
 
         forwarded_response = await _maybe_forward_affinitized_rpc_request(
             request,
@@ -11821,7 +11835,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Per the MCP spec, a ping returns an empty result.
             result = {}
         elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
-            await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
+            if not _tools_call_permission_checked:
+                await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
             # Note: Multi-worker session affinity forwarding is handled earlier
             # (before method routing) to apply to ALL methods, not just tools/call
             try:
@@ -12030,6 +12045,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             oauth_user_email = get_user_email(user)
             # Get server_id from params if provided
             server_id = params.get("server_id")
+            if server_id and not _trusted_internal_mcp_dispatch:
+                server_user_email, server_token_teams = get_scoped_resource_access_context(request, user)
+                try:
+                    await server_service.ensure_server_access(db, server_id, user_email=server_user_email, token_teams=server_token_teams)
+                except ServerNotFoundError as exc:
+                    raise JSONRPCError(-32002, f"Server not found: {server_id}", {"server_id": server_id}) from exc
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
