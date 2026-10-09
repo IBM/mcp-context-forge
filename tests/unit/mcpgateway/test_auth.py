@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from cpex.framework import GlobalContext
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import pytest
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import TokenValidationError, get_current_user, get_db, get_user_team_roles, validate_token_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser
+from mcpgateway.transports.context import UserContext, user_identity_var
 from mcpgateway.transports.streamablehttp_transport import (
     _StreamableHttpAuthHandler,
     OAuthAuthResult,
@@ -6100,6 +6102,62 @@ class TestOAuthAudienceEnforcement:
 
         assert captured["expected_audience"] == "https://api.example.com"
         assert "attacker.example.com" not in str(captured["expected_audience"])
+
+
+class TestOAuthAccessTokenIdentityPropagation:
+    """IdP-issued tokens must leave the caller where identity propagation reads
+    it: ``user_identity_var`` and the request's plugin ``GlobalContext``."""
+
+    async def _authenticate(self, handler):
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            return {"sub": "user@example.com", "email": "user@example.com", "aud": "my-client-id"}
+
+        async def fake_resolve_teams(*_args, **_kwargs):
+            return ["team-a"]
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.transports.streamablehttp_transport._persist_learned_server_audience"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=MagicMock(is_active=True, is_admin=False)),
+            patch("mcpgateway.auth._resolve_teams_from_db", side_effect=fake_resolve_teams),
+        ):
+            return await handler._try_oauth_access_token(_make_idp_token())
+
+    @pytest.mark.asyncio
+    async def test_identity_set_without_plugin_global_context(self, _pinned_app_domain):
+        handler, _responses = _make_handler()
+        assert await self._authenticate(handler) is OAuthAuthResult.SUCCESS
+
+        identity = user_identity_var.get()
+        assert identity.email == "user@example.com"
+        assert identity.auth_method == "oauth_access_token"
+        assert identity.teams == ["team-a"]
+        assert handler.scope["state"]["plugin_global_context"].user_context is identity
+
+    @pytest.mark.asyncio
+    async def test_identity_added_to_existing_plugin_global_context(self, _pinned_app_domain):
+        handler, _responses = _make_handler()
+        existing = GlobalContext(request_id="req-1")
+        handler.scope["state"] = {"plugin_global_context": existing}
+        assert await self._authenticate(handler) is OAuthAuthResult.SUCCESS
+
+        assert handler.scope["state"]["plugin_global_context"] is existing
+        assert existing.user_context.email == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_existing_user_context_is_kept(self, _pinned_app_domain):
+        """A user_context injected earlier (e.g. by a get_current_user plugin hook) wins."""
+        handler, _responses = _make_handler()
+        injected = UserContext(user_id="plugin@example.com", email="plugin@example.com")
+        handler.scope["state"] = {"plugin_global_context": GlobalContext(request_id="req-1", user_context=injected)}
+        assert await self._authenticate(handler) is OAuthAuthResult.SUCCESS
+
+        assert handler.scope["state"]["plugin_global_context"].user_context is injected
 
 
 class TestPersistLearnedServerAudience:
