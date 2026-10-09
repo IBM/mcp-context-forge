@@ -977,7 +977,26 @@ class OpenTelemetryRequestMiddleware:
                             span.set_status(Status(StatusCode.OK))
             await send(message)
 
-        with _TRACER.start_as_current_span(span_name, **start_span_kwargs) as span:
+        try:
+            span_context_manager = _TRACER.start_as_current_span(span_name, **start_span_kwargs)
+        except TypeError as exc:
+            # Some tracer implementations (e.g. Instana < 3.12) don't accept the
+            # `context` keyword argument even though it is part of the
+            # OpenTelemetry Tracer API. Retry only for that known incompatibility;
+            # unrelated TypeErrors must retain their original behavior.
+            error_message = str(exc)
+            rejected_context = "context" in start_span_kwargs and "unexpected keyword argument" in error_message and ("'context'" in error_message or '"context"' in error_message)
+            if not rejected_context:
+                raise
+            compatible_kwargs = {key: value for key, value in start_span_kwargs.items() if key != "context"}
+            span_context_manager = _TRACER.start_as_current_span(span_name, **compatible_kwargs)
+            logger.debug(
+                "Tracer %r rejected `context` kwarg; started span %r without explicit parent context",
+                type(_TRACER).__name__,
+                span_name,
+            )
+
+        with span_context_manager as span:
             # No valid inbound envelope: publish this new root span's context into
             # the ASGI headers so downstream raw-header copies (session-task handoff,
             # affinity envelopes, trusted-internal dispatch) carry the trace and

@@ -7,6 +7,7 @@ Tests for observability module.
 """
 
 # Standard
+from contextlib import nullcontext
 import inspect
 import logging
 import os
@@ -830,3 +831,100 @@ class TestRequestMiddlewareTraceEnvelope:
             await middleware(scope, receive, send)
 
         assert captured["headers"] == original_headers
+
+    @pytest.mark.asyncio
+    async def test_middleware_tolerates_tracer_without_context_kwarg(self):
+        """A tracer that rejects `context=` (e.g. Instana < 3.12) must not break the request."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        scope = self._make_scope([(b"content-type", b"application/json")])
+
+        class ContextRejectingTracer:
+            """Emulates InstanaTracer < 3.12: start_as_current_span() lacks `context`."""
+
+            def __init__(self):
+                self.attempts = []
+
+            def start_as_current_span(self, _name, **kwargs):
+                self.attempts.append(sorted(kwargs))
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                return nullcontext(None)
+
+        tracer = ContextRejectingTracer()
+        mock_trace = MagicMock()
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+
+        with (
+            patch("mcpgateway.observability._TRACER", tracer),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=self._fake_inject),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        # First attempt passed the parent `context`; the compatibility fallback dropped it.
+        assert ["context", "kind"] in tracer.attempts
+        assert ["kind"] in tracer.attempts
+        # The request still completed and the trace envelope was published.
+        assert (b"traceparent", b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01") in captured["headers"]
+
+    @pytest.mark.asyncio
+    async def test_middleware_does_not_retry_type_error_without_context(self):
+        """A TypeError cannot be a context compatibility error when no context was passed."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        scope = self._make_scope()
+
+        class FailingTracer:
+            """Track calls before raising an unrelated tracer failure."""
+
+            def __init__(self):
+                self.attempts = []
+
+            def start_as_current_span(self, _name, **kwargs):
+                self.attempts.append(sorted(kwargs))
+                raise TypeError("unrelated tracer failure")
+
+        tracer = FailingTracer()
+        with (
+            patch("mcpgateway.observability._TRACER", tracer),
+            patch("mcpgateway.observability.otel_extract", return_value=None),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            with pytest.raises(TypeError, match="unrelated tracer failure"):
+                await middleware(scope, receive, send)
+
+        assert tracer.attempts == [["kind"]]
+
+    @pytest.mark.asyncio
+    async def test_middleware_does_not_swallow_unrelated_type_error_with_context(self):
+        """Only rejection of the context keyword should activate the compatibility retry."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        scope = self._make_scope()
+
+        class InternallyFailingTracer:
+            """Accept context but fail internally while creating the span."""
+
+            def __init__(self):
+                self.attempts = []
+
+            def start_as_current_span(self, _name, **kwargs):
+                self.attempts.append(sorted(kwargs))
+                if "context" in kwargs:
+                    raise TypeError("tracer implementation failed internally")
+                return nullcontext(None)
+
+        tracer = InternallyFailingTracer()
+        with (
+            patch("mcpgateway.observability._TRACER", tracer),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            with pytest.raises(TypeError, match="tracer implementation failed internally"):
+                await middleware(scope, receive, send)
+
+        assert tracer.attempts == [["context", "kind"]]
