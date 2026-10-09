@@ -233,3 +233,22 @@ def test_middleware_preserves_correlation_id_through_request_lifecycle():
     assert len(captured_ids) == 2
     assert captured_ids[0][1] == "consistent-id"  # Middleware capture
     assert captured_ids[1][1] == "consistent-id"  # Endpoint capture
+
+
+class TestResolveCorrelationIdMalformedHeaders:
+    """Direct unit coverage for the malformed-header defensive branch."""
+
+    def test_skips_malformed_header_tuples(self):
+        """A header entry that isn't a valid (bytes, bytes) 2-tuple is skipped, not raised."""
+        middleware = CorrelationIDMiddleware(app=Mock())
+        scope = {
+            "type": "http",
+            "headers": [
+                ("only-one-elem",),  # malformed: not a 2-tuple
+                (b"x-correlation-id", b"abc-123"),
+            ],
+        }
+
+        correlation_id = middleware._resolve_correlation_id(scope)
+
+        assert correlation_id == "abc-123"
