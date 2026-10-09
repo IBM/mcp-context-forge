@@ -334,6 +334,7 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 | Field       | Type                                                       | Default          | Format / Constraints           | Description                                                          |
 |-------------|------------------------------------------------------------|------------------|--------------------------------|----------------------------------------------------------------------|
 | `by_user`   | string \| null                                             | `null`           | `<int>/s` or `<int>/m`         | Rate limit per calling user; `null` disables                         |
+| `by_user_per_server` | string \| null | `null` | `<int>/s` or `<int>/m` | Per-user quota shared by tools from one upstream MCP catalog UUID |
 | `by_tenant` | string \| null                                             | `null`           | `<int>/s` or `<int>/m`         | Rate limit per tenant (team); `null` disables                        |
 | `by_tool`   | object (string → string) \| null                           | `null`           | values: `<int>/s` or `<int>/m` | Per-tool rate limits as a map of `tool_name → rate`; `null` disables |
 | `algorithm` | `"fixed_window"` \| `"sliding_window"` \| `"token_bucket"` | `"fixed_window"` | —                              | Counting algorithm to use                                            |
@@ -341,6 +342,33 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 | `fail_mode` | `"open"` \| `"closed"`                                     | `"open"`         | —                              | Behaviour when the `"redis"` backend is unreachable: `"open"` allows requests through without counting them (availability-first); `"closed"` blocks requests until Redis recovers (enforcement-first); ignored when `backend` is `"memory"` |
 
 > When `backend` is `"redis"`, the Redis connection URL is configured via `redis_url` in `plugins/config.yaml` — it is **not** a binding payload field. Gateway operators set it once at deployment time; binding-API users should not override it per-tenant.
+
+#### Opt in to per-user MCP server quotas
+
+Install `cpex-rate-limiter>=0.1.11` on every gateway replica before enabling `by_user_per_server`.
+Older packages do not enforce this option. Keep a shared Redis backend and the same prefix on all replicas.
+Set the plugin mode to `enforce` to enable enforcement; the shipped entry remains `disabled`.
+
+```yaml
+config:
+  backend: redis
+  redis_key_prefix: rl
+  algorithm: fixed_window
+  by_user: null
+  by_user_per_server: "60/m"
+  by_tenant: "3000/m"
+  by_tool: {}
+```
+
+Configure `redis_url` for the shared Redis instance as described above.
+`by_user_per_server` counts each user's calls per upstream MCP catalog UUID, within the tenant scope.
+All tools from one upstream registration share that user's quota, across sessions and gateway replicas.
+The virtual-server ID and upstream display name do not define this quota.
+Gateway-less tools use the shared `"unknown"` server scope.
+
+`by_user` remains a global user ceiling across MCP servers. When both options are set, both limits apply.
+Leave `by_user_per_server: null` to preserve existing behavior.
+`user_scope` is not an implemented configuration option; use `by_user_per_server` instead.
 
 **Validation:** Each non-null rate string must match `^\d+/[sm]$`.
 

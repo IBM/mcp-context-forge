@@ -12,6 +12,8 @@ already-extracted tool payload. Without these tests the rate limiter's
 ``by_tenant`` dimension is silently a no-op on the fallback path.
 """
 
+import pytest
+
 from cpex.framework import GlobalContext
 from mcpgateway.services.tool_service import ToolService
 
@@ -22,7 +24,6 @@ def test_build_rust_tool_hook_global_context_propagates_team_id_as_tenant_id():
 
     ctx = service._build_rust_tool_hook_global_context(
         app_user_email="alice@example.com",
-        server_id=None,
         tool_gateway_id=None,
         plugin_global_context=None,  # forces the fallback branch
         tool_payload={"team_id": "team_a", "name": "search"},
@@ -30,7 +31,7 @@ def test_build_rust_tool_hook_global_context_propagates_team_id_as_tenant_id():
         request_headers=None,
     )
 
-    assert ctx.tenant_id == "team_a", "fallback-path GlobalContext must carry tool_payload['team_id'] as tenant_id — " f"got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id == "team_a", f"fallback-path GlobalContext must carry tool_payload['team_id'] as tenant_id — got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_tenant_id_none_when_team_id_absent():
@@ -39,7 +40,6 @@ def test_build_rust_tool_hook_global_context_tenant_id_none_when_team_id_absent(
 
     ctx = service._build_rust_tool_hook_global_context(
         app_user_email="alice@example.com",
-        server_id=None,
         tool_gateway_id=None,
         plugin_global_context=None,
         tool_payload={"name": "search"},  # no team_id
@@ -47,7 +47,7 @@ def test_build_rust_tool_hook_global_context_tenant_id_none_when_team_id_absent(
         request_headers=None,
     )
 
-    assert ctx.tenant_id is None, "tenant_id must remain None when tool_payload has no team_id, " f"got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id is None, f"tenant_id must remain None when tool_payload has no team_id, got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_non_string_team_id_is_ignored():
@@ -56,7 +56,6 @@ def test_build_rust_tool_hook_global_context_non_string_team_id_is_ignored():
 
     ctx = service._build_rust_tool_hook_global_context(
         app_user_email="alice@example.com",
-        server_id=None,
         tool_gateway_id=None,
         plugin_global_context=None,
         tool_payload={"team_id": 42, "name": "search"},  # numeric, not str
@@ -64,7 +63,7 @@ def test_build_rust_tool_hook_global_context_non_string_team_id_is_ignored():
         request_headers=None,
     )
 
-    assert ctx.tenant_id is None, "Non-string team_id must not be accepted as tenant_id; " f"got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id is None, f"Non-string team_id must not be accepted as tenant_id; got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_fills_missing_existing_tenant_id():
@@ -74,7 +73,6 @@ def test_build_rust_tool_hook_global_context_fills_missing_existing_tenant_id():
 
     ctx = service._build_rust_tool_hook_global_context(
         app_user_email="alice@example.com",
-        server_id=None,
         tool_gateway_id=None,
         plugin_global_context=existing_context,
         tool_payload={"team_id": "team_a", "name": "search"},
@@ -83,7 +81,7 @@ def test_build_rust_tool_hook_global_context_fills_missing_existing_tenant_id():
     )
 
     assert ctx is existing_context
-    assert ctx.tenant_id == "team_a", "existing GlobalContext with tenant_id=None must be filled from " f"tool_payload['team_id']; got tenant_id={ctx.tenant_id!r}"
+    assert ctx.tenant_id == "team_a", f"existing GlobalContext with tenant_id=None must be filled from tool_payload['team_id']; got tenant_id={ctx.tenant_id!r}"
 
 
 def test_build_rust_tool_hook_global_context_preserves_existing_tenant_id():
@@ -98,7 +96,6 @@ def test_build_rust_tool_hook_global_context_preserves_existing_tenant_id():
 
     ctx = service._build_rust_tool_hook_global_context(
         app_user_email="alice@example.com",
-        server_id=None,
         tool_gateway_id=None,
         plugin_global_context=existing_context,
         tool_payload={"team_id": "team_payload", "name": "search"},
@@ -108,5 +105,30 @@ def test_build_rust_tool_hook_global_context_preserves_existing_tenant_id():
 
     assert ctx is existing_context
     assert ctx.tenant_id == "team_middleware", (
-        "existing GlobalContext with tenant_id already set must NOT be overwritten by " f"tool_payload['team_id']; expected 'team_middleware', got tenant_id={ctx.tenant_id!r}"
+        f"existing GlobalContext with tenant_id already set must NOT be overwritten by tool_payload['team_id']; expected 'team_middleware', got tenant_id={ctx.tenant_id!r}"
     )
+
+
+@pytest.mark.parametrize("gateway_id,expected", [("f90870e0-bbbf-4e3c-80c5-69d72a1e6e21", "f90870e0-bbbf-4e3c-80c5-69d72a1e6e21"), (None, "unknown"), ("", "unknown"), (42, "unknown")])
+@pytest.mark.parametrize("reuse", [False, True])
+def test_hook_context_uses_catalog_identity(gateway_id, expected, reuse):
+    """Use the catalog UUID across fallback and reused contexts, including gateway-less tools.
+
+    Args:
+        gateway_id: Upstream catalog identity from the tool payload.
+        expected: Expected hook server identity.
+        reuse: Whether middleware supplies an existing context.
+    """
+    service = ToolService()
+    existing = GlobalContext(request_id="session-one", server_id="previous-display-name") if reuse else None
+    context = service._build_rust_tool_hook_global_context(
+        app_user_email="alice@example.com",
+        tool_gateway_id=gateway_id,
+        plugin_global_context=existing,
+        tool_payload={"name": "search", "team_id": "team_a"},
+        gateway_payload=None,
+        request_headers=None,
+    )
+    assert context.server_id == expected
+    if reuse:
+        assert context is existing

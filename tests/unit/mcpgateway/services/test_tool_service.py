@@ -5274,13 +5274,17 @@ class TestToolService:
         session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
 
-    async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+    @pytest.mark.parametrize("gateway_id", ["f90870e0-bbbf-4e3c-80c5-69d72a1e6e21", None])
+    @pytest.mark.parametrize("reuse_context", [False, True])
+    async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db, gateway_id, reuse_context):
         """Test invoking tool with successful plugin post-invoke hook."""
         # Third-Party
-        from cpex.framework import ToolHookType
+        from cpex.framework import GlobalContext, ToolHookType
         from cpex.framework.models import PluginResult
 
         # Configure tool as REST
+        mock_tool.gateway_id = gateway_id
+        context = GlobalContext(request_id="session-id", server_id="previous-upstream-name") if reuse_context else None
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
         mock_tool.auth_value = None
@@ -5300,6 +5304,7 @@ class TestToolService:
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                assert global_context.server_id == (gateway_id or "unknown")
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
             return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=0), None)
@@ -5311,7 +5316,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "original response"}),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, plugin_global_context=context)
 
         # Verify plugin hooks were called
         assert mock_pm.invoke_hook.call_count == 2  # Pre and post invoke
