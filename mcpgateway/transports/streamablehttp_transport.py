@@ -74,7 +74,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -3327,6 +3327,7 @@ async def complete(
     ref: Union[types.PromptReference, types.ResourceTemplateReference],
     argument: types.CompleteRequest,
     context: Optional[types.CompletionContext] = None,
+    meta: Optional[types.RequestParamsMeta] = None,
 ) -> types.CompleteResult:
     """
     Provides argument completion suggestions for prompts or resources.
@@ -3338,6 +3339,7 @@ async def complete(
             position for which completion suggestions should be generated.
         context: Optional contextual information for the completion request,
             such as user, environment, or invocation metadata.
+        meta: Optional MCP request metadata.
 
     Returns:
         types.CompleteResult: A normalized completion result containing
@@ -3355,6 +3357,13 @@ async def complete(
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
+            raise PermissionError(_ACCESS_DENIED_MSG)
+        has_permission = await _check_streamable_permission(
+            user_context=user_context,
+            permission="tools.read",
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
+        )
+        if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
@@ -3379,6 +3388,8 @@ async def complete(
                 "argument": argument.model_dump() if hasattr(argument, "model_dump") else argument,
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
             }
+            if meta is not None:
+                params["_meta"] = meta.model_dump(by_alias=True) if hasattr(meta, "model_dump") else meta
 
             result = await completion_service.handle_completion(
                 db,
@@ -3419,6 +3430,13 @@ async def complete(
             # Fallback: return empty completion
             return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
+    except CompletionError as e:
+        # Surface as an MCPError instead of a silently-empty CompleteResult,
+        # matching the JSON-RPC code #6629 requires (spec §8.5). This is a
+        # deliberate behavior change: today this path fails open (the caller
+        # gets a *successful* empty completion) — a federated-forwarding
+        # failure is now visible as a proper JSON-RPC error instead.
+        raise MCPError(code=completion_error_code(e), message=str(e)) from e
     except Exception as e:
         logger.exception("Error handling completion: %s", e)
         return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
@@ -3572,7 +3590,7 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
     token = _v2_request_ctx.set(ctx)
     try:
         completion_context = getattr(params, "context", None)
-        return await complete(params.ref, params.argument, completion_context)
+        return await complete(params.ref, params.argument, completion_context, getattr(params, "meta", None))
     finally:
         _v2_request_ctx.reset(token)
 

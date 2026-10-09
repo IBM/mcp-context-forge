@@ -2,6 +2,31 @@
 
 This guide provides comprehensive examples for using ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
 
+## Completion compatibility and permission migration
+
+The release that includes [PR #6760](https://github.com/IBM/mcp-context-forge/pull/6760)
+changes authorization for `POST /protocol/completion/complete`.
+ContextForge 1.0.11 accepts authenticated callers on this endpoint without an explicit
+`tools.read` RBAC check. The new release requires `tools.read`, matching `/rpc` and
+Streamable HTTP `completion/complete`. Authentication alone no longer grants access.
+Callers without this permission receive HTTP 403 before any upstream request.
+
+Before upgrading, grant `tools.read` to each completion caller's role through the
+[RBAC role management API](rbac.md). Built-in `viewer`, `developer`, and `team_admin`
+roles already include this permission. For tokens with explicit `scope.permissions`,
+include `tools.read` when creating replacement tokens. Empty token scopes inherit
+RBAC permissions. Token visibility still limits accessible prompts and resources.
+Verify an authorized completion request and an insufficient-permission request before
+moving production callers to the new release. No database migration is required.
+
+Federated completions support both legacy `2025-11-25` and modern `2026-07-28` MCP
+negotiation. Each connection negotiates independently through the existing transport
+configuration. Completion forwarding imposes no modern-only gate; mixed-era
+connections remain eligible when the upstream advertises `completions`.
+The gateway forwards the reference, argument, context, and request `_meta` to the
+owning upstream. Local schema completion remains available for local references.
+An upstream without `completions` returns JSON-RPC `-32601` on MCP routes.
+
 ## Prerequisites
 
 Before using the API, you need to:
