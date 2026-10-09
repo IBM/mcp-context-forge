@@ -45,6 +45,7 @@ def _settings(**flags) -> SimpleNamespace:
         metrics_rollup_enabled=False,
         email_auth_enabled=False,
         sso_enabled=False,
+        sso_user_provisioning_api_enabled=False,
         llmchat_enabled=False,
         mcpgateway_admin_api_enabled=False,
     )

@@ -389,6 +389,7 @@ services:
       # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
       # ═══════════════════════════════════════════════════════════════════════════
       - SSO_ENABLED=${SSO_ENABLED:-false}
+      - SSO_USER_PROVISIONING_API_ENABLED=${SSO_USER_PROVISIONING_API_ENABLED:-false}
       - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
       - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
       - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}

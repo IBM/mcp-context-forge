@@ -326,6 +326,7 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 def build_v1_router(
     settings: Any,
     *,
+    sso_user_provisioning_enabled: bool | None = None,
     protocol_router: APIRouter,
     tool_router: APIRouter,
     resource_router: APIRouter,
@@ -346,6 +347,7 @@ def build_v1_router(
 
     Args:
         settings: Application settings instance.
+        sso_user_provisioning_enabled: Startup registration decision shared with the pre-auth gate. Defaults to the three provisioning flags.
         protocol_router: Inline protocol router from main.py.
         tool_router: Inline tools router from main.py.
         resource_router: Inline resources router from main.py.
@@ -394,6 +396,17 @@ def build_v1_router(
 
     v1_router.include_router(plugins_router)
     logger.info("Plugin discovery router included - v1 only")
+
+    if sso_user_provisioning_enabled is None:
+        sso_user_provisioning_enabled = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled and getattr(settings, "sso_user_provisioning_api_enabled", False))
+    if sso_user_provisioning_enabled:
+        # Keep provisioning v1-only and independent of the browser SSO/JIT routers.
+        # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
+        from mcpgateway.routers.sso_user_provisioning import router as sso_user_provisioning_router  # pylint: disable=import-outside-toplevel
+
+        v1_router.include_router(sso_user_provisioning_router, dependencies=[Depends(enforce_admin_csrf)])
+        logger.info("SSO user provisioning router included - v1 only")
     return v1_router
 
 

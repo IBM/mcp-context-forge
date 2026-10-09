@@ -502,6 +502,58 @@ SSO_GENERIC_USERINFO_URL=https://authentik.company.com/application/o/userinfo/
 SSO_GENERIC_ISSUER=https://authentik.company.com/application/o/mcp-gateway/
 ```
 
+## Provisioning SSO users through the API
+
+Administrators can pre-provision passwordless users with `POST /v1/admin/users/sso`.
+Enable all three startup flags:
+
+```bash
+MCPGATEWAY_ADMIN_API_ENABLED=true
+SSO_ENABLED=true
+SSO_USER_PROVISIONING_API_ENABLED=true
+```
+
+`SSO_USER_PROVISIONING_API_ENABLED` defaults to `false`. Restart the gateway after changing any of
+these flags: route registration and the disabled-route gate use the startup configuration.
+When any flag is disabled, provisioning POSTs return `404` with `{"detail":"Not Found"}` before
+authentication or body validation. This early response bypasses inner middleware, so its headers
+can differ from an ordinary routed `404`. Other methods retain their existing behavior.
+There is no unversioned provisioning POST alias.
+
+The caller needs `admin.user_management`. API-token permission restrictions apply independently
+of the caller's admin status; empty token permissions inherit RBAC permissions at runtime.
+Bearer-only requests do not require CSRF tokens. Requests carrying session cookies require a
+same-origin Origin/Referer and matching CSRF cookie/header, following existing admin protections.
+
+```bash
+curl --request POST "$GATEWAY_URL/v1/admin/users/sso" \
+  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"email":"user@example.com","auth_provider":"keycloak","full_name":"Example User"}'
+```
+
+The provider must exist as an enabled SSO provider. `azure-ad` is accepted as an alias for `entra`;
+custom configured provider IDs are supported. Optional `is_admin` and `is_active` default to
+`false` and `true`, respectively. Authorized callers can set `is_admin=true`, matching existing
+administrator user creation.
+
+Successful creation returns `201` with `EmailUserResponse`. The account has no password hash,
+is not email-verified, and does not require a password change. Provisioning deliberately bypasses
+browser JIT policies such as automatic creation, trusted-domain checks, and pending approval.
+Existing browser login and local-password creation paths are unchanged.
+
+| Condition | Response |
+|-----------|----------|
+| Unsupported or missing Content-Type | `415` |
+| Empty or malformed JSON with JSON Content-Type | `400`, `Invalid JSON in request body` |
+| Any `password` key, including `null` | `400`, `password not allowed for SSO users` |
+| Non-object JSON, missing/invalid fields, or unknown fields | Standard sanitized `422` |
+| Invalid, unconfigured, or disabled provider | `400` |
+| Existing email | `409`; the existing account is unchanged |
+
+Use `application/json`; a charset parameter such as `application/json; charset=utf-8` is accepted.
+The password-key check runs before schema validation. No bulk endpoint is provided.
+
 ## Advanced Configuration
 
 ### Trusted Domains
