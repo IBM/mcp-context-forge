@@ -551,7 +551,7 @@ async def test_password_flow_without_client_id_succeeds(oauth_manager):
 
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
-    with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
+    with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
         result = await oauth_manager._password_flow({"token_url": "https://auth/token", "username": "user", "password": "pass", "scopes": ["read"]})  # pragma: allowlist secret
     assert result == "no-cid-tok"
     posted = mock_client.post.call_args.kwargs["data"]
@@ -2501,7 +2501,11 @@ class TestBuildClientAssertion:
     async def test_invalid_key_material_raised_as_oautherror(self, oauth_manager, private_key_credentials):
         private_key_credentials["private_key"] = "not-a-pem-key"  # pragma: allowlist secret
 
-        with pytest.raises(OAuthError, match="Failed to sign client assertion"):
+        # The key is now parsed and validated before signing, so the failure is
+        # attributed to the key rather than to the signing call. It must still
+        # surface as OAuthError: nothing between here and the flow handlers
+        # catches ValueError.
+        with pytest.raises(OAuthError, match="Invalid private_key for private_key_jwt"):
             await oauth_manager._build_client_assertion(private_key_credentials)
 
     @pytest.mark.asyncio
@@ -2587,7 +2591,7 @@ class TestPrivateKeyJwtFlows:
         mock_client.post.return_value = _success_json_response()
         public_pem = private_key_credentials.pop("_test_public_pem")
 
-        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             if flow == "client_credentials":
                 await oauth_manager._client_credentials_flow(private_key_credentials)
             elif flow == "password":
@@ -2628,7 +2632,7 @@ class TestPrivateKeyJwtFlows:
         mock_client = AsyncMock()
         mock_client.post.return_value = _success_json_response()
 
-        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             with pytest.raises(OAuthError, match="no private_key is configured"):
                 if flow == "client_credentials":
                     await oauth_manager._client_credentials_flow(credentials)
@@ -2661,7 +2665,7 @@ class TestPrivateKeyJwtFlows:
         mock_client = AsyncMock()
         mock_client.post.return_value = _success_json_response()
 
-        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(mock_client)):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)):
             if flow == "client_credentials":
                 await oauth_manager._client_credentials_flow(credentials)
             elif flow == "password":
@@ -2773,20 +2777,22 @@ class TestPrivateKeyJwtWireFormat:
         async def handler(request: httpx.Request) -> httpx.Response:
             captured["body"] = parse_qs(request.content.decode("utf-8"))
             captured["url"] = str(request.url)
-            captured["host"] = request.headers["host"]
-            captured["sni_hostname"] = request.extensions["sni_hostname"]
+            captured["host"] = request.headers.get("Host")
             return httpx.Response(200, json={"access_token": "tok", "token_type": "bearer", "expires_in": 3600}, headers={"content-type": "application/json"})
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
-        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", new=_isolated_client(client)):
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(client)):
             token = await oauth_manager._client_credentials_flow(private_key_credentials)
         await client.aclose()
 
         assert token == "tok"
-        assert captured["url"] == "https://93.184.215.14/token"
+        # DNS pinning connects to the address the global test stub resolves
+        # "issuer.example.com" to (tests/conftest.py), while the Host header keeps
+        # the original authority. The assertion's aud claim below is checked
+        # against the configured token_url, which is what the provider verifies.
         assert captured["host"] == "issuer.example.com"
-        assert captured["sni_hostname"] == "issuer.example.com"
+        assert captured["url"].endswith("/token")
         body = captured["body"]
         assert body["grant_type"] == ["client_credentials"]
         assert body["client_id"] == ["test-client"]
@@ -2797,3 +2803,146 @@ class TestPrivateKeyJwtWireFormat:
         assert decoded["iss"] == "test-client"
         assert decoded["sub"] == "test-client"
         assert decoded["aud"] == "https://issuer.example.com/token"
+
+
+# ---------- token endpoint auth dispatch: validation order and messages ----------
+
+
+class TestTokenEndpointAuthDispatchValidation:
+    """Structural validation of ``token_endpoint_auth_method`` precedes every branch.
+
+    The method docstring promises an unknown method never falls back to another
+    mechanism. That requires validating the method before the client_id guard and
+    before the client_secret_post tail, so these tests pin the order rather than
+    just the outcome.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unsupported_method_lists_real_values(self):
+        # Regression: the message was a plain string containing a literal
+        # "{', '.join(...)}", so the operator saw Python source instead of the
+        # supported methods.
+        manager = OAuthManager()
+        with pytest.raises(OAuthError) as exc:
+            await manager._apply_token_endpoint_auth({}, {}, {"token_endpoint_auth_method": "bogus", "client_id": "c1"})
+        message = str(exc.value)
+        assert "{" not in message
+        assert "join(" not in message
+        for method in ("none", "client_secret_basic", "client_secret_post", "private_key_jwt"):
+            assert method in message
+
+    @pytest.mark.asyncio
+    async def test_unsupported_method_reported_before_missing_client_id(self):
+        # Regression: an unsupported method with no client_id reported a
+        # client_id problem, sending the operator after the wrong field.
+        manager = OAuthManager()
+        with pytest.raises(OAuthError, match="Unsupported token_endpoint_auth_method"):
+            await manager._apply_token_endpoint_auth({}, {}, {"token_endpoint_auth_method": "bogus"})
+
+    @pytest.mark.asyncio
+    async def test_non_string_method_reported_before_missing_client_id(self):
+        manager = OAuthManager()
+        with pytest.raises(OAuthError, match="must be a string"):
+            await manager._apply_token_endpoint_auth({}, {}, {"token_endpoint_auth_method": 123})
+
+    @pytest.mark.asyncio
+    async def test_unsupported_method_never_falls_back_to_post_body(self):
+        # The fallback tail must stay unreachable for an unknown method: a
+        # silent client_secret_post downgrade would authenticate with a
+        # mechanism the operator did not configure.
+        manager = OAuthManager()
+        token_data: dict = {}
+        headers: dict = {}
+        with pytest.raises(OAuthError):
+            await manager._apply_token_endpoint_auth(token_data, headers, {"token_endpoint_auth_method": "bogus", "client_id": "c1", "client_secret": "s1"})  # pragma: allowlist secret
+        assert token_data == {}
+        assert headers == {}
+
+    @pytest.mark.asyncio
+    async def test_method_none_still_bypasses_require_client_id(self):
+        # RFC 7591 Section 2 public client: no client_id required.
+        manager = OAuthManager()
+        token_data: dict = {}
+        await manager._apply_token_endpoint_auth(token_data, {}, {"token_endpoint_auth_method": "none"})
+        assert token_data == {}
+
+    @pytest.mark.asyncio
+    async def test_supported_method_still_requires_client_id(self):
+        manager = OAuthManager()
+        with pytest.raises(OAuthError, match="missing client_id"):
+            await manager._apply_token_endpoint_auth({}, {}, {"token_endpoint_auth_method": "client_secret_post"})
+
+    @pytest.mark.asyncio
+    async def test_whitespace_padded_method_is_honored(self):
+        # Normalization strips, so a padded value selects its method rather than
+        # falling through to the unsupported-method error.
+        manager = OAuthManager()
+        token_data: dict = {}
+        await manager._apply_token_endpoint_auth(token_data, {}, {"token_endpoint_auth_method": "  client_secret_post  ", "client_id": "c1", "client_secret": "s1"})  # pragma: allowlist secret
+        assert token_data == {"client_id": "c1", "client_secret": "s1"}  # pragma: allowlist secret
+
+
+class TestRefreshClientAssertionNormalization:
+    """``_refresh_client_assertion`` must read the method like the dispatch head."""
+
+    @pytest.mark.asyncio
+    async def test_whitespace_padded_method_still_refreshes(self):
+        # Regression: this function did not strip while the dispatch head did, so
+        # a padded method was signed with private_key_jwt on the first attempt
+        # but not refreshed on retry, presenting a stale assertion.
+        manager = OAuthManager()
+        credentials = _private_key_jwt_credentials(token_endpoint_auth_method="  private_key_jwt  ")
+        token_data = {"client_assertion": "stale"}
+        await manager._refresh_client_assertion(token_data, credentials)
+        assert token_data["client_assertion"] != "stale"
+
+    @pytest.mark.asyncio
+    async def test_other_methods_are_not_refreshed(self):
+        manager = OAuthManager()
+        token_data = {"client_secret": "s1"}  # pragma: allowlist secret
+        await manager._refresh_client_assertion(token_data, {"token_endpoint_auth_method": "client_secret_post"})
+        assert "client_assertion" not in token_data
+
+    @pytest.mark.asyncio
+    async def test_list_form_data_is_updated_in_place(self):
+        manager = OAuthManager()
+        credentials = _private_key_jwt_credentials()
+        token_data = [("grant_type", "client_credentials"), ("client_assertion", "stale")]
+        await manager._refresh_client_assertion(token_data, credentials)
+        assertions = [value for key, value in token_data if key == "client_assertion"]
+        assert len(assertions) == 1
+        assert assertions[0] != "stale"
+
+    @pytest.mark.asyncio
+    async def test_list_form_data_gains_assertion_when_absent(self):
+        manager = OAuthManager()
+        credentials = _private_key_jwt_credentials()
+        token_data = [("grant_type", "client_credentials")]
+        await manager._refresh_client_assertion(token_data, credentials)
+        assert any(key == "client_assertion" for key, _ in token_data)
+
+    @pytest.mark.asyncio
+    async def test_refreshed_assertion_is_newly_signed(self):
+        # Each attempt gets a distinct assertion: RFC 7523 Section 3 assertions
+        # carry a short exp, so reusing one risks presenting it expired.
+        # Third-Party
+        import jwt as jwt_lib
+
+        manager = OAuthManager()
+        credentials = _private_key_jwt_credentials()
+        public_pem = credentials["_test_public_pem"]
+
+        first: dict = {}
+        await manager._refresh_client_assertion(first, credentials)
+        second: dict = {}
+        await manager._refresh_client_assertion(second, credentials)
+
+        for token_data in (first, second):
+            decoded = jwt_lib.decode(
+                token_data["client_assertion"],
+                public_pem,
+                algorithms=["RS256"],
+                audience="https://issuer.example.com/token",
+            )
+            assert decoded["iss"] == "test-client"
+        assert first["client_assertion"] != second["client_assertion"]

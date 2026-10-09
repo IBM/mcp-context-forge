@@ -1049,8 +1049,17 @@ class TestOauthConfigPrivateKeyJwtValidation:
         assert gateway.oauth_config["private_key"] == settings.masked_auth_value
 
     def test_encrypted_private_key_value_accepted(self):
-        gateway = GatewayUpdate(oauth_config=_oauth_config(private_key="enc:v1:ABCDEF1234567890"))  # pragma: allowlist secret
-        assert gateway.oauth_config["private_key"].startswith("enc:")
+        # Must be real ciphertext from the encryption service, not a hand-written
+        # prefix. The service emits EncryptionService.FORMAT_MARKER ("v2:"); an
+        # "enc:v1:" string is not a format this codebase ever produces, so
+        # asserting on it documented a fiction and would not have caught a
+        # validator that rejects genuine stored keys.
+        # First-Party
+        from mcpgateway.services.encryption_service import get_encryption_service
+
+        ciphertext = get_encryption_service(settings.auth_encryption_secret).encrypt_secret("stored-key-material")
+        gateway = GatewayUpdate(oauth_config=_oauth_config(private_key=ciphertext))
+        assert gateway.oauth_config["private_key"] == ciphertext
 
     def test_non_private_key_method_ignores_private_key_requirement(self):
         gateway = GatewayUpdate(oauth_config=_oauth_config(token_endpoint_auth_method="client_secret_post"))
