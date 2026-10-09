@@ -13,8 +13,8 @@ Also federates a prompt from ``completion_test_server_no_completions`` (same
 fixture, no ``completion`` handler registered) and asserts the gateway maps
 the upstream's missing capability to JSON-RPC ``-32601`` over ``/rpc``.
 
-R7 (modern-protocol gating) is not implemented on this branch (spec §5.4,
-plan Task 9 -- withdrawn) so there is no gate for this test to exercise.
+Completion forwarding supports legacy and modern negotiation through the
+existing transport settings, without a modern-only gate.
 
 Requires the `testing` compose profile (provides `completion_test_server`
 and `completion_test_server_no_completions` alongside the gateway):
