@@ -415,31 +415,74 @@ class TestConnectivity:
         print(f"    -> Modern capabilities: {sorted(raw_result['capabilities'])}")
 
     @skip_no_modern_inbound
-    async def test_modern_cacheable_results_carry_ttl_and_private_scope(self, jwt_token: str, mcp_url: str) -> None:
-        """2026-era discover, lists and reads carry ttlMs and cacheScope=private (issue #6627)."""
-        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
-        transport = streamable_http_client(mcp_url, http_client=http_client)
-        async with Client(transport, mode="2026-07-28", cache=None) as modern_client:
-            discover = await modern_client.session.send_discover("2026-07-28")
-            assert discover.get("cacheScope") == "private", f"discover cacheScope: {discover}"
-            assert isinstance(discover.get("ttlMs"), int) and discover["ttlMs"] > 0, f"discover ttlMs: {discover}"
+    async def test_modern_cacheable_results_carry_ttl_and_private_scope(self, jwt_token: str) -> None:
+        """2026-era discover, lists and reads carry ttlMs and cacheScope=private; the legacy wire carries neither (issue #6627)."""
+        rest_headers = {"authorization": f"Bearer {jwt_token}", "content-type": "application/json"}
+        uid = uuid.uuid4().hex[:8]
+        resource_uri = f"test://cache-e2e-{uid}"
+        resource_id = None
+        server_id = None
+        with httpx.Client(timeout=_CLIENT_TIMEOUT) as http:
+            try:
+                # A resource served from the gateway's own store and a virtual server bound to it make the read deterministic.
+                resource_resp = http.post(
+                    f"{BASE_URL}/resources",
+                    headers=rest_headers,
+                    json={"resource": {"name": f"cache-e2e-{uid}", "uri": resource_uri, "mimeType": "text/plain", "content": "cached hello"}, "visibility": "public"},
+                )
+                assert resource_resp.status_code in (200, 201), f"Failed to create resource: {resource_resp.text}"
+                resource_id = resource_resp.json()["id"]
+                server_resp = http.post(
+                    f"{BASE_URL}/servers",
+                    headers=rest_headers,
+                    json={"server": {"name": f"cache-e2e-{uid}", "description": "cache directive E2E server", "associated_resources": [resource_id]}, "visibility": "public"},
+                )
+                assert server_resp.status_code in (200, 201), f"Failed to create server: {server_resp.text}"
+                server_id = server_resp.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
 
-            for name, listing in (
-                ("tools", await modern_client.list_tools()),
-                ("prompts", await modern_client.list_prompts()),
-                ("resources", await modern_client.list_resources()),
-            ):
-                assert listing.cache_scope == "private", f"{name}/list cacheScope: {listing.cache_scope}"
-                # Lists are good for the catalog's refresh interval, which is at least the 60s minimum.
-                assert listing.ttl_ms >= 60_000, f"{name}/list ttlMs: {listing.ttl_ms}"
+                http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                    discover = await modern_client.session.send_discover("2026-07-28")
+                    assert discover.get("cacheScope") == "private", f"discover cacheScope: {discover}"
+                    # Catalog results are good for the refresh interval, which is at least the 60s minimum.
+                    assert isinstance(discover.get("ttlMs"), int) and discover["ttlMs"] >= 60_000, f"discover ttlMs: {discover}"
 
-            resources = (await modern_client.list_resources()).resources
-            if resources:
-                with suppress(McpError):
-                    read = await modern_client.read_resource(resources[0].uri)
+                    for name, listing in (
+                        ("tools", await modern_client.list_tools()),
+                        ("prompts", await modern_client.list_prompts()),
+                        ("resources", await modern_client.list_resources()),
+                        ("resources/templates", await modern_client.list_resource_templates()),
+                    ):
+                        assert listing.cache_scope == "private", f"{name}/list cacheScope: {listing.cache_scope}"
+                        assert listing.ttl_ms >= 60_000, f"{name}/list ttlMs: {listing.ttl_ms}"
+
+                    read = await modern_client.read_resource(resource_uri)
+                    assert [getattr(content, "text", None) for content in read.contents] == ["cached hello"], f"resources/read contents: {read.contents}"
                     assert read.cache_scope == "private", f"resources/read cacheScope: {read.cache_scope}"
-                    assert read.ttl_ms >= 0, f"resources/read ttlMs: {read.ttl_ms}"
-        print(f"    -> discover ttlMs={discover['ttlMs']} cacheScope={discover['cacheScope']}")
+                    assert read.ttl_ms == 0, f"resources/read ttlMs for gateway-stored content: {read.ttl_ms}"
+
+                # The same catalog on a legacy wire carries no cache fields: the SDK strips 2026-era keys for handshake-era clients.
+                legacy_headers = {**rest_headers, "accept": "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26"}
+                init_resp = http.post(scoped_url, headers=legacy_headers, json=build_initialize(1))
+                assert init_resp.status_code == 200, f"legacy initialize failed: {init_resp.text}"
+                if session_id := init_resp.headers.get("mcp-session-id"):
+                    legacy_headers["mcp-session-id"] = session_id
+                list_resp = http.post(scoped_url, headers=legacy_headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+                assert list_resp.status_code == 200, f"legacy tools/list failed: {list_resp.text}"
+                if list_resp.headers.get("content-type", "").startswith("text/event-stream"):
+                    legacy_payload = json.loads([line for line in list_resp.text.splitlines() if line.startswith("data:")][-1][5:])
+                else:
+                    legacy_payload = list_resp.json()
+                legacy_result = legacy_payload.get("result", {})
+                assert "tools" in legacy_result, f"legacy tools/list returned no result: {legacy_payload}"
+                assert "ttlMs" not in legacy_result and "cacheScope" not in legacy_result, f"legacy tools/list leaked cache fields: {legacy_result}"
+            finally:
+                if server_id:
+                    http.delete(f"{BASE_URL}/servers/{server_id}", headers=rest_headers)
+                if resource_id:
+                    http.delete(f"{BASE_URL}/resources/{resource_id}", headers=rest_headers)
+        print(f"    -> discover ttlMs={discover['ttlMs']} cacheScope={discover['cacheScope']}; read ttlMs={read.ttl_ms}; legacy keys={sorted(legacy_result)}")
 
     async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""
