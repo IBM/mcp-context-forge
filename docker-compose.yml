@@ -234,6 +234,8 @@ services:
       - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
       # MCP Apps UI support (disabled by default; opt-in only)
       - MCPGATEWAY_MCP_APPS_ENABLED=${MCPGATEWAY_MCP_APPS_ENABLED:-false}
+      # Inbound MCP protocol mode (legacy by default; set auto to accept 2026-07-28 clients)
+      - MCP_INBOUND_PROTOCOL_MODE=${MCP_INBOUND_PROTOCOL_MODE:-legacy}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -387,6 +389,7 @@ services:
       # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
       # ═══════════════════════════════════════════════════════════════════════════
       - SSO_ENABLED=${SSO_ENABLED:-false}
+      - SSO_USER_PROVISIONING_API_ENABLED=${SSO_USER_PROVISIONING_API_ENABLED:-false}
       - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
       - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
       - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
@@ -646,21 +649,11 @@ services:
       - SSE_RAPID_YIELD_WINDOW_MS=1000                          # Detection window in ms (default: 1000)
       - SSE_RAPID_YIELD_MAX=50                                  # Max yields before disconnect (default: 50, 0=disabled)
       # ─────────────────────────────────────────────────────────────────────────
-      # Layer 2: Cleanup Timeouts
-      # ─────────────────────────────────────────────────────────────────────────
-      # Limit how long cleanup waits for stuck tasks. Short timeouts (0.5s) reduce
-      # CPU waste during cancelled connection cleanup. Only affects cleanup, not
-      # normal operation.
-      - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
-      - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
-      # ─────────────────────────────────────────────────────────────────────────
-      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
-      # ─────────────────────────────────────────────────────────────────────────
-      # Last resort: patches anyio to limit _deliver_cancellation iterations.
-      # Enable only if Layers 1-2 don't fully resolve the issue.
-      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=${ANYIO_CANCEL_DELIVERY_PATCH_ENABLED:-false}  # Experimental workaround; disabled for current AnyIO
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
+      # NOTE: The former Layer 2 cleanup-timeout knobs (MCP_SESSION_POOL_CLEANUP_TIMEOUT,
+      # SSE_TASK_GROUP_CLEANUP_TIMEOUT) and the Layer 3 anyio monkey-patch were removed.
+      # anyio >= 4.15.0 fixes the _deliver_cancellation spin upstream (anyio#695/#1111);
+      # cleanup waits remain bounded internally (fixed 5-second windows).
+
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording

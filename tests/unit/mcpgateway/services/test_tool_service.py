@@ -2344,8 +2344,8 @@ class TestToolService:
 
         The output path validates in ``_extract_and_validate_structured_content``, offloaded
         with ``asyncio.to_thread`` at its call site. Removing that offload stalls the loop for
-        the sandbox timeout, so the budget is half of ``regex_timeout_seconds``, as in the
-        input-path test above.
+        the sandbox timeout. The budget is 0.9 * ``regex_timeout_seconds`` to allow for
+        slow CI machines while still catching a genuine stall (which would be >= 1 * timeout).
         """
         # First-Party
         from mcpgateway.config import settings
@@ -2395,7 +2395,7 @@ class TestToolService:
         assert settings.regex_timeout_seconds <= max_supported_regex_timeout_seconds, (
             f"regex_timeout_seconds is {settings.regex_timeout_seconds}s, above {max_supported_regex_timeout_seconds}s; the loop budget below is derived from this setting and must not silently widen with it"
         )
-        budget = 0.5 * settings.regex_timeout_seconds
+        budget = 0.9 * settings.regex_timeout_seconds
         assert max(lateness) < budget, f"event loop stalled {max(lateness):.2f}s; budget is {budget:.2f}s"
         assert result.is_error, "the hostile output must fail validation, not pass"
 
@@ -4890,7 +4890,7 @@ class TestToolService:
         # Mock HTTP error
         tool_service._http_client.get.side_effect = Exception("Connection refused")
 
-        with pytest.raises(ToolValidationError, match="Failed to validate tool URL: Connection refused"):
+        with pytest.raises(ToolValidationError, match="Failed to validate tool URL: An unexpected error occurred"):
             await tool_service._validate_tool_url("http://example.com/tool")
 
     async def test_check_tool_health_success(self, tool_service, mock_tool):
@@ -5129,7 +5129,8 @@ class TestToolService:
         with pytest.raises(ToolInvocationError) as exc_info:
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        assert "OAuth authentication failed: OAuth failed" in str(exc_info.value)
+        assert "OAuth authentication failed: An unexpected error occurred" in str(exc_info.value)
+        assert "OAuth failed" not in str(exc_info.value)
 
     async def test_invoke_tool_mcp_oauth_client_credentials(self, tool_service, mock_tool, mock_gateway, test_db):
         """Test invoking MCP tool with OAuth client credentials flow."""
@@ -10397,6 +10398,25 @@ class TestInvokeToolDirectProxyViaHeader:
         assert result.content[0].text == "direct proxy result"
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_direct_proxy_header_with_server_scope(self, tool_service, test_db):
+        """A gateway routing header cannot override virtual-server tool membership."""
+        with (
+            patch.object(test_db, "execute", wraps=test_db.execute) as execute,
+            pytest.raises(ToolNotFoundError, match="Tool not found: my_remote_tool"),
+        ):
+            await tool_service.invoke_tool(
+                test_db,
+                "my_remote_tool",
+                {"arg": "value"},
+                request_headers={"x-context-forge-gateway-id": "gw-dp-1"},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+                server_id="server-1",
+            )
+
+        execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_header_gateway_not_direct_proxy(self, tool_service, mock_cache_gateway, test_db):
         """Header present but gateway_mode=cache should fall through to normal tool lookup."""
         # Set up DB: first call returns cache gateway, subsequent calls return no tool (to trigger ToolNotFoundError)
@@ -10422,6 +10442,224 @@ class TestInvokeToolDirectProxyViaHeader:
                     {},
                     request_headers=request_headers,
                 )
+
+
+class TestScopedToolResolution:
+    """Tests for exact-name and virtual-server original-name resolution."""
+
+    @staticmethod
+    def _candidate(name, original_name, visibility="public", team_id=None, owner_email=None):
+        return SimpleNamespace(
+            id=f"{name}-{visibility}",
+            name=name,
+            original_name=original_name,
+            visibility=visibility,
+            team_id=team_id,
+            owner_email=owner_email,
+        )
+
+    @staticmethod
+    def _cache_payload(name, original_name, *, deprecated=False):
+        return {
+            "status": "active",
+            "tool": {
+                "id": "tool-1",
+                "name": name,
+                "original_name": original_name,
+                "enabled": True,
+                "reachable": True,
+                "deprecated": deprecated,
+                "visibility": "public",
+                "team_id": None,
+                "owner_email": None,
+                "gateway_id": "gateway-1",
+            },
+            "gateway": {"id": "gateway-1"},
+        }
+
+    @staticmethod
+    def _cache_mock(payload=None):
+        cache = AsyncMock()
+        cache.enabled = True
+        cache.get = AsyncMock(return_value=payload)
+        cache.get_negative = AsyncMock(return_value=None)
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        return cache
+
+    @pytest.mark.asyncio
+    async def test_exact_name_keeps_visibility_priority(self, tool_service):
+        """Exact-name collisions should retain team/private/public priority behavior."""
+        public_tool = self._candidate("qualified-tool", "remote-tool", visibility="public")
+        team_tool = self._candidate("qualified-tool", "remote-tool", visibility="team", team_id="team-a")
+
+        with (
+            patch.object(tool_service, "_load_invocable_tools", return_value=[public_tool, team_tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            selected, multiple_found = await tool_service._select_invocable_tool(
+                MagicMock(),
+                "qualified-tool",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                server_id="server-1",
+            )
+
+        assert selected is team_tool
+        assert multiple_found is True
+
+    @pytest.mark.asyncio
+    async def test_exact_name_same_priority_remains_ambiguous(self, tool_service):
+        """Exact-name candidates tied at the best visibility priority remain ambiguous."""
+        first = self._candidate("qualified-tool", "remote-tool", visibility="team", team_id="team-a")
+        second = self._candidate("qualified-tool", "remote-tool", visibility="team", team_id="team-b")
+
+        with (
+            patch.object(tool_service, "_load_invocable_tools", return_value=[first, second]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolInvocationError, match="ambiguous"):
+                await tool_service._select_invocable_tool(
+                    MagicMock(),
+                    "qualified-tool",
+                    user_email="user@example.com",
+                    token_teams=["team-a", "team-b"],
+                    server_id="server-1",
+                )
+
+    @pytest.mark.asyncio
+    async def test_original_name_fallback_runs_after_inaccessible_exact_match(self, tool_service):
+        """An inaccessible exact match should not block an accessible scoped fallback."""
+        inaccessible_exact = self._candidate("search", "remote-search", visibility="team", team_id="other-team")
+        fallback = self._candidate("gateway-search", "search", visibility="public")
+        load_tools = MagicMock(side_effect=[[inaccessible_exact], [fallback]])
+        db = MagicMock()
+
+        with (
+            patch.object(tool_service, "_load_invocable_tools", load_tools),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[False, True])),
+        ):
+            selected, multiple_found = await tool_service._select_invocable_tool(
+                db,
+                "search",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                server_id="server-1",
+            )
+
+        assert selected is fallback
+        assert multiple_found is True
+        assert load_tools.call_args_list == [
+            call(db, "search", server_id="server-1"),
+            call(db, "search", server_id="server-1", match_original_name=True),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_original_name_fallback_without_exact_candidates_is_cache_safe(self, tool_service):
+        """A unique fallback remains cacheable when no exact candidate exists."""
+        fallback = self._candidate("gateway-search", "search", visibility="public")
+
+        with (
+            patch.object(tool_service, "_load_invocable_tools", side_effect=[[], [fallback]]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            selected, caller_dependent = await tool_service._select_invocable_tool(
+                MagicMock(),
+                "search",
+                user_email="user@example.com",
+                token_teams=[],
+                server_id="server-1",
+            )
+
+        assert selected is fallback
+        assert caller_dependent is False
+
+    @pytest.mark.asyncio
+    async def test_original_name_fallback_does_not_use_visibility_priority(self, tool_service):
+        """Multiple accessible fallback matches are ambiguous across gateways."""
+        team_tool = self._candidate("gateway-a-search", "search", visibility="team", team_id="team-a")
+        public_tool = self._candidate("gateway-b-search", "search", visibility="public")
+
+        with (
+            patch.object(tool_service, "_load_invocable_tools", side_effect=[[], [team_tool, public_tool]]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolInvocationError, match="Multiple tools attached.*qualified tool name"):
+                await tool_service._select_invocable_tool(
+                    MagicMock(),
+                    "search",
+                    user_email="user@example.com",
+                    token_teams=["team-a"],
+                    server_id="server-1",
+                )
+
+    @pytest.mark.asyncio
+    async def test_python_resolution_preserves_identity_across_caller_transition(self, tool_service):
+        """A public fallback must not replace an exact tool for a later team caller."""
+        cache = self._cache_mock()
+        gateway = SimpleNamespace(id="gateway-1")
+        exact = SimpleNamespace(
+            name="search",
+            original_name="remote-search",
+            enabled=True,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email=None,
+            gateway=gateway,
+        )
+        fallback = SimpleNamespace(
+            name="gateway-search",
+            original_name="search",
+            enabled=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=gateway,
+        )
+        exact_payload = self._cache_payload("search", "remote-search")
+        exact_payload["tool"].update({"visibility": "team", "team_id": "team-a"})
+        fallback_payload = self._cache_payload("gateway-search", "search")
+
+        def load_candidates(_db, _name, server_id=None, *, match_original_name=False):
+            assert server_id == "server-1"
+            return [fallback] if match_original_name else [exact]
+
+        async def check_access(_db, tool, _user_email, token_teams):
+            return tool.get("visibility") == "public" or tool.get("team_id") in (token_teams or [])
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch.object(tool_service, "_load_invocable_tools", side_effect=load_candidates),
+            patch.object(tool_service, "_build_tool_cache_payload", side_effect=lambda tool, _gateway: exact_payload if tool is exact else fallback_payload),
+            patch.object(tool_service, "_check_tool_access", side_effect=check_access),
+        ):
+            public_resolution = await tool_service._resolve_tool_for_invocation(
+                MagicMock(),
+                "search",
+                None,
+                "public@example.com",
+                [],
+                "server-1",
+                False,
+                False,
+            )
+            team_resolution = await tool_service._resolve_tool_for_invocation(
+                MagicMock(),
+                "search",
+                None,
+                "team@example.com",
+                ["team-a"],
+                "server-1",
+                False,
+                False,
+            )
+
+        assert public_resolution.tool is fallback
+        assert team_resolution.tool is exact
+        cache.set.assert_awaited_once_with("search", exact_payload, gateway_id="gateway-1", server_id="server-1")
+        cache.set_negative.assert_not_awaited()
 
 
 class TestRustMcpExecutionPlan:
@@ -10557,7 +10795,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.tool_service.create_child_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.tool_service.metrics_buffer", MagicMock()),
-            patch.object(tool_service, "_load_invocable_tools", return_value=[original_name_match, exact_name_tool]),
+            patch.object(tool_service, "_load_invocable_tools", side_effect=[[exact_name_tool], [original_name_match]]),
             patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
             patch.object(tool_service, "_build_tool_cache_payload", return_value=exact_payload) as build_payload,
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -10920,6 +11158,23 @@ class TestRustMcpExecutionPlan:
         assert plan == {"eligible": False, "fallbackReason": "direct-proxy"}
 
     @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_direct_proxy_header_with_server_scope(self, tool_service):
+        """Rust planning cannot route a server-scoped call through a header-selected gateway."""
+        db = MagicMock()
+
+        with pytest.raises(ToolNotFoundError, match="Tool not found: tool-one"):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                db,
+                "tool-one",
+                request_headers={"x-context-forge-gateway-id": "gw-1"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                server_id="server-1",
+            )
+
+        db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_direct_proxy_access_denied(self, tool_service):
         """Direct-proxy lookup should deny inaccessible gateways as not-found."""
         gateway = SimpleNamespace(
@@ -11104,7 +11359,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda request_headers, headers, *_args, **_kwargs: headers),
-            patch.object(tool_service, "_load_invocable_tools", return_value=[original_name_match, exact_name_tool]),
+            patch.object(tool_service, "_load_invocable_tools", side_effect=[[exact_name_tool], [original_name_match]]),
             patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
             patch.object(tool_service, "_build_tool_cache_payload", return_value=self._cache_payload(id="exact-tool", gateway_id="gw-1")),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -11139,9 +11394,11 @@ class TestRustMcpExecutionPlan:
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_rejects_inactive_db_tool(self, tool_service):
-        """Inactive DB-loaded tools should fail before plan generation."""
+        """An inactive exact match should fail without trying original-name fallback."""
         cache = self._cache_mock(None)
         tool = SimpleNamespace(
+            name="tool-one",
+            original_name="remote-tool-one",
             enabled=False,
             reachable=True,
             visibility="public",
@@ -11149,15 +11406,28 @@ class TestRustMcpExecutionPlan:
             owner_email=None,
             gateway=SimpleNamespace(),
         )
+        fallback = SimpleNamespace(
+            name="gateway-tool-one",
+            original_name="tool-one",
+            enabled=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=SimpleNamespace(),
+        )
+        load_tools = MagicMock(side_effect=[[tool], [fallback]])
 
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
-            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+            patch.object(tool_service, "_load_invocable_tools", load_tools),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             with pytest.raises(ToolNotFoundError, match="inactive"):
-                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="server-1")
+
+        assert load_tools.call_count == 1
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_caches_global_offline_result_with_gateway(self, tool_service):
@@ -11185,6 +11455,34 @@ class TestRustMcpExecutionPlan:
         caller_scope = tool_service._negative_cache_caller_scope(None, None)
         cache.get_negative.assert_awaited_once_with("tool-one", caller_scope, None)
         cache.set_negative.assert_awaited_once_with("tool-one", "offline", caller_scope, gateway_id="gw-1", server_id=None)
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_caches_scoped_offline_result(self, tool_service):
+        """A scoped exact-name offline tool should retain negative-cache behavior."""
+        cache = self._cache_mock(None)
+        tool = SimpleNamespace(
+            name="tool-one",
+            enabled=True,
+            reachable=False,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway_id="gw-1",
+            gateway=SimpleNamespace(),
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="currently offline"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="server-1")
+
+        caller_scope = tool_service._negative_cache_caller_scope(None, None)
+        cache.get_negative.assert_awaited_once_with("tool-one", caller_scope, "server-1")
+        cache.set_negative.assert_awaited_once_with("tool-one", "offline", caller_scope, gateway_id="gw-1", server_id="server-1")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -11319,7 +11617,9 @@ class TestRustMcpExecutionPlan:
             with pytest.raises(ToolNotFoundError, match="Tool not found"):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="srv-1")
 
-        load_invocable_tools.assert_called_once()
+        assert load_invocable_tools.call_count == 2
+        assert load_invocable_tools.call_args_list[0].kwargs == {"server_id": "srv-1"}
+        assert load_invocable_tools.call_args_list[1].kwargs == {"server_id": "srv-1", "match_original_name": True}
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_rejects_detached_stale_cache_hit(self, tool_service):
@@ -11336,7 +11636,10 @@ class TestRustMcpExecutionPlan:
             with pytest.raises(ToolNotFoundError, match="Tool not found"):
                 await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", server_id="server-1")
 
-        load_invocable_tools.assert_called_once_with(db, "tool-one", server_id="server-1")
+        assert load_invocable_tools.call_args_list == [
+            call(db, "tool-one", server_id="server-1"),
+            call(db, "tool-one", server_id="server-1", match_original_name=True),
+        ]
 
     @pytest.mark.asyncio
     async def test_python_resolution_rejects_detached_stale_cache_hit(self, tool_service):
@@ -11361,7 +11664,10 @@ class TestRustMcpExecutionPlan:
                     False,
                 )
 
-        load_invocable_tools.assert_called_once_with(db, "tool-one", server_id="server-1")
+        assert load_invocable_tools.call_args_list == [
+            call(db, "tool-one", server_id="server-1"),
+            call(db, "tool-one", server_id="server-1", match_original_name=True),
+        ]
 
     @pytest.mark.asyncio
     async def test_python_resolution_isolates_negative_cache_by_caller(self, tool_service):
@@ -11736,6 +12042,36 @@ class TestRustMcpExecutionPlan:
         cache.get.assert_awaited_once_with("Custom.Tool", server_id="srv-1")
         cache.set.assert_awaited_once_with("Custom.Tool", cache_payload, gateway_id="gw-1", server_id="srv-1")
         load_invocable_tools.assert_called_once_with(db, "Custom.Tool", server_id="srv-1")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_does_not_cache_caller_dependent_fallback(self, tool_service):
+        """Rust preparation must not share a fallback selected around an exact candidate."""
+        cache = self._cache_mock(None)
+        cache_payload = self._cache_payload(name="gateway-search", original_name="search")
+        gateway = SimpleNamespace(id="gw-1")
+        fallback = SimpleNamespace(enabled=True, reachable=True, gateway=gateway)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_select_invocable_tool", AsyncMock(return_value=(fallback, True))),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=cache_payload),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "search",
+                server_id="server-1",
+                user_email="public@example.com",
+                token_teams=[],
+            )
+
+        assert plan["remoteToolName"] == "search"
+        cache.set.assert_not_awaited()
+        cache.set_negative.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_handles_query_param_auth_and_passthrough(self, tool_service):

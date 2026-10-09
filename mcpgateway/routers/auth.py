@@ -35,7 +35,11 @@ from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
 from mcpgateway.utils.security_cookies import set_auth_cookie
-from mcpgateway.utils.verify_credentials import get_auth_header_value, security, verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    get_auth_header_value,
+    security,
+    verify_credentials_cached,
+)
 
 # Initialize logging
 logging_service = LoggingService()
@@ -445,7 +449,7 @@ async def _verify_session_token(raw_token: str, request: Request, current_user: 
             subject does not match the authenticated user
     """
     try:
-        payload = await verify_jwt_token_cached(raw_token, request)
+        payload = await verify_credentials_cached(raw_token, request)
     except HTTPException:
         raise
     except Exception:

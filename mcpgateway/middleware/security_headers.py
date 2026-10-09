@@ -399,6 +399,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #   This prevents XSS via injected <script> blocks while allowing legitimate
         #   inline scripts that have the matching nonce attribute.
         #
+        # script-src-attr: 'none' blocks inline on* event handler attributes, so
+        #   injected markup cannot become script execution.
+        #
         # script-src: Fallback for older browsers. No unsafe-eval or unsafe-inline.
         #   All HTMX hx-vals="js:{...}" have been migrated to htmx:configRequest handlers.
         #   All hx-on:* event handlers have been migrated to addEventListener.
@@ -430,7 +433,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             csp_directives = [
                 "default-src 'self'",
                 f"script-src-elem 'self' 'nonce-{csp_nonce}'",
-                "script-src-attr 'unsafe-inline'",
+                "script-src-attr 'none'",
                 "script-src 'self'",
                 "style-src 'self' 'unsafe-inline'",
                 "img-src 'self' data: https:",

@@ -59,6 +59,7 @@ import uuid
 
 # Third-Party
 from fastapi import HTTPException, status
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 import orjson
 
 # First-Party
@@ -2196,7 +2197,7 @@ class SessionRegistry(SessionBackend):
                     prompts={"listChanged": True},
                     resources={"subscribe": True, "listChanged": True},
                     tools={"listChanged": True},
-                    logging={},
+                    logging=None if protocol_version in MODERN_PROTOCOL_VERSIONS else {},
                     completions={},  # Advertise completions capability per MCP spec
                     experimental=experimental,  # OAuth capability when configured
                 ),

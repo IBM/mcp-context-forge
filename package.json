@@ -62,7 +62,7 @@
         "@alpinejs/csp": "^3.15.8",
         "chart.js": "^4.4.7",
         "codemirror": "^5.65.18",
-        "dompurify": "^3.2.2",
+        "dompurify": "^3.4.16",
         "htmx.org": "^2.0.3",
         "marked": "^15.0.6"
     }

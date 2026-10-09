@@ -85,6 +85,8 @@ if not logging.getLogger().handlers:
 
 logger = logging.getLogger(__name__)
 
+FRONTEND_MOUNT_PREFIX = "/app"
+
 
 def _normalize_env_list_vars() -> None:
     """Normalize list-typed env vars to valid JSON arrays.
@@ -474,6 +476,7 @@ class Settings(BaseSettings):
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
+    sso_user_provisioning_api_enabled: bool = Field(default=False, description="Enable the admin SSO user provisioning API; requires SSO and admin API enabled. Changes require restart.")
     sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
     sso_github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     sso_github_client_secret: Optional[SecretStr] = Field(default=None, description="GitHub OAuth client secret")
@@ -1312,7 +1315,7 @@ class Settings(BaseSettings):
     app_domain: HttpUrl = Field(default=HttpUrl("http://localhost:4444"))
     ui_base_url: Optional[HttpUrl] = Field(
         default=None,
-        description="Trusted base URL for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
+        description="Trusted deployment base or full frontend root ending in /app for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
     )
 
     @field_validator("ui_base_url", mode="before")
@@ -1333,7 +1336,7 @@ class Settings(BaseSettings):
     @field_validator("ui_base_url")
     @classmethod
     def validate_ui_base_url(cls, value: Optional[HttpUrl]) -> Optional[HttpUrl]:
-        """Reject URL components unsuitable for a trusted frontend base.
+        """Validate the frontend URL and remove its final mount segment when present.
 
         Args:
             value: Configured frontend base URL.
@@ -1352,6 +1355,11 @@ class Settings(BaseSettings):
             raise ValueError("UI_BASE_URL must not contain a query string")
         if value.fragment:
             raise ValueError("UI_BASE_URL must not contain a fragment")
+        if (value.path or "").rstrip("/").endswith(FRONTEND_MOUNT_PREFIX):
+            logger.warning("UI_BASE_URL is a full frontend root; removing the trailing %s mount while preserving the deployment prefix", FRONTEND_MOUNT_PREFIX)
+            normalized = str(value).rstrip("/")
+            normalized = normalized[: -len(FRONTEND_MOUNT_PREFIX)].rstrip("/")
+            return HttpUrl(normalized)
         return value
 
     # Security settings
@@ -1800,11 +1808,11 @@ class Settings(BaseSettings):
                 password_route_warning = (
                     "Password-recovery links will use legacy /admin routes because MCPGATEWAY_ADMIN_API_ENABLED=true."
                     if self.mcpgateway_admin_api_enabled
-                    else "Password-recovery links will use frontend /forgot-password and /reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
+                    else "Password-recovery links will use frontend /app/forgot-password and /app/reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
                 )
                 logger.warning(
                     "SMTP_ENABLED=true while UI_BASE_URL is unset. Invitation links will use APP_DOMAIN plus "
-                    "APP_ROOT_PATH and require /accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
+                    "APP_ROOT_PATH and require /app/accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
                     password_route_warning,
                 )
 
@@ -2923,39 +2931,6 @@ class Settings(BaseSettings):
     )
 
     # Timeout for SSE task group cleanup (seconds).
-    # When an SSE connection is cancelled, this controls how long to wait for
-    # internal tasks to respond before forcing cleanup. Shorter values reduce
-    # CPU waste during anyio _deliver_cancellation spin loops but may interrupt
-    # legitimate cleanup. Only affects cancelled connections, not normal operation.
-    # See: https://github.com/agronholm/anyio/issues/695
-    sse_task_group_cleanup_timeout: float = 5.0
-
-    # =========================================================================
-    # EXPERIMENTAL: anyio _deliver_cancellation spin loop workaround
-    # =========================================================================
-    # When enabled, monkey-patches anyio's CancelScope._deliver_cancellation to
-    # limit the number of retry iterations. This prevents 100% CPU spin loops
-    # when tasks don't respond to CancelledError (anyio issue #695).
-    #
-    # WARNING: This is a workaround for an upstream issue. May be removed when
-    # anyio or MCP SDK fix the underlying problem. Enable only if you experience
-    # CPU spin loops during SSE/MCP connection cleanup.
-    #
-    # Trade-offs when enabled:
-    # - Prevents indefinite CPU spin (good)
-    # - May leave some tasks uncancelled after max iterations (usually harmless)
-    # - Worker recycling (GUNICORN_MAX_REQUESTS) cleans up orphaned tasks
-    #
-    # See: https://github.com/agronholm/anyio/issues/695
-    # Env: ANYIO_CANCEL_DELIVERY_PATCH_ENABLED
-    anyio_cancel_delivery_patch_enabled: bool = False
-
-    # Maximum iterations for _deliver_cancellation before giving up.
-    # Only used when anyio_cancel_delivery_patch_enabled=True.
-    # Higher values = more attempts to cancel tasks, but longer potential spin.
-    # Lower values = faster recovery, but more orphaned tasks.
-    # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
-    anyio_cancel_delivery_max_iterations: int = 100
 
     # Session Affinity (multi-worker downstream-session → worker routing).
     # The upstream-session pooling surface that used to share this section is
@@ -3243,7 +3218,9 @@ class Settings(BaseSettings):
     dev_mode: bool = False
     reload: bool = False
     debug: bool = False
-    expose_error_details: bool = False
+    expose_error_details: bool = Field(
+        default=False, description="Deprecated and ignored. Error responses are always sanitized; full detail is logged server-side. Will be removed in a future release."
+    )
 
     # Observability (OpenTelemetry)
     deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")

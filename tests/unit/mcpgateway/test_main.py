@@ -47,6 +47,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.schemas import (
     A2AAgentAggregateMetrics,
+    GatewayCreate,
     GatewayImpactPreview,
     GatewayRead,
     PromptMetrics,
@@ -995,7 +996,6 @@ class TestServerEndpoints:
 
     def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers, monkeypatch):
         """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
-        monkeypatch.setattr("mcpgateway.main.should_expose_error_details", lambda: True)
         req = {
             "server": {
                 "name": "test_server",
@@ -2422,6 +2422,46 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         mock_create.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_accepts_private_key_jwt_config(self, mock_create, test_client, auth_headers):
+        """Valid private_key_jwt config passes schema validation and reaches the service."""
+        mock_create.return_value = MOCK_GATEWAY_READ
+        req = {
+            "name": "test_gateway",
+            "url": "http://example.com",
+            "oauth_config": {
+                "client_id": "client-1",
+                "token_url": "https://issuer.example.com/token",
+                "token_endpoint_auth_method": "private_key_jwt",
+                "private_key": "dummy-private-key-material",  # pragma: allowlist secret
+                "token_endpoint_auth_signing_alg": "ES256",
+                "private_key_jwt_kid": "kid-1",
+            },
+        }
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        parsed: GatewayCreate = mock_create.call_args.args[1]
+        assert parsed.oauth_config["token_endpoint_auth_method"] == "private_key_jwt"
+        assert parsed.oauth_config["token_endpoint_auth_signing_alg"] == "ES256"
+        assert parsed.oauth_config["private_key_jwt_kid"] == "kid-1"
+
+    @pytest.mark.parametrize(
+        "oauth_config",
+        [
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "client_secret_digest"},
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "private_key_jwt", "token_endpoint_auth_signing_alg": "HS256", "private_key": "k"},
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "private_key_jwt"},
+            {"client_id": "c", "token_url": "https://issuer.example.com/token", "token_endpoint_auth_method": "private_key_jwt", "private_key": "k", "private_key_jwt_kid": "  "},
+        ],
+    )
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_rejects_invalid_private_key_jwt_config(self, mock_create, test_client, auth_headers, oauth_config):
+        """Invalid token endpoint auth config is rejected with 422 before any service call."""
+        req = {"name": "test_gateway", "url": "http://example.com", "oauth_config": oauth_config}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        mock_create.assert_not_called()
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint_secondary(self, mock_get, test_client, auth_headers):
         """Test retrieving a specific gateway."""
@@ -3026,18 +3066,31 @@ class TestRPCEndpoints:
         )
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
-        req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id-deny",
+            "method": "tools/call",
+            "params": {"name": "test_tool", "server_id": "server-1", "arguments": {"param": "value"}},
+        }
 
         async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+        with (
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission),
+            patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock) as ensure_server_access,
+            patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new_callable=AsyncMock) as forward_request,
+            patch("mcpgateway.main._execute_rpc_tools_call", new_callable=AsyncMock) as execute_call,
+        ):
             response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
         assert "Access denied" in body["error"]["message"]
+        ensure_server_access.assert_not_awaited()
+        forward_request.assert_not_awaited()
+        execute_call.assert_not_awaited()
 
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}

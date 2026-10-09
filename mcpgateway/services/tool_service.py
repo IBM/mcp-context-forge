@@ -125,6 +125,7 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -1124,7 +1125,7 @@ def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> i
         return default
     value = int(raw_value)
     if value < minimum:
-        raise ValueError(f"Retry policy integer must be >= {minimum}")
+        raise PublicValidationError(f"Retry policy integer must be >= {minimum}")
     return value
 
 
@@ -1133,7 +1134,7 @@ def _coerce_retry_policy_statuses(raw_value: Any) -> List[int]:
     if raw_value is None:
         return [429, 500, 502, 503, 504]
     if isinstance(raw_value, (str, bytes)) or not isinstance(raw_value, (list, tuple, set)):
-        raise ValueError("Retry policy retry_on_status must be a sequence of integers")
+        raise PublicValidationError("Retry policy retry_on_status must be a sequence of integers")
     return [int(code) for code in raw_value]
 
 
@@ -1151,14 +1152,14 @@ def _coerce_retry_policy_bool(raw_value: Any, *, default: bool) -> bool:
             return True
         if normalized in {"0", "false", "f", "no", "n", "off"}:
             return False
-    raise ValueError("Retry policy boolean must be a bool-like value")
+    raise PublicValidationError("Retry policy boolean must be a bool-like value")
 
 
 def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str) -> Dict[str, Any]:
     """Build a gateway-owned retry policy view from plugin config."""
     cfg = raw_cfg or {}
     if not isinstance(cfg, dict):
-        raise ValueError("Retry policy config must be a mapping")
+        raise PublicValidationError("Retry policy config must be a mapping")
     effective_cfg: Dict[str, Any] = {
         "max_retries": _coerce_retry_policy_int(cfg.get("max_retries"), default=2, minimum=0),
         "backoff_base_ms": _coerce_retry_policy_int(cfg.get("backoff_base_ms"), default=200, minimum=1),
@@ -1170,12 +1171,12 @@ def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str
 
     tool_overrides = cfg.get("tool_overrides") or {}
     if not isinstance(tool_overrides, dict):
-        raise ValueError("Retry policy tool_overrides must be a mapping")
+        raise PublicValidationError("Retry policy tool_overrides must be a mapping")
 
     overrides = tool_overrides.get(tool_name)
     if overrides:
         if not isinstance(overrides, dict):
-            raise ValueError("Retry policy tool override must be a mapping")
+            raise PublicValidationError("Retry policy tool override must be a mapping")
         effective_cfg.update({key: value for key, value in overrides.items() if key in effective_cfg})
         effective_cfg["max_retries"] = _coerce_retry_policy_int(effective_cfg.get("max_retries"), default=2, minimum=0)
         effective_cfg["backoff_base_ms"] = _coerce_retry_policy_int(effective_cfg.get("backoff_base_ms"), default=200, minimum=1)
@@ -2563,7 +2564,7 @@ class ToolService(BaseService):
                     "tool_name": tool.name,
                 },
             )
-            raise ToolError(f"Failed to register tool: {str(e)}")
+            raise ToolError(f"Failed to register tool: {unexpected_error_detail(e)}")
 
     async def register_tools_bulk(
         self,
@@ -2788,7 +2789,7 @@ class ToolService(BaseService):
             db.rollback()
             logger.error("Failed to process tool chunk: %s", str(e))
             stats["failed"] += len(chunk)
-            stats["errors"].append(f"Chunk processing failed: {str(e)}")
+            stats["errors"].append(f"Chunk processing failed: {unexpected_error_detail(e)}")
 
         return stats
 
@@ -2960,7 +2961,7 @@ class ToolService(BaseService):
 
         except Exception as e:
             logger.warning("Failed to process tool %s in bulk operation: %s", tool.name, str(e))
-            return {"status": "fail", "error": f"Failed to process tool {tool.name}: {str(e)}"}
+            return {"status": "fail", "error": f"Failed to process tool {tool.name}: {unexpected_error_detail(e)}"}
 
     def _create_tool_object(
         self,
@@ -3851,7 +3852,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=e,
             )
-            raise ToolError(f"Failed to delete tool: {str(e)}")
+            raise ToolError(f"Failed to delete tool: {unexpected_error_detail(e)}")
 
     async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
         """
@@ -4019,7 +4020,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=e,
             )
-            raise ToolError(f"Failed to set tool state: {str(e)}")
+            raise ToolError(f"Failed to set tool state: {unexpected_error_detail(e)}")
 
     @staticmethod
     def _make_mcp_tool_error(
@@ -4346,10 +4347,8 @@ class ToolService(BaseService):
             started = time.monotonic()
             try:
                 response = await self.oauth_manager.token_exchange(
-                    token_url=oauth_config["token_url"],
+                    oauth_config=oauth_config,
                     subject_token=subject_token,
-                    client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),  # raw encrypted DB value — token_exchange() decrypts inline (client_secret_is_plaintext defaults False)
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
@@ -4640,6 +4639,9 @@ class ToolService(BaseService):
         """
 
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+        if server_id and gateway_id_from_header:
+            logger.warning("Rejecting gateway routing override for server-scoped tool '%s'", name)
+            raise ToolNotFoundError(f"Tool not found: {name}")
         is_direct_proxy = False
         tool = None
         gateway = None
@@ -4703,36 +4705,15 @@ class ToolService(BaseService):
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tool, caller_dependent_resolution = await self._select_invocable_tool(
+                db,
+                name,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+            )
             tool_membership_verified = bool(server_id)
-
-            if not tools:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-            multiple_found = len(tools) > 1
-            negative_cache_allowed = not multiple_found
-            if not multiple_found:
-                tool = tools[0]
-            else:
-                visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
-                for candidate in tools:
-                    tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
-                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
-                        priority = visibility_priority.get(candidate.visibility, 99)
-                        accessible_tools.append((name_priority, priority, candidate))
-
-                if not accessible_tools:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                accessible_tools.sort(key=lambda item: (item[0], item[1]))
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [candidate for name_priority, priority, candidate in accessible_tools if name_priority == best_name_priority and priority == best_visibility_priority]
-                if len(best_tools) > 1:
-                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-                tool = best_tools[0]
-
+            negative_cache_allowed = not caller_dependent_resolution
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
@@ -4752,7 +4733,7 @@ class ToolService(BaseService):
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+            if not caller_dependent_resolution and (server_id or tool_payload.get("visibility") == "public"):
                 gateway_id = tool_payload.get("gateway_id")
                 if server_id:
                     await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
@@ -4920,7 +4901,7 @@ class ToolService(BaseService):
                         )
                 except Exception as e:
                     logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                    raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                    raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {unexpected_error_detail(e)}")
             elif grant_type == "token-exchange":
                 headers = await self._resolve_token_exchange_header(
                     gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
@@ -4931,7 +4912,7 @@ class ToolService(BaseService):
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
                     logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
-                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {unexpected_error_detail(e)}")
         else:
             # Non-OAuth auth types (bearer / basic / authheaders / none): resolve PER-USER creds
             # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
@@ -5248,24 +5229,99 @@ class ToolService(BaseService):
             False,
         )
 
-    def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
-        """Load candidate tools for invocation, narrowing to a virtual server when possible.
+    def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None, *, match_original_name: bool = False) -> List[DbTool]:
+        """Load exact-name or original-name candidates for invocation.
 
         Args:
             db: Active database session.
             name: Tool name to resolve.
             server_id: Optional virtual server identifier used to constrain results.
+            match_original_name: Match ``DbTool.original_name`` instead of
+                ``DbTool.name``. Used only for server-scoped fallback resolution.
 
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
-        if server_id:
-            name_filter = or_(name_filter, DbTool.original_name == name)
+        name_filter = DbTool.original_name == name if match_original_name else DbTool.name == name  # pylint: disable=comparison-with-callable
         query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
-        return db.execute(query).scalars().all()
+        return list(db.execute(query).scalars().all())
+
+    async def _select_invocable_tool(
+        self,
+        db: Session,
+        name: str,
+        *,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+    ) -> Tuple[DbTool, bool]:
+        """Select an accessible invocation target using exact then scoped fallback lookup.
+
+        Exact-name candidates retain the existing visibility-priority behavior. A
+        server-scoped ``original_name`` fallback is valid only when exactly one
+        accessible attached tool matches, because visibility cannot disambiguate
+        tools exposed by different gateways under the same upstream name.
+
+        Args:
+            db: Active database session.
+            name: Tool name requested by the caller.
+            user_email: Effective requester email for visibility checks.
+            token_teams: Team scope from the caller token.
+            server_id: Optional virtual server identifier restricting candidates.
+
+        Returns:
+            The selected tool and whether its resolution depends on caller-visible
+            candidates and therefore must not be shared through the lookup cache.
+
+        Raises:
+            ToolNotFoundError: If no accessible candidate exists.
+            ToolInvocationError: If the highest-priority exact match or the scoped
+                original-name fallback is ambiguous.
+        """
+
+        async def accessible_tools(candidates: List[DbTool]) -> List[DbTool]:
+            accessible: List[DbTool] = []
+            for candidate in candidates:
+                tool_dict = {
+                    "visibility": candidate.visibility,
+                    "team_id": candidate.team_id,
+                    "owner_email": candidate.owner_email,
+                }
+                if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                    accessible.append(candidate)
+            return accessible
+
+        exact_candidates = self._load_invocable_tools(db, name, server_id=server_id)
+        if not server_id and len(exact_candidates) == 1:
+            # Preserve direct invocation's existing state-check and access-check
+            # ordering. The access-first behavior below is required specifically
+            # to decide whether scoped original-name fallback may run.
+            return exact_candidates[0], False
+
+        accessible_exact = await accessible_tools(exact_candidates)
+        if accessible_exact:
+            caller_dependent_resolution = len(exact_candidates) > 1
+            visibility_priority = {"team": 0, "private": 1, "public": 2}
+            best_priority = min(visibility_priority.get(candidate.visibility, 99) for candidate in accessible_exact)
+            best_tools = [candidate for candidate in accessible_exact if visibility_priority.get(candidate.visibility, 99) == best_priority]
+            if len(best_tools) > 1:
+                raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
+            return best_tools[0], caller_dependent_resolution
+
+        if server_id:
+            fallback_candidates = self._load_invocable_tools(db, name, server_id=server_id, match_original_name=True)
+            accessible_fallback = await accessible_tools(fallback_candidates)
+            if len(accessible_fallback) > 1:
+                raise ToolInvocationError(f"Multiple tools attached to this server share the upstream name '{name}'. Use a qualified tool name to select one.")
+            if accessible_fallback:
+                # Even an inaccessible exact-name candidate makes this fallback
+                # caller-dependent. Caching it would let a later caller who can
+                # access the exact candidate incorrectly reuse the fallback.
+                return accessible_fallback[0], bool(exact_candidates) or len(fallback_candidates) > 1
+
+        raise ToolNotFoundError(f"Tool not found: {name}")
 
     # ------------------------------------------------------------------
     # Retry helpers (used by invoke_tool)
@@ -5462,6 +5518,9 @@ class ToolService(BaseService):
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+        if server_id and gateway_id_from_header:
+            logger.warning("Rejecting gateway routing override for server-scoped tool '%s'", name)
+            raise ToolNotFoundError(f"Tool not found: {name}")
 
         # If X-Context-Forge-Gateway-Id header is present, check if gateway is in direct_proxy mode
         is_direct_proxy = False
@@ -5549,46 +5608,17 @@ class ToolService(BaseService):
                     self._raise_for_negative_tool_status(name, negative_payload.get("status"))
 
         if not tool_payload:
-            # Eager load tool WITH gateway in single query to prevent lazy load N+1
-            # Use a single query to avoid a race between separate enabled/inactive lookups.
-            # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
-            # tool names across teams without crashing on MultipleResultsFound.
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
+            # Each resolution stage eager-loads the gateway and uses scalars().all()
+            # so duplicate names across teams remain deterministic.
+            tool, caller_dependent_resolution = await self._select_invocable_tool(
+                db,
+                name,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+            )
             tool_membership_verified = bool(server_id)
-
-            if not tools:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-            multiple_found = len(tools) > 1
-            negative_cache_allowed = not multiple_found
-            if not multiple_found:
-                tool = tools[0]
-            else:
-                # Multiple tools found with same name — filter by access using
-                # _check_tool_access (same rules as list_tools) and prioritize.
-                # Priority (lower is better): team (0) > private (1) > public (2)
-                visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
-                for t in tools:
-                    tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
-                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(t, "name", None) == name else 1
-                        priority = visibility_priority.get(t.visibility, 99)
-                        accessible_tools.append((name_priority, priority, t))
-
-                if not accessible_tools:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                accessible_tools.sort(key=lambda x: (x[0], x[1]))
-
-                # Check for ambiguity at the highest priority level
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [t for name_priority, p, t in accessible_tools if name_priority == best_name_priority and p == best_visibility_priority]
-
-                if len(best_tools) > 1:
-                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-
-                tool = best_tools[0]
+            negative_cache_allowed = not caller_dependent_resolution
 
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -5609,9 +5639,9 @@ class ToolService(BaseService):
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            # Skip caching when multiple tools share a name — resolution is
-            # user-dependent, so a cached result could be wrong for other users.
-            if not multiple_found and (server_id or tool_payload.get("visibility") == "public"):
+            # Skip caching when candidate visibility makes resolution caller-dependent;
+            # a shared result could route a later caller to the wrong tool.
+            if not caller_dependent_resolution and (server_id or tool_payload.get("visibility") == "public"):
                 gateway_id = tool_payload.get("gateway_id")
                 if server_id:
                     await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
@@ -6125,7 +6155,7 @@ class ToolService(BaseService):
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
-                            raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
+                            raise ToolInvocationError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
                     else:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Strip invisible Unicode format characters left over in a credential
@@ -6567,7 +6597,7 @@ class ToolService(BaseService):
                                     )
                             except Exception as e:
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                                raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                                raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {unexpected_error_detail(e)}")
                         elif grant_type == "token-exchange":
                             headers = await self._resolve_token_exchange_header(
                                 gateway_oauth_config,
@@ -6588,7 +6618,7 @@ class ToolService(BaseService):
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
-                                raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                                raise ToolInvocationError(f"OAuth authentication failed for gateway: {unexpected_error_detail(e)}")
                     else:
                         # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
                         try:
@@ -8008,9 +8038,9 @@ class ToolService(BaseService):
                     )
                     pre_hooks_run.append(ref.plugin_ref.name)
                 except PluginViolationError as exc:
-                    warnings.append(ToolPreviewWarning(code="preview_hook_violation", hook=ref.plugin_ref.name, message=str(exc)))
+                    warnings.append(ToolPreviewWarning(code="preview_hook_violation", hook=ref.plugin_ref.name, message=unexpected_error_detail(exc)))
                 except PluginError as exc:
-                    warnings.append(ToolPreviewWarning(code="preview_hook_error", hook=ref.plugin_ref.name, message=str(exc)))
+                    warnings.append(ToolPreviewWarning(code="preview_hook_error", hook=ref.plugin_ref.name, message=unexpected_error_detail(exc)))
 
             for ref in skipped_refs:
                 warnings.append(
@@ -8483,7 +8513,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=ex,
             )
-            raise ToolError(f"Failed to update tool: {str(ex)}")
+            raise ToolError(f"Failed to update tool: {unexpected_error_detail(ex)}")
 
     async def _notify_tool_updated(self, tool: DbTool) -> None:
         """
@@ -8625,7 +8655,7 @@ class ToolService(BaseService):
             response = await self._http_client.get(url)
             response.raise_for_status()
         except Exception as e:
-            raise ToolValidationError(f"Failed to validate tool URL: {str(e)}")
+            raise ToolValidationError(f"Failed to validate tool URL: {unexpected_error_detail(e)}")
 
     async def _check_tool_health(self, tool: DbTool) -> bool:
         """Check if tool endpoint is healthy.
@@ -8998,7 +9028,7 @@ class ToolService(BaseService):
             result = ToolResult(content=content, is_error=False)
 
         except Exception as e:
-            error_message = str(e)
+            error_message = unexpected_error_detail(e)
             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
             result = ToolResult(content=content, is_error=True)
 

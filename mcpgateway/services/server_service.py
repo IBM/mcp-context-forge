@@ -51,6 +51,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.server_urls import build_server_display_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # ---------------------------------------------------------------------------
 # Server-associable entity registry
@@ -71,6 +72,15 @@ class _AssociationType(NamedTuple):
     rel_attr: str
     input_field: str
     label: str
+
+
+class _ServerAccessRecord(NamedTuple):
+    """Minimal server fields required for a Layer 1 visibility decision."""
+
+    id: str
+    visibility: str
+    team_id: Optional[str]
+    owner_email: Optional[str]
 
 
 _server_rels: dict[type[Base], Any] = {rel.mapper.class_: rel for rel in sa_inspect(DbServer).relationships if rel.mapper.class_ in set(SERVER_ASSOCIABLE_ENTITY_MODELS)}
@@ -137,11 +147,11 @@ def _validate_server_team_assignment(db: Session, user_email: Optional[str], tar
             an active team owner.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     # Preserve existing behavior for system/internal updates where
     # user context may be intentionally omitted.
@@ -154,7 +164,7 @@ def _validate_server_team_assignment(db: Session, user_email: Optional[str], tar
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 # Initialize logging service first
@@ -761,7 +771,7 @@ class ServerService(BaseService):
                 created_by=created_by,
                 user_email=created_by,
             )
-            raise ServerError(f"Failed to register server: {str(ex)}")
+            raise ServerError(f"Failed to register server: {unexpected_error_detail(ex)}")
 
     async def list_servers(
         self,
@@ -1019,7 +1029,7 @@ class ServerService(BaseService):
     async def _check_server_access(
         self,
         db: Session,
-        server: DbServer,
+        server: Union[DbServer, _ServerAccessRecord],
         user_email: Optional[str],
         token_teams: Optional[List[str]],
         *,
@@ -1076,6 +1086,66 @@ class ServerService(BaseService):
                 return True
 
         return False
+
+    async def ensure_server_access(
+        self,
+        db: Session,
+        server_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
+        """Verify server visibility without hydrating its associated entities.
+
+        This is intended for request preflights that only need the server's
+        Layer 1 visibility decision. It deliberately avoids the resource graph
+        loading, schema conversion, and view audit emitted by :meth:`get_server`.
+
+        Args:
+            db: Database session.
+            server_id: The server identifier to authorize.
+            user_email: Effective requester email for visibility checks.
+            token_teams: Team scope from the caller token.
+
+        Raises:
+            ServerNotFoundError: If the server does not exist or is not visible
+                to the caller. Both cases use the same response to avoid
+                disclosing server existence.
+        """
+        row = db.execute(
+            select(
+                DbServer.id,
+                DbServer.visibility,
+                DbServer.team_id,
+                DbServer.owner_email,
+            ).where(DbServer.id == server_id)
+        ).one_or_none()
+        if not row:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+        server = _ServerAccessRecord(
+            id=str(row.id),
+            visibility=row.visibility,
+            team_id=row.team_id,
+            owner_email=row.owner_email,
+        )
+
+        if await self._check_server_access(db, server, user_email, token_teams):
+            return
+
+        self._structured_logger.log(
+            level="INFO",
+            message="Server access denied",
+            event_type="server_access_denied",
+            component="server_service",
+            resource_type="server",
+            resource_id=str(server.id),
+            team_id=server.team_id,
+            user_email=user_email,
+            custom_fields={
+                "visibility": server.visibility,
+                "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
+            },
+        )
+        raise ServerNotFoundError(f"Server not found: {server_id}")
 
     async def get_server(
         self,
@@ -1495,7 +1565,7 @@ class ServerService(BaseService):
                 modified_by=user_email,
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to update server: {str(e)}")
+            raise ServerError(f"Failed to update server: {unexpected_error_detail(e)}")
 
     async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
         """Set the activation status of a server.
@@ -1652,7 +1722,7 @@ class ServerService(BaseService):
                 error_message=str(e),
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to set server state: {str(e)}")
+            raise ServerError(f"Failed to set server state: {unexpected_error_detail(e)}")
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Permanently delete a server.
@@ -1758,7 +1828,7 @@ class ServerService(BaseService):
                 error_message=str(e),
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to delete server: {str(e)}")
+            raise ServerError(f"Failed to delete server: {unexpected_error_detail(e)}")
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """

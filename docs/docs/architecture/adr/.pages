@@ -53,3 +53,4 @@ nav:
   - 48 End-User Identity Propagation: 041-identity-propagation.md
   - 54 Remove Granian HTTP Server: 054-remove-granian-http-server.md
   - 55 Scope Tool Lookup Cache Entries: 055-scope-tool-lookup-cache.md
+  - 56 CSP Hardening — No eval, No Inline Handlers: 056-csp-hardening-no-eval-no-inline-handlers.md

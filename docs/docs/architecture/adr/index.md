@@ -18,7 +18,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0011  | Namespaced Tool Federation                         | Implemented | Federation   | 2025-03-01  |
 | 0012  | Drop-down UI Tool Selection                        | Draft     | User Interface | 2025-03-01  |
 | 0013  | APIs for Server Connection Strings                 | Draft     | API Design     | 2025-03-01  |
-| 0014  | Security Headers & Environment-Aware CORS Middleware | Accepted  | Security       | 2025-08-17  |
+| 0014  | Security Headers & Environment-Aware CORS Middleware | Superseded by ADR-0056 | Security | 2025-08-17  |
 | 0015  | Configurable Well-Known URI Handler                | Accepted  | Security       | 2025-08-17  |
 | 0016  | Plugin Framework & AI Middleware                   | Implemented | Extensibility | 2025-08-17  |
 | 0017  | Adopt **orjson** for High-Performance JSON         | Accepted  | Performance    | 2025-10-27  |
@@ -57,6 +57,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0052  | GET /mcp Stream and Server-Initiated Request Correlation | Proposed | MCP Protocol | 2026-04-19 |
 | 0053  | Governed MCP Extension Framework                     | Proposed | Security       | 2026-05-29 |
 | 0054  | Remove Granian HTTP Server (supersedes ADR-0025)     | Accepted  | Performance   | 2026-07-22 |
-| 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24 |
+| 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24  |
+| 0056  | CSP Hardening — No eval, No Inline Handlers, Nonce-Only Scripts (supersedes ADR-0014 CSP) | Accepted | Security | 2026-10-01  |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

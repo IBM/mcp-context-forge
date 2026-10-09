@@ -57,6 +57,7 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -118,7 +119,7 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
     # Get domain allowlist (fail-closed: empty list means no domains allowed)
     allowed_domains = getattr(settings, "uaid_allowed_domains", [])
     if not allowed_domains:
-        raise ValueError(
+        raise PublicValidationError(
             f"UAID {operation_context} blocked for security: UAID_ALLOWED_DOMAINS is empty. "
             f"Cannot use endpoint {endpoint_url!r} without explicit domain allowlist. "
             f"Configure UAID_ALLOWED_DOMAINS to authorize trusted destination domains, "
@@ -227,7 +228,7 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
         return False
 
     if not any(domain_matches(endpoint_domain, d) for d in allowed_domains):
-        raise ValueError(
+        raise PublicValidationError(
             f"UAID {operation_context} blocked: endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS. "
             f"Endpoint: {endpoint_url!r}. "
             f"Allowed domains: {allowed_domains!r}. "
@@ -388,11 +389,11 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
         ValueError: If team does not exist or caller lacks ownership.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     if not user_email:
         return
@@ -403,7 +404,7 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 class A2AAgentService(BaseService):
@@ -681,7 +682,7 @@ class A2AAgentService(BaseService):
                 if auth_type == "query_param":
                     # Service-layer enforcement: Check feature flag
                     if not settings.insecure_allow_queryparam_auth:
-                        raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
+                        raise PublicValidationError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                     # Service-layer enforcement: Check host allowlist
                     if settings.insecure_queryparam_auth_allowed_hosts:
@@ -690,7 +691,7 @@ class A2AAgentService(BaseService):
                         allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
                         if hostname not in allowed_hosts:
                             allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                            raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
+                            raise PublicValidationError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
 
                     # Extract and encrypt query param auth
                     param_key = getattr(agent_data, "auth_query_param_key", None)
@@ -732,11 +733,11 @@ class A2AAgentService(BaseService):
                     parsed = urlparse(url_to_parse)
                     native_id = parsed.netloc
                     if parsed.path and parsed.path != "/":
-                        raise ValueError(f"UAID native_id cannot contain path components: {native_id_source}")
+                        raise PublicValidationError(f"UAID native_id cannot contain path components: {native_id_source}")
                     if parsed.query:
-                        raise ValueError(f"UAID native_id cannot contain query strings: {native_id_source}")
+                        raise PublicValidationError(f"UAID native_id cannot contain query strings: {native_id_source}")
                     if parsed.fragment:
-                        raise ValueError(f"UAID native_id cannot contain fragments: {native_id_source}")
+                        raise PublicValidationError(f"UAID native_id cannot contain fragments: {native_id_source}")
 
                     # Validate the native_id against allowlist (if it's different from endpoint_url)
                     if native_id_source != agent_data.endpoint_url:
@@ -911,7 +912,7 @@ class A2AAgentService(BaseService):
             except Exception as e:
                 set_span_error(span, e)
                 db.rollback()
-                raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
+                raise A2AAgentError(f"Failed to register A2A agent: {unexpected_error_detail(e)}")
 
     async def list_agents(
         self,
@@ -1554,7 +1555,7 @@ class A2AAgentService(BaseService):
                     # Grandfather clause: Allow updates to existing query_param agents
                     # unless they're trying to change credentials
                     if is_switching_to_queryparam or is_updating_queryparam_creds:
-                        raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
+                        raise PublicValidationError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                 # Service-layer enforcement: Check host allowlist
                 if settings.insecure_queryparam_auth_allowed_hosts:
@@ -1564,7 +1565,7 @@ class A2AAgentService(BaseService):
                     allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
                     if hostname not in allowed_hosts:
                         allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
+                        raise PublicValidationError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
 
             if is_switching_to_queryparam or is_updating_queryparam_creds:
                 # Get query param key and value
@@ -1635,11 +1636,11 @@ class A2AAgentService(BaseService):
                 parsed = urlparse(url_to_parse)
                 native_id = parsed.netloc
                 if parsed.path and parsed.path != "/":
-                    raise ValueError(f"UAID native_id cannot contain path components: {native_id_source}")
+                    raise PublicValidationError(f"UAID native_id cannot contain path components: {native_id_source}")
                 if parsed.query:
-                    raise ValueError(f"UAID native_id cannot contain query strings: {native_id_source}")
+                    raise PublicValidationError(f"UAID native_id cannot contain query strings: {native_id_source}")
                 if parsed.fragment:
-                    raise ValueError(f"UAID native_id cannot contain fragments: {native_id_source}")
+                    raise PublicValidationError(f"UAID native_id cannot contain fragments: {native_id_source}")
 
                 # Validate the native_id against allowlist (if it's different from endpoint_url)
                 if native_id_source != agent.endpoint_url:
@@ -1735,7 +1736,7 @@ class A2AAgentService(BaseService):
             raise ie
         except Exception as e:
             db.rollback()
-            raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
+            raise A2AAgentError(f"Failed to update A2A agent: {unexpected_error_detail(e)}")
 
     async def set_agent_state(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
         """Set the activation status of an A2A agent.
@@ -2217,7 +2218,7 @@ class A2AAgentService(BaseService):
                     _validate_uaid_endpoint_domain(agent_endpoint_url, operation_context="invocation")
             except ValueError as e:
                 # Convert validation error to A2AAgentError for consistent error handling
-                raise A2AAgentError(f"Agent '{agent_name}' invocation blocked: {e}") from e
+                raise A2AAgentError(f"Agent '{agent_name}' invocation blocked: {unexpected_error_detail(e)}") from e
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -2254,10 +2255,10 @@ class A2AAgentService(BaseService):
             )
         except Exception as e:
             if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
-                raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}") from e
+                raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {unexpected_error_detail(e)}") from e
             if agent_auth_type == "query_param" and agent_auth_query_params:
-                raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {e}") from e
-            raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {e}") from e
+                raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {unexpected_error_detail(e)}") from e
+            raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {unexpected_error_detail(e)}") from e
 
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2b: Plugin context setup and PRE_INVOKE hook
@@ -2389,10 +2390,10 @@ class A2AAgentService(BaseService):
                             )
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
+                raise A2AAgentError(f"Plugin RBAC violation: {unexpected_error_detail(e)}") from e
             except Exception as e:
                 logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+                raise A2AAgentError(f"Pre-invoke plugin error: {unexpected_error_detail(e)}") from e
 
         # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
         # headers. The Vault plugin removes this header when it processes the token,
@@ -2719,10 +2720,10 @@ class A2AAgentService(BaseService):
             # 4. Port injection is allowed for legitimate use cases (gateway.example.com:8443)
 
             if "://" in endpoint:
-                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain protocol prefix (SSRF protection)")
+                raise PublicValidationError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain protocol prefix (SSRF protection)")
 
             if "@" in endpoint:
-                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain @ character (SSRF protection)")
+                raise PublicValidationError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain @ character (SSRF protection)")
 
             # Parse to check for path components (after first slash)
             # Valid: "gateway.example.com", "gateway.example.com:8443"
@@ -2733,16 +2734,16 @@ class A2AAgentService(BaseService):
             # call.  The Rust parser already rejects the same characters
             # in `uaid::resolve_routing`; mirror that here.
             if "/" in endpoint or "?" in endpoint or "#" in endpoint:
-                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain path/query/fragment components (SSRF protection)")
+                raise PublicValidationError(f"Cross-gateway routing to {endpoint!r} rejected: endpoint cannot contain path/query/fragment components (SSRF protection)")
 
             # Validate it's a valid hostname/IP by attempting to parse as URL
             # This catches malformed hostnames like "not..valid..hostname"
             try:
                 parsed = urlparse(f"https://{endpoint}/test")
                 if not parsed.netloc:
-                    raise ValueError("Empty netloc")
+                    raise PublicValidationError("Empty netloc")
             except Exception as parse_error:
-                raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
+                raise PublicValidationError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Fail-closed domain allowlist enforcement
@@ -2776,7 +2777,7 @@ class A2AAgentService(BaseService):
             elif protocol == "mcp":
                 url = f"{scheme}://{endpoint}/mcp/tools/call"
             else:
-                raise ValueError(f"Unsupported protocol in UAID: {protocol}")
+                raise PublicValidationError(f"Unsupported protocol in UAID: {protocol}")
 
             # Prepare request payload — for A2A, pass agent_id in body instead of URL path
             # to support UAIDs containing forward slashes (e.g., in nativeId component)
@@ -3099,10 +3100,10 @@ class A2AAgentService(BaseService):
             # these into `A2AAgentError`).  A remote that lies about
             # its Content-Type charset lands here.
             logger.error("Cross-gateway routing response decode failure: %s", e)
-            raise A2AAgentError(f"Cross-gateway routing failed: response decode error: {e}")
+            raise A2AAgentError(f"Cross-gateway routing failed: response decode error: {unexpected_error_detail(e)}")
         except ValueError as e:
             logger.error("Failed to parse UAID or validate endpoint: %s", e)
-            raise A2AAgentError(f"Invalid UAID or endpoint not allowed: {e}")
+            raise A2AAgentError(f"Invalid UAID or endpoint not allowed: {unexpected_error_detail(e)}")
         except (httpx.HTTPError, OSError) as e:
             # Narrowed from a bare `except Exception` so we no longer
             # swallow programmer errors (AttributeError, KeyError,
@@ -3114,7 +3115,7 @@ class A2AAgentService(BaseService):
             # Programmer errors and asyncio.CancelledError deliberately
             # propagate.
             logger.error("Cross-gateway routing transport failure: %s", e)
-            raise A2AAgentError(f"Cross-gateway routing failed: {e}")
+            raise A2AAgentError(f"Cross-gateway routing failed: {unexpected_error_detail(e)}")
 
     async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
         """Aggregate metrics for all A2A agents.

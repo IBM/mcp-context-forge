@@ -35,6 +35,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ResourceRead
 from mcpgateway.utils.services_auth import encode_auth
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 # Service singletons are imported lazily in __init__ to avoid circular imports
 
@@ -430,7 +431,7 @@ class ExportService:
 
         except Exception as e:
             logger.error("Export failed: %s", str(e))
-            raise ExportError(f"Failed to export configuration: {str(e)}")
+            raise ExportError(f"Failed to export configuration: {unexpected_error_detail(e)}")
 
     async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export tools with encrypted authentication data.

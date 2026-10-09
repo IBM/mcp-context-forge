@@ -60,9 +60,11 @@ import uuid
 import httpx
 import httpx2
 from mcp import ClientSession, MCPError as McpError
+from mcp.client import Client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.server.mcpserver import MCPServer
 from mcp.types import PaginatedRequestParams
+from mcp_types import LoggingMessageNotificationParams
 import pytest
 import uvicorn
 
@@ -130,6 +132,11 @@ _MCP_APPS_E2E_ENABLED = os.getenv("MCPGATEWAY_MCP_APPS_ENABLED", "false").strip(
 skip_no_mcp_apps = pytest.mark.skipif(
     not _MCP_APPS_E2E_ENABLED,
     reason="MCP Apps E2E requires a gateway started with MCPGATEWAY_MCP_APPS_ENABLED=true",
+)
+_MODERN_INBOUND_E2E_ENABLED = os.getenv("MCP_INBOUND_PROTOCOL_MODE", "legacy").strip().lower() == "auto"
+skip_no_modern_inbound = pytest.mark.skipif(
+    not _MODERN_INBOUND_E2E_ENABLED,
+    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto and RUST_MCP_MODE=off",
 )
 
 
@@ -373,6 +380,40 @@ class TestConnectivity:
         advertised = [k for k in ("tools", "resources", "prompts", "logging", "completions") if getattr(caps, k, None) is not None]
         print(f"    -> Capabilities: {advertised}")
 
+    @skip_no_modern_inbound
+    @pytest.mark.flaky(reruns=1, reruns_delay=2)
+    async def test_modern_logging_is_not_advertised_or_emitted(self, jwt_token: str, mcp_url: str) -> None:
+        """Modern discovery omits logging, and debug opt-in requests receive no log message."""
+        received: list[LoggingMessageNotificationParams] = []
+
+        async def _collect(params: LoggingMessageNotificationParams) -> None:
+            received.append(params)
+
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        transport = streamable_http_client(mcp_url, http_client=http_client)
+        async with Client(transport, mode="2026-07-28", cache=None, log_level="debug", logging_callback=_collect) as modern_client:
+            raw_result = await modern_client.session.send_discover("2026-07-28")
+            assert "tools" in raw_result["capabilities"], f"unexpected discover result: {raw_result}"
+            assert "logging" not in raw_result["capabilities"], f"logging advertised to modern client: {raw_result['capabilities']}"
+
+            tools = (await modern_client.list_tools()).tools
+            assert any(tool.name == "a2a-a2a-echo-agent" for tool in tools), "echo agent tool unavailable for the modern call check"
+            tool_result = await modern_client.call_tool("a2a-a2a-echo-agent", {"query": "modern logging check"})
+            assert tool_result.is_error is False, f"modern tools/call failed (upstream may be down): {tool_result.content}"
+
+            for resource in (await modern_client.list_resources()).resources[:3]:
+                with suppress(McpError):
+                    await modern_client.read_resource(resource.uri)
+
+            for prompt in (await modern_client.list_prompts()).prompts:
+                if all(not argument.required for argument in prompt.arguments or []):
+                    with suppress(McpError):
+                        await modern_client.get_prompt(prompt.name)
+                    break
+
+        assert received == [], f"modern client received log notifications: {received}"
+        print(f"    -> Modern capabilities: {sorted(raw_result['capabilities'])}")
+
     async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""
         tools = (await client.list_tools()).tools
@@ -595,6 +636,29 @@ class TestRawJsonRpc:
             resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=build_initialize(1))
         assert resp.status_code in (401, 403), f"expected 401/403 without auth, got {resp.status_code}: {resp.text}"
         print(f"    -> unauthenticated /mcp/ -> status={resp.status_code}")
+
+    def test_unsupported_protocol_version_returns_32022(self, jwt_token: str) -> None:
+        """A modern-era POST at an unserved version gets JSON-RPC -32022 with HTTP 400."""
+        headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2099-01-01",
+        }
+        body = {
+            "jsonrpc": "2.0",
+            "id": "ping-2099",
+            "method": "ping",
+            "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2099-01-01"}},
+        }
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=body)
+        assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text}"
+        error = resp.json()["error"]
+        assert error["code"] == -32022, error
+        assert error["data"]["requested"] == "2099-01-01", error
+        assert error["data"]["supported"], error
+        print(f"    -> unsupported version -> status={resp.status_code} supported={error['data']['supported']}")
 
     def test_invalid_method_returns_error(self, jwt_token: str) -> None:
         """Unknown MCP method surfaces a JSON-RPC error envelope."""
@@ -1835,6 +1899,22 @@ def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
     return _run_async(_async_mcp_initialize(access_token, server_url))
 
 
+def _public_rpc_tool_call(server_id: str, tool_name: str, arguments: dict[str, Any], access_token: str | None = None) -> httpx.Response:
+    """Call a tool through the public JSON-RPC endpoint."""
+    headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
+    return httpx.post(
+        f"{BASE_URL}/rpc",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": f"scoped-rpc-{uuid.uuid4().hex}",
+            "method": "tools/call",
+            "params": {"name": tool_name, "server_id": server_id, "arguments": arguments},
+        },
+        timeout=_CLIENT_TIMEOUT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test: REST API server visibility
 # ---------------------------------------------------------------------------
@@ -2167,6 +2247,67 @@ class TestMcpPerServerEndpoint:
         with pytest.raises(Exception) as excinfo:
             _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
         print(f"    -> Outsider denied private server: {excinfo.value}")
+
+
+class TestPublicRpcScopedAuthorization:
+    """Public ``/rpc`` enforces authentication, token permissions, and server visibility."""
+
+    tool_name = f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time"
+
+    def test_unauthenticated_call_is_rejected(self, visibility_servers: dict) -> None:
+        """A scoped public tool call requires a bearer token."""
+        response = _public_rpc_tool_call(visibility_servers["public"]["id"], self.tool_name, {"timezone": "UTC"})
+        assert response.status_code == 401, f"Unauthenticated POST /rpc returned {response.status_code}: {response.text[:500]}"
+
+    def test_read_only_token_cannot_execute(self, scoped_token_read_only: dict, visibility_servers: dict) -> None:
+        """MCP transport access does not imply ``tools.execute``."""
+        response = _public_rpc_tool_call(
+            visibility_servers["public"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            scoped_token_read_only["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert body.get("error", {}).get("code") == -32003, f"Read-only token returned the wrong error: {body}"
+
+    def test_cross_team_developer_cannot_probe_team_server(
+        self,
+        admin_api: APIRequestContext,
+        playwright: Playwright,
+        create_team: Any,
+        visibility_servers: dict,
+    ) -> None:
+        """A caller with execute permission in another team sees generic not-found."""
+        _, other_team = _created_team(create_team, name=f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}")
+        caller = _create_user_with_token(
+            admin_api,
+            playwright,
+            f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}@test.com",
+            team_id=other_team["id"],
+            rbac_role="developer",
+        )
+        server_id = visibility_servers["team"]["id"]
+        try:
+            response = _public_rpc_tool_call(server_id, self.tool_name, {"timezone": "UTC"}, caller["access_token"])
+            assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+            body = response.json()
+            assert body.get("error") == {"code": -32002, "message": f"Server not found: {server_id}", "data": {"server_id": server_id}}, f"Hidden server returned the wrong error: {body}"
+        finally:
+            _cleanup_user(admin_api, caller)
+
+    def test_team_developer_can_invoke(self, test_users: dict, visibility_servers: dict) -> None:
+        """A team member with ``tools.execute`` can invoke an attached tool."""
+        response = _public_rpc_tool_call(
+            visibility_servers["team"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            test_users["developer"]["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert "error" not in body, f"Authorized scoped invocation failed: {body}"
+        assert body.get("result", {}).get("content"), f"Authorized scoped invocation returned no content: {body}"
 
 
 # ---------------------------------------------------------------------------
@@ -3076,6 +3217,68 @@ class TestVirtualServerLifecycle:
 
         assert detached.is_error, f"Detached tool remained invocable: {detached}"
         assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
+
+    def test_public_rpc_tools_call_honors_server_attachment(
+        self,
+        create_server: Any,
+        lifecycle_tools: list[dict[str, Any]],
+        admin_token: str,
+    ) -> None:
+        """Public /rpc should invoke an attached tool and reject an unassociated one.
+
+        Args:
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        unassociated_tool = next((tool for tool in lifecycle_tools if tool["id"] != (echo_tool or {}).get("id")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+        assert unassociated_tool, "The live gateway fixture must expose an unassociated tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        invoked = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-call",
+                "method": "tools/call",
+                "params": {
+                    "name": echo_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {"message": "scoped-rpc-live"},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert invoked.status_code == 200, f"POST /rpc returned {invoked.status_code}: {invoked.text[:500]}"
+        invoked_body = invoked.json()
+        assert "error" not in invoked_body, f"Attached tool invocation failed: {invoked_body}"
+        assert "scoped-rpc-live" in json.dumps(invoked_body["result"]), f"Attached tool returned the wrong result: {invoked_body}"
+
+        rejected = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-rejection",
+                "method": "tools/call",
+                "params": {
+                    "name": unassociated_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert rejected.status_code == 200, f"POST /rpc returned {rejected.status_code}: {rejected.text[:500]}"
+        rejected_body = rejected.json()
+        assert rejected_body.get("error", {}).get("code") == -32601, f"Unassociated tool returned the wrong error: {rejected_body}"
 
     @pytest.mark.parametrize(
         ("first_tenant", "second_tenant"),
@@ -4296,6 +4499,7 @@ class TestGatewayLifecycle:
                 if gateway_id:
                     with suppress(Exception):
                         admin_api.delete(f"/gateways/{gateway_id}")
+
 
 # ---------------------------------------------------------------------------
 # Schema ReDoS: a hostile input-schema pattern must not stall the gateway

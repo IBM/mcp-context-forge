@@ -496,7 +496,7 @@ class TestSessionRefreshAndValidate:
         blocklist.is_token_revoked.return_value = False
         blocklist.revoke_token.return_value = True
         return {
-            "verify": patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, return_value=payload),
+            "verify": patch("mcpgateway.routers.auth.verify_credentials_cached", new_callable=AsyncMock, return_value=payload),
             "blocklist": patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist),
             "create_token": patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock, return_value=(issued, expires_in)),
             "csrf": patch("mcpgateway.routers.auth.generate_csrf_token", return_value="csrf-rotated"),
@@ -633,7 +633,7 @@ class TestSessionRefreshAndValidate:
         token, _ = self._make_token()
         request = self._make_request(token)
 
-        with patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, side_effect=Exception("bad signature")):
+        with patch("mcpgateway.routers.auth.verify_credentials_cached", new_callable=AsyncMock, side_effect=Exception("bad signature")):
             with pytest.raises(HTTPException) as exc_info:
                 await refresh_session(request, mock_user)
 
@@ -797,11 +797,68 @@ class TestSessionRefreshAndValidate:
         token, _ = self._make_token()
         request = self._make_request(token)
 
-        with patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, side_effect=Exception("bad signature")):
+        with patch("mcpgateway.routers.auth.verify_credentials_cached", new_callable=AsyncMock, side_effect=Exception("bad signature")):
             with pytest.raises(HTTPException) as exc_info:
                 await validate_session(request, mock_user)
 
         assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_validate_accepts_trusted_external_idp_token(self, mock_user):
+        """A trusted external-IdP token whose resolved subject is the caller validates as an SSO session."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        token, payload = self._make_token(iss="https://kc.example.com/realms/m", sub="test@example.com", auth_provider="keycloak")
+        request = self._make_request(token)
+
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            result = await validate_session(request, mock_user)
+
+        assert result.valid is True
+        assert result.session_source == "sso"
+
+    @pytest.mark.asyncio
+    async def test_validate_refuses_external_idp_token_for_other_user(self, mock_user):
+        """A trusted external-IdP token that resolves to a different user is rejected with 401."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        token, payload = self._make_token(iss="https://kc.example.com/realms/m", sub="someone-else@example.com", auth_provider="keycloak")
+        request = self._make_request(token)
+
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            with pytest.raises(HTTPException) as exc_info:
+                await validate_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Session token does not match authenticated user"
+
+    @pytest.mark.asyncio
+    async def test_validate_refuses_external_idp_token_when_flag_disabled(self, mock_user, monkeypatch):
+        """With SSO_API_TOKEN_AUTH_ENABLED off, an external-IdP token skips external verification and keeps the internal 401."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+        from mcpgateway.utils import verify_credentials as vc
+
+        token, _ = self._make_token(iss="https://kc.example.com/realms/m")
+        request = self._make_request(token)
+        external = AsyncMock()
+        monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", False)
+        monkeypatch.setattr(vc, "verify_external_idp_token", external)
+        monkeypatch.setattr(vc, "_has_trusted_providers", lambda _db: True)
+        monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid token"
+        external.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_validate_refuses_when_no_token_present(self, mock_user):
