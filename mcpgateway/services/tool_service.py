@@ -4020,7 +4020,7 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=e,
             )
-            raise ToolError("Failed to set tool state: %s" % unexpected_error_detail(e))
+            raise ToolError(f"Failed to set tool state: {unexpected_error_detail(e)}")
 
     @staticmethod
     def _make_mcp_tool_error(
