@@ -1219,7 +1219,6 @@ async def oauth_callback(
                             }});
 
                             const result = await response.json();
-
                             if (response.ok) {{
                                 statusDiv.innerHTML = `
                                     <div style="color: #059669; padding: 15px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 5px;">
@@ -1229,6 +1228,15 @@ async def oauth_callback(
                                 `;
                                 button.textContent = '✅ Tools Fetched';
                                 button.style.backgroundColor = '#059669';
+                                if (window.opener && !window.opener.closed) {{
+                                    window.opener.postMessage({{
+                                        type: 'oauth_callback',
+                                        status: 'tools_fetched',
+                                        gatewayId: {json.dumps(str(gateway_id))},
+                                        gatewayName: {json.dumps(str(gateway.name))}
+                                    }}, '*');
+                                    window.close();
+                                }}
                             }} else {{
                                 throw new Error(result.detail || 'Failed to fetch tools');
                             }}
