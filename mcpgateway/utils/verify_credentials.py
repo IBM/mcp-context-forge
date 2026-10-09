@@ -1998,15 +1998,25 @@ async def verify_oauth_access_token(
     # Defense-in-depth: the jwks_uri from metadata must share the issuer's
     # origin and use HTTPS. A compromised metadata endpoint could otherwise
     # redirect key fetches to an attacker-controlled or internal host.
+    # Exception: when SSRF_ALLOW_LOCALHOST=true, permit http:// for loopback
+    # hosts so local development IdPs (e.g. Keycloak on localhost) work.
     jwks_parts = urlsplit(jwks_uri.strip())
     issuer_parts = urlsplit(normalized_issuer)
+    _localhost_hosts = ("localhost", "127.0.0.1", "::1")
+    _jwks_is_localhost_http = jwks_parts.scheme == "http" and (jwks_parts.hostname or "") in _localhost_hosts
     if jwks_parts.scheme != "https" or jwks_parts.netloc != issuer_parts.netloc:
-        logger.warning(
-            "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
-            sanitize_for_log(jwks_uri),
-            sanitize_for_log(normalized_issuer),
-        )
-        return None
+        if settings.ssrf_allow_localhost and _jwks_is_localhost_http and jwks_parts.netloc == issuer_parts.netloc:
+            logger.warning(
+                "Allowing non-HTTPS localhost jwks_uri %s (SSRF_ALLOW_LOCALHOST=true)",
+                sanitize_for_log(jwks_uri),
+            )
+        else:
+            logger.warning(
+                "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
+                sanitize_for_log(jwks_uri),
+                sanitize_for_log(normalized_issuer),
+            )
+            return None
 
     # Reject OIDC ID tokens before signature verification. ID tokens are
     # front-channel credentials (authorization code / implicit flow) and

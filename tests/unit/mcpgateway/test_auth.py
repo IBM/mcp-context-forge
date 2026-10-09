@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import TokenValidationError, get_current_user, get_db, get_user_team_roles, validate_token_user
+from mcpgateway.auth import get_current_user, get_db, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser
 from mcpgateway.transports.streamablehttp_transport import (
@@ -215,6 +215,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_jwt_uuid_sub_resolved_to_email(self, monkeypatch):
         """UUID sub in JWT is resolved to email via _get_email_by_id_sync (lines 1488-1490)."""
+        # Standard
         import uuid as _uuid
 
         user_uuid = str(_uuid.uuid4())
@@ -245,6 +246,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_jwt_uuid_sub_with_signed_email_uses_email_metadata(self, monkeypatch):
         """UUID sub with signed user.email should not need UUID-to-email DB resolution."""
+        # Standard
         import uuid as _uuid
 
         user_uuid = str(_uuid.uuid4())
@@ -279,6 +281,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_jwt_unknown_uuid_sub_rejected(self, monkeypatch):
         """UUID sub not found in DB should fail closed instead of using UUID as email."""
+        # Standard
         import uuid as _uuid
 
         user_uuid = str(_uuid.uuid4())
@@ -959,7 +962,7 @@ class TestAuthHooksOptimization:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         # Mock plugin result that continues to standard auth
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         mock_plugin_result = PluginResult(
@@ -2068,6 +2071,7 @@ class TestGetEmailByIdSync:
 
     def test_returns_email_when_found(self, monkeypatch):
         """Returns email string when UUID matches a DB row."""
+        # Standard
         from contextlib import contextmanager
 
         class DummyResult:
@@ -2083,6 +2087,7 @@ class TestGetEmailByIdSync:
             yield DummySession()
 
         monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
         from mcpgateway.auth import _get_email_by_id_sync
 
         result = _get_email_by_id_sync("550e8400-e29b-41d4-a716-446655440000")
@@ -2090,6 +2095,7 @@ class TestGetEmailByIdSync:
 
     def test_returns_none_when_not_found(self, monkeypatch):
         """Returns None when UUID has no matching DB row."""
+        # Standard
         from contextlib import contextmanager
 
         class DummyResult:
@@ -2105,6 +2111,7 @@ class TestGetEmailByIdSync:
             yield DummySession()
 
         monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
         from mcpgateway.auth import _get_email_by_id_sync
 
         result = _get_email_by_id_sync("550e8400-e29b-41d4-a716-446655440000")
@@ -2560,7 +2567,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_success(self):
         """Plugin successfully authenticates user (lines 614-646)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -2611,7 +2618,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_violation_error(self):
         """Plugin denies auth with PluginViolationError (lines 649-656)."""
-        # First-Party
+        # Third-Party
         from cpex.framework.errors import PluginViolationError
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="denied_token")  # pragma: allowlist secret
@@ -2666,7 +2673,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_no_credentials_no_request(self):
         """Plugin hook with no credentials and no request (lines 562, 573)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         mock_pm = MagicMock()
@@ -2686,7 +2693,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_fallback_request_id(self):
         """Request_id fallback to request.state.request_id (lines 577-580)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
@@ -2729,7 +2736,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_uuid_fallback_request_id(self):
         """Request_id fallback to uuid when neither correlation_id nor state (lines 581-583)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
@@ -3366,9 +3373,11 @@ class TestInjectUserInfoInState:
 
     def test_inject_with_existing_global_context(self):
         """Existing global_context has user dict already (line 1070-1072)."""
+        # Third-Party
+        from cpex.framework import GlobalContext
+
         # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
-        from cpex.framework import GlobalContext
 
         gc = GlobalContext(request_id="req-1", server_id=None, tenant_id=None)
         gc.user = {"existing_key": "value"}
@@ -3418,7 +3427,7 @@ class TestPluginAuthHookEdgeCases:
     @pytest.mark.asyncio
     async def test_plugin_auth_no_metadata_no_context(self):
         """Plugin returns user with no metadata and no context_table (branches 631-641)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -3463,7 +3472,7 @@ class TestPluginAuthHookEdgeCases:
     @pytest.mark.asyncio
     async def test_plugin_auth_metadata_without_auth_method(self):
         """Plugin returns metadata but without auth_method key (branch 633->637)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -3919,7 +3928,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_plugin_auth_success_without_request(self):
         """Plugin auth branch where request is None (branch 795->798)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -3960,7 +3969,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_plugin_auth_ignores_plugin_admin_claim_and_uses_db_user(self):
         """Plugin-provided is_admin must not override database admin status."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -4003,7 +4012,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_plugin_auth_missing_user_rejected_when_require_user_in_db_enabled(self, monkeypatch):
         """Missing DB users are rejected when REQUIRE_USER_IN_DB is enabled."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -4038,7 +4047,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_plugin_auth_existing_db_inactive_user_rejected(self):
         """Inactive DB users must be rejected even when plugin auth succeeds."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -4083,7 +4092,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_plugin_auth_missing_user_defaults_to_non_admin_when_allowed(self, monkeypatch):
         """Missing DB users can authenticate as non-admin when DB-only mode is disabled."""
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
@@ -4570,9 +4579,11 @@ class TestTenantIdPropagation:
         In production, _inject_userinfo_instate() runs first (may create
         GlobalContext), then _propagate_tenant_id() fills in tenant_id.
         """
+        # Third-Party
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1")
         request = self._make_request(team_id="team-acme", existing_global_context=global_context)
@@ -4590,9 +4601,11 @@ class TestTenantIdPropagation:
         Multi-team tokens have team_id=None because there is no single authoritative tenant.
         The plugin must receive tenant_id=None and skip by_tenant — not invent a 'default'.
         """
+        # Third-Party
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1")
         request = self._make_request(team_id=None, existing_global_context=global_context)
@@ -4608,9 +4621,11 @@ class TestTenantIdPropagation:
 
         _propagate_tenant_id() must not clobber an explicit tenant identity.
         """
+        # Third-Party
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1", tenant_id="existing-tenant")
         request = self._make_request(team_id="different-team", existing_global_context=global_context)
@@ -4630,7 +4645,7 @@ class TestTenantIdPropagation:
         tenant_id set from request.state.team_id so the rate limiter can enforce
         per-tenant limits on this request path.
         """
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult  # noqa: PLC0415
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
@@ -4668,7 +4683,7 @@ class TestTenantIdPropagation:
         constructed GlobalContext must have tenant_id=None so the rate limiter
         skips by_tenant enforcement rather than inventing a phantom tenant.
         """
-        # First-Party
+        # Third-Party
         from cpex.framework import PluginResult  # noqa: PLC0415
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
@@ -4706,9 +4721,11 @@ class TestTenantIdPropagation:
         in the get_current_user fallback (skipped when plugin_global_context exists).
         On the normal middleware path, tenant_id stayed None.
         """
+        # Third-Party
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         # Simulate middleware pre-creating context with tenant_id=None
         global_context = GlobalContext(request_id="r1", tenant_id=None)
@@ -4716,15 +4733,17 @@ class TestTenantIdPropagation:
 
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "team-acme", (
-            "_propagate_tenant_id must fill tenant_id even when middleware has already created plugin_global_context with tenant_id=None"
-        )
+        assert (
+            request.state.plugin_global_context.tenant_id == "team-acme"
+        ), "_propagate_tenant_id must fill tenant_id even when middleware has already created plugin_global_context with tenant_id=None"
 
     def test_propagate_tenant_id_no_overwrite(self):
         """_propagate_tenant_id must not overwrite an already-set tenant_id."""
+        # Third-Party
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1", tenant_id="plugin-set-tenant")
         request = self._make_request(team_id="different-team", existing_global_context=global_context)
@@ -4748,9 +4767,11 @@ class TestTenantIdPropagation:
         requests or middleware that doesn't set it).  The function uses getattr
         fallback — verify it leaves tenant_id as None rather than raising.
         """
+        # Third-Party
+        from cpex.framework import GlobalContext  # noqa: PLC0415
+
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1", tenant_id=None)
         # State has plugin_global_context but NO team_id attribute
@@ -5426,6 +5447,82 @@ class TestVerifyOauthAccessToken:
         mock_ctor.assert_called_once_with(self.JWKS_URI)
         assert self.JWKS_URI in vc._oauth_jwks_client_cache  # pylint: disable=protected-access
 
+    @pytest.mark.asyncio
+    async def test_http_localhost_jwks_uri_accepted_when_ssrf_allow_localhost(self):
+        """verify_oauth_access_token accepts http:// localhost jwks_uri when SSRF_ALLOW_LOCALHOST=true.
+
+        The guard that rejects non-HTTPS jwks_uri must not fire for loopback
+        hosts when settings.ssrf_allow_localhost is True — this allows local
+        development IdPs (e.g. Keycloak on http://localhost:8080) to work
+        without modifying production-grade security defaults.
+        """
+        # First-Party
+        from mcpgateway.utils import verify_credentials as vc  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+
+        localhost_issuer = "http://localhost:8080/realms/test"
+        localhost_jwks_uri = "http://localhost:8080/realms/test/protocol/openid-connect/certs"
+
+        token = self._sign_token(
+            {"iss": localhost_issuer, "sub": "user@example.com", "email": "user@example.com", "exp": 9999999999, "iat": 1700000000},
+            private_key,
+        )
+
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = public_key
+        mock_jwks_client = MagicMock()
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"issuer": localhost_issuer, "jwks_uri": localhost_jwks_uri}
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        vc._oauth_jwks_client_cache.pop(localhost_jwks_uri, None)  # pylint: disable=protected-access
+
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)),
+            patch("mcpgateway.utils.verify_credentials._NoRedirectPyJWKClient", return_value=mock_jwks_client),
+            patch("mcpgateway.utils.verify_credentials.settings", MagicMock(ssrf_allow_localhost=True)),
+        ):
+            result = await verify_oauth_access_token(token, [localhost_issuer])
+
+        assert result is not None, "Token from localhost IdP must be accepted when SSRF_ALLOW_LOCALHOST=true"
+        assert result["sub"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_http_localhost_jwks_uri_rejected_when_ssrf_allow_localhost_false(self):
+        """verify_oauth_access_token rejects http:// localhost jwks_uri when SSRF_ALLOW_LOCALHOST=false.
+
+        The production default (ssrf_allow_localhost=False) must still reject
+        non-HTTPS jwks_uri — the bypass is strictly opt-in for development.
+        """
+        private_key, _ = self._generate_rsa_keypair()
+
+        localhost_issuer = "http://localhost:8080/realms/test"
+        localhost_jwks_uri = "http://localhost:8080/realms/test/protocol/openid-connect/certs"
+
+        token = self._sign_token(
+            {"iss": localhost_issuer, "sub": "user@example.com", "exp": 9999999999, "iat": 1700000000},
+            private_key,
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"issuer": localhost_issuer, "jwks_uri": localhost_jwks_uri}
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)),
+            patch("mcpgateway.utils.verify_credentials.settings", MagicMock(ssrf_allow_localhost=False)),
+        ):
+            result = await verify_oauth_access_token(token, [localhost_issuer])
+
+        assert result is None, "Non-HTTPS localhost jwks_uri must be rejected when SSRF_ALLOW_LOCALHOST=false"
+
 
 class TestResolveAuthorizationServers:
     """Tests for the ``_resolve_authorization_servers`` helper."""
@@ -5465,6 +5562,51 @@ class TestResolveAuthorizationServers:
         assert _resolve_authorization_servers({}) == []
         assert _resolve_authorization_servers({"authorization_servers": None, "authorization_server": None}) == []
         assert _resolve_authorization_servers({"authorization_server": "   "}) == []
+
+    def test_http_localhost_kept_when_ssrf_allow_localhost(self):
+        """Non-HTTPS localhost authorization_server is kept when SSRF_ALLOW_LOCALHOST=true.
+
+        Ensures _resolve_authorization_servers respects ssrf_allow_localhost so
+        local development IdPs (e.g. Keycloak on http://localhost:8080) are not
+        silently dropped from the allowlist.
+        """
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(ssrf_allow_localhost=True)):
+            result = _resolve_authorization_servers({"authorization_servers": ["http://localhost:8080/realms/test"]})
+        assert result == ["http://localhost:8080/realms/test"]
+
+    def test_http_localhost_dropped_when_ssrf_allow_localhost_false(self):
+        """Non-HTTPS localhost authorization_server is dropped when SSRF_ALLOW_LOCALHOST=false.
+
+        The production default must not accept HTTP authorization servers — the
+        bypass is strictly opt-in for development environments.
+        """
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(ssrf_allow_localhost=False)):
+            result = _resolve_authorization_servers({"authorization_servers": ["http://localhost:8080/realms/test"]})
+        assert result == []
+
+    def test_http_non_localhost_always_dropped(self):
+        """Non-HTTPS non-localhost authorization_server is always dropped regardless of SSRF_ALLOW_LOCALHOST."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(ssrf_allow_localhost=True)):
+            result = _resolve_authorization_servers({"authorization_servers": ["http://internal.corp/realms/test"]})
+        assert result == [], "SSRF_ALLOW_LOCALHOST must not bypass the HTTPS requirement for non-loopback hosts"
+
+    def test_singular_http_localhost_kept_when_ssrf_allow_localhost(self):
+        """Non-HTTPS localhost authorization_server (singular key) kept when SSRF_ALLOW_LOCALHOST=true."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_authorization_servers  # pylint: disable=import-outside-toplevel
+
+        with patch("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(ssrf_allow_localhost=True)):
+            result = _resolve_authorization_servers({"authorization_server": "http://127.0.0.1:8080/realms/test"})
+        assert result == ["http://127.0.0.1:8080/realms/test"]
 
 
 class TestTryOAuthAccessTokenDbErrors:
