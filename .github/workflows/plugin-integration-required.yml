@@ -30,6 +30,7 @@ on:
             - "uv.lock"
             - "plugins/config.yaml"
             - "tests/live_gateway/plugins/**"
+            - "tests/integration/test_rate_limiter_per_server.py"
             - ".github/workflows/plugin-integration.yml"
 
 permissions:

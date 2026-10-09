@@ -7651,8 +7651,8 @@ class TestInvokeToolPluginContext:
         assert gc.user == "user@test.com"
 
     @pytest.mark.asyncio
-    async def test_global_context_not_updated_when_gateway_id_missing_and_user_already_set(self, tool_service):
-        """Covers the false branches for global_context.server_id/user propagation."""
+    async def test_global_context_resets_missing_gateway_identity_and_preserves_user(self, tool_service):
+        """Reset stale server identity for gateway-less tools and preserve the authenticated user."""
         # Third-Party
         from cpex.framework.models import GlobalContext
 
@@ -7697,8 +7697,7 @@ class TestInvokeToolPluginContext:
             )
 
         assert result is not None
-        # gateway_id is missing -> should not overwrite server_id
-        assert gc.server_id == "old-server"
+        assert gc.server_id == "unknown"
         # user already set -> should not overwrite
         assert gc.user == "already@test.com"
 

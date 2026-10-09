@@ -35,6 +35,7 @@ on:
             - "uv.lock"
             - "plugins/config.yaml"
             - "tests/live_gateway/plugins/**"
+            - "tests/integration/test_rate_limiter_per_server.py"
             - ".github/workflows/plugin-integration.yml"
     workflow_dispatch:
 
@@ -308,6 +309,15 @@ jobs:
               run: |
                   . .venv/bin/activate
                   python -m pytest "${{ matrix.plugin.tests }}" -v
+
+            - name: Verify per-server quotas through both transports and replicas
+              if: matrix.plugin.name == 'rate-limiter' && matrix.plugin.enforcement == 'static'
+              run: |
+                  docker run --detach --name fast-time-server-b \
+                    --publish 127.0.0.1:9081:9080 \
+                    ghcr.io/ibm/cfex-mcp-fast-time-server:5eac210da1c96a5fb2386c82a0c6f543b68fd76a
+                  . .venv/bin/activate
+                  python -m pytest tests/integration/test_rate_limiter_per_server.py -v --with-integration
 
             - name: Capture fast-time-server logs on failure
               if: failure()
