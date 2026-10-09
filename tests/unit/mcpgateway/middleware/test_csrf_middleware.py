@@ -1132,3 +1132,94 @@ def test_csrf_exempt_paths_default_contains_admin_subpaths():
     defaults = Settings.model_fields["csrf_exempt_paths"].default_factory()
     for path in ["/admin/login", "/admin/forgot-password", "/admin/reset-password", "/rpc"]:
         assert path in defaults, f"Expected '{path}' in csrf_exempt_paths default_factory, got: {defaults}"
+
+
+class TestCSRFMiddlewareASGICall:
+    """Pure-ASGI ``__call__`` entry point coverage (non-http passthrough and rejection)."""
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scope(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        middleware = CSRFMiddleware(app=app)
+
+        async def noop(*_args):
+            return None
+
+        await middleware({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_sends_rejection_directly_without_calling_downstream(self):
+        """POST without a CSRF token: the 403 rejection is sent via ASGI, downstream never runs."""
+        downstream_called = False
+
+        async def app(scope, receive, send):
+            nonlocal downstream_called
+            downstream_called = True
+
+        middleware = CSRFMiddleware(app=app)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/data",
+            "headers": [(b"cookie", b"jwt_token=jwt_cookie_token")],
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+            mock_settings.csrf_enabled = True
+            mock_settings.auth_required = True
+            mock_settings.csrf_exempt_paths = []
+            mock_settings.csrf_token_name = "X-CSRF-Token"
+
+            await middleware(scope, receive, send)
+
+        assert downstream_called is False
+        assert sent[0]["status"] == 403
+
+    @pytest.mark.asyncio
+    async def test_call_invokes_downstream_when_request_passes(self):
+        """GET request passes validation: downstream app runs and its response is sent verbatim."""
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = CSRFMiddleware(app=app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/data",
+            "headers": [],
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+            mock_settings.csrf_enabled = True
+            mock_settings.auth_required = True
+            mock_settings.csrf_exempt_paths = []
+
+            await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200

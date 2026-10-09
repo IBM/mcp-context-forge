@@ -10,6 +10,18 @@ for ContextForge requests. It validates request parameters, JSON payloads, and
 resource paths to prevent security vulnerabilities like path traversal, XSS,
 and injection attacks.
 
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): JSON request bodies
+read during validation are replayed downstream via a fresh receive callable
+(mirroring what BaseHTTPMiddleware's _CachedRequest did), and responses stream
+unbuffered. A ``dispatch`` shim is retained for tests.
+
+Output sanitization was removed with the ASGI conversion: under
+BaseHTTPMiddleware ``call_next`` always returned ``_StreamingResponse`` (which
+carries no ``body`` attribute), so ``_sanitize_response`` could never run in
+production. ``settings.sanitize_output`` is retained for environment
+compatibility but has no effect.
+
+
 Examples:
     >>> from mcpgateway.middleware.validation_middleware import ValidationMiddleware  # doctest: +SKIP
     >>> app.add_middleware(ValidationMiddleware)  # doctest: +SKIP
@@ -19,13 +31,13 @@ Examples:
 import logging
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, List
 import warnings
 
 # Third-Party
-from fastapi import HTTPException, Request, Response
+from fastapi import HTTPException, Request
 import orjson
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
@@ -48,51 +60,40 @@ def is_path_traversal(uri: str) -> bool:
     return ".." in uri or uri.startswith("/") or "\\" in uri
 
 
-class ValidationMiddleware(BaseHTTPMiddleware):
-    """Middleware for validating inputs and sanitizing outputs.
+class ValidationMiddleware:
+    """Middleware for validating inputs.
 
     This middleware validates request parameters, JSON data, and resource paths
-    to prevent security vulnerabilities. It can operate in strict or lenient mode
-    and optionally sanitizes response content.
+    to prevent security vulnerabilities. It can operate in strict or lenient mode.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         """Initialize validation middleware with configuration settings.
 
         Args:
-            app: FastAPI application instance
+            app: ASGI application instance
         """
         global _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED  # pylint: disable=global-statement
-        super().__init__(app)
+        self.app = app
         warnings.warn(VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
         if not _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED:
             logger.warning(VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
             _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED = True
         self.enabled = settings.experimental_validate_io
         self.strict = settings.validation_strict
-        self.sanitize = settings.sanitize_output
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
 
-    async def dispatch(self, request: Request, call_next):
-        """Process request with validation and response sanitization.
+    async def _run_validation(self, request: Request) -> None:
+        """Validate the request, honoring log-only mode in dev/staging.
 
         Args:
             request: Incoming HTTP request
-            call_next: Next middleware/handler in chain
-
-        Returns:
-            HTTP response, potentially sanitized
 
         Raises:
-            HTTPException: If validation fails in strict mode
+            HTTPException: If validation fails outside log-only mode
         """
-        # Phase 0: Feature disabled - skip entirely
-        if not self.enabled:
-            response = await call_next(request)
-            return response
-
-        # Phase 1: Log-only mode in dev/staging
+        # Log-only mode in dev/staging
         warn_only = settings.environment in ("development", "staging") and not self.strict
 
         # Validate input
@@ -105,13 +106,75 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 logger.error("[VALIDATION] Input validation failed: %s", e.detail)
                 raise
 
-        response = await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """ASGI entry point with request-body replay for JSON validation.
 
-        # Sanitize output
-        if self.sanitize:
-            response = await self._sanitize_response(response)
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
 
-        return response
+        Raises:
+            HTTPException: If validation fails outside log-only mode
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Feature disabled - skip entirely
+        if not self.enabled:
+            await self.app(scope, receive, send)
+            return
+
+        # Record any request-stream messages consumed during validation so the
+        # body can be replayed downstream exactly as BaseHTTPMiddleware's
+        # _CachedRequest replayed dispatch-read bodies.
+        consumed: List[Message] = []
+
+        async def recording_receive() -> Message:
+            """Forward receive messages while recording them for replay."""
+            message = await receive()
+            consumed.append(message)
+            return message
+
+        request = Request(scope, recording_receive)
+        await self._run_validation(request)
+
+        if not consumed:
+            await self.app(scope, receive, send)
+            return
+
+        replay_queue = list(consumed)
+
+        async def replay_receive() -> Message:
+            """Replay recorded request messages, then defer to the real receive."""
+            if replay_queue:
+                return replay_queue.pop(0)
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+    async def dispatch(self, request: Request, call_next):
+        """BaseHTTPMiddleware-compatible entry point retained for tests.
+
+        Args:
+            request: Incoming HTTP request
+            call_next: Next middleware/handler in chain
+
+        Returns:
+            HTTP response from the downstream handler
+
+        Raises:
+            HTTPException: If validation fails in strict mode
+        """
+        # Phase 0: Feature disabled - skip entirely
+        if not self.enabled:
+            response = await call_next(request)
+            return response
+
+        await self._run_validation(request)
+
+        return await call_next(request)
 
     async def _validate_request(self, request: Request):
         """Validate incoming request parameters.
@@ -251,47 +314,3 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             return str(resolved_path)
         except (OSError, ValueError):
             raise HTTPException(status_code=400, detail="invalid_path: Invalid path")
-
-    async def _sanitize_response(self, response: Response) -> Response:
-        """Sanitize response content by removing control characters.
-
-        Args:
-            response: HTTP response to sanitize
-
-        Returns:
-            Response: Sanitized response
-
-        Note:
-            This middleware does NOT set Content-Length for compressed responses
-            to avoid "Content-Length mismatch" errors (issue #5457). Compressed
-            responses must not be sanitized as they are binary data, not text.
-        """
-        if not hasattr(response, "body"):
-            return response
-
-        # Skip sanitization for compressed responses - they are binary data and cannot
-        # be decoded as UTF-8. Attempting to sanitize compressed data would corrupt it.
-        # Let the compression middleware handle Content-Length for compressed responses.
-        content_encoding = response.headers.get("content-encoding", "")
-        if content_encoding in ("gzip", "br", "zstd", "deflate"):
-            logger.debug("Skipping output sanitization for compressed response (content-encoding: %s)", content_encoding)
-            return response
-
-        try:  # noqa: PLW0717 - keep sanitization failures non-fatal.
-            original_body = response.body
-            body = original_body
-            if isinstance(body, bytes):
-                body = body.decode("utf-8", errors="replace")
-
-            # Remove control characters except newlines and tabs
-            sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", body)
-
-            final_body = sanitized.encode("utf-8")
-            response.body = final_body
-            # Decoding invalid UTF-8 can change bytes even when sanitization leaves text unchanged.
-            if original_body != final_body:
-                response.headers["content-length"] = str(len(final_body))
-        except Exception as e:
-            logger.warning("Failed to sanitize response: %s", e)
-
-        return response

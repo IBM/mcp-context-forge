@@ -82,6 +82,7 @@ async def lifecycle_client(main_app_with_admin_api):
     # First-Party
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
+    import mcpgateway.middleware.ui_auth as ui_auth_mod
     import mcpgateway.services.gateway_service as gateway_service_mod
     from mcpgateway.auth import get_current_user
     from mcpgateway.middleware.auth_middleware import security_logger
@@ -115,7 +116,7 @@ async def lifecycle_client(main_app_with_admin_api):
         seed_db.close()
 
     original_main_session_local = main_mod.SessionLocal
-    original_validate_token_user = main_mod.validate_token_user
+    original_ui_auth_validate_token_user = ui_auth_mod.validate_token_user
     original_gateway_session_local = gateway_service_mod.SessionLocal
     original_db_session_local = db_mod.SessionLocal
     original_db_url = settings.database_url
@@ -138,7 +139,7 @@ async def lifecycle_client(main_app_with_admin_api):
     settings.gateway_async_lifecycle_enabled = True
     settings.gateway_async_lifecycle_poll_interval = 0.01
     main_mod.SessionLocal = SessionLocal
-    main_mod.validate_token_user = AsyncMock(return_value=mock_email_user)
+    ui_auth_mod.validate_token_user = AsyncMock(return_value=mock_email_user)
     gateway_service_mod.SessionLocal = SessionLocal
     db_mod.SessionLocal = SessionLocal
     main_mod.gateway_service._event_service.publish_event = AsyncMock(return_value=None)
@@ -152,10 +153,7 @@ async def lifecycle_client(main_app_with_admin_api):
 
     import mcpgateway.middleware.rbac as rbac_mod
 
-    original_permission_service = getattr(main_mod, "PermissionService", None)
     original_rbac_permission_service = rbac_mod.PermissionService
-    if original_permission_service is not None:
-        main_mod.PermissionService = AllowAllPermissionService
     rbac_mod.PermissionService = AllowAllPermissionService
 
     def override_get_db():
@@ -201,11 +199,9 @@ async def lifecycle_client(main_app_with_admin_api):
     app.dependency_overrides.clear()
     user_context_db.close()
     main_mod.SessionLocal = original_main_session_local
-    main_mod.validate_token_user = original_validate_token_user
+    ui_auth_mod.validate_token_user = original_ui_auth_validate_token_user
     gateway_service_mod.SessionLocal = original_gateway_session_local
     db_mod.SessionLocal = original_db_session_local
-    if original_permission_service is not None:
-        main_mod.PermissionService = original_permission_service
     rbac_mod.PermissionService = original_rbac_permission_service
     settings.database_url = original_db_url
     settings.auth_required = original_auth_required

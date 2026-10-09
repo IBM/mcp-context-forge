@@ -323,3 +323,107 @@ def test_setup_query_logging(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(dql, "instrument_engine_for_logging", MagicMock())
     dql.setup_query_logging(app, engine)
     app.add_middleware.assert_called_once()
+
+
+class TestDBQueryLoggingMiddlewareASGICall:
+    """Pure-ASGI ``__call__`` entry point coverage (passthrough branches and full write path)."""
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scope(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        middleware = dql.DBQueryLoggingMiddleware(app=app)
+
+        async def noop(*_args):
+            return None
+
+        await middleware({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_when_disabled(self, monkeypatch: pytest.MonkeyPatch):
+        """db_query_log_enabled=False: downstream app runs untouched, no context set."""
+        monkeypatch.setattr(dql, "get_settings", lambda: DummySettings(db_query_log_enabled=False))
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = dql.DBQueryLoggingMiddleware(app=app)
+        scope = {"type": "http", "method": "GET", "path": "/tools", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_for_skipped_path(self, monkeypatch: pytest.MonkeyPatch):
+        """should_skip_db_query_logging=True: downstream app runs untouched."""
+        monkeypatch.setattr(dql, "get_settings", lambda: DummySettings(db_query_log_enabled=True))
+        monkeypatch.setattr(dql, "should_skip_db_query_logging", lambda path: True)
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = dql.DBQueryLoggingMiddleware(app=app)
+        scope = {"type": "http", "method": "GET", "path": "/health", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_captures_status_and_writes_logs(self, monkeypatch: pytest.MonkeyPatch):
+        """Full success path: status is captured from response-start and logs are written."""
+        monkeypatch.setattr(dql, "get_settings", lambda: DummySettings(db_query_log_enabled=True))
+        monkeypatch.setattr(dql, "should_skip_db_query_logging", lambda path: False)
+
+        captured = {}
+
+        def fake_write_logs(ctx, _queries):
+            captured["status_code"] = ctx.get("status_code")
+            captured["request_duration_ms"] = ctx.get("request_duration_ms")
+
+        monkeypatch.setattr(dql, "_write_logs", fake_write_logs)
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 201, "headers": []})
+            await send({"type": "http.response.body", "body": b"created"})
+
+        middleware = dql.DBQueryLoggingMiddleware(app=app)
+        scope = {"type": "http", "method": "POST", "path": "/tools", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 201
+        assert captured["status_code"] == 201
+        assert captured["request_duration_ms"] is not None
