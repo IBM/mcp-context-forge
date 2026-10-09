@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 # First-Party
-from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION, MCPProtocolVersionMiddleware, SUPPORTED_PROTOCOL_VERSIONS
+from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION, MCPProtocolVersionMiddleware
 
 
 def _make_request(path: str, headers: Iterable[Tuple[bytes, bytes]] | None = None) -> Request:
@@ -157,3 +157,81 @@ async def test_auto_mode_accepts_modern_version(monkeypatch):
     response = await middleware.dispatch(request, call_next)
     assert response.status_code == 200
     assert request.state.mcp_protocol_version == "2026-07-28"
+
+
+class TestMCPProtocolVersionMiddlewareASGICall:
+    """Pure-ASGI ``__call__`` entry point coverage (passthrough and 400 rejection)."""
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scope(self):
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        middleware = MCPProtocolVersionMiddleware(app)
+
+        async def noop(*_args):
+            return None
+
+        await middleware({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_sends_400_rejection_directly_without_calling_downstream(self):
+        downstream_called = False
+
+        async def app(scope, receive, send):
+            nonlocal downstream_called
+            downstream_called = True
+
+        middleware = MCPProtocolVersionMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/rpc",
+            "headers": [(b"mcp-protocol-version", b"1999-01-01")],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+
+        assert downstream_called is False
+        assert sent[0]["status"] == 400
+
+    @pytest.mark.asyncio
+    async def test_call_invokes_downstream_when_version_supported(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.config.settings.mcp_inbound_protocol_mode", "auto")
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = MCPProtocolVersionMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/rpc",
+            "headers": [],
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+        assert scope["state"]["mcp_protocol_version"] == DEFAULT_PROTOCOL_VERSION

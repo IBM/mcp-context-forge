@@ -16,7 +16,7 @@ from enum import auto, Enum
 from functools import lru_cache
 import ipaddress
 import re
-from typing import List, Optional, Pattern, Tuple
+from typing import Any, Callable, List, Optional, Pattern, Tuple
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -31,7 +31,7 @@ from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _ALL_PERMISSIONS_SCOPE, token_scope_grants
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.paths import replace_api_path_alias
+from mcpgateway.utils.paths import normalize_scope_path, replace_api_path_alias
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
     get_auth_bearer_token_from_request,
@@ -336,26 +336,6 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     return normalized
 
 
-def _normalize_scope_path(scope_path: str, root_path: str) -> str:
-    """Strip ``root_path`` from ``scope_path`` when the incoming path includes it.
-
-    Args:
-        scope_path: Request path observed by middleware.
-        root_path: Application root path prefix, if configured.
-
-    Returns:
-        Path value normalized for permission and scope pattern matching.
-    """
-    if root_path and len(root_path) > 1:
-        root_path = root_path.rstrip("/")
-    if root_path and len(root_path) > 1 and scope_path.startswith(root_path):
-        rest = scope_path[len(root_path) :]
-        # root_path="/app" must not strip from "/application/..."
-        if rest == "" or rest.startswith("/"):
-            return rest or "/"
-    return scope_path
-
-
 @lru_cache(maxsize=16)
 def _get_llm_permission_patterns(prefix: str) -> Tuple[Tuple[str, Pattern[str], str], ...]:
     """Build precompiled permission patterns for LLM proxy endpoints.
@@ -447,7 +427,7 @@ class TokenScopingMiddleware:
             - docs/docs/manage/rbac.md - Token scope pattern documentation
             - tests/unit/mcpgateway/middleware/test_token_scoping_normalization.py
         """
-        normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
+        normalized = normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
             normalized = f"/{normalized}"
         normalized = replace_api_path_alias(normalized)
@@ -469,7 +449,7 @@ class TokenScopingMiddleware:
             scope = {}
         scope_path = request.url.path or scope.get("path") or "/"
         root_path = scope.get("root_path") or settings.app_root_path or ""
-        normalized = _normalize_scope_path(scope_path, root_path)
+        normalized = normalize_scope_path(scope_path, root_path)
         if not normalized.startswith("/"):
             normalized = f"/{normalized}"
         return replace_api_path_alias(normalized)
@@ -1478,3 +1458,44 @@ class TokenScopingMiddleware:
 
 # Create middleware instance
 token_scoping_middleware = TokenScopingMiddleware()
+
+
+class TokenScopingASGIMiddleware:
+    """Pure-ASGI adapter around the TokenScopingMiddleware singleton.
+
+    BaseHTTPMiddleware charges every request a task group plus a buffered
+    response; the scoping logic only ever passes the request through unchanged
+    or returns a deny response, so neither is needed. The singleton keeps its
+    ``(request, call_next)`` interface for direct callers (route handlers in
+    main.py) and the existing test-suite.
+    """
+
+    def __init__(self, app: Any) -> None:
+        """Store the downstream ASGI app.
+
+        Args:
+            app: The next ASGI application in the stack.
+        """
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Run token scoping, then pass through or emit the deny response.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+
+        async def call_next(_request: Request) -> None:
+            """Invoke the downstream app; its response is already sent."""
+            await self.app(scope, receive, send)
+
+        response = await token_scoping_middleware(request, call_next)
+        if response is not None:
+            await response(scope, receive, send)

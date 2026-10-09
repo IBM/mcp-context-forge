@@ -54,7 +54,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = False
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
 
@@ -67,7 +66,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"<script", r"javascript:"]
             mock_settings.max_param_length = 1000
@@ -83,7 +81,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = False
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
 
@@ -118,7 +115,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -147,7 +143,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = False  # Not strict
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
@@ -177,7 +172,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = False
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -208,7 +202,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -239,7 +232,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -263,7 +255,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -285,7 +276,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 10
@@ -304,7 +294,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
@@ -323,7 +312,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 10
@@ -339,7 +327,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -355,7 +342,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -371,7 +357,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
 
@@ -388,7 +373,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
 
@@ -405,7 +389,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
 
@@ -418,7 +401,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 3
@@ -436,7 +418,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = ["/safe"]
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
@@ -458,7 +439,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = ["/safe"]
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
@@ -477,7 +457,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = [str(tmp_path)]
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
@@ -493,7 +472,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
@@ -509,7 +487,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
@@ -522,120 +499,6 @@ class TestValidationMiddleware:
             assert exc_info.value.status_code == 400
             assert "Invalid path" in exc_info.value.detail
 
-    @pytest.mark.asyncio
-    async def test_sanitize_response(self):
-        """Test response sanitization."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = True
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-
-            # Response with control characters
-            response = Response(content="Hello\x00World\x1f")
-
-            sanitized = await middleware._sanitize_response(response)
-
-            assert b"\x00" not in sanitized.body
-            assert b"\x1f" not in sanitized.body
-            assert b"HelloWorld" in sanitized.body
-
-    @pytest.mark.asyncio
-    async def test_sanitize_response_no_body(self):
-        """Test response sanitization with no body."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = True
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-
-            middleware = ValidationMiddleware(app=None)
-
-            response = MagicMock()
-            del response.body  # Remove body attribute
-
-            result = await middleware._sanitize_response(response)
-
-            assert result == response
-
-    @pytest.mark.asyncio
-    async def test_sanitize_response_str_body_skips_decode(self):
-        """Test sanitization works when response.body is already a string."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = True
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-
-            middleware = ValidationMiddleware(app=None)
-
-            class DummyResponse:
-                def __init__(self, body):
-                    self.body = body
-                    self.headers = {}
-
-            response = DummyResponse("Hello\x00World")
-            sanitized = await middleware._sanitize_response(response)
-            assert sanitized.body == b"HelloWorld"
-            assert sanitized.headers["content-length"] == str(len(sanitized.body))
-
-    @pytest.mark.asyncio
-    async def test_sanitize_response_exception_is_caught(self):
-        """Test sanitization catches unexpected exceptions."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = True
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-
-            middleware = ValidationMiddleware(app=None)
-
-            class DummyResponse:
-                def __init__(self, body):
-                    self.body = body
-                    self.headers = {}
-
-            response = DummyResponse(object())
-            result = await middleware._sanitize_response(response)
-            assert result is response
-
-    @pytest.mark.asyncio
-    async def test_sanitize_output_enabled(self):
-        """Test full middleware flow with sanitization."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = True
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-
-            scope = {
-                "type": "http",
-                "method": "GET",
-                "path": "/test",
-                "query_string": b"",
-                "headers": [],
-            }
-            request = Request(scope)
-
-            async def call_next(req):
-                return Response(content="Hello\x00World")
-
-            response = await middleware.dispatch(request, call_next)
-
-            assert b"\x00" not in response.body
-
     def test_validate_parameter_valid_uaid(self):
         """Test UAID validation with valid UAID format.
 
@@ -644,7 +507,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r";"]  # Semicolons would normally be dangerous
             mock_settings.max_param_length = 1000
@@ -666,7 +528,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -691,7 +552,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -713,7 +573,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
@@ -744,7 +603,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"-"]  # Hyphens would normally be dangerous
             mock_settings.max_param_length = 1000
@@ -763,7 +621,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
@@ -787,7 +644,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             # Semicolons are commonly in dangerous patterns
             mock_settings.dangerous_patterns = [r";"]
@@ -811,7 +667,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = False
-            mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
@@ -827,3 +682,146 @@ class TestValidationMiddleware:
                 middleware._validate_parameter("agent_name", invalid_uaid_with_script)
             assert exc_info.value.status_code == 422
             assert "dangerous characters" in exc_info.value.detail
+
+
+class TestValidationMiddlewareASGICall:
+    """Pure-ASGI ``__call__`` coverage: passthroughs, body replay, and strict deny."""
+
+    @staticmethod
+    def _middleware(mock_settings, app):
+        mock_settings.experimental_validate_io = True
+        mock_settings.validation_strict = True
+        mock_settings.allowed_roots = []
+        mock_settings.dangerous_patterns = [r"<script"]
+        mock_settings.max_param_length = 1000
+        mock_settings.environment = "production"
+        return ValidationMiddleware(app=app)
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scope(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            middleware = self._middleware(mock_settings, app)
+            await middleware({"type": "lifespan"}, AsyncMock(), AsyncMock())
+
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_when_disabled(self):
+        """experimental_validate_io=False: downstream app runs untouched."""
+        seen = []
+
+        async def app(scope, receive, send):
+            seen.append(await receive())
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = False
+            mock_settings.validation_strict = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            middleware = ValidationMiddleware(app=app)
+
+            request_message = {"type": "http.request", "body": b"", "more_body": False}
+
+            async def receive():
+                return request_message
+
+            sent = []
+
+            async def send(message):
+                sent.append(message)
+
+            await middleware({"type": "http", "method": "GET", "path": "/tools", "query_string": b"", "headers": []}, receive, send)
+
+        assert seen == [request_message]
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_replays_chunked_json_body_downstream(self):
+        """A JSON body consumed during validation reaches downstream intact and in order."""
+        received_bodies = []
+
+        async def app(scope, receive, send):
+            while True:
+                message = await receive()
+                received_bodies.append(message.get("body", b""))
+                if not message.get("more_body"):
+                    break
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            middleware = self._middleware(mock_settings, app)
+
+            chunks = [
+                {"type": "http.request", "body": b'{"name": "val', "more_body": True},
+                {"type": "http.request", "body": b'ue"}', "more_body": False},
+            ]
+
+            async def receive():
+                return chunks.pop(0)
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/tools",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            }
+            sent = []
+
+            async def send(message):
+                sent.append(message)
+
+            await middleware(scope, receive, send)
+
+        assert received_bodies == [b'{"name": "val', b'ue"}']
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_does_not_touch_receive_without_body_read(self):
+        """Non-JSON requests skip validation body reads; downstream gets the original receive."""
+        seen = []
+
+        async def app(scope, receive, send):
+            seen.append(await receive())
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            middleware = self._middleware(mock_settings, app)
+            request_message = {"type": "http.request", "body": b"", "more_body": False}
+
+            async def receive():
+                return request_message
+
+            scope = {"type": "http", "method": "GET", "path": "/tools", "query_string": b"", "headers": []}
+            await middleware(scope, receive, AsyncMock())
+
+        assert seen == [request_message]
+
+    @pytest.mark.asyncio
+    async def test_call_raises_strict_deny_from_asgi_path(self):
+        """Dangerous query parameters raise HTTPException out of __call__ in strict mode."""
+        async def app(scope, receive, send):  # pragma: no cover - must not run
+            raise AssertionError("downstream app must not run on deny")
+
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            middleware = self._middleware(mock_settings, app)
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": "/tools",
+                "query_string": b"name=%3Cscript%3Ealert(1)%3C/script%3E",
+                "headers": [],
+            }
+
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware(scope, AsyncMock(), AsyncMock())
+
+        assert exc_info.value.status_code == 422
