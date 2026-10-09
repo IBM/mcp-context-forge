@@ -2016,6 +2016,13 @@ class OAuthManager:
         # Must be included in refresh requests to maintain JWT token type
         resource = runtime_credentials.get("resource")
         scopes = runtime_credentials.get("scopes", [])
+        # Re-send the configured scopes. RFC 6749 section 6 allows scope on refresh
+        # as long as it does not exceed the original grant, and these are the scopes
+        # the grant was requested with. Microsoft Entra's v2 endpoint needs them:
+        # without scope it cannot resolve the resource, and when the client is also
+        # the API it rejects the refresh with AADSTS90009.
+        if scopes:
+            token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else str(scopes)
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples
