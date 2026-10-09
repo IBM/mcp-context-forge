@@ -569,13 +569,75 @@ class GatewayLookupConflictError(GatewayError):
 class GatewayConnectionError(GatewayError):
     """Raised when gateway connection fails.
 
+    Carries a stable ``reason_code`` so callers log why the connection failed without
+    parsing the human-readable message.
+
     Examples:
         >>> error = GatewayConnectionError("Connection failed")
         >>> str(error)
         'Connection failed'
+        >>> error.reason_code
+        'gateway_connection_failed'
         >>> isinstance(error, GatewayError)
         True
     """
+
+    def __init__(self, message: str, reason_code: str = "gateway_connection_failed") -> None:
+        """Store the failure message and its stable reason code.
+
+        Args:
+            message: Human-readable, already sanitized failure message.
+            reason_code: Stable machine-readable code, e.g. ``gateway_tls_failed``.
+        """
+        self.reason_code = reason_code
+        super().__init__(message)
+
+
+def classify_connection_failure(exc: BaseException) -> str:
+    """Map a transport exception to a stable gateway reason code.
+
+    Walks the ``__cause__``/``__context__`` chain and every ``ExceptionGroup`` member:
+    httpx wraps a TLS failure in a transport error, and the MCP SDK task group wraps that
+    again, both of which would otherwise read as a plain initialization failure.
+
+    Args:
+        exc: The exception raised while connecting to or initializing a gateway.
+
+    Returns:
+        str: ``gateway_tls_failed``, ``gateway_connection_failed``, or ``gateway_initialization_failed``.
+
+    Examples:
+        >>> classify_connection_failure(ssl.SSLError("handshake failed"))
+        'gateway_tls_failed'
+        >>> classify_connection_failure(OSError("connection refused"))
+        'gateway_connection_failed'
+        >>> classify_connection_failure(ValueError("bad payload"))
+        'gateway_initialization_failed'
+        >>> classify_connection_failure(ExceptionGroup("tg", [ssl.SSLError("handshake failed")]))
+        'gateway_tls_failed'
+        >>> classify_connection_failure(ExceptionGroup("tg", [OSError("refused")]))
+        'gateway_connection_failed'
+    """
+    transport_errors = (httpx.TransportError, httpx2.TransportError, OSError, TimeoutError, asyncio.TimeoutError)
+    seen: Set[int] = set()
+    pending: List[Optional[BaseException]] = [exc]
+    transport_seen = False
+
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLError):
+            return "gateway_tls_failed"
+        if isinstance(current, transport_errors):
+            transport_seen = True
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        pending.append(current.__cause__)
+        pending.append(current.__context__)
+
+    return "gateway_connection_failed" if transport_seen else "gateway_initialization_failed"
 
 
 class GatewayCredentialError(GatewayError):
@@ -2606,7 +2668,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.rollback()
             # Surface validation or depth-related failures directly to the user
             logger.error("GatewayConnectionError during OAuth fetch for %s: %s", SecurityValidator.sanitize_log_message(gateway_id), gce)
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}", gce.reason_code)
         except Exception as e:
             db.rollback()
             # Extract actual error from TaskGroup or ExceptionGroup if present
@@ -2623,7 +2685,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 type(actual_error).__name__,
                 exc_info=True,  # Include full traceback
             )
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}", classify_connection_failure(e))
 
     async def list_gateways(
         self,
@@ -5684,7 +5746,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
                 raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
 
-            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}") from root_cause
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}", classify_connection_failure(e)) from root_cause
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
@@ -7555,7 +7617,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         try:
             pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
         except ValueError as exc:
-            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}") from exc
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}", getattr(exc, "reason_code", "url_destination_blocked")) from exc
 
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -7695,7 +7757,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
                 diagnostics = "; ".join(validation_warnings)
                 raise GatewayConnectionError(f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(e).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes.")
-            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}")
+            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}", classify_connection_failure(e))
 
     async def connect_to_sse_server(
         self,
@@ -7729,7 +7791,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         try:
             pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
         except ValueError as exc:
-            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}") from exc
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}", getattr(exc, "reason_code", "url_destination_blocked")) from exc
 
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -7899,7 +7961,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         try:
             pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
         except ValueError as exc:
-            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}") from exc
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}", getattr(exc, "reason_code", "url_destination_blocked")) from exc
 
         # Use authentication directly instead
         def get_httpx_client_factory(

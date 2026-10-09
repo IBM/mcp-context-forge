@@ -175,7 +175,6 @@ from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayCredentialError,
     GatewayDuplicateConflictError,
-    GatewayError,
     GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
@@ -250,6 +249,18 @@ except ImportError:
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
+
+
+class CaSigningError(RuntimeError):
+    """Raised when CA certificate signing fails because of server key or crypto configuration.
+
+    Subclasses RuntimeError so the existing handler maps it to 500: a signing fault is a
+    server fault, not invalid client input.
+    """
+
+    reason_code = "gateway_ca_signing_failed"
+
+
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "overview": ("overview",),
     "servers": ("catalog",),
@@ -12837,8 +12848,8 @@ async def admin_add_gateway(
                     data["ca_certificate_sig"] = sig
                     data["signing_algorithm"] = "ed25519"
                 except Exception as e:
-                    LOGGER.error(f"Error signing CA certificate: {e}")
-                    raise GatewayError("Failed to sign CA certificate") from e
+                    LOGGER.error("CA certificate signing failed: error=%s", type(e).__name__)
+                    raise CaSigningError("Failed to sign CA certificate") from e
             else:
                 # Explicitly set to None when signing is disabled
                 data["ca_certificate_sig"] = None
@@ -12853,13 +12864,15 @@ async def admin_add_gateway(
         gateway = GatewayCreate(**data)
 
     except ValidationError as ex:
+        LOGGER.warning("Gateway registration rejected: %s", sanitize_validation_error_for_log(ex))
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
 
-    except GatewayError as err:
-        LOGGER.exception("CA certificate signing failed in admin_add_gateway")
-        # --- Getting only the custom message from the RuntimeError ---
-        error_ctx = [unexpected_error_detail(err)]
-        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+    except RuntimeError as err:
+        # Encryption and signing faults are server-side: they are not client input errors.
+        reason_code = getattr(err, "reason_code", "gateway_initialization_failed")
+        LOGGER.error("Gateway registration failed before validation: reason_code=%s error=%s", reason_code, type(err).__name__)
+        message = str(err) if isinstance(err, CaSigningError) else unexpected_error_detail(err)
+        return ORJSONResponse(content={"success": False, "message": message, "reason_code": reason_code}, status_code=500)
 
     user_email = get_user_email(user)
 
@@ -12912,6 +12925,7 @@ async def admin_add_gateway(
     except GatewayCredentialError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except GatewayConnectionError as ex:
+        LOGGER.warning("Gateway registration rejected: reason_code=%s", getattr(ex, "reason_code", "gateway_connection_failed"))
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
