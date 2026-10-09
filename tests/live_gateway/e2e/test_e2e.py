@@ -637,6 +637,29 @@ class TestRawJsonRpc:
         assert resp.status_code in (401, 403), f"expected 401/403 without auth, got {resp.status_code}: {resp.text}"
         print(f"    -> unauthenticated /mcp/ -> status={resp.status_code}")
 
+    def test_unsupported_protocol_version_returns_32022(self, jwt_token: str) -> None:
+        """A modern-era POST at an unserved version gets JSON-RPC -32022 with HTTP 400."""
+        headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2099-01-01",
+        }
+        body = {
+            "jsonrpc": "2.0",
+            "id": "ping-2099",
+            "method": "ping",
+            "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2099-01-01"}},
+        }
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=body)
+        assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text}"
+        error = resp.json()["error"]
+        assert error["code"] == -32022, error
+        assert error["data"]["requested"] == "2099-01-01", error
+        assert error["data"]["supported"], error
+        print(f"    -> unsupported version -> status={resp.status_code} supported={error['data']['supported']}")
+
     def test_invalid_method_returns_error(self, jwt_token: str) -> None:
         """Unknown MCP method surfaces a JSON-RPC error envelope."""
         headers = {
