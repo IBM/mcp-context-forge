@@ -1217,6 +1217,7 @@ class Gateway(CommonAttributes):
     passthrough_headers: Optional[list[str]]  # Store list of strings as JSON array
     # Request type and authentication fields
     auth_value: Optional[str | dict]
+    requires_user_credentials: bool = False
 
 
 # ===== RBAC Models =====

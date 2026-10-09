@@ -59,6 +59,7 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
+from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -10467,6 +10468,7 @@ class TestRustMcpExecutionPlan:
             "ca_certificate": None,
             "ca_certificate_sig": None,
             "passthrough_headers": [],
+            "requires_user_credentials": False,
         }
         gateway_payload.update(tool_overrides.pop("gateway", {}))
         tool_payload = {
@@ -10494,6 +10496,206 @@ class TestRustMcpExecutionPlan:
         mock_cache.set = AsyncMock()
         mock_cache.set_negative = AsyncMock()
         return mock_cache
+
+    @staticmethod
+    def _mcp_proxy_result():
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))
+        session.session.call_tool = session.call_tool
+        context = AsyncMock()
+        context.__aenter__.return_value = session
+        context.__aexit__.return_value = None
+        return context, session
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("gateway_auth", "expected_authorization"),
+        [
+            ({"auth_type": None, "auth_value": None, "requires_user_credentials": False}, None),
+            ({"auth_type": "bearer", "auth_value": "encoded-static-auth", "requires_user_credentials": False}, "Bearer shared-token"),
+        ],
+        ids=["no-auth", "static-bearer"],
+    )
+    async def test_invoke_tool_skips_per_user_resolver_when_disabled(self, tool_service, gateway_auth, expected_authorization):
+        """Disabled per-user credentials must not make Vault an invocation dependency."""
+        cache = self._cache_mock(self._cache_payload(gateway=gateway_auth))
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        client_context, session = self._mcp_proxy_result()
+        resolver = AsyncMock(side_effect=AssertionError("resolver must not run"))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer shared-token"}) as decode_auth_mock,
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_context) as proxy_client,
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", resolver),
+        ):
+            result = await tool_service.invoke_tool(db, "tool-one", {}, app_user_email="user@example.com", token_teams=["team-a"])
+
+        assert result.content[0].text == "ok"
+        resolver.assert_not_awaited()
+        session.call_tool.assert_awaited_once()
+        outbound_headers = proxy_client.call_args.kwargs["headers"]
+        if expected_authorization:
+            assert outbound_headers["Authorization"] == expected_authorization
+            decode_auth_mock.assert_called_once_with("encoded-static-auth")
+        else:
+            assert "authorization" not in {key.lower() for key in outbound_headers}
+            decode_auth_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "vault_error",
+        [VaultConnectionError("vault unavailable"), VaultAuthError("vault authentication failed")],
+        ids=["connection-error", "authentication-error"],
+    )
+    async def test_invoke_tool_per_user_resolver_failure_remains_fail_closed(self, tool_service, vault_error):
+        """Enabled per-user credentials must not fall back to shared credentials."""
+        cache = self._cache_mock(self._cache_payload(gateway={"auth_type": "bearer", "auth_value": "encoded-static-auth", "requires_user_credentials": True}))
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        resolver = AsyncMock(side_effect=vault_error)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.decode_auth") as decode_auth_mock,
+            patch("mcpgateway.services.tool_service.mcp_proxy_client") as proxy_client,
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", resolver),
+        ):
+            with pytest.raises(ToolInvocationError, match="Credential storage unavailable"):
+                await tool_service.invoke_tool(db, "tool-one", {}, app_user_email="user@example.com", token_teams=["team-a"])
+
+        resolver.assert_awaited_once()
+        decode_auth_mock.assert_not_called()
+        proxy_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_missing_cached_per_user_policy_reloads_database(self, tool_service):
+        """A stale cache entry must reload the gateway credential policy."""
+        stale_payload = self._cache_payload()
+        stale_payload["gateway"].pop("requires_user_credentials")
+        current_payload = self._cache_payload(gateway={"requires_user_credentials": True})
+        cache = self._cache_mock(stale_payload)
+        db = MagicMock()
+        gateway = SimpleNamespace(requires_user_credentials=True, auth_value=None, auth_query_params=None, oauth_config=None)
+        tool = SimpleNamespace(enabled=True, reachable=True, gateway=gateway, auth_value=None, oauth_config=None)
+        resolver = AsyncMock(return_value={"Authorization": "Bearer user-token"})
+        client_context, session = self._mcp_proxy_result()
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_context) as proxy_client,
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]) as load_invocable_tools,
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=current_payload),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", resolver),
+        ):
+            result = await tool_service.invoke_tool(db, "tool-one", {}, app_user_email="user@example.com", token_teams=["team-a"])
+
+        assert result.content[0].text == "ok"
+        load_invocable_tools.assert_called_once()
+        cache.get_negative.assert_not_awaited()
+        resolver.assert_awaited_once()
+        assert proxy_client.call_args.kwargs["headers"]["Authorization"] == "Bearer user-token"
+        session.call_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("gateway_auth", "expected_authorization"),
+        [
+            ({"auth_type": None, "auth_value": None, "requires_user_credentials": False}, None),
+            ({"auth_type": "bearer", "auth_value": "encoded-static-auth", "requires_user_credentials": False}, "Bearer shared-token"),
+        ],
+        ids=["no-auth", "static-bearer"],
+    )
+    async def test_prepare_rust_mcp_tool_execution_skips_per_user_resolver_when_disabled(self, tool_service, gateway_auth, expected_authorization):
+        """Rust plans must skip Vault when per-user credentials are disabled."""
+        cache = self._cache_mock(self._cache_payload(gateway=gateway_auth))
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        resolver = AsyncMock(side_effect=AssertionError("resolver must not run"))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer shared-token"}) as decode_auth_mock,
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", resolver),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", app_user_email="user@example.com", token_teams=["team-a"])
+
+        assert plan["eligible"] is True
+        resolver.assert_not_awaited()
+        if expected_authorization:
+            assert plan["headers"]["Authorization"] == expected_authorization
+            decode_auth_mock.assert_called_once_with("encoded-static-auth")
+        else:
+            assert "authorization" not in {key.lower() for key in plan["headers"]}
+            decode_auth_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "vault_error",
+        [VaultConnectionError("vault unavailable"), VaultAuthError("vault authentication failed")],
+        ids=["connection-error", "authentication-error"],
+    )
+    async def test_prepare_rust_mcp_tool_execution_per_user_resolver_failure_remains_fail_closed(self, tool_service, vault_error):
+        """Rust plans must retain fail-closed behavior for enabled gateways."""
+        cache = self._cache_mock(self._cache_payload(gateway={"auth_type": "bearer", "auth_value": "encoded-static-auth", "requires_user_credentials": True}))
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        resolver = AsyncMock(side_effect=vault_error)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.decode_auth") as decode_auth_mock,
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", resolver),
+        ):
+            with pytest.raises(ToolInvocationError, match="Credential storage unavailable"):
+                await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", app_user_email="user@example.com", token_teams=["team-a"])
+
+        resolver.assert_awaited_once()
+        decode_auth_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_missing_cached_per_user_policy_reloads_database(self, tool_service):
+        """Rust plans must reload a stale gateway credential policy."""
+        stale_payload = self._cache_payload()
+        stale_payload["gateway"].pop("requires_user_credentials")
+        current_payload = self._cache_payload(gateway={"requires_user_credentials": True})
+        cache = self._cache_mock(stale_payload)
+        db = MagicMock()
+        gateway = SimpleNamespace(requires_user_credentials=True, auth_value=None, auth_query_params=None, oauth_config=None)
+        tool = SimpleNamespace(enabled=True, reachable=True, gateway=gateway)
+        resolver = AsyncMock(return_value={"Authorization": "Bearer user-token"})
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]) as load_invocable_tools,
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=current_payload),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(tool_service, "_resolve_vault_auth_headers", resolver),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", app_user_email="user@example.com", token_teams=["team-a"])
+
+        assert plan["headers"]["Authorization"] == "Bearer user-token"
+        load_invocable_tools.assert_called_once()
+        cache.get_negative.assert_not_awaited()
+        resolver.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invoke_tool_prefers_exact_name_over_original_name_collision(self, tool_service):

@@ -13306,6 +13306,7 @@ async def admin_edit_gateway(
             auth_query_param_key=str(form.get("auth_query_param_key", "")) or None,
             auth_query_param_value=str(form.get("auth_query_param_value", "")) or None,
             one_time_auth=form.get("one_time_auth", False),
+            requires_user_credentials="requires_user_credentials" in form,
             passthrough_headers=passthrough_headers,
             oauth_config=oauth_config,
             visibility=visibility,
