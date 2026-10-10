@@ -56,6 +56,7 @@ import asyncio
 from base64 import b64decode
 import binascii
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -88,6 +89,14 @@ basic_security = HTTPBasic(auto_error=False)
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Return whether a hostname is a loopback IP address."""
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _resolve_auth_header_name(settings_obj: Any | None = None) -> str:
@@ -2009,12 +2018,38 @@ async def verify_oauth_access_token(
         jwks_uri = jwks_uri.strip()
 
         # Defense-in-depth: a *live-discovered* jwks_uri must share the
-        # issuer's origin and use HTTPS. A compromised metadata endpoint
+        # issuer's origin. A compromised metadata endpoint
         # could otherwise redirect key fetches to an attacker-controlled or
         # internal host. Doesn't apply to jwks_uri_override (see above).
-        jwks_parts = urlsplit(jwks_uri)
-        issuer_parts = urlsplit(normalized_issuer)
-        if jwks_parts.scheme != "https" or jwks_parts.netloc != issuer_parts.netloc:
+        jwks_parts = urlsplit("")
+        issuer_parts = urlsplit("")
+        try:
+            jwks_parts = urlsplit(jwks_uri)
+            issuer_parts = urlsplit(normalized_issuer)
+            # Accessing ports validates malformed port values.
+            jwks_parts.port
+            issuer_parts.port
+            jwks_hostname = jwks_parts.hostname
+            issuer_hostname = issuer_parts.hostname
+        except ValueError:
+            jwks_hostname = issuer_hostname = None
+
+        same_origin = (
+            jwks_parts.netloc == issuer_parts.netloc
+            and bool(jwks_parts.netloc)
+            and bool(issuer_parts.netloc)
+        )
+        local_http = False
+        if jwks_parts.scheme.lower() == issuer_parts.scheme.lower() == "http" and settings.ssrf_allow_localhost:
+            local_hosts = {jwks_hostname, issuer_hostname}
+            local_http = all(
+                host and (
+                    host.rstrip(".").lower() in {"localhost", "localhost.localdomain"}
+                    or _is_loopback_host(host)
+                )
+                for host in local_hosts
+            )
+        if not (same_origin and (jwks_parts.scheme.lower() == "https" or local_http)):
             logger.warning(
                 "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
                 sanitize_for_log(jwks_uri),
