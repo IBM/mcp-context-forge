@@ -14,6 +14,8 @@
 
 ### Added
 
+- **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added `A2AInvokeResponse` and `A2AJsonRpcResponse` response models for `/agents/{id}/invoke` and `/agents/{id}/jsonrpc` routes, replacing anonymous `Dict[str, Any]` in the generated OpenAPI schema so client generators produce typed component definitions while preserving passthrough semantics with `response_model_exclude_unset=True` and `extra="allow"`.
+
 - **Federated completions** ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629)) - Forward `completion/complete` to the owning upstream with request metadata. Both legacy and modern MCP connections remain supported through existing negotiation settings; forwarding has no modern-only gate.
 
 - **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
