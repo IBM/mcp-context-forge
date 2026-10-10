@@ -323,10 +323,9 @@ async def test_prepare_runtime_credentials_rejects_ssrf_token_url(oauth_manager)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field_name", ["redirect_uri", "jwks_uri"])
-async def test_prepare_runtime_credentials_rejects_ssrf_redirect_and_jwks_uri(oauth_manager, field_name):
-    """redirect_uri and jwks_uri are validated against SSRF rules (Gap B)."""
-    credentials = {field_name: "http://169.254.169.254/latest/meta-data/"}
+async def test_prepare_runtime_credentials_rejects_ssrf_jwks_uri(oauth_manager):
+    """jwks_uri is a real outbound fetch destination, so it keeps SSRF protection."""
+    credentials = {"jwks_uri": "http://169.254.169.254/latest/meta-data/"}
 
     with (
         patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
@@ -336,18 +335,37 @@ async def test_prepare_runtime_credentials_rejects_ssrf_redirect_and_jwks_uri(oa
 
 
 @pytest.mark.asyncio
-async def test_prepare_runtime_credentials_allows_public_redirect_and_jwks_uri(oauth_manager):
-    """Public redirect_uri/jwks_uri pass validation and are returned unchanged."""
+async def test_prepare_runtime_credentials_allows_ssrf_internal_redirect_uri(oauth_manager):
+    """redirect_uri never triggers outbound SSRF validation, even when it resolves to an
+    internal/private address (issue #7151)."""
     credentials = {
-        "redirect_uri": "https://gateway.example.com/oauth/callback",
-        "jwks_uri": "https://issuer.example.com/.well-known/jwks.json",
+        "redirect_uri": "https://gateway.internal.example/oauth/callback",
     }
 
-    with patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()):
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+    ):
         runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "authorization_code_exchange")
 
-    assert runtime_credentials["redirect_uri"] == "https://gateway.example.com/oauth/callback"
-    assert runtime_credentials["jwks_uri"] == "https://issuer.example.com/.well-known/jwks.json"
+    assert runtime_credentials["redirect_uri"] == "https://gateway.internal.example/oauth/callback"
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_still_validates_redirect_uri_syntax(oauth_manager):
+    """redirect_uri remains subject to non-SSRF validation (syntax, scheme, blocked hostnames).
+
+    The fix removes only the outbound-fetch SSRF check; malformed or dangerous
+    callback values must still be rejected by the appropriate validation path.
+    """
+    credentials = {"redirect_uri": "not-a-valid-url"}
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(ValueError, match="must start with one of"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "authorization_code_exchange")
+
+
 
 
 @pytest.mark.asyncio

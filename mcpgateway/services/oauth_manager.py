@@ -322,10 +322,18 @@ class OAuthManager:
         if isinstance(issuer, str) and issuer:
             runtime_credentials["issuer"] = validate_core_url(issuer, "OAuth config issuer")
 
-        for url_key in ("redirect_uri", "jwks_uri"):
+        # redirect_uri is only used to bounce the browser back to the calling
+        # application; the gateway never fetches it, so it must not be subjected
+        # to outbound-fetch SSRF checks (which resolve DNS and reject private/
+        # loopback/link-local destinations). jwks_uri, by contrast, is an actual
+        # destination the gateway retrieves, so it keeps full SSRF protection.
+        # See https://github.com/IBM/mcp-context-forge/issues/7151.
+        for url_key, skip_ssrf in (("jwks_uri", False), ("redirect_uri", True)):
             url_value = runtime_credentials.get(url_key)
             if isinstance(url_value, str) and url_value:
-                runtime_credentials[url_key] = validate_core_url(url_value, f"OAuth config {url_key}")
+                runtime_credentials[url_key] = SecurityValidator.validate_url(
+                    url_value, f"OAuth config {url_key}", skip_ssrf=skip_ssrf
+                )
 
         auth_servers = runtime_credentials.get("authorization_servers")
         if auth_servers not in (None, ""):
