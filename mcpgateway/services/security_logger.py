@@ -339,6 +339,138 @@ class SecurityLogger:
 
         return event
 
+    def log_authorization_denial(
+        self,
+        method: str,
+        permission: str,
+        denial_type: str,
+        client_ip: str,
+        user_email: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        additional_context: Optional[Dict[str, Any]] = None,
+        db: Optional[Session] = None,
+    ) -> Optional[SecurityEvent]:
+        """Log an RPC authorization denial (token-scope cap or RBAC) as a security event.
+
+        Args:
+            method: JSON-RPC method that was denied.
+            permission: Permission that was required but absent.
+            denial_type: ``"token_scope"`` or ``"rbac"``.
+            client_ip: Client IP address.
+            user_email: User email if available.
+            user_agent: Client user-agent string.
+            additional_context: Extra key/value context to store.
+            db: Optional database session; a new one is opened when None.
+
+        Returns:
+            Created SecurityEvent or None if security logging is disabled.
+        """
+        if not getattr(settings, "security_logging_enabled", False):
+            return None
+
+        correlation_id = get_correlation_id()
+        description = f"RPC authorization denied ({denial_type}): method={method}, required={permission}"
+        context = {
+            "method": method,
+            "required_permission": permission,
+            "denial_type": denial_type,
+            **(additional_context or {}),
+        }
+
+        event = self._create_security_event(
+            event_type=SecurityEventType.AUTHORIZATION_FAILURE,
+            severity=SecuritySeverity.MEDIUM,
+            category="authorization",
+            client_ip=client_ip,
+            description=description,
+            threat_score=0.4,
+            user_email=user_email,
+            user_agent=user_agent,
+            action_taken="denied",
+            context=context,
+            correlation_id=correlation_id,
+            db=db,
+            source="auth",
+        )
+
+        logger.warning(
+            "Authorization denial recorded: %s",
+            description,
+            extra={
+                "security_event": True,
+                "event_type": SecurityEventType.AUTHORIZATION_FAILURE,
+                "denial_type": denial_type,
+                "correlation_id": correlation_id,
+            },
+        )
+        return event
+
+    def log_plugin_violation(
+        self,
+        plugin_name: Optional[str],
+        violation_code: Optional[str],
+        description: str,
+        client_ip: str,
+        user_email: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        additional_context: Optional[Dict[str, Any]] = None,
+        db: Optional[Session] = None,
+    ) -> Optional[SecurityEvent]:
+        """Log a plugin block or violation as a security event.
+
+        Args:
+            plugin_name: Name of the plugin that blocked the request.
+            violation_code: Plugin-defined violation code (e.g. ``PII_DETECTED_IN_TOOL_ARGS``).
+            description: Human-readable description of the violation.
+            client_ip: Client IP address.
+            user_email: User email if available.
+            user_agent: Client user-agent string.
+            additional_context: Extra key/value context to store.
+            db: Optional database session; a new one is opened when None.
+
+        Returns:
+            Created SecurityEvent or None if security logging is disabled.
+        """
+        if not getattr(settings, "security_logging_enabled", False):
+            return None
+
+        correlation_id = get_correlation_id()
+        context = {
+            "plugin_name": plugin_name,
+            "violation_code": violation_code,
+            **(additional_context or {}),
+        }
+
+        event = self._create_security_event(
+            event_type=SecurityEventType.SUSPICIOUS_ACTIVITY,
+            severity=SecuritySeverity.HIGH,
+            category="plugin_violation",
+            client_ip=client_ip,
+            description=description,
+            threat_score=0.7,
+            user_email=user_email,
+            user_agent=user_agent,
+            action_taken="blocked",
+            context=context,
+            correlation_id=correlation_id,
+            db=db,
+            source="security",
+        )
+
+        logger.warning(
+            "Plugin violation recorded: plugin=%s code=%s",
+            plugin_name,
+            violation_code,
+            extra={
+                "security_event": True,
+                "event_type": SecurityEventType.SUSPICIOUS_ACTIVITY,
+                "plugin_name": plugin_name,
+                "violation_code": violation_code,
+                "correlation_id": correlation_id,
+            },
+        )
+        return event
+
     def _count_recent_failures(self, user_id: Optional[str] = None, client_ip: Optional[str] = None, minutes: Optional[int] = None, db: Optional[Session] = None) -> int:
         """Count recent authentication failures.
 

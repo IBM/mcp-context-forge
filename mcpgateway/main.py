@@ -99,6 +99,7 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import PermissionAuditLog
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
@@ -219,6 +220,7 @@ from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.security_logger import get_security_logger, SecurityEventType, SecuritySeverity  # noqa: E402
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
@@ -837,6 +839,49 @@ def _is_permission_admin_user(user) -> bool:
     return False
 
 
+def _extract_user_email(user: Any) -> Optional[str]:
+    """Return the email from a user context dict, or None."""
+    if isinstance(user, dict):
+        return user.get("email")
+    return None
+
+
+def _write_permission_audit_log(
+    request: Optional[Request],
+    user: Any,
+    permission: str,
+    granted: bool,
+    db: Optional[Session],
+) -> None:
+    """Write a PermissionAuditLog row when permission_audit_enabled is set."""
+    if not getattr(settings, "permission_audit_enabled", False):
+        return
+    try:
+        ip_address = request.client.host if request is not None and request.client else None
+        user_agent = request.headers.get("user-agent") if request is not None else None
+        user_email = _extract_user_email(user)
+        entry = PermissionAuditLog(
+            user_email=user_email,
+            permission=permission,
+            granted=granted,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        should_close = False
+        _db = db
+        if _db is None:
+            _db = SessionLocal()
+            should_close = True
+        try:
+            _db.add(entry)
+            _db.commit()
+        finally:
+            if should_close:
+                _db.close()
+    except Exception as _exc:
+        logger.error("Failed to write permission audit log: %s", _exc)
+
+
 async def _ensure_rpc_permission(user, db: Session, permission: str, method: str, request: Request | None = None) -> None:
     """Require a specific RPC permission for a method branch.
 
@@ -869,6 +914,19 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         scoped = _extract_scoped_permissions(request)
         if scoped is not None and "*" not in scoped and permission not in scoped:
             logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
+            _client_ip = request.client.host if request.client else "unknown"
+            _user_email = _extract_user_email(user)
+            _user_agent = request.headers.get("user-agent")
+            get_security_logger().log_authorization_denial(
+                method=method,
+                permission=permission,
+                denial_type="token_scope",
+                client_ip=_client_ip,
+                user_email=_user_email,
+                user_agent=_user_agent,
+                db=db,
+            )
+            _write_permission_audit_log(request=request, user=user, permission=permission, granted=False, db=db)
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
     if permission == "admin.system_config" and _is_permission_admin_user(user):
@@ -889,6 +947,19 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
     if not await checker.has_permission(permission, check_any_team=check_any_team, team_id=team_id):
         logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
+        _client_ip = request.client.host if request is not None and request.client else "unknown"
+        _user_email = _extract_user_email(user)
+        _user_agent = request.headers.get("user-agent") if request is not None else None
+        get_security_logger().log_authorization_denial(
+            method=method,
+            permission=permission,
+            denial_type="rbac",
+            client_ip=_client_ip,
+            user_email=_user_email,
+            user_agent=_user_agent,
+            db=db,
+        )
+        _write_permission_audit_log(request=request, user=user, permission=permission, granted=False, db=db)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
@@ -2531,6 +2602,23 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
                 http_status = mapping.code
 
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
+
+    # Write security event so plugin blocks appear in security_events table
+    _plugin_name = exc.violation.plugin_name if exc.violation else None
+    _violation_code = exc.violation.code if exc.violation else None
+    _client_ip = _request.client.host if _request is not None and _request.client else "unknown"
+    _user_agent = _request.headers.get("user-agent") if _request is not None else None
+    _user = getattr(getattr(_request, "state", None), "user", None) if _request is not None else None
+    _user_email = _extract_user_email(_user)
+    get_security_logger().log_plugin_violation(
+        plugin_name=_plugin_name,
+        violation_code=_violation_code,
+        description=f"Plugin blocked request: {_plugin_name} [{_violation_code}] — {message}",
+        client_ip=_client_ip,
+        user_email=_user_email,
+        user_agent=_user_agent,
+        additional_context={"violation_details": violation_details},
+    )
 
     # Collect HTTP headers from violation if present
     headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
