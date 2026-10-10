@@ -73,6 +73,24 @@ streamable_http_auth = tr.streamable_http_auth
 SessionManagerWrapper = tr.SessionManagerWrapper
 
 
+@pytest.mark.parametrize(
+    ("url", "allow_localhost", "expected"),
+    [
+        ("http://localhost:8080", True, ["http://localhost:8080"]),
+        ("http://localhost:8080", False, []),
+        ("http://127.0.0.1:8080", True, ["http://127.0.0.1:8080"]),
+        ("http://[::1]:8080", True, ["http://[::1]:8080"]),
+        ("http://example.com", True, []),
+        ("https://issuer.example.com", False, ["https://issuer.example.com"]),
+        ("https://", False, []),
+    ],
+)
+def test_resolve_authorization_servers_local_http_policy(monkeypatch, url, allow_localhost, expected):
+    """Allow HTTP issuers only for loopback hosts when explicitly enabled."""
+    monkeypatch.setattr(tr.settings, "ssrf_allow_localhost", allow_localhost)
+    assert tr._resolve_authorization_servers({"authorization_servers": [url]}) == expected
+
+
 def _read_content(result):
     """Return the first read-resource content payload (text str or raw blob bytes)."""
     assert isinstance(result, list)

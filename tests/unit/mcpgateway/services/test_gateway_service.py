@@ -11115,6 +11115,22 @@ class TestTokenExchangeWiring:
                 }
             )
 
+    @pytest.mark.parametrize("allow_localhost", [False, True])
+    def test_token_exchange_localhost_token_url_policy(self, monkeypatch, allow_localhost):
+        """Localhost token exchange URLs follow the SSRF localhost setting."""
+        monkeypatch.setattr(settings, "ssrf_allow_localhost", allow_localhost)
+        config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "http://localhost:8080/token",
+            "target_audience": "https://d",
+        }
+        if allow_localhost:
+            assert GatewayService._validate_token_exchange_config(config)["token_url"] == config["token_url"]
+        else:
+            with pytest.raises(ValueError):
+                GatewayService._validate_token_exchange_config(config)
+
     def test_dedup_distinguishes_by_target_audience(self):
         """Two configs identical except target_audience must NOT be treated as duplicates."""
         keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope", "target_audience", "subject_token_source"]
