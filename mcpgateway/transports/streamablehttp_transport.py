@@ -37,7 +37,9 @@ from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
+import ipaddress
 import re
+from urllib.parse import urlsplit
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 from uuid import uuid4
 
@@ -539,20 +541,43 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
     Returns:
         A list of allowed issuer URLs, with surrounding whitespace stripped.
     """
+    def _is_allowed_url(value: str) -> bool:
+        """Return whether an issuer URL uses an allowed scheme and host."""
+        try:
+            parts = urlsplit(value)
+            hostname = parts.hostname
+            # Accessing port validates malformed port values.
+            parts.port
+        except ValueError:
+            return False
+        if not parts.netloc or not hostname:
+            return False
+        if parts.scheme.lower() == "https":
+            return True
+        if parts.scheme.lower() != "http" or not settings.ssrf_allow_localhost:
+            return False
+        hostname = hostname.rstrip(".").lower()
+        if hostname in {"localhost", "localhost.localdomain"}:
+            return True
+        try:
+            return ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            return False
+
     servers = oauth_config.get("authorization_servers") or []
     if isinstance(servers, list):
         cleaned = [s.strip() for s in servers if isinstance(s, str) and s.strip()]
         if cleaned:
-            non_https = [s for s in cleaned if not s.lower().startswith("https://")]
-            if non_https:
-                logger.warning("Ignoring non-HTTPS authorization_servers (SSRF risk): %s", non_https)
-                cleaned = [s for s in cleaned if s.lower().startswith("https://")]
+            rejected = [s for s in cleaned if not _is_allowed_url(s)]
+            if rejected:
+                logger.warning("Ignoring invalid authorization_servers (SSRF risk): %s", rejected)
+                cleaned = [s for s in cleaned if _is_allowed_url(s)]
             return cleaned
     singular = oauth_config.get("authorization_server")
     if isinstance(singular, str) and singular.strip():
         url = singular.strip()
-        if not url.lower().startswith("https://"):
-            logger.warning("Ignoring non-HTTPS authorization_server (SSRF risk): %s", url)
+        if not _is_allowed_url(url):
+            logger.warning("Ignoring invalid authorization_server (SSRF risk): %s", url)
             return []
         return [url]
     return []
