@@ -63,6 +63,8 @@ def _force_safe_test_db_defaults() -> None:
     os.environ["DB"] = "sqlite"
     os.environ["DATABASE_URL"] = TEST_SQLITE_MEMORY_URL
     os.environ["TEST_DATABASE_URL"] = TEST_SQLITE_MEMORY_URL
+    # External-IdP fallback queries sso_providers on every auth path; tests opt in via settings patch.
+    os.environ["SSO_API_TOKEN_AUTH_ENABLED"] = "false"
 
 
 _force_safe_test_db_defaults()
@@ -569,6 +571,12 @@ def assert_max_queries(test_engine):
 # pipeline runs without requiring real network access.
 _REAL_GETADDRINFO = socket.getaddrinfo
 _STUB_PUBLIC_IP = "93.184.215.14"  # IANA example.com
+# Hostnames that must resolve via real DNS even with the global stub active.
+# Opt-in via comma-separated env var; used by integration tests that talk to
+# real external IdPs (e.g. Entra ID: login.microsoftonline.com, graph.microsoft.com).
+_DNS_PASSTHROUGH_HOSTS = frozenset(
+    h.strip().lower() for h in os.environ.get("TESTS_DNS_PASSTHROUGH_HOSTS", "").split(",") if h.strip()
+)
 
 
 def _stub_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
@@ -580,7 +588,11 @@ def _stub_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     patch ``mcpgateway.common.validators.socket.getaddrinfo`` (or ``socket.getaddrinfo``
     directly) which takes precedence within the patch context.
     """
-    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+    # httpx/anyio resolve through anyio.getaddrinfo, which IDNA-encodes the
+    # hostname to bytes before reaching socket.getaddrinfo; normalize so the
+    # localhost/passthrough checks see a plain string.
+    host_str = host.decode("idna") if isinstance(host, (bytes, bytearray)) else host
+    if host_str in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or str(host_str).lower() in _DNS_PASSTHROUGH_HOSTS:
         return _REAL_GETADDRINFO(host, port, family, type, proto, flags)
     return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_STUB_PUBLIC_IP, port or 0))]
 

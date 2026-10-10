@@ -45,6 +45,7 @@ def _settings(**flags) -> SimpleNamespace:
         metrics_rollup_enabled=False,
         email_auth_enabled=False,
         sso_enabled=False,
+        sso_user_provisioning_api_enabled=False,
         llmchat_enabled=False,
         mcpgateway_admin_api_enabled=False,
     )
@@ -367,6 +368,9 @@ class TestBuildV1RouterGroupD:
         teams_mod = ModuleType("_mock_teams")
         teams_mod.teams_router = _sentinel_router("/sentinel-teams")
 
+        users_mod = ModuleType("_mock_users")
+        users_mod.users_router = _sentinel_router("/sentinel-users")
+
         tokens_mod = ModuleType("_mock_tokens")
         tokens_mod.router = _sentinel_router("/sentinel-tokens")
 
@@ -378,6 +382,7 @@ class TestBuildV1RouterGroupD:
             "mcpgateway.routers.email_auth": email_auth_mod,
             "mcpgateway.routers.sso": sso_mod,
             "mcpgateway.routers.teams": teams_mod,
+            "mcpgateway.routers.users": users_mod,
             "mcpgateway.routers.tokens": tokens_mod,
             "mcpgateway.routers.rbac": rbac_mod,
         }
@@ -401,6 +406,12 @@ class TestBuildV1RouterGroupD:
         with patch.dict(sys.modules, self._auth_modules()):
             v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/teams/sentinel-teams" in _route_paths(v1)
+
+    def test_users_router_included_when_email_auth_enabled(self):
+        settings = _settings(email_auth_enabled=True)
+        with patch.dict(sys.modules, self._auth_modules()):
+            v1 = build_v1_router(settings, **_required_kwargs())
+        assert "/v1/users/sentinel-users" in _route_paths(v1)
 
     def test_tokens_router_included_when_email_auth_enabled(self):
         settings = _settings(email_auth_enabled=True)
@@ -526,24 +537,20 @@ class TestBuildV1RouterGroupF:
         admin_mod.validate_section_permissions = MagicMock()
 
         # _assemble_routers imports enforce_admin_csrf from mcpgateway.admin to guard
-        # the runtime-admin mount. It must be a real callable, not a MagicMock:
+        # the llm-admin mount. It must be a real callable, not a MagicMock:
         # FastAPI inspects a dependency's signature when the router is included, and
         # omitting it entirely makes the whole admin `try` block raise ImportError,
-        # silently dropping the runtime-admin and well-known includes that follow it.
+        # silently dropping the admin and well-known includes that follow it.
         async def _noop_enforce_admin_csrf() -> None:
             return None
 
         admin_mod.enforce_admin_csrf = _noop_enforce_admin_csrf
-
-        runtime_admin_mod = ModuleType("_mock_runtime_admin")
-        runtime_admin_mod.runtime_admin_router = _sentinel_router("/sentinel-runtime-admin")
 
         well_known_mod = ModuleType("_mock_well_known")
         well_known_mod.admin_router = _sentinel_router("/sentinel-well-known")
 
         return {
             "mcpgateway.admin": admin_mod,
-            "mcpgateway.routers.runtime_admin_router": runtime_admin_mod,
             "mcpgateway.routers.well_known": well_known_mod,
         }
 
@@ -552,12 +559,6 @@ class TestBuildV1RouterGroupF:
         with patch.dict(sys.modules, self._admin_modules()):
             v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/sentinel-admin" in _route_paths(v1)
-
-    def test_runtime_admin_router_included_when_admin_api_enabled(self):
-        settings = _settings(mcpgateway_admin_api_enabled=True)
-        with patch.dict(sys.modules, self._admin_modules()):
-            v1 = build_v1_router(settings, **_required_kwargs())
-        assert "/v1/admin/runtime/sentinel-runtime-admin" in _route_paths(v1)
 
     def test_well_known_included_in_v1_when_admin_api_enabled(self):
         settings = _settings(mcpgateway_admin_api_enabled=True)
@@ -576,7 +577,6 @@ class TestBuildV1RouterGroupF:
         settings = _settings(mcpgateway_admin_api_enabled=True)
         with patch.dict(sys.modules, {
             "mcpgateway.admin": None,
-            "mcpgateway.routers.runtime_admin_router": None,
             "mcpgateway.routers.well_known": None,
         }):
             v1 = build_v1_router(settings, **_required_kwargs())

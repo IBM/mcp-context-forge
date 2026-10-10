@@ -21,8 +21,7 @@
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
-#  --profile experimental: Adds the ContextForge web UI (web_ui) + its Redis session store
-#                          (web_ui is also included in --profile testing)
+#  --profile ui:          Adds the ContextForge web UI (web_ui) + its Redis session store
 #
 #  Compose overlays (separate files):
 #  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
@@ -148,6 +147,7 @@ services:
       - HOST=${GATEWAY_HOST:-0.0.0.0}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
       # High-level Rust MCP UX:
       # Deprecated as of 2026-06-11; sunsets on 2026-07-07. Prefer RUST_MCP_MODE=off and the Python MCP transport.
       #   RUST_MCP_MODE=off    -> Python MCP transport
@@ -234,6 +234,8 @@ services:
       - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
       # MCP Apps UI support (disabled by default; opt-in only)
       - MCPGATEWAY_MCP_APPS_ENABLED=${MCPGATEWAY_MCP_APPS_ENABLED:-false}
+      # Inbound MCP protocol mode (legacy by default; set auto to accept 2026-07-28 clients)
+      - MCP_INBOUND_PROTOCOL_MODE=${MCP_INBOUND_PROTOCOL_MODE:-legacy}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -387,6 +389,7 @@ services:
       # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
       # ═══════════════════════════════════════════════════════════════════════════
       - SSO_ENABLED=${SSO_ENABLED:-false}
+      - SSO_USER_PROVISIONING_API_ENABLED=${SSO_USER_PROVISIONING_API_ENABLED:-false}
       - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
       - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
       - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
@@ -399,6 +402,8 @@ services:
       - SSO_KEYCLOAK_ROLE_MAPPINGS=${SSO_KEYCLOAK_ROLE_MAPPINGS:-{}}
       - SSO_KEYCLOAK_DEFAULT_ROLE=${SSO_KEYCLOAK_DEFAULT_ROLE:-}
       - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
+      # Accept bearer tokens from a trusted_for_api_auth SSO provider on API/MCP endpoints
+      - SSO_API_TOKEN_AUTH_ENABLED=${SSO_API_TOKEN_AUTH_ENABLED:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
       - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
       # Security defaults (tokens require expiration and JTI for revocation)
@@ -644,21 +649,11 @@ services:
       - SSE_RAPID_YIELD_WINDOW_MS=1000                          # Detection window in ms (default: 1000)
       - SSE_RAPID_YIELD_MAX=50                                  # Max yields before disconnect (default: 50, 0=disabled)
       # ─────────────────────────────────────────────────────────────────────────
-      # Layer 2: Cleanup Timeouts
-      # ─────────────────────────────────────────────────────────────────────────
-      # Limit how long cleanup waits for stuck tasks. Short timeouts (0.5s) reduce
-      # CPU waste during cancelled connection cleanup. Only affects cleanup, not
-      # normal operation.
-      - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
-      - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
-      # ─────────────────────────────────────────────────────────────────────────
-      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
-      # ─────────────────────────────────────────────────────────────────────────
-      # Last resort: patches anyio to limit _deliver_cancellation iterations.
-      # Enable only if Layers 1-2 don't fully resolve the issue.
-      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=${ANYIO_CANCEL_DELIVERY_PATCH_ENABLED:-false}  # Experimental workaround; disabled for current AnyIO
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
+      # NOTE: The former Layer 2 cleanup-timeout knobs (MCP_SESSION_POOL_CLEANUP_TIMEOUT,
+      # SSE_TASK_GROUP_CLEANUP_TIMEOUT) and the Layer 3 anyio monkey-patch were removed.
+      # anyio >= 4.15.0 fixes the _deliver_cancellation spin upstream (anyio#695/#1111);
+      # cleanup waits remain bounded internally (fixed 5-second windows).
+
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
@@ -1075,6 +1070,7 @@ services:
       dockerfile: Containerfile
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - GATEWAY_TOOL_NAME_SEPARATOR=${GATEWAY_TOOL_NAME_SEPARATOR:--}
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH unset here)
       # Only set these if you explicitly enable Basic auth for this container
@@ -1176,8 +1172,8 @@ services:
           memory: 1G
 
 ###############################################################################
-#  CONTEXTFORGE WEB UI (enabled with --profile testing or --profile experimental)
-#  Usage: docker compose --profile experimental up -d
+#  CONTEXTFORGE WEB UI (enabled with --profile ui or --profile testing)
+#  Usage: docker compose --profile ui up -d
 #  Access: http://localhost:${WEB_UI_PORT:-3001}
 ###############################################################################
 
@@ -1198,13 +1194,18 @@ services:
       retries: 10
       start_period: 10s
     networks: [mcpnet]
-    profiles: ["testing", "experimental"]
+    profiles: ["testing", "ui"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Web UI - BFF-style frontend for the gateway API
   # ──────────────────────────────────────────────────────────────────────
   web_ui:
-    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
+    # Pinned by tag AND digest: the digest makes the supported `ui` profile
+    # reproducible even if the tag is ever retargeted on the registry - this
+    # service holds user sessions/auth, so an unexpected code swap matters.
+    # Bump both together on release (see release-management.md #6.4); get the
+    # digest with: docker buildx imagetools inspect <image>:<tag>
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.1@sha256:e2063ab012e7fe78815c5f840d517e1cc1fd484ed25c7b8e37cd78210cc3ab98}
     restart: unless-stopped
     ports:
       # Host and container port tied together on purpose - the image reads
@@ -1224,7 +1225,7 @@ services:
         condition: service_healthy
       web_ui_redis:
         condition: service_healthy
-    profiles: ["testing", "experimental"]
+    profiles: ["testing", "ui"]
 
 ###############################################################################
 #  MONITORING STACK (enabled with --profile monitoring)
@@ -1556,6 +1557,8 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
+  # Rust server from contextforge-examples (CI-built image); serves /mcp
+  # (Streamable HTTP), /sse, /health, /version on BIND_ADDRESS.
   # Pinned by digest so `docker compose pull` cannot change the tool inventory
   # under the benchmarks. Digest resolved 2026-08-07 (== commit tag
   # 9b97731fab3cce083d09fe48b4d4760a38d17248); 8 tools exposed:
@@ -1568,7 +1571,7 @@ services:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:110e1826f5d763e5afadba770b731dac93e0819c1bbadb68671b0124260603cf}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1882,6 +1885,44 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Completion Test Server - minimal MCP server advertising the `completions`
+  # capability, for #6629 completion/complete federation testing
+  # (tests/live_gateway/mcp/test_completion_federation.py). Built fresh from
+  # mcp-servers/python/completion_test_server, pinned mcp>=2.0.0 -- not reused
+  # from the sibling `mcp<2` fixture branch (spec §8.1). Registration and
+  # prompt federation happen inside the test itself, not here.
+  ###############################################################################
+  completion_test_server:
+    build:
+      context: ./mcp-servers/python/completion_test_server
+      dockerfile: Containerfile
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9102:9102"
+    environment:
+      - COMPLETION_TEST_SERVER_PORT=9102
+    profiles: ["testing"]
+
+  ###############################################################################
+  # Completion Test Server (no completions capability) - same image, same
+  # `greet` prompt, but no `completion` handler registered -- simulates an
+  # upstream that does not support completion/complete (#6629 R3).
+  ###############################################################################
+  completion_test_server_no_completions:
+    build:
+      context: ./mcp-servers/python/completion_test_server
+      dockerfile: Containerfile
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9103:9103"
+    environment:
+      - COMPLETION_TEST_SERVER_PORT=9103
+      - COMPLETIONS_ENABLED=false
+    profiles: ["testing"]
 
   ###############################################################################
   # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing

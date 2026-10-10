@@ -91,23 +91,27 @@ gh api repos/IBM/mcp-context-forge/code-scanning/alerts --jq '[.[] | select(.sta
 **Acceptance criteria:** Zero open critical/high Dependabot alerts. All code scanning and secret scanning alerts reviewed and resolved or triaged with documented justification.
 
 ### 1.6 Update container base images
-
-Update the `FROM` lines in `Containerfile` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
-
-Check current base images:
+Pinned UBI image tags must be bumped to the latest build within their current minor line before each release. Use the automated target — it queries the Red Hat Catalog (Pyxis API), validates pin consistency across all Containerfiles, and applies updates atomically with rollback on failure:
 
 ```bash
-grep '^FROM' Containerfile
+make container-bump-image-versions
 ```
 
-| Stage | Current image | What to check |
-|-------|---------------|---------------|
-| Rust builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
-| Frontend builder | `registry.access.redhat.com/ubi10/nodejs-24:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/nodejs-24) |
-| Builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
-| Runtime | `registry.access.redhat.com/ubi10/ubi-minimal:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi-minimal) |
+The script manages four ARG pins across three files:
 
-Update `Containerfile` with the latest tags, then verify the image builds:
+| ARG | File |
+|-----|------|
+| `UBI_BASE` | `Containerfile` |
+| `NODEJS_IMAGE` | `Containerfile` |
+| `UBI_MINIMAL` | `Containerfile` and `infra/wheels/Containerfile` (kept in sync) |
+| `NGINX_IMAGE` | `infra/nginx/Dockerfile` |
+
+The target stays within the current minor line (e.g. `10.2`). A minor-line bump is a deliberate, reviewed change and must be done manually.
+
+!!! note "Prerequisites"
+    `curl` and `jq` must be installed.
+
+After the script reports updates, verify the image builds cleanly:
 
 ```bash
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
@@ -131,9 +135,8 @@ The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` i
 
 ```bash
 # uv sync + lockfile upgrade for every pyproject.toml
-# Skips: mcp-servers/templates (generated), .venv* dirs, Rust crates (no uv)
+# Skips: templates dirs (generated), .venv* dirs, Rust crates (no uv)
 find . \
-  -path "./mcp-servers/templates" -prune -o \
   -name "templates" -prune -o \
   -name ".venv*" -prune -o \
   -path "*/target" -prune -o \
@@ -384,8 +387,9 @@ make test-e2e
 ```
 
 `test-e2e` runs the consolidated suite covering both RBAC enforcement and
-MCP protocol compliance. `test-mcp-rbac` and `test-mcp-protocol-e2e` are
-deprecated aliases for `test-e2e`, removed in v1.3.0.
+MCP protocol compliance. `test-mcp-cli` and `test-mcp-rbac` are aliases for
+`test-e2e`. `test-mcp-protocol-e2e` is a deprecated alias for `test-e2e`. It
+sunsets on 2027-01-18.
 
 ### 5.5 Load testing
 
@@ -471,7 +475,53 @@ Tear down when done:
 make embedded-down
 ```
 
-### 6.4 Python package build
+### 6.4 Web UI verification
+
+The `web_ui` service is pinned to a specific released tag *and* image digest of
+[contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui) via
+the `WEB_UI_IMAGE` default in `docker-compose.yml` (and the commented example in
+`.env.example`) — never `latest`. The digest makes the pin immutable: a tag alone
+can be retargeted on the registry, and this service handles user sessions/auth, so
+an unexpected code swap on deploy matters. As part of each release:
+
+1. Check the latest published release tag of `contextforge-web-ui` (GitHub releases
+   or `ghcr.io/contextforge-org/contextforge-web-ui` tags).
+2. Resolve that tag's manifest digest:
+
+   ```bash
+   docker buildx imagetools inspect ghcr.io/contextforge-org/contextforge-web-ui:<tag>
+   ```
+
+   Use the top-level `Digest:` value (the multi-arch image index), not one of the
+   per-platform manifest digests underneath it.
+3. Update the `WEB_UI_IMAGE` default in `docker-compose.yml` and the example in
+   `.env.example` to `<tag>@<digest>`.
+4. Verify the new pinned version starts and communicates with the gateway under the
+   `ui` profile:
+
+```bash
+docker compose --profile ui up -d
+```
+
+Verify:
+
+- `web_ui` and `web_ui_redis` services start cleanly
+- The web UI responds at `http://localhost:3001`
+- Gateway health endpoint responds at `http://localhost:8080/health`
+
+Tear down when done:
+
+```bash
+docker compose --profile ui down
+```
+
+!!! tip "Config-only smoke test"
+    `make compose-ui-config-check` runs `docker compose --profile ui config --quiet`
+    to catch profile, variable-interpolation, and Compose-schema regressions without
+    starting containers. It also runs in CI on every PR that touches
+    `docker-compose.yml`.
+
+### 6.5 Python package build
 
 ```bash
 make dist

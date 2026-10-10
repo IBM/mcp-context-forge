@@ -44,8 +44,8 @@ authors = [
 
 dependencies = [
     "cedarpy>=4.8.7",
-    "mcp>=1.28.1,<2",
-    "mcp-contextforge-gateway>=1.0.10",
+    "mcp>=2.2.0",
+    "mcp-contextforge-gateway>=1.0.11",
 ]
 
 # URLs

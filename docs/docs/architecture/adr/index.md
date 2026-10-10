@@ -18,7 +18,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0011  | Namespaced Tool Federation                         | Implemented | Federation   | 2025-03-01  |
 | 0012  | Drop-down UI Tool Selection                        | Draft     | User Interface | 2025-03-01  |
 | 0013  | APIs for Server Connection Strings                 | Draft     | API Design     | 2025-03-01  |
-| 0014  | Security Headers & Environment-Aware CORS Middleware | Accepted  | Security       | 2025-08-17  |
+| 0014  | Security Headers & Environment-Aware CORS Middleware | Superseded by ADR-0056 | Security | 2025-08-17  |
 | 0015  | Configurable Well-Known URI Handler                | Accepted  | Security       | 2025-08-17  |
 | 0016  | Plugin Framework & AI Middleware                   | Implemented | Extensibility | 2025-08-17  |
 | 0017  | Adopt **orjson** for High-Performance JSON         | Accepted  | Performance    | 2025-10-27  |
@@ -37,7 +37,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0030  | Metrics Cleanup and Rollup | Accepted | Performance | 2025-01-15 |
 | 0031  | Parallel Session Cleanup with asyncio.gather() | Accepted | Performance | 2025-01-15 |
 | 0032  | MCP Session Pool for Connection Reuse | Accepted | Performance | 2025-01-05 |
-| 0033  | Tool Lookup Cache for invoke_tool | Accepted | Performance | 2025-01-20 |
+| 0033  | Tool Lookup Cache for invoke_tool | Superseded by ADR-055 | Performance | 2025-01-20 |
 | 0035  | Query Parameter Authentication for Gateways | Accepted | Security | 2026-01-19 |
 | 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
 | 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Superseded | Performance | 2025-12-26 |
@@ -57,5 +57,8 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0052  | GET /mcp Stream and Server-Initiated Request Correlation | Proposed | MCP Protocol | 2026-04-19 |
 | 0053  | Governed MCP Extension Framework                     | Proposed | Security       | 2026-05-29 |
 | 0054  | Remove Granian HTTP Server (supersedes ADR-0025)     | Accepted  | Performance   | 2026-07-22 |
+| 0055  | Scope Tool Lookup Cache Entries (supersedes ADR-0033) | Accepted | Security | 2026-09-24 |
+| 0056  | CSP Hardening — No eval, No Inline Handlers, Nonce-Only Scripts (supersedes ADR-0014 CSP) | Accepted | Security | 2026-10-01  |
+| 0057  | Trust A2A Plugin Header Output | Accepted | Security | 2026-10-06 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

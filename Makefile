@@ -136,7 +136,7 @@ endif
 help:
 	@grep "^# help\:" Makefile | grep -v grep | sed 's/\# help\: //' | sed 's/\# help\://'
 	@if grep -q "^# deprecated:" Makefile; then \
-		printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work, will be removed in stated version)\033[0m\n'; \
+	printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work and sunset on the stated date)\033[0m\n'; \
 		grep "^# deprecated:" Makefile | sed 's/^# deprecated: //' | while IFS= read -r line; do \
 			printf '  \033[2;33m%s\033[0m\n' "$$line"; \
 		done; \
@@ -163,10 +163,11 @@ os-deps: $(OS_DEPS_SCRIPT)
 is_true = $(filter 1 true yes,$(1))
 
 # Deprecation warning for aliased targets.
-# Usage: $(call deprecated_target,old-name,replacement invocation,removal-version)
+# Usage: $(call deprecated_target,old-name,replacement invocation,deprecated-on,sunset-date)
+# The sunset date must be at least 90 days after the deprecated-on date.
 define deprecated_target
-	@printf '\n  ⚠️  WARNING: "%s" is deprecated. Use "%s" instead.\n' '$(1)' '$(2)'
-	@printf '     This alias will be removed in v%s.\n\n' '$(3)'
+	@printf '\n  ⚠️  WARNING: "%s" is deprecated as of %s. Use "%s" instead.\n' '$(1)' '$(3)' '$(2)'
+	@printf '     This alias sunsets on %s.\n\n' '$(4)'
 endef
 
 # Helper to ensure a Python package is installed in venv (uses uv to avoid pip corruption)
@@ -856,7 +857,7 @@ clean:
 # help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
 # help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
-# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
+# help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
 # help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -928,10 +929,21 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
+.PHONY: bats
+bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
+	@command -v bats >/dev/null 2>&1 || { echo "❌ bats not found - install with 'brew install bats-core' or see https://bats-core.readthedocs.io"; exit 1; }
+	@echo "🦇 Running bats shell tests..."
+	@files=$$(find tests -type f -name '*.bats' | sort); \
+	if [ -z "$$files" ]; then echo "ℹ️  No .bats files found under tests/"; exit 0; fi; \
+	echo "$$files" | sed 's/^/   /'; \
+	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
+	@echo "✅ bats tests passed!"
+
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
+	@echo "   Modern MCP: set MCP_INBOUND_PROTOCOL_MODE=auto (with RUST_MCP_MODE=off) for both testing-up and this target; select with K=modern_logging"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
@@ -939,29 +951,16 @@ test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 
-# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (v1.3.0)
+# deprecated: test-mcp-protocol-e2e - Use "make test-e2e" instead (sunsets 2027-01-18)
 test-mcp-protocol-e2e: test-e2e
-	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,1.3.0)
+	$(call deprecated_target,test-mcp-protocol-e2e,make test-e2e,2026-10-20,2027-01-18)
 
-# deprecated: test-mcp-cli - Use "make test-e2e" instead (v1.3.0)
 test-mcp-cli: test-e2e
-	$(call deprecated_target,test-mcp-cli,make test-e2e,1.3.0)
 
 .PHONY: test-bats
-test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
-	@command -v bats >/dev/null 2>&1 || { \
-		echo "❌  bats not found - install it to run tests/bash:"; \
-		echo "    macOS:          brew install bats-core"; \
-		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
-		echo "    npm:            npm install -g bats"; \
-		exit 1; \
-	}
-	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
-	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
+test-bats: bats              ## 🧪  Run all bats shell tests (alias for bats)
 
-# deprecated: test-mcp-rbac - Use "make test-e2e" instead (v1.3.0)
 test-mcp-rbac: test-e2e
-	$(call deprecated_target,test-mcp-rbac,make test-e2e,1.3.0)
 
 test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1001,6 +1000,13 @@ test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] again
 	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
 		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
 	@echo "✅ OAuth status live tests passed!"
+
+test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt token auth against a running gateway
+	@echo "🧪 Running private_key_jwt live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack; stub AS/upstream run on host.docker.internal"
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
+		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
+	@echo "✅ private_key_jwt live tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1769,6 +1775,9 @@ TESTING_LOCUST_WORKERS ?= 1
 # can write reports to ./reports on bind mounts without EACCES.
 HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
+# Profiles that bring up the testing stack. Also used to resolve the web_ui
+# host port for the startup summary, so both paths see the same services.
+TESTING_COMPOSE_PROFILES := --profile testing --profile inspector --profile sso
 
 .PHONY: testing-up
 testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
@@ -1784,13 +1793,15 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
 	@echo "Service              URL                           Purpose"
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@WEB_UI_PUBLISHED_PORT=$$(COMPOSE_CMD='$(COMPOSE_CMD_MONITOR)' COMPOSE_PROFILES='$(TESTING_COMPOSE_PROFILES)' scripts/testing-web-ui-port.sh); \
+		echo "ContextForge Web UI  http://localhost:$$WEB_UI_PUBLISHED_PORT         Gateway Supported UX"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
 	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
@@ -2760,6 +2771,31 @@ MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
 MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
+MODE ?= legacy
+# modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
+# proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
+HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
+SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
+USERS ?= 125
+SPAWN_RATE ?= 30
+# Locust exits 1 when any request failed. Set 0 to report numbers regardless.
+EXIT_ON_ERROR ?= 1
+TIME ?= 1800s
+
+# TOKEN wins, from the command line or the environment, then MCPGATEWAY_BEARER_TOKEN.
+# With both empty, legacy mode mints a fresh token from the running gateway; modern
+# mode cannot mint, because the Rust dataplane verifies RS256 against its JWKS.
+# A token that went stale on a stack restart stops at the 401 preflight below.
+JWT_USER ?= admin@example.com
+# Reports carry the commit they measured, so a rerun of the same commit overwrites
+# its own report instead of clobbering another commit's numbers.
+HTML_REPORT ?= reports/perf_benchmark_tools_$(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit).html
+# Compose project label of the running stack; its containers carry the resource table.
+PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
+# Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
+# summary and the history row, so it is deleted when the run ends.
+# Appended one row per run, tracked in git so results are comparable across commits.
+HISTORY_CSV ?= tests/loadtest/historic_load_data.csv
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2846,6 +2882,67 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo ""
 	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
+
+# help: perf-benchmark-tools  - Fixed-tool-list MCP benchmark (MODE=legacy|modern)
+.PHONY: perf-benchmark-tools
+perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against legacy or modern gateway
+	@case "$(MODE)" in legacy|modern) ;; *) echo "❌ MODE must be legacy or modern (got: $(MODE))"; exit 1 ;; esac
+	@echo "📊 Running fixed-tool benchmark..."
+	@echo "🔑 Token: run \`export TOKEN=\$$(make create-token)\`"
+	@echo "   Mode: $(MODE) (handshake: $(if $(filter modern,$(MODE)),skipped,initialize))"
+	@echo "   Host: $(HOST)"
+	@echo "   Server: $(SERVER_ID)"
+	@echo "   Users: $(USERS), Spawn: $(SPAWN_RATE)/s, Duration: $(TIME)"
+	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true)
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		GW_SECRET="$(gateway_jwt_secret)" && \
+		BENCH_TOKEN="$(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))" && \
+		if [ -z "$$BENCH_TOKEN" ] && [ -n "$$GW_SECRET" ]; then \
+			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(JWT_USER) --exp 10080 2>/dev/null); \
+		fi; \
+		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(HOST)/servers/$(SERVER_ID)/mcp" \
+			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
+		case "$$CODE" in \
+			2*) ;; \
+			401) \
+				echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
+				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
+				exit 1 ;; \
+			000) \
+				echo "Preflight failed: no HTTP response from $(HOST). Start the stack with: make perf-up"; \
+				exit 1 ;; \
+			*) \
+				echo "Preflight failed (HTTP $$CODE) from $(HOST)/servers/$(SERVER_ID)/mcp"; \
+				exit 1 ;; \
+		esac; \
+		STATS_DIR=$$(mktemp -d); trap "rm -rf $$STATS_DIR" EXIT; \
+		STATUS=0; \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
+		MCP_SERVER_ID=$(SERVER_ID) \
+		TOOL_BENCH_MODE=$(MODE) \
+		JWT_SECRET_KEY=$${GW_SECRET:-$${JWT_SECRET_KEY:-}} \
+		MCPGATEWAY_BEARER_TOKEN=$$BENCH_TOKEN \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(HOST) \
+			--users=$(USERS) \
+			--spawn-rate=$(SPAWN_RATE) \
+			--run-time=$(TIME) \
+			--headless \
+			--exit-code-on-error=$(EXIT_ON_ERROR) \
+			--html=$(HTML_REPORT) \
+			--csv="$$STATS_DIR/stats" \
+			--only-summary \
+			ToolUser || STATUS=$$?; \
+		$(VENV_DIR)/bin/python tests/loadtest/summarize_benchmark.py "$(HTML_REPORT)" "$$STATS_DIR/stats_stats.csv" \
+			--mode "$(MODE)" --host "$(HOST)" --server "$(SERVER_ID)" --project "$(PROJECT)" \
+			--history "$(HISTORY_CSV)"; \
+		echo ""; \
+		echo "📄 HTML Report: $(HTML_REPORT)"; \
+		echo "🗂  History:     $(HISTORY_CSV)"; \
+		exit $$STATUS'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
@@ -3784,14 +3881,14 @@ isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
-# deprecated: black-check       - Use "make black CHECK=1" instead (v1.2.0)
-# deprecated: isort-check       - Use "make isort CHECK=1" instead (v1.2.0)
+# deprecated: black-check       - Use "make black CHECK=1" instead (sunsets 2027-01-18)
+# deprecated: isort-check       - Use "make isort CHECK=1" instead (sunsets 2027-01-18)
 black-check:
-	$(call deprecated_target,black-check,make black CHECK=1,1.2.0)
+	$(call deprecated_target,black-check,make black CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)"
 
 isort-check:
-	$(call deprecated_target,isort-check,make isort CHECK=1,1.2.0)
+	$(call deprecated_target,isort-check,make isort CHECK=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
 
 
@@ -3982,19 +4079,19 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	$(UV_BIN) tool run ruff==$(RUFF_VERSION) $$ruff_cmd $$select_flag $(TARGET)
 
 # --- Deprecated aliases (use RUFF_MODE= instead) ---
-# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
-# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (v1.2.0)
-# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (v1.2.0)
+# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (sunsets 2027-01-18)
+# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (sunsets 2027-01-18)
+# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (sunsets 2027-01-18)
 ruff-check:
-	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,1.2.0)
+	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)"
 
 ruff-fix:
-	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,1.2.0)
+	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$(TARGET)"
 
 ruff-format:
-	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,1.2.0)
+	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=format TARGET="$(TARGET)"
 
 future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged from main
@@ -4496,7 +4593,6 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	  -not -path './.venv/*' \
 	  -not -path './.cache/*' \
 	  -not -path './.venv/*' \
-	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
 
@@ -5054,6 +5150,11 @@ container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
 
+.PHONY: container-bump-image-versions
+container-bump-image-versions: ## Bump pinned UBI image tags in Containerfiles to latest within their minor line
+	@echo "🔄 Checking Red Hat Catalog for newer UBI image tags..."
+	@bash scripts/container-bump-image-versions.sh
+
 container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
 	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
 
@@ -5101,26 +5202,26 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
 # --- Deprecated container-run aliases ---
-# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (v1.2.0)
-# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
-# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
-# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
+# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (sunsets 2027-01-18)
+# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (sunsets 2027-01-18)
 .PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
-	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
+	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_HOST_NET=1
 
 container-run-ssl: container-check-image
-	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,1.2.0)
+	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1
 
 container-run-ssl-host: container-check-image
-	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,1.2.0)
+	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1
 
 container-run-ssl-jwt: container-check-image
-	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
+	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,2026-10-20,2027-01-18)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
 
 .PHONY: container-push
@@ -5594,6 +5695,8 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
+# help: perf-up               - Start stack with pinned 4 CPU / 4 G benchmark resources (REPLICA=3)
+# help: perf-down             - Stop the pinned benchmark stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
 # help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
 # help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
@@ -5677,9 +5780,11 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-compose-siem-up compose-siem-down compose-siem-logs \
+	compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
-	embedded-up embedded-down embedded-clean embedded-status embedded-logs
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs \
+	compose-ui-config-check \
+	perf-up perf-down
 
 # Validate compose file
 # To auto-fix before validating, run: make setup && make compose-validate
@@ -5696,6 +5801,22 @@ compose-validate:
 	fi
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
+
+# Config-only smoke test for the supported 'ui' profile (contextforge-web-ui BFF)
+# Catches profile, variable-interpolation, and Compose-schema regressions without
+# starting any containers. See docs/docs/development/release-management.md #6.4.
+compose-ui-config-check:
+	@echo "🔍 Validating 'ui' profile compose config..."
+	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
+		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile ui config --quiet
+	@echo "✅ 'ui' profile compose config is valid"
 
 compose-upgrade-pg18: compose-validate
 	@echo "⚠️  This will upgrade Postgres 17 -> 18"
@@ -5715,6 +5836,39 @@ compose-upgrade-pg18: compose-validate
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+
+PERF_COMPOSE_FILE := docker-compose.perf.yml
+PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(PROFILE)
+REPLICA ?= 3
+
+perf-up: compose-validate                  ## Start stack with pinned benchmark resource overrides (REPLICA=3)
+	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PERF_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🚀  Using $(COMPOSE_CMD) + $(PERF_COMPOSE_FILE); starting production stack ($(REPLICA) gateway replica(s))..."
+	IMAGE_LOCAL=$(call get_image_name) GATEWAY_REPLICAS=$(REPLICA) $(PERF_COMPOSE) up -d
+
+# Signing secret of the running gateway container; empty when no gateway is up.
+# The container wins over .env: compose lets a shell JWT_SECRET_KEY override the
+# file, so .env can hold a secret the running gateway never saw (every call 401s).
+gateway_jwt_secret = $$(docker ps -q -f label=com.docker.compose.service=gateway 2>/dev/null | { read -r id; [ -n "$$id" ] && docker exec "$$id" printenv JWT_SECRET_KEY 2>/dev/null; } || true)
+
+# help: create-token          - Print a bare admin JWT (use: export TOKEN=$(make create-token))
+.PHONY: create-token
+create-token:                             ## Print a bare admin JWT signed with the running gateway's secret
+	@SECRET="$(gateway_jwt_secret)"; \
+	env $${SECRET:+JWT_SECRET_KEY=$$SECRET} $(VENV_DIR)/bin/python -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 2>/dev/null
+
+perf-down: compose-validate                ## Stop the pinned benchmark stack
+	@if [ ! -f "$(PERF_COMPOSE_FILE)" ]; then \
+		echo "❌ Compose override file not found: $(PERF_COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping benchmark stack..."
+	@$(PERF_COMPOSE) stop -t 10 2>/dev/null || true
+	$(PERF_COMPOSE) down --remove-orphans
+	@echo "✅ Benchmark stack stopped."
 
 compose-sso: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -6259,7 +6413,31 @@ ibmcloud-push:
 ibmcloud-deploy:
 	@test -f .env || { echo "❌ Missing .env — run: cp .env.example .env"; exit 1; }
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
-	@# Create the runtime env secret from .env if it does not exist yet
+	@# Verify the registry pull secret exists. Check CLI availability first so
+	@# infrastructure errors are distinguished from a genuinely absent secret.
+	@if ! command -v ibmcloud > /dev/null 2>&1; then \
+		echo "❌ ibmcloud CLI not found. Install it and the code-engine plugin first:"; \
+		echo "   make ibmcloud-cli-install"; \
+		exit 1; \
+	fi; \
+	if ! _secret_err=$$(ibmcloud ce secret get --name $(IBMCLOUD_REGISTRY_SECRET) 2>&1 >/dev/null); then \
+		if echo "$$_secret_err" | grep -qiF "Secret $(IBMCLOUD_REGISTRY_SECRET) not found"; then \
+			echo "❌ Registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)' does not exist."; \
+			echo "   Create it first (first-time setup only):"; \
+			echo "   ibmcloud ce secret create --name $(IBMCLOUD_REGISTRY_SECRET) \\"; \
+			echo "       --format registry \\"; \
+			echo "       --server $$(echo $(IBMCLOUD_IMAGE_NAME) | cut -d/ -f1) \\"; \
+			echo "       --username iamapikey --password \$$IBMCLOUD_ICR_API_KEY"; \
+			echo "   (Use a long-lived IAM API key — IBMCLOUD_API_KEY may be blank for SSO users.)"; \
+			echo "   See the docs for service ID key setup and alternative credential types."; \
+		else \
+			echo "❌ Could not verify registry pull secret '$(IBMCLOUD_REGISTRY_SECRET)'."; \
+			echo "   Diagnostic: $$_secret_err"; \
+			echo "   Check your IBM Cloud login, region, CE project selection, and plugin installation."; \
+		fi; \
+		exit 1; \
+	fi
+	@# Sync the runtime env secret from .env — create on first deploy, update thereafter.
 	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
 		echo "🔐 Creating runtime env secret from .env..."; \
 		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
@@ -8762,3 +8940,45 @@ linting-workflow-commitlint:         ## 📝  Conventional Commits linting (togg
 .PHONY: conc-01-gateways
 conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
 	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh
+
+# Published full-stack MCP conformance harness.
+CF_INTEGRATION ?= cf-integration
+CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
+CF_CONTROLPLANE_REPO ?= $(CURDIR)
+CF_CONTROLPLANE_REF ?= $(shell git -C "$(CF_CONTROLPLANE_REPO)" rev-parse HEAD)
+CF_CONTROLPLANE_IMAGE ?= mcpgateway/mcpgateway:conformance
+CF_CONTROLPLANE_PULL_POLICY ?= never
+CF_COMPOSE_BUILD ?= true
+CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+
+# help: conformance          - Run legacy MCP conformance against a legacy fixture through the built-in dataplane
+# help: conformance-bless    - Update baselines after legacy-to-legacy conformance finishes
+.PHONY: conformance conformance-bless
+
+# Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
+conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+# Exercise only the 2025-11-25 client against a legacy fixture.
+conformance conformance-bless:
+	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git -C "$(CF_CONTROLPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
+		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
+		exit 1; \
+	fi
+	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+	"$(CF_INTEGRATION)" conformance run \
+		--client-version 2025-11-25 \
+		--server-era legacy \
+		--lane builtin \
+		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+		$(if $(filter conformance-bless,$@),--bless)

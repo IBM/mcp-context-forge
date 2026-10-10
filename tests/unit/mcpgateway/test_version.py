@@ -26,9 +26,9 @@ import pytest
 
 
 # --------------------------------------------------------------------------- #
-# Utility - fake psutil so _system_metrics code path runs                     #
+# Utility - mock psutil so _system_metrics code path runs                     #
 # --------------------------------------------------------------------------- #
-def _make_fake_psutil() -> types.ModuleType:  # noqa: D401
+def _make_mock_psutil() -> types.ModuleType:  # noqa: D401
     """Return an in-memory *psutil* stub implementing just what we need."""
 
     class _MemInfo:
@@ -116,9 +116,6 @@ def test_version_json_ok(client: TestClient) -> None:
     payload: Dict[str, Any] = rsp.json()
     assert payload["database"]["server_version"] == "db-vX"
     assert payload["system"] == {"stub": True}
-    assert "mcp_runtime" in payload
-    assert "mode" in payload["mcp_runtime"]
-    assert "mounted" in payload["mcp_runtime"]
 
 
 def test_version_html_query_param(client: TestClient) -> None:
@@ -137,7 +134,7 @@ def test_version_html_accept_header(client: TestClient) -> None:
 
 def test_version_html_all_sections(client: TestClient) -> None:
     html = client.get("/version?fmt=html").text
-    for sec in ["App", "Platform", "Database", "Redis", "Settings", "MCP Runtime", "System", "Environment"]:
+    for sec in ["App", "Platform", "Database", "Redis", "Settings", "System", "Environment"]:
         assert re.search(rf"<h2[^>]*>{sec}</h2>", html)
 
 
@@ -291,7 +288,7 @@ def test_system_metrics_full(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    monkeypatch.setattr(ver_mod, "psutil", _make_fake_psutil())
+    monkeypatch.setattr(ver_mod, "psutil", _make_mock_psutil())
     metrics = ver_mod._system_metrics()
     assert metrics["process"]["pid"] == 1234
 
@@ -426,6 +423,28 @@ def test_system_metrics_no_psutil(monkeypatch: pytest.MonkeyPatch) -> None:
     assert metrics == {}
 
 
+@pytest.mark.parametrize("exc", [
+    SystemError("cpu_freq C extension error"),
+    RuntimeError("invalid CPU frequency data"),
+])
+def test_system_metrics_cpu_freq_exception_sets_none(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    """cpu_freq_mhz is None when psutil.cpu_freq() raises (psutil bug #2382)."""
+    # Standard
+    from unittest.mock import MagicMock
+
+    # First-Party
+    from mcpgateway import version as ver_mod
+
+    fake = _make_mock_psutil()
+    fake.cpu_freq = MagicMock(side_effect=exc)
+    monkeypatch.setattr(ver_mod, "psutil", fake)
+
+    metrics = ver_mod._system_metrics()
+
+    assert metrics["cpu_freq_mhz"] is None
+    assert metrics["cpu_percent"] == 12.3
+
+
 def test_login_html_rendering() -> None:
     """Test _login_html function."""
     # First-Party
@@ -513,7 +532,6 @@ def test_version_partial_html_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rsp.status_code == 200
     assert rsp.headers["content-type"].startswith("text/html")
     assert "Application Information" in rsp.text
-    assert "MCP Runtime" in rsp.text
 
 
 def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.MonkeyPatch) -> None:

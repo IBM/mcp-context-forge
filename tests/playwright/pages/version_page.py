@@ -63,21 +63,6 @@ class VersionPage(BasePage):
         return self.page.locator("#version-platform-runtime-card")
 
     @property
-    def mcp_runtime_card(self) -> Locator:
-        """MCP runtime card container."""
-        return self.page.locator("#version-mcp-runtime-card")
-
-    @property
-    def mcp_core_badge(self) -> Locator:
-        """Primary MCP core badge."""
-        return self.page.locator("#version-mcp-core-badge")
-
-    @property
-    def mcp_runtime_mode_badge(self) -> Locator:
-        """Runtime mode badge."""
-        return self.page.locator("#version-mcp-runtime-mode-badge")
-
-    @property
     def python_version(self) -> Locator:
         """Python version display."""
         return self.platform_runtime_card.locator("div.text-lg.font-semibold").first
@@ -238,14 +223,6 @@ class VersionPage(BasePage):
             FastAPI version as string
         """
         return self.fastapi_version.text_content().strip()
-
-    def get_mcp_core_badge(self) -> str:
-        """Get the primary MCP core badge text."""
-        return self.mcp_core_badge.text_content().strip()
-
-    def get_mcp_runtime_mode_badge(self) -> str:
-        """Get the MCP runtime mode badge text."""
-        return self.mcp_runtime_mode_badge.text_content().strip()
 
     def get_operating_system(self) -> str:
         """Get the operating system information.

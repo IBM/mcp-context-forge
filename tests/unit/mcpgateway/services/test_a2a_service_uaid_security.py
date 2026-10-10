@@ -16,6 +16,32 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentService
 
 
 @pytest.fixture(autouse=True)
+def mock_isolated_client_for_existing_tests(monkeypatch):
+    """Route the isolated UAID client through whatever get_http_client mock each test installs.
+
+    _invoke_remote_agent's UAID path now calls get_isolated_http_client() directly instead of the
+    shared get_http_client() singleton. Existing tests in this file patch get_http_client at its
+    source module; this fixture bridges the new call to that same patched function, so those tests
+    keep exercising the behaviour they were written to check without editing every test body.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
+
+
+@pytest.fixture(autouse=True)
 def disable_allow_all_domains(monkeypatch):
     """Keep UAID security tests deterministic regardless of env."""
     monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)

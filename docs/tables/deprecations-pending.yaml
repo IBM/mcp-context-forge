@@ -1,0 +1,134 @@
+# Pending deprecations registry.
+# Rendered by table-reader in docs/docs/deprecations.md.
+# Rows sort by deprecation date, then earliest removal. Rows without dates sort last.
+- Interface: "Legacy MCP HTTP+SSE transport"
+  Deprecated: "2025-03-26"
+  "Earliest removal": "—"
+  Migration: >-
+    Streamable HTTP for new gateway registrations.
+  Status: >-
+    Spec-deprecated. The gateway compatibility path remains via the control
+    plane. No removal date assigned. The dataplane publisher serves only
+    `STREAMABLEHTTP` backends.
+- Interface: "Rust MCP runtime sidecar"
+  Deprecated: "2026-06-11"
+  "Earliest removal": "2026-07-07"
+  Migration: >-
+    Python MCP transport. Leave `RUST_MCP_MODE=off` and
+    `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false`.
+  Status: >-
+    Past earliest removal. Code remains: `crates/mcp_runtime`,
+    `RUST_MCP_MODE`, `EXPERIMENTAL_RUST_MCP_*`, `MCP_RUST_*`, and the
+    transport proxies. Runtime responses carry `Deprecation` and `Sunset`
+    headers.
+- Interface: "Rust A2A runtime sidecar"
+  Deprecated: "2026-06-11"
+  "Earliest removal": "2026-07-07"
+  Migration: >-
+    Python A2A invocation path.
+  Status: >-
+    Past earliest removal. Code remains. The Python A2A protocol adapter is
+    unaffected.
+- Interface: "ValidationMiddleware"
+  Deprecated: "2026-06-11"
+  "Earliest removal": "2026-07-07"
+  Migration: >-
+    Endpoint-level Pydantic models, `SecurityValidator` helpers, and
+    protocol-specific validation middleware.
+  Status: >-
+    Past earliest removal. The middleware remains, mounted when
+    `VALIDATION_MIDDLEWARE_ENABLED=true`. Instantiation emits a
+    `DeprecationWarning`.
+- Interface: "Legacy unversioned API shim"
+  Deprecated: "2026-06-26"
+  "Earliest removal": "2026-09-26"
+  Migration: >-
+    The `/v1/*` routes. See [terminology](overview/terminology.md).
+  Status: >-
+    `legacy_api_enabled` still defaults to `true`. Tools, resources, prompts,
+    teams, and tokens still call legacy paths internally.
+- Interface: "Makefile formatting and container aliases"
+  Deprecated: "2026-10-20"
+  "Earliest removal": "2027-01-18"
+  Migration: >-
+    `make black CHECK=1`, `make isort CHECK=1`, `make ruff RUFF_MODE=...`,
+    `make container-run ...`.
+  Status: >-
+    Pending. Covers `black-check`, `isort-check`, `ruff-check`, `ruff-fix`,
+    `ruff-format`, and the 4 `container-run-*` aliases. Each call site states
+    both dates.
+- Interface: "Makefile alias test-mcp-protocol-e2e"
+  Deprecated: "2026-10-20"
+  "Earliest removal": "2027-01-18"
+  Migration: >-
+    `make test-e2e`.
+  Status: >-
+    Pending.
+- Interface: "gRPC upstream services"
+  Deprecated: "2026-10-20"
+  "Earliest removal": "2027-01-18"
+  Migration: >-
+    None.
+  Status: >-
+    Experimental and disabled by default (`MCPGATEWAY_GRPC_ENABLED=false`).
+    The admin routes, reflection discovery, and `grpc` install extra stop at
+    removal. Runtime signals land with the code change. See
+    [gRPC services](using/grpc-services.md).
+- Interface: "WebSocket upstreams"
+  Deprecated: "2026-10-20"
+  "Earliest removal": "2027-01-18"
+  Migration: >-
+    Streamable HTTP or SSE registrations.
+  Status: >-
+    Covers `ws://` and `wss://` URLs and `transport=WEBSOCKET` in gateway and
+    catalog registrations. The client-facing WebSocket endpoint is unaffected.
+    See [catalog registration](manage/catalog.md).
+- Interface: "Local observability data store"
+  Deprecated: "2026-10-20"
+  "Earliest removal": "2027-01-18"
+  Migration: >-
+    OTel export: `OTEL_ENABLE_OBSERVABILITY=true` and
+    `OTEL_EXPORTER_OTLP_ENDPOINT`. See
+    [OTel observability](architecture/observability-otel.md).
+  Status: >-
+    Covers the trace, span, and metric tables and the Admin UI views that read
+    them. Dashboards lose their data source at removal. See
+    [internal observability](manage/observability/internal-observability.md).
+- Interface: "A2A v0.3 protocol support"
+  Deprecated: "—"
+  "Earliest removal": "—"
+  Migration: >-
+    A2A v1.0 wire format.
+  Status: >-
+    Gradual deprecation planned in a future release
+    ([ADR 048](architecture/adr/048-a2a-v1-protocol-migration.md)).
+- Interface: "Flat `_meta[ui/resourceUri]` ingest key"
+  Deprecated: "—"
+  "Earliest removal": "Before MCP Apps GA"
+  Migration: >-
+    The nested `_meta.ui` object.
+  Status: >-
+    Ingest-only compatibility. The gateway rejects the flat value when both
+    shapes are present.
+- Interface: "`/toggle` endpoints"
+  Deprecated: "—"
+  "Earliest removal": "—"
+  Migration: >-
+    `/state`.
+  Status: >-
+    Emit `DeprecationWarning`. Covers servers, tools, resources, prompts,
+    gateways, and A2A agents.
+- Interface: "`rbac.get_db()`"
+  Deprecated: "—"
+  "Earliest removal": "—"
+  Migration: >-
+    `get_db()` from `main.py`, or `request.state.db`.
+  Status: >-
+    Emits `DeprecationWarning`.
+- Interface: "`EmailAuthService.get_all_users()`"
+  Deprecated: "—"
+  "Earliest removal": "—"
+  Migration: >-
+    `list_users()` with pagination.
+  Status: >-
+    Emits `DeprecationWarning` and caps results at 10,000 users.

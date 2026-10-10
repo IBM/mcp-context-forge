@@ -128,16 +128,28 @@ UI_BASE_URL=https://ui.example.com/contextforge
 
 ContextForge uses this trusted base to generate these browser-facing email links:
 
-- `https://ui.example.com/contextforge/accept-invitation/{token}`
-- `https://ui.example.com/contextforge/reset-password/{token}`
-- `https://ui.example.com/contextforge/forgot-password`
+- `https://ui.example.com/contextforge/app/accept-invitation/{token}`
+- `https://ui.example.com/contextforge/app/reset-password/{token}`
+- `https://ui.example.com/contextforge/app/forgot-password`
 
-When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base. Password-reset and account-lockout
-emails preserve compatibility with the bundled Admin UI by using `/admin/reset-password/{token}` and
-`/admin/forgot-password`; these routes require `MCPGATEWAY_ADMIN_API_ENABLED=true`. Invitation emails continue to use
-`/accept-invitation/{token}`, so the fallback host must serve that frontend route. ContextForge does not provide the
-React invitation page. If the React client is deployed separately, configure `UI_BASE_URL`. ContextForge never
-derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
+Values whose final path segment is `/app` are treated as full frontend roots, including a trailing slash.
+Only that final mount segment is removed during normalization; earlier path segments are preserved.
+Other values are treated as deployment bases and receive the `/app` mount when links are generated.
+For a deployment prefix of `/contextforge/app`, configure the full frontend root:
+
+```bash
+UI_BASE_URL=https://ui.example.com/contextforge/app/app
+```
+
+This produces links such as `https://ui.example.com/contextforge/app/app/reset-password/{token}`.
+
+When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base.
+With `MCPGATEWAY_ADMIN_API_ENABLED=true`, password-recovery emails use the bundled Admin UI routes:
+`/admin/reset-password/{token}` and `/admin/forgot-password`.
+With the Admin API disabled, these emails use `/app/reset-password/{token}` and `/app/forgot-password`.
+Invitation emails always use `/app/accept-invitation/{token}`. The fallback host must serve the corresponding frontend routes.
+For a separately deployed React client, configure `UI_BASE_URL` using the deployment-base or full-root rules above.
+ContextForge never derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
 
 `UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
 different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set
@@ -457,17 +469,95 @@ Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An ad
 When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
 When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
 
-### MCP Client Authentication
+### MCP Protocol & Authentication
+
+ContextForge sits between MCP clients and MCP servers, acting as both a **server** (to inbound clients) and a **client** (to upstream servers):
+
+```
+┌────────────┐         ┌──────────────────────────────────────┐         ┌────────────┐
+│            │         │           ContextForge               │         │            │
+│ MCP Client │ ──────▶ │  (inbound)  Gateway  (outbound)  │ ──────▶ │ MCP Server │
+│ (e.g. IDE, │ ◀────── │   /mcp endpoints   MCP client    │ ◀────── │ (upstream)  │
+│  Claude)   │         │                                      │         │            │
+└────────────┘         └──────────────────────────────────────┘         └────────────┘
+     INBOUND side:                                              OUTBOUND side:
+     Gateway acts as                                            Gateway acts as
+     an MCP server                                              an MCP client
+```
+
+- **Inbound** = MCP clients (IDEs, Claude Desktop, agents) connecting **to** the gateway's `/mcp` endpoints. The gateway is the **server**.
+- **Outbound** = The gateway connecting **to** upstream MCP servers (registered via `/gateways`). The gateway is the **client**.
+
+#### Inbound Authentication (MCP Clients → Gateway)
+
+These settings control how the gateway authenticates inbound MCP client connections:
 
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
-| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
+| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for inbound MCP client operations | `true`            | bool    |
+| `MCP_REQUIRE_AUTH`            | Require authentication for inbound `/mcp` endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
+| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers on inbound requests | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
 !!! warning "MCP Access Control Dependencies"
     Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
+
+#### Inbound MCP Protocol Mode (MCP Clients → Gateway)
+
+`MCP_INBOUND_PROTOCOL_MODE` controls which protocol versions the gateway accepts from **inbound** MCP clients connecting to its `/mcp` server endpoints.
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_INBOUND_PROTOCOL_MODE`   | Protocol versions accepted from inbound MCP clients | `auto`                | `auto`, `legacy` |
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` (default) | Accepts all supported protocol versions including `2026-07-28`. Dual-era clients may negotiate the modern protocol. |
+| `legacy` | Accepts only handshake-era versions (`2024-11-05` through `2025-11-25`). Clients sending `2026-07-28` receive a 400 response with the list of supported versions, steering dual-era clients to retry with the legacy `initialize` handshake. |
+
+An unserved version is rejected with HTTP `400` and a JSON-RPC error body. The error code is `-32022` (`UnsupportedProtocolVersionError`); `data.supported` lists the versions this gateway accepts in its current mode and `data.requested` echoes the rejected version. The example below shows the default `auto` mode; in `legacy` mode `supported` omits `2026-07-28`:
+
+```json
+{"jsonrpc": "2.0", "id": null, "error": {"code": -32022, "message": "Unsupported protocol version",
+  "data": {"supported": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"], "requested": "2099-01-01"}}}
+```
+
+#### Outbound MCP Connect Mode (Gateway → MCP Servers)
+
+`MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens **outbound** connections to upstream MCP servers. It applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_CLIENT_CONNECT_MODE`     | Protocol negotiation for outbound connections to upstream MCP servers | `auto`                | `auto`, `legacy` |
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` (default) | Outbound connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
+| `legacy` | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
+
+!!! note "Upgrading the MCP SDK"
+    The upstream transport health check reads SDK-internal dispatcher flags. The compatibility spike tests in `tests/unit/mcpgateway/utils/test_sdk_client_compat.py` fail loudly if a future SDK release changes those internals, so run them before adopting a new SDK pin.
+
+#### Full Legacy Mode (Both Sides)
+
+To force legacy-only protocol on both the inbound and outbound sides:
+
+```bash
+MCP_INBOUND_PROTOCOL_MODE=legacy      # inbound: clients must use initialize handshake
+MCP_CLIENT_CONNECT_MODE=legacy        # outbound: gateway uses initialize only
+```
+
+#### Compatibility Guidance
+
+Choose each mode independently for its direction: `MCP_INBOUND_PROTOCOL_MODE` applies to MCP clients connecting to the gateway, while `MCP_CLIENT_CONNECT_MODE` applies to upstream MCP servers.
+
+| Peer capability | `MCP_INBOUND_PROTOCOL_MODE` | `MCP_CLIENT_CONNECT_MODE` | Guidance |
+| ---------------- | --------------------------- | ------------------------- | -------- |
+| Legacy-only | `legacy` | `legacy` | Use the pre-2026 `initialize` handshake only. |
+| Dual-era | `legacy` | `legacy` | Sufficient for compatibility; dual-era clients should retry with legacy after the gateway returns `400` for a modern handshake. |
+| Modern-only | `auto` | `auto` | Required because there is no strict `modern` mode; `auto` negotiates modern protocol revisions and retains legacy fallback. |
+
+For dual-era peers, use `auto` instead of `legacy` only when modern protocol negotiation or modern-only features are required. `auto` is not modern-only.
 
 ### SSO (Single Sign-On) Configuration
 
@@ -627,6 +717,9 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
+| `REGEX_TIMEOUT_SECONDS`   | Time budget for validating against a schema that carries `pattern` or `patternProperties`; on expiry validation fails closed | `1.0` | float > 0 |
+| `REGEX_WORKERS`           | Worker processes in the JSON Schema regex sandbox | `2`                                         | int > 0    |
+| `REGEX_MAX_SUBJECT_BYTES` | Largest value a regex-bearing schema validates; larger values fail closed | `262144`                        | int >= 1024 |
 | `HSTS_ENABLED`            | Enable HSTS header             | `true`                                         | bool       |
 | `HSTS_MAX_AGE`            | HSTS max age in seconds        | `31536000`                                     | int        |
 | `HSTS_INCLUDE_SUBDOMAINS` | Include subdomains in HSTS header | `true`                                      | bool       |
@@ -637,6 +730,8 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 !!! info "CORS Configuration"
     When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
+
+    In every environment, the gateway allows only origins listed in `ALLOWED_ORIGINS`. An empty `ALLOWED_ORIGINS` blocks all cross-origin requests. Earlier releases allowed any origin in non-production environments when the list was empty.
 
 !!! info "iframe Embedding"
     The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive:
@@ -840,6 +935,17 @@ mcpContextForge:
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
     Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
+### URL Scheme Allowlist
+
+Controls which URL schemes are permitted for gateway, tool, and A2A agent URLs. Applied at registration time and checked against existing records on startup. SIGHUP refreshes runtime validation; restart required to re-run the startup database scan.
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `VALIDATION_ALLOWED_URL_SCHEMES` | Permitted URL scheme prefixes | `["http://", "https://", "ws://", "wss://"]` | JSON array |
+| `STRICT_SCHEME_ENFORCEMENT` | Fail startup when existing records violate the allowlist | `false` | bool |
+
+When `STRICT_SCHEME_ENFORCEMENT` is `false` (default), the startup check logs a warning per non-compliant record. Set to `true` to prevent the gateway from starting until all records use allowed schemes.
+
 ### Content Security - Size Limits
 
 Content size limits prevent DoS attacks and resource exhaustion from oversized content submissions. Validation occurs at the service layer before database writes and returns **HTTP 413 Payload Too Large** with structured error details.
@@ -1016,6 +1122,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
+
+Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#upstream-mcp-connect-mode).
 
 ### Resources
 
@@ -1336,29 +1444,22 @@ The plugin framework has its own configuration via `pydantic-settings` with the 
 
 ### CPU Spin Loop Mitigation
 
-These settings mitigate CPU spin loops that can occur when SSE/MCP connections are cancelled.
+These settings detect and close dead SSE connections before they can trigger CPU
+spin loops during connection cleanup. The underlying anyio `_deliver_cancellation`
+spin (anyio#695) was fixed upstream in anyio 4.15.0, which this project requires;
+the former cleanup-timeout knobs (`MCP_SESSION_POOL_CLEANUP_TIMEOUT`,
+`SSE_TASK_GROUP_CLEANUP_TIMEOUT`) and the experimental anyio monkey-patch
+(`ANYIO_CANCEL_DELIVERY_*`) were removed. Cleanup waits remain bounded internally
+(fixed 5-second windows). See the
+[CPU Spin Loop Mitigation guide](../operations/cpu-spin-loop-mitigation.md) for details.
 
-**Layer 1: SSE Connection Protection**
+**SSE Connection Protection**
 
 | Setting                    | Description                                              | Default | Options     |
 | -------------------------- | -------------------------------------------------------- | ------- | ----------- |
 | `SSE_SEND_TIMEOUT`         | ASGI send() timeout - protects against hung connections | `30.0`  | float       |
 | `SSE_RAPID_YIELD_WINDOW_MS`| Time window for rapid yield detection (milliseconds)    | `1000`  | int > 0     |
 | `SSE_RAPID_YIELD_MAX`      | Max yields per window before assuming client dead       | `50`    | int         |
-
-**Layer 2: Cleanup Timeouts**
-
-| Setting                          | Description                                        | Default | Options |
-| -------------------------------- | -------------------------------------------------- | ------- | ------- |
-| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | Session `__aexit__` timeout (seconds)            | `5.0`   | float > 0 |
-| `SSE_TASK_GROUP_CLEANUP_TIMEOUT`   | SSE task group cleanup timeout (seconds)         | `5.0`   | float > 0 |
-
-**Layer 3: EXPERIMENTAL - anyio Monkey-Patch**
-
-| Setting                                  | Description                                                   | Default | Options |
-| ---------------------------------------- | ------------------------------------------------------------- | ------- | ------- |
-| `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED`    | Enable anyio `_deliver_cancellation` iteration limit          | `false` | bool    |
-| `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS`   | Max iterations before forcing termination                     | `100`   | int > 0 |
 
 ---
 

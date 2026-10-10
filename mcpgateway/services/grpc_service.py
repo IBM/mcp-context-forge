@@ -49,6 +49,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path, GrpcServiceError
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 # Initialize logging
 logging_service = LoggingService()
@@ -105,7 +106,7 @@ def _validate_reflected_tool_name(tool_name: str) -> None:
     try:
         SecurityValidator.validate_tool_name(tool_name)
     except ValueError as exc:
-        raise GrpcServiceError(f"Reflected tool name '{tool_name}' rejected: {exc}") from exc
+        raise GrpcServiceError(f"Reflected tool name '{tool_name}' rejected: {unexpected_error_detail(exc)}") from exc
 
 
 class GrpcServiceNotFoundError(GrpcServiceError):
@@ -508,7 +509,7 @@ class GrpcService:
             logger.error("Reflection failed for %s: %s", service.name, e)
             service.reachable = False
             db.commit()
-            raise GrpcServiceError(f"Reflection failed: {str(e)}")
+            raise GrpcServiceError(f"Reflection failed: {unexpected_error_detail(e)}")
 
         return GrpcServiceRead.model_validate(service)
 
@@ -585,7 +586,7 @@ class GrpcService:
                     key = await asyncio.to_thread(key_path.read_bytes)
                     credentials = grpc.ssl_channel_credentials(root_certificates=cert, private_key=key)
                 except FileNotFoundError as e:
-                    raise GrpcServiceError(f"TLS certificate or key file not found: {e}")
+                    raise GrpcServiceError(f"TLS certificate or key file not found: {unexpected_error_detail(e)}")
             else:
                 # Use default system certificates
                 credentials = grpc.ssl_channel_credentials()
@@ -917,7 +918,7 @@ class GrpcService:
             raise
         except Exception as e:
             logger.error("Failed to invoke %s on %s: %s", method_name, service.name, e, exc_info=True)
-            raise GrpcServiceError(f"Method invocation failed: {e}") from e
+            raise GrpcServiceError(f"Method invocation failed: {unexpected_error_detail(e)}") from e
 
         finally:
             await endpoint.close()

@@ -399,6 +399,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #   This prevents XSS via injected <script> blocks while allowing legitimate
         #   inline scripts that have the matching nonce attribute.
         #
+        # script-src-attr: 'none' blocks inline on* event handler attributes, so
+        #   injected markup cannot become script execution.
+        #
         # script-src: Fallback for older browsers. No unsafe-eval or unsafe-inline.
         #   All HTMX hx-vals="js:{...}" have been migrated to htmx:configRequest handlers.
         #   All hx-on:* event handlers have been migrated to addEventListener.
@@ -430,7 +433,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             csp_directives = [
                 "default-src 'self'",
                 f"script-src-elem 'self' 'nonce-{csp_nonce}'",
-                "script-src-attr 'unsafe-inline'",
+                "script-src-attr 'none'",
                 "script-src 'self'",
                 "style-src 'self' 'unsafe-inline'",
                 "img-src 'self' data: https:",
@@ -475,14 +478,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Lightweight dynamic CORS reflection based on current settings
         origin = request.headers.get("Origin")
         if origin:
-            allow = False
-            if settings.environment != "production":
-                # In non-production, honor allowed_origins dynamically
-                allow = (not settings.allowed_origins) or (origin in settings.allowed_origins)
-            else:
-                # In production, require explicit allow-list
-                allow = origin in settings.allowed_origins
-            if allow:
+            # Reflecting an origin with credentials requires an explicit allowlist in every
+            # environment; an empty allowlist must never mean "allow any origin".
+            if origin in settings.allowed_origins:
                 response.headers["Access-Control-Allow-Origin"] = origin
                 # Standard CORS helpers
                 if settings.cors_allow_credentials:

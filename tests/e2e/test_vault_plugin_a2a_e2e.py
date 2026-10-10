@@ -46,11 +46,7 @@ MCP_ACCEPT = "application/json, text/event-stream"
 SYSTEM_TAG = "system:echo.local"
 TOOL_TOKEN = "tok-tool-e2e"  # pragma: allowlist secret
 A2A_TOKEN = "tok-a2a-e2e"  # pragma: allowlist secret
-
-ECHO_MCP_LOG = "/tmp/vault_e2e_pytest_echo_mcp.log"
-ECHO_A2A_LOG = "/tmp/vault_e2e_pytest_echo_a2a.log"
-GATEWAY_LOG = "/tmp/vault_e2e_pytest_gateway.log"
-E2E_DB = "/tmp/vault_e2e_pytest.db"
+LARGE_TOOL_TOKEN = "T" * 9000
 
 
 def _port_free(port: int) -> bool:
@@ -85,44 +81,47 @@ def _mint_jwt(env: Optional[dict] = None) -> str:
 
 
 @pytest.fixture(scope="module")
-def live_stack():
+def live_stack(tmp_path_factory, request):
     """Boot echo backends + gateway with the Vault plugin on both hooks.
 
-    Yields the admin bearer token once everything is reachable. Tears down all
-    processes and the throwaway DB afterwards.
+    Yield admin bearer token and echo log path. Stop processes afterwards.
     """
+    pytest.importorskip("fastmcp")
     for port in (4444, 8001, 8002):
         if not _port_free(port):
             pytest.skip(f"port {port} is in use; cannot run live vault E2E")
 
-    try:
-        os.remove(E2E_DB)
-    except FileNotFoundError:
-        pass
-
+    run_dir = tmp_path_factory.mktemp("vault-e2e")
+    echo_mcp_log = run_dir / "echo_mcp.log"
+    echo_a2a_log = run_dir / "echo_a2a.log"
+    gateway_log = run_dir / "gateway.log"
+    e2e_db = run_dir / "gateway.db"
     procs: list[subprocess.Popen] = []
-    logs = [open(p, "w", encoding="utf-8") for p in (ECHO_MCP_LOG, ECHO_A2A_LOG, GATEWAY_LOG)]
+    logs = [open(p, "w", encoding="utf-8") for p in (echo_mcp_log, echo_a2a_log, gateway_log)]
 
     try:
         # Echo backends
         procs.append(subprocess.Popen([PYBIN, "plugins/vault/echo_mcp.py"], cwd=REPO, stdout=logs[0], stderr=subprocess.STDOUT))
         procs.append(subprocess.Popen([PYBIN, "plugins/vault/echo_a2a.py"], cwd=REPO, stdout=logs[1], stderr=subprocess.STDOUT))
         if not _wait_http("http://localhost:8001/sse"):
-            pytest.skip("echo_mcp backend did not become ready")
+            pytest.fail(f"echo_mcp backend did not become ready (see {echo_mcp_log})")
         if not _wait_http("http://localhost:8002/health"):
-            pytest.skip("echo_a2a backend did not become ready")
+            pytest.fail(f"echo_a2a backend did not become ready (see {echo_a2a_log})")
 
-        # Gateway with E2E env: plugin on both hooks + sensitive header passthrough
+        # Gateway with E2E env: plugin on both hooks and explicit caller policy.
         env = dict(os.environ)
         env.update(
             {
                 "PLUGINS_ENABLED": "true",
                 "PLUGINS_CONFIG_FILE": "plugins/vault/config_vault_e2e.yaml",
                 "ENABLE_HEADER_PASSTHROUGH": "true",
-                "ENABLE_SENSITIVE_HEADER_PASSTHROUGH": "true",
+                "ENABLE_SENSITIVE_HEADER_PASSTHROUGH": "true" if getattr(request, "param", True) else "false",
+                "MAX_HEADER_VALUE_LENGTH": "16384",
+                "MAX_HEADER_FIELD_SIZE_BYTES": "12000",
+                "MAX_HEADER_TOTAL_SIZE_BYTES": "32768",
                 "MCPGATEWAY_A2A_ENABLED": "true",
                 "JWT_SECRET_KEY": JWT_SECRET,
-                "DATABASE_URL": f"sqlite:///{E2E_DB}",
+                "DATABASE_URL": f"sqlite:///{e2e_db}",
                 "AUTH_REQUIRED": "true",
                 "EXPOSE_ERROR_DETAILS": "true",
                 # The echo backends run on localhost; SSRF protection blocks
@@ -135,15 +134,21 @@ def live_stack():
 
         token = _mint_jwt(env)
         if not _wait_http(f"{BASE_URL}/health", headers={"Authorization": f"Bearer {token}"}):
-            pytest.skip(f"gateway did not become ready (see {GATEWAY_LOG})")
+            pytest.fail(f"gateway did not become ready (see {gateway_log})")
 
-        yield token
+        yield {"token": token, "echo_mcp_log": echo_mcp_log, "echo_a2a_log": echo_a2a_log, "sensitive_passthrough": getattr(request, "param", True)}
     finally:
         for p in procs:
             try:
                 p.terminate()
             except Exception:
                 pass
+        for p in procs:
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
         for f in logs:
             try:
                 f.close()
@@ -153,7 +158,7 @@ def live_stack():
 
 def test_tool_path_injects_token_and_strips_vault_header(live_stack):
     """MCP tool path (old behavior): Bearer injected upstream, X-Vault-Tokens stripped."""
-    token = live_stack
+    token = live_stack["token"]
     auth = {"Authorization": f"Bearer {token}"}
     with httpx.Client(base_url=BASE_URL, timeout=60.0) as client:
         # Register the SSE echo MCP server as a gateway, whitelisting the vault + auth headers
@@ -179,22 +184,44 @@ def test_tool_path_injects_token_and_strips_vault_header(live_stack):
         hdr = {**auth, "Content-Type": "application/json", "Accept": MCP_ACCEPT}
         client.post(mcp_path, params=sess, headers=hdr, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "1.0"}}})
         client.post(mcp_path, params=sess, headers=hdr, json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-        client.post(
+        r = client.post(
             mcp_path,
             params=sess,
             headers={**hdr, "X-Vault-Tokens": json.dumps({"echo.local": TOOL_TOKEN})},
             json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": echo_tool["name"], "arguments": {"message": "hi"}}},
         )
+        assert r.status_code == 200, r.text
+
+        large_header = json.dumps({"echo.local": LARGE_TOOL_TOKEN})
+        assert len(large_header) > 8192
+        r = client.post(
+            mcp_path,
+            params=sess,
+            headers={**hdr, "X-Vault-Tokens": large_header},
+            json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": echo_tool["name"], "arguments": {"message": "large-token"}}},
+        )
+        assert r.status_code == 200, r.text
+
+        r = client.post(
+            mcp_path,
+            params=sess,
+            headers={**hdr, "X-Vault-Tokens": json.dumps({"echo.local": "T" * 12500})},
+            json={"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": echo_tool["name"], "arguments": {"message": "oversized"}}},
+        )
+        assert r.status_code == 431, r.text
+        assert r.json()["violation_type"] == "field_size"
 
     time.sleep(1)
-    echo_log = open(ECHO_MCP_LOG, encoding="utf-8").read().lower() if os.path.exists(ECHO_MCP_LOG) else ""
+    echo_log = live_stack["echo_mcp_log"].read_text(encoding="utf-8").lower()
     assert f"bearer {TOOL_TOKEN}".lower() in echo_log, "vault token was not injected as Bearer on the tool path"
+    assert f"bearer {LARGE_TOOL_TOKEN}".lower() in echo_log, "large vault token was not injected as Bearer on the tool path"
     assert "x-vault-tokens" not in echo_log, "SECURITY: X-Vault-Tokens leaked to the upstream MCP server"
 
 
+@pytest.mark.parametrize("live_stack", [True, False], indirect=True)
 def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
     """A2A agent path (new behavior): Bearer injected upstream, X-Vault-Tokens stripped."""
-    token = live_stack
+    token = live_stack["token"]
     auth = {"Authorization": f"Bearer {token}"}
     agent_name = "vault_e2e_agent"
     with httpx.Client(base_url=BASE_URL, timeout=60.0) as client:
@@ -207,7 +234,7 @@ def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
                     "endpoint_url": "http://127.0.0.1:8002/invoke",
                     "agent_type": "custom",  # plain-JSON POST, no jsonrpc envelope
                     "tags": [SYSTEM_TAG],
-                    "passthrough_headers": ["X-Vault-Tokens", "Authorization"],
+                    "passthrough_headers": ["X-Vault-Tokens"] + (["Authorization"] if live_stack["sensitive_passthrough"] else []),
                 },
                 "visibility": "public",
             },
@@ -220,13 +247,17 @@ def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
             json={"parameters": {"message": "hi"}, "interaction_type": "query"},
         )
         assert r.status_code == 200, r.text
-        received = _find_received_headers(r.json())
+        received = _find_received_header_pairs(r.json())
+        outbound_count = live_stack["echo_a2a_log"].read_text().count("POST /invoke")
+        denied = client.post(f"/a2a/{agent_name}/invoke", json={"parameters": {"message": "denied"}})
+        assert denied.status_code == 401, denied.text
+        assert live_stack["echo_a2a_log"].read_text().count("POST /invoke") == outbound_count
 
     assert received is not None, "echo_a2a did not reflect received headers"
-    assert str(received.get("authorization", "")).lower() == f"bearer {A2A_TOKEN}".lower(), "vault token was not injected as Bearer on the A2A path"
-    assert "x-vault-tokens" not in received, "SECURITY: X-Vault-Tokens leaked to the upstream A2A agent"
+    _assert_plugin_headers(received, A2A_TOKEN)
 
 
+@pytest.mark.parametrize("live_stack", [True, False], indirect=True)
 def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stack):
     """A2A agent wrapped as MCP tool: Bearer injected upstream, X-Vault-Tokens stripped.
 
@@ -234,7 +265,7 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
     (not directly via /a2a/{name}/invoke). The vault plugin should detect the A2A-backed
     tool, load the agent metadata, and inject the vault token properly.
     """
-    token = live_stack
+    token = live_stack["token"]
     auth = {"Authorization": f"Bearer {token}"}
     agent_name = "vault_e2e_agent_tool_wrapped"
 
@@ -251,7 +282,7 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
                     "endpoint_url": "http://127.0.0.1:8002/invoke",
                     "agent_type": "custom",
                     "tags": [SYSTEM_TAG],  # Tag on the A2A agent
-                    "passthrough_headers": ["X-Vault-Tokens", "Authorization"],
+                    "passthrough_headers": ["X-Vault-Tokens"] + (["Authorization"] if live_stack["sensitive_passthrough"] else []),
                 },
                 "visibility": "public",
             },
@@ -313,11 +344,20 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": {"name": a2a_tool["name"], "arguments": {"message": "hi"}},
+                "params": {"name": a2a_tool["name"], "arguments": {"query": "hi"}},
             },
         )
         assert r.status_code == 200, r.text
         result = r.json()
+        outbound_count = live_stack["echo_a2a_log"].read_text().count("POST /invoke")
+        denied = client.post(
+            mcp_path,
+            params=sess,
+            headers={"Accept": MCP_ACCEPT},
+            json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": a2a_tool["name"], "arguments": {"query": "denied"}}},
+        )
+        assert denied.status_code == 401, denied.text
+        assert live_stack["echo_a2a_log"].read_text().count("POST /invoke") == outbound_count
 
         # Extract the A2A response from MCP tool result
         assert "result" in result, f"No result in MCP response: {result}"
@@ -339,28 +379,33 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
         except json.JSONDecodeError:
             a2a_response = {"response": content_text}  # Fallback if not JSON
 
-        received = _find_received_headers(a2a_response)
+        received = _find_received_header_pairs(a2a_response)
 
     # Assertions
     assert received is not None, f"A2A echo backend did not reflect received headers. Response: {a2a_response}"
-    assert str(received.get("authorization", "")).lower() == f"bearer {A2A_TOKEN}".lower(), \
-        "vault token was not injected as Bearer on A2A-tool-wrapped path"
-    assert "x-vault-tokens" not in received, \
-        "SECURITY: X-Vault-Tokens leaked to the upstream A2A agent when invoked as MCP tool"
+    _assert_plugin_headers(received, A2A_TOKEN)
 
 
-def _find_received_headers(obj):
-    """Recursively locate the reflected received_headers dict in a response body."""
+def _find_received_header_pairs(obj):
+    """Recursively locate reflected raw header pairs in a response body."""
     if isinstance(obj, dict):
-        if "received_headers" in obj and isinstance(obj["received_headers"], dict):
-            return obj["received_headers"]
-        for v in obj.values():
-            found = _find_received_headers(v)
+        pairs = obj.get("received_header_pairs")
+        if isinstance(pairs, list):
+            return pairs
+        for value in obj.values():
+            found = _find_received_header_pairs(value)
             if found is not None:
                 return found
     elif isinstance(obj, list):
-        for v in obj:
-            found = _find_received_headers(v)
+        for value in obj:
+            found = _find_received_header_pairs(value)
             if found is not None:
                 return found
     return None
+
+
+def _assert_plugin_headers(header_pairs, token):
+    """Assert plugin authentication reaches the agent once without Vault data."""
+    authorization = [value for name, value in header_pairs if name.lower() == "authorization"]
+    assert authorization == [f"Bearer {token}"]
+    assert all(name.lower() != "x-vault-tokens" for name, _ in header_pairs)

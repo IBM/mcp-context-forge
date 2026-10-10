@@ -670,6 +670,12 @@ class TestHopCounter:
         stamp_hop(headers, 2)
         assert headers[HOP_HEADER] == "3"
 
+    def test_stamp_hop_replaces_case_variants(self):
+        """Gateway stamping replaces every casing of a supplied hop header."""
+        headers = {HOP_HEADER.lower(): "99", HOP_HEADER.upper(): "100", "X-Request-ID": "request"}
+        stamp_hop(headers, 2)
+        assert headers == {HOP_HEADER: "3", "X-Request-ID": "request"}
+
     def test_stamp_hop_saturates_near_ceiling(self):
         headers: dict[str, str] = {}
         stamp_hop(headers, _HOP_MAX)

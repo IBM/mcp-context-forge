@@ -1387,106 +1387,28 @@ class TestAuthenticationBeforeHeaderProcessing:
         )
 
 
-# =============================================================================
-# PRIORITY 2: Plugin Header Security - Defense in Depth
-# =============================================================================
+@pytest.mark.parametrize("sensitive_enabled", [False, True])
+@pytest.mark.parametrize("allowlist", [None, [], ["Authorization", "X-Request-ID"]])
+def test_trusted_plugin_credentials_do_not_require_caller_passthrough(monkeypatch, sensitive_enabled, allowlist):
+    """Trust plugin credentials while retaining caller filtering and sanitized hook input."""
+    from mcpgateway.config import settings
+    from mcpgateway.services.a2a_protocol import resolve_a2a_headers
 
-
-class TestPluginHeaderRefiltering:
-    """Test that plugin-returned headers are re-filtered before downstream forwarding.
-
-    PRIORITY 2 SECURITY TEST: Validates defense-in-depth architecture where plugin
-    hook modifications are subject to the same security filters as inbound headers.
-    """
-
-    def test_plugin_returned_headers_must_pass_through_refiltering(self):
-        """Plugin-modified headers are re-filtered via _refilter_plugin_headers.
-
-        SECURITY INVARIANT: Plugin hooks can modify headers, but modified headers
-        are re-filtered before being sent to downstream agents. This prevents
-        malicious plugins from bypassing security filters.
-        """
-        service = A2AAgentService()
-
-        # Mock agent with whitelist
-        agent = MagicMock(spec=A2AAgent)
-        agent.name = "test-agent"
-        agent.passthrough_headers = ["X-Custom-Header", "X-Request-Id"]
-
-        # Test 1: Plugin tries to inject Authorization (sensitive header)
-        plugin_headers = {
-            "Authorization": "Bearer injected-by-plugin",  # Malicious injection attempt
-            "X-Custom-Header": "safe-value",
-        }
-
-        filtered = service._refilter_plugin_headers(
-            plugin_headers=plugin_headers,
-            agent=agent,
-            feature_flag_enabled=False,  # Sensitive passthrough disabled
-        )
-
-        # Assert: Authorization was filtered out (defense in depth worked)
-        assert "Authorization" not in filtered
-        assert "authorization" not in filtered
-        assert filtered.get("X-Custom-Header") == "safe-value"  # Safe header passed
-
-    def test_plugin_cannot_bypass_whitelist_with_non_whitelisted_headers(self):
-        """Plugin-returned headers not in whitelist are filtered out.
-
-        SECURITY INVARIANT: Plugin-returned headers must be in agent's passthrough_headers
-        whitelist, just like inbound headers.
-        """
-        service = A2AAgentService()
-
-        agent = MagicMock(spec=A2AAgent)
-        agent.name = "test-agent"
-        agent.passthrough_headers = ["X-Allowed-Header"]
-
-        # Plugin returns headers not in whitelist
-        plugin_headers = {
-            "X-Allowed-Header": "allowed",
-            "X-Not-Whitelisted": "blocked",
-            "X-Also-Not-Whitelisted": "also-blocked",
-        }
-
-        filtered = service._refilter_plugin_headers(
-            plugin_headers=plugin_headers,
-            agent=agent,
-            feature_flag_enabled=False,
-        )
-
-        # Assert: Only whitelisted header passed through
-        assert filtered.get("X-Allowed-Header") == "allowed"
-        assert "X-Not-Whitelisted" not in filtered
-        assert "X-Also-Not-Whitelisted" not in filtered
-
-    def test_plugin_can_inject_sensitive_headers_when_flag_enabled_and_whitelisted(self):
-        """Trusted plugin can inject sensitive headers when flag enabled + whitelisted.
-
-        This is the intended use case: token transformation plugins that need to
-        inject downstream credentials. Security is maintained by:
-        1. Feature flag must be explicitly enabled
-        2. Header must be in agent's whitelist
-        3. Plugin must be trusted (deployed by operator)
-        """
-        service = A2AAgentService()
-
-        agent = MagicMock(spec=A2AAgent)
-        agent.name = "token-transform-agent"
-        agent.passthrough_headers = ["Authorization", "X-Custom-Header"]
-
-        # Trusted plugin injects Authorization for downstream
-        plugin_headers = {
-            "Authorization": "Bearer downstream-token",
-            "X-Custom-Header": "value",
-        }
-
-        filtered = service._refilter_plugin_headers(
-            plugin_headers=plugin_headers,
-            agent=agent,
-            feature_flag_enabled=True,  # Sensitive passthrough ENABLED
-        )
-
-        # Assert: Authorization allowed (flag enabled + whitelisted)
-        assert filtered.get("Authorization") == "Bearer downstream-token"
-        assert filtered.get("X-Custom-Header") == "value"
+    monkeypatch.setattr(settings, "enable_sensitive_header_passthrough", sensitive_enabled)
+    plugin_input, downstream = A2AAgentService._prepare_header_flows(
+        {"authorization": "Bearer caller", "x-request-id": "caller"}, allowlist
+    )
+    assert "authorization" not in plugin_input
+    result = resolve_a2a_headers(
+        caller_headers=downstream,
+        configured_headers=None,
+        plugin_input_headers=plugin_input,
+        plugin_output_headers={"authorization": "Bearer plugin", "X-Custom-Credential": "plugin-value"},
+        uses_jsonrpc=False,
+        protocol_version_header="1.0",
+        correlation_id=None,
+    )
+    assert result["authorization"] == "Bearer plugin"
+    assert result["X-Custom-Credential"] == "plugin-value"
+    assert "x-request-id" not in {name.lower() for name in result}
+    assert sum(name.lower() == "authorization" for name in result) == 1

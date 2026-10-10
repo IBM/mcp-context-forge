@@ -149,7 +149,7 @@ except ImportError:
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
 
-# Use patched EventSourceResponse with CPU spin protection (anyio#695 fix)
+# Use the gateway EventSourceResponse subclass (compression disabled for SSE)
 from mcpgateway.transports.sse_transport import EventSourceResponse
 from mcpgateway.utils.orjson_response import ORJSONResponse
 

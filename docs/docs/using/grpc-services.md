@@ -1,7 +1,9 @@
-# gRPC Services (Experimental)
+# gRPC Services (Deprecated)
 
-!!! warning "Experimental Feature"
-    gRPC support is an **experimental opt-in feature** that is disabled by default. It requires additional dependencies and explicit enablement.
+!!! warning "Deprecated as of 2026-10-20. Sunsets on 2027-01-18."
+    gRPC service registration is deprecated. Do not adopt it in new
+    deployments. Existing registrations keep working until the sunset date.
+    No replacement exists. See [Deprecations](../deprecations.md).
 
 ContextForge supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
 

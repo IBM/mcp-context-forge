@@ -8,7 +8,8 @@ Tests for server service implementation.
 
 # Standard
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -631,6 +632,56 @@ class TestServerService:
         with pytest.raises(ServerNotFoundError):
             await server_service.get_server(test_db, 999)
 
+    @pytest.mark.asyncio
+    async def test_ensure_server_access_uses_lightweight_query_without_view_audit(self, server_service, test_db):
+        """RPC preflight should select only visibility columns and avoid view auditing."""
+        server = SimpleNamespace(id="server-1", visibility="public", team_id=None, owner_email=None)
+        test_db.execute = Mock(return_value=Mock(one_or_none=Mock(return_value=server)))
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        await server_service.ensure_server_access(
+            test_db,
+            "server-1",
+            user_email="user@example.com",
+            token_teams=[],
+        )
+
+        test_db.execute.assert_called_once()
+        statement = test_db.execute.call_args.args[0]
+        assert {column.key for column in statement.selected_columns} == {"id", "visibility", "team_id", "owner_email"}
+        server_service._structured_logger.log.assert_not_called()
+        server_service._audit_trail.log_action.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ensure_server_access_wrong_team_matches_missing_response(self, server_service, test_db):
+        """Wrong-team and absent servers must both use the generic not-found contract."""
+        hidden_server = SimpleNamespace(id="server-1", visibility="team", team_id="team-a", owner_email="owner@example.com")
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        test_db.execute = Mock(return_value=Mock(one_or_none=Mock(return_value=hidden_server)))
+        with pytest.raises(ServerNotFoundError) as hidden_error:
+            await server_service.ensure_server_access(
+                test_db,
+                "server-1",
+                user_email="user@example.com",
+                token_teams=["team-b"],
+            )
+
+        test_db.execute = Mock(return_value=Mock(one_or_none=Mock(return_value=None)))
+        with pytest.raises(ServerNotFoundError) as missing_error:
+            await server_service.ensure_server_access(
+                test_db,
+                "server-1",
+                user_email="user@example.com",
+                token_teams=["team-b"],
+            )
+
+        assert str(hidden_error.value) == str(missing_error.value) == "Server not found: server-1"
+        server_service._structured_logger.log.assert_called_once()
+        server_service._audit_trail.log_action.assert_not_called()
+
     # --------------------------- update -------------------------------- #
     @pytest.mark.asyncio
     async def test_update_server(self, server_service, mock_server, test_db, mock_tool, mock_resource, mock_prompt):
@@ -737,14 +788,19 @@ class TestServerService:
         )
 
         test_user_email = "user@example.com"
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
         # Patch permission check to avoid consuming db.execute side-effects
-        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+        ):
             result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         server_service._notify_server_updated.assert_called_once()
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with("550e8400e29b41d4a716446655440001")  # pragma: allowlist secret
         assert result.name == "updated_server"
 
     @pytest.mark.asyncio
@@ -1052,13 +1108,16 @@ class TestServerService:
         test_db.delete = Mock()
         test_db.commit = Mock()
         server_service._notify_server_deleted = AsyncMock()
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
-        await server_service.delete_server(test_db, 1)
+        with patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache):
+            await server_service.delete_server(test_db, 1)
 
         test_db.get.assert_called_once_with(DbServer, 1)
         test_db.delete.assert_called_once_with(mock_server)
         test_db.commit.assert_called_once()
         server_service._notify_server_deleted.assert_called_once()
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with("550e8400e29b41d4a716446655440001")  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_delete_server_purge_metrics(self, server_service, mock_server, test_db):
@@ -1383,9 +1442,11 @@ class TestServerService:
         server_update = ServerUpdate(id=new_standard_uuid, name="Updated Server", description="Updated description")
 
         test_user_email = "user@example.com"
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
         # Call the service method
-        result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
+        with patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache):
+            result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
 
         # Verify UUID was set correctly (note: actual normalization happens at create time)
         # The update method currently just sets the ID directly
@@ -1393,6 +1454,7 @@ class TestServerService:
         assert result.id == expected_hex_uuid
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
+        assert tool_lookup_cache.invalidate_server.await_args_list == [call("oldserverid"), call(expected_hex_uuid)]
 
     def test_uuid_normalization_edge_cases(self, server_service):
         """Test edge cases in UUID normalization logic."""
@@ -3473,12 +3535,18 @@ class TestServerServiceCoverageMissingBranches:
 
         cache = AsyncMock()
         cache.invalidate_servers = AsyncMock()
+        tool_lookup_cache = MagicMock(invalidate_server=AsyncMock())
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+        ):
             result = await server_service.set_server_state(db, "srv-1", True)
 
         assert result == "server_read"
         assert mock_server.enabled is True
+        tool_lookup_cache.invalidate_server.assert_awaited_once_with(str(mock_server.id))
 
     @pytest.mark.asyncio
     async def test_set_server_state_no_change_skips_update_block(self, server_service, mock_server):

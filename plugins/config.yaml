@@ -454,14 +454,14 @@ plugins:
   # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
-    version: "0.3.7"
+    version: "0.3.11"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "disabled"
     priority: 170
     conditions: []
     config:
-      max_retries: 2
+      max_retries: 3
       backoff_base_ms: 200
       max_backoff_ms: 5000
       retry_on_status: [429, 500, 502, 503, 504]
@@ -569,9 +569,9 @@ plugins:
 
   # Output Length Guard - sequential bounds or truncate tool outputs
   - name: "OutputLengthGuardPlugin"
-    kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
+    kind: "cpex_output_length_guard.output_length_guard.OutputLengthGuardPlugin"
     description: "Guards tool outputs by enforcing min/max character/token length; block or truncate strategies"
-    version: "1.0.0"
+    version: "0.1.0"
     author: "ContextForge"
     hooks: ["tool_post_invoke"]
     tags:

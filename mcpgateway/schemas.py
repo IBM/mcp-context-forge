@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
+from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
@@ -38,7 +39,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -128,6 +129,40 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
 )
 
 
+def _validate_oauth_token_endpoint_auth(v: Dict[str, Any]) -> None:
+    """Validate the token endpoint client authentication settings structurally.
+
+    Structural rules match the runtime exactly because both read the same
+    constant sets: an unknown ``token_endpoint_auth_method`` or signing
+    algorithm is rejected here so a config value can never pass the API
+    boundary and then fail or silently switch behavior later.
+
+    Args:
+        v: OAuth configuration dict.
+
+    Raises:
+        ValueError: If the method, algorithm, key ID, or signing key is invalid.
+    """
+    raw_method = v.get("token_endpoint_auth_method")
+    if raw_method is not None and raw_method not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_method '{raw_method}' is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+
+    raw_alg = v.get("token_endpoint_auth_signing_alg")
+    if raw_alg is not None and raw_alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_signing_alg '{raw_alg}' is not allowed. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS))}")
+
+    raw_kid = v.get("private_key_jwt_kid")
+    if raw_kid is not None and raw_kid != "":
+        if not isinstance(raw_kid, str) or not raw_kid.strip():
+            raise ValueError("oauth_config.private_key_jwt_kid must be a non-empty string when provided")
+
+    method = raw_method or "client_secret_post"
+    if method == "private_key_jwt":
+        private_key = v.get("private_key")
+        if not isinstance(private_key, str) or not private_key.strip():
+            raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
+
+
 def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
@@ -148,6 +183,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         return v
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
+    _validate_oauth_token_endpoint_auth(v)
     for field_name in ("token_url", "authorization_url", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
         raw_value = v.get(field_name)
         if raw_value in (None, ""):
@@ -525,6 +561,13 @@ class AuthenticationValues(BaseModelWithConfigDict):
 
 # Minimal valid JSON Schema used as the default input_schema for REST tools.
 _DEFAULT_INPUT_SCHEMA: dict = {"type": "object", "properties": {}}
+
+
+def _reject_invalid_x_mcp_header(schema: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reject an input schema whose ``x-mcp-header`` annotations break the MCP 2026-07-28 constraints."""
+    if schema is not None and (reason := find_invalid_x_mcp_header(schema)) is not None:
+        raise ValueError(f"invalid x-mcp-header annotation: {reason}")
+    return schema
 
 
 def _extract_rest_url_components(values: dict) -> dict:
@@ -977,6 +1020,12 @@ class ToolCreate(BaseModel):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -1535,6 +1584,12 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: If the filter uses a restricted jq built-in.
         """
         return _validate_jsonpath_filter_value(value)
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_x_mcp_header_annotations(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject ``x-mcp-header`` annotations that conforming MCP clients would drop the tool for."""
+        return _reject_invalid_x_mcp_header(v)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -2342,6 +2397,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
+    custom_name: Optional[str] = Field(None, description="Explicit resource base name; required to rename federated resources. Local names remain literal.")
     description: Optional[str] = Field(None, description="Resource description")
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
@@ -2367,6 +2423,19 @@ class ResourceUpdate(BaseModelWithConfigDict):
             List of validated tag strings or None if input is None
         """
         return validate_tags_field(v)
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate an explicit rename without changing the legacy name contract.
+
+        Args:
+            v: Requested base name, or None to use legacy name handling.
+
+        Returns:
+            Validated name or None.
+        """
+        return SecurityValidator.validate_name(v, "Resource name") if v is not None else None
 
     @field_validator("name")
     @classmethod
@@ -2482,6 +2551,8 @@ class ResourceRead(BaseModelWithConfigDict):
     id: str = Field(description="Unique ID of the resource")
     uri: str
     name: str
+    original_name: Optional[str] = Field(None, description="Upstream name for federated resources; initial naming history for local resources")
+    custom_name_slug: Optional[str] = Field(None, description="Slugified base used to compose the namespaced name")
     description: Optional[str]
     mime_type: Optional[str]
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
@@ -3237,7 +3308,10 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
+        "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
+        "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3647,7 +3721,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), resource (RFC 8707), "
+        "token_endpoint_auth_method (none, client_secret_basic, client_secret_post, private_key_jwt), and for private_key_jwt: private_key, optional "
+        "token_endpoint_auth_signing_alg (RS256 default; RS384, RS512, ES256, ES384, ES512, PS256) and optional private_key_jwt_kid",
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -5045,6 +5122,22 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     base_url: AnyHttpUrl = Field(..., description="Base URL of the MCP server to test")
     path: Optional[str] = Field(None, description="Optional path appended to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
+    gateway_id: Optional[str] = Field(None, description="Exact registered gateway to use for transport and connection settings")
+    credential_mode: Literal["stored_with_override", "candidate_only"] = Field("stored_with_override", description="Whether the handshake may use stored gateway credentials")
+
+    @model_validator(mode="after")
+    def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":
+        """Require exact gateway selection for candidate-only validation.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If candidate-only validation omits the gateway ID.
+        """
+        if self.credential_mode == "candidate_only" and not self.gateway_id:
+            raise ValueError("gateway_id is required when credential_mode is candidate_only")
+        return self
 
     @field_validator("path")
     @classmethod
@@ -6520,6 +6613,22 @@ class AdminCreateUserRequest(BaseModel):
     is_admin: bool = Field(False, description="Grant admin privileges to user")
     is_active: bool = Field(True, description="Whether user account is active")
     password_change_required: bool = Field(False, description="Whether user must change password on next login")
+
+
+class AdminCreateSSOUserRequest(BaseModel):
+    """Administrator-driven passwordless SSO user creation request.
+
+    Providers are validated against enabled provider rows by the service. The
+    endpoint rejects a password key before validating this schema.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    email: EmailStr = Field(..., description="User's email address")
+    auth_provider: str = Field(..., description="Configured SSO provider ID; azure-ad is an alias for entra")
+    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+    is_admin: bool = Field(False, description="Grant admin privileges to user")
+    is_active: bool = Field(True, description="Whether user account is active")
 
 
 # Deprecated alias — use AdminCreateUserRequest or PublicRegistrationRequest instead
@@ -9155,7 +9264,6 @@ class HealthCheckResponse(BaseModel):
 
     status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
     status_items: List[HealthStatusItem] = Field(..., description="List of component health statuses")
-    mcp_runtime: Dict[str, Any] = Field(default_factory=dict, description="MCP runtime diagnostics and configuration")
 
 
 class GunicornMetricsSchema(BaseModel):
@@ -9445,11 +9553,6 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     auth_type: Optional[str] = Field(None, description="Authentication type")
     content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
     endpoint_url: Optional[str] = Field(None, description="Registered endpoint URL for the agent, as configured at registration time")
-
-    class Config:
-        """Pydantic config for A2A agent metadata."""
-
-        from_attributes = True  # SQLAlchemy ORM compatibility
 
 
 class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):

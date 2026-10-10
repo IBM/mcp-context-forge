@@ -78,6 +78,7 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+.integration/
 .playwright-mcp/
 output
 htmlcov
@@ -108,7 +109,6 @@ coverage/
 # ========================================
 # Fuzzing
 # ========================================
-reports/
 corpus/
 tests/fuzz/fuzzers/results/
 snyk-code-results.json

@@ -18,7 +18,7 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)plugin_templates/|(^|/)tests/load/|^reports/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, generated benchmark reports, and jinja files
 fail_fast: true
 
 default_language_version:
@@ -35,7 +35,7 @@ repos:
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
         types: [text]
-        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py|tests/unit/mcpgateway/test_oauth_manager\.py'
+        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py|tests/unit/mcpgateway/test_oauth_manager\.py|tests/live_gateway/mcp/test_private_key_jwt_e2e\.py'
 
   - repo: local
     hooks:
@@ -333,8 +333,7 @@ repos:
           (?x)^(
             tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate|targets)/.*\.py|
             tests/.*/_[^/]+\.py|
-            tests/.*/make_[^/]+\.py|
-            mcp-servers/python/url_to_markdown_server/tests/e2e_verify_ssrf_fix\.py
+            tests/.*/make_[^/]+\.py
           )$
         args: [--pytest-test-first] # `test_.*\.py`
 

@@ -224,6 +224,8 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE_NAME }}:scan
+          # Refresh OS packages even when the base image and Containerfile are unchanged.
+          no-cache-filters: builder,runtime
           cache-from: type=gha,scope=containerfile-lite-amd64
           cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 

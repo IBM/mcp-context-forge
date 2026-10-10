@@ -24,6 +24,7 @@ app = FastAPI()
 async def invoke(request: Request):
     """Reflect received headers (and body) so the caller can inspect them."""
     body = await request.body()
+    received_header_pairs = [[name.decode("latin-1"), value.decode("latin-1")] for name, value in request.scope["headers"]]
     received_headers = {k.lower(): v for k, v in request.headers.items()}
     # Also log to stdout for live observation
     print(f"[echo_a2a] received_headers={received_headers}")
@@ -32,6 +33,7 @@ async def invoke(request: Request):
         content={
             "ok": True,
             "received_headers": received_headers,
+            "received_header_pairs": received_header_pairs,
             "messages": [{"role": "assistant", "content": "echo"}],
         }
     )

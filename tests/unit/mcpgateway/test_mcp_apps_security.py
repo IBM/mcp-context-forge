@@ -53,18 +53,25 @@ def valid_app_session(mock_db):
     return session
 
 
-def test_load_invocable_tools_server_scope_matches_original_name(mock_db):
-    """Server-scoped Apps calls may use the upstream tool name embedded in the UI."""
+def test_load_invocable_tools_server_scope_supports_exact_then_original_name(mock_db):
+    """Server-scoped Apps calls support distinct exact and upstream-name queries."""
     service = ToolService()
     mock_db.execute.return_value.scalars.return_value.all.return_value = []
 
     service._load_invocable_tools(mock_db, "submit_contact_form", server_id="server-1")
+    exact_statement = mock_db.execute.call_args.args[0]
+    exact_compiled = str(exact_statement.compile(compile_kwargs={"literal_binds": True}))
 
-    statement = mock_db.execute.call_args.args[0]
-    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
-    assert "tools.name = 'submit_contact_form'" in compiled
-    assert "tools.original_name = 'submit_contact_form'" in compiled
-    assert "server_tool_association.server_id = 'server-1'" in compiled
+    service._load_invocable_tools(mock_db, "submit_contact_form", server_id="server-1", match_original_name=True)
+    fallback_statement = mock_db.execute.call_args.args[0]
+    fallback_compiled = str(fallback_statement.compile(compile_kwargs={"literal_binds": True}))
+
+    assert "tools.name = 'submit_contact_form'" in exact_compiled
+    assert "tools.original_name = 'submit_contact_form'" not in exact_compiled
+    assert "server_tool_association.server_id = 'server-1'" in exact_compiled
+    assert "tools.original_name = 'submit_contact_form'" in fallback_compiled
+    assert "tools.name = 'submit_contact_form'" not in fallback_compiled
+    assert "server_tool_association.server_id = 'server-1'" in fallback_compiled
 
 
 def test_load_invocable_tools_global_scope_uses_registered_name_only(mock_db):
@@ -1308,7 +1315,11 @@ class TestAppOnlyToolSecurity:
             header_mapping=None,
             gateway=None,
         )
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        cache.get_negative = AsyncMock(return_value=None)
 
         monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
         monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [model_only_tool])
@@ -1354,7 +1365,11 @@ class TestAppOnlyToolSecurity:
             header_mapping=None,
             gateway=None,
         )
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        cache.get_negative = AsyncMock(return_value=None)
 
         monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
         monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [app_only_tool])
@@ -1407,7 +1422,11 @@ class TestAppOnlyToolSecurity:
         assert _serialize_mcp_tool_definitions([app_only_tool]) == []
 
         service = ToolService()
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        cache = MagicMock()
+        cache.enabled = False
+        cache.set = AsyncMock()
+        cache.set_negative = AsyncMock()
+        cache.get_negative = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
         monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [app_only_tool])
         monkeypatch.setattr(service, "_check_tool_access", AsyncMock(return_value=True))

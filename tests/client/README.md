@@ -15,8 +15,8 @@ These benchmarks help determine:
 ## Quick Start
 
 ```bash
-# Start a test server (e.g., fast-time-server)
-./fast-time-server -transport=dual -port 8101
+# Start a test server (published fast-time-server image; /health is served on host port 8101)
+docker run --rm -p 8101:9080 ghcr.io/ibm/cfex-mcp-fast-time-server:latest
 
 # Run a quick benchmark
 make benchmark
@@ -212,8 +212,8 @@ HTTPX_POOL_TIMEOUT=10.0   # Fail fast on pool exhaustion
 Ensure your test server is running:
 
 ```bash
-# Start fast-time-server
-./fast-time-server -transport=dual -port 8101
+# Start fast-time-server (published image)
+docker run --rm -p 8101:9080 ghcr.io/ibm/cfex-mcp-fast-time-server:latest
 
 # Or start ContextForge
 make dev

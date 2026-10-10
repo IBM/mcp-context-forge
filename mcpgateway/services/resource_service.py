@@ -21,6 +21,7 @@ Examples:
 
 # Standard
 import asyncio
+import base64
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -34,11 +35,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
-import httpx
-from mcp import ClientSession, types
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.types import ReadResourceRequest, ReadResourceRequestParams
+import httpx2
+from mcp import ClientSession
+import mcp_types as types
+from mcp_types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -76,8 +76,10 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -88,6 +90,7 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -128,11 +131,11 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
-    """Build a ReadResource ClientRequest that carries _meta."""
+def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadResourceRequest":
+    """Build a ReadResourceRequest that carries _meta."""
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
     _rp_dict["_meta"] = meta_data
-    return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
+    return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
 
 
 async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
@@ -218,11 +221,11 @@ def _validate_resource_team_assignment(db: Session, user_email: Optional[str], t
         ValueError: If team does not exist or caller lacks ownership.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     if not user_email:
         return
@@ -233,7 +236,7 @@ def _validate_resource_team_assignment(db: Session, user_email: Optional[str], t
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 class ResourceService(BaseService):
@@ -804,7 +807,7 @@ class ResourceService(BaseService):
                     "resource_uri": resource.uri,
                 },
             )
-            raise ResourceError(f"Failed to register resource: {str(e)}")
+            raise ResourceError(f"Failed to register resource: {unexpected_error_detail(e)}")
 
     async def register_resources_bulk(
         self,
@@ -953,7 +956,13 @@ class ResourceService(BaseService):
                                 continue
                             if conflict_strategy == "update":
                                 # Update existing resource
-                                existing_resource.name = resource.name
+                                # Bulk import supplies operator intent, not a new upstream identity.
+                                if existing_resource.gateway_id:
+                                    if resource.name not in (existing_resource.name, existing_resource.custom_name_slug):
+                                        existing_resource.custom_name_slug = slugify(resource.name)
+                                else:
+                                    existing_resource.name = resource.name
+                                    existing_resource.custom_name_slug = slugify(resource.name)
                                 existing_resource.title = getattr(resource, "title", None)
                                 existing_resource.description = resource.description
                                 existing_resource.mime_type = getattr(resource, "mime_type", None)
@@ -1892,10 +1901,10 @@ class ResourceService(BaseService):
 
                     def _get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
-                        timeout: httpx.Timeout | None = None,
-                        auth: httpx.Auth | None = None,
-                    ) -> httpx.AsyncClient:
-                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+                        timeout: httpx2.Timeout | None = None,
+                        auth: httpx2.Auth | None = None,
+                    ) -> httpx2.AsyncClient:
+                        """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                         Args:
                             headers: Optional headers for the client
@@ -1903,18 +1912,18 @@ class ResourceService(BaseService):
                             auth: Optional auth for the client
 
                         Returns:
-                            httpx.AsyncClient: Configured HTTPX async client
+                            httpx2.AsyncClient: Configured HTTPX async client
                         """
                         # First-Party
-                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
 
-                        return httpx.AsyncClient(
+                        return httpx2.AsyncClient(
                             verify=ssl_context if ssl_context else get_default_verify(),  # pylint: disable=cell-var-from-loop
                             follow_redirects=False,
                             headers=headers,
-                            timeout=timeout if timeout else get_http_timeout(),
+                            timeout=timeout if timeout else get_httpx2_timeout(),
                             auth=auth,
-                            limits=httpx.Limits(
+                            limits=httpx2.Limits(
                                 max_connections=settings.httpx_max_connections,
                                 max_keepalive_connections=settings.httpx_max_keepalive_connections,
                                 keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -2151,14 +2160,15 @@ class ResourceService(BaseService):
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
-                                    async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            _ = await session.initialize()
-                                            resource_text = await _read_resource_text_with_retry(session, uri, "SSE")
-                                            resource_received = True
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=authentication,
+                                        timeout=settings.health_check_timeout,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                        transport="sse",
+                                    ) as client:
+                                        resource_text = await _read_resource_text_with_retry(client.session, uri, "SSE")
+                                        resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
@@ -2200,7 +2210,7 @@ class ResourceService(BaseService):
                                     The text content returned by the StreamableHTTP resource.
 
                             Notes:
-                                - The `streamablehttp_client` context manager must yield a tuple:
+                                - The `streamable_http_client` context manager must yield a tuple:
                                 ``(read_stream, write_stream, get_session_id)``.
                                 - The expected `resource_response` returned by ``session.read_resource()``
                                 must contain a `contents` list, whose first element exposes a `text`
@@ -2234,15 +2244,14 @@ class ResourceService(BaseService):
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
-                                    async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                        _get_session_id,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            _ = await session.initialize()
-                                            resource_text = await _read_resource_text_with_retry(session, uri, "StreamableHTTP")
-                                            resource_received = True
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=authentication,
+                                        timeout=settings.health_check_timeout,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                    ) as client:
+                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
@@ -2383,9 +2392,11 @@ class ResourceService(BaseService):
         has_valid_cached_fallback = False
 
         def _resource_has_gateway(resource: Optional[DbResource]) -> bool:
+            """Return True when the resource is backed by a gateway that can be fetched from."""
             return resource_db_gateway is not None or (resource is not None and resource.gateway_id is not None)
 
         def _resource_content_or_placeholder(resource: DbResource) -> ResourceContent:
+            """Return the stored content, remembering whether it is an authoritative cached fallback."""
             nonlocal has_valid_cached_fallback
             if _has_authoritative_cached_content(resource):
                 has_valid_cached_fallback = True
@@ -2514,7 +2525,7 @@ class ResourceService(BaseService):
                     try:
                         SecurityValidator.validate_path(uri, getattr(settings, "allowed_roots", None))
                     except ValueError as e:
-                        raise ResourceError(f"Path validation failed: {e}")
+                        raise ResourceError(f"Path validation failed: {unexpected_error_detail(e)}")
 
                 # Original resource fetching logic
                 logger.info("Fetching resource: %s (URI: %s)", resource_id, uri)
@@ -2557,10 +2568,7 @@ class ResourceService(BaseService):
 
                         logger.info("Using direct_proxy mode for resource '%s' via gateway %s", uri, resource_db.gateway.id)
 
-                        try:  # First-Party
-                            # First-Party
-                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
-
+                        try:
                             gateway = resource_db.gateway
 
                             # Prepare headers with gateway auth
@@ -2570,34 +2578,43 @@ class ResourceService(BaseService):
                             if plugin_global_context and plugin_global_context.user_context:
                                 headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
 
-                            # Use MCP SDK to connect and read resource
-                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-                                async with ClientSession(read_stream, write_stream) as session:
-                                    await session.initialize()
-                                    result = await _read_resource_with_meta(session, uri, meta_data)
+                            # Use MCP v2 Client to connect and read resource (auto-initializes)
+                            async with mcp_proxy_client(
+                                url=gateway.url,
+                                headers=headers,
+                                timeout=settings.mcpgateway_direct_proxy_timeout,
+                                transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
+                            ) as client:
+                                result = await _read_resource_with_meta(client.session, uri, meta_data)
 
-                                    # Convert MCP result to MCP-compliant content models
-                                    # result.contents is a list of TextResourceContents or BlobResourceContents
-                                    if result.contents:
-                                        first_content = result.contents[0]
-                                        if hasattr(first_content, "text"):
-                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
-                                        elif hasattr(first_content, "blob"):
-                                            content = BlobResourceContents(
-                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
-                                            )
-                                        else:
-                                            content = TextResourceContents(uri=uri, text="")
+                                # Build the FINAL content shape (ResourceContent) directly: the
+                                # proxied read already returned the resolved content, so the
+                                # pointer-resolution machinery below must not run again on it.
+                                if result.contents:
+                                    first_content = result.contents[0]
+                                    # mcp 2.x exposes snake_case attributes (`.mime_type`); v1 used camelCase.
+                                    # Read via getattr so the code tolerates either shape during the transition.
+                                    _mime = getattr(first_content, "mime_type", None) or getattr(first_content, "mimeType", None)
+                                    if hasattr(first_content, "text"):
+                                        content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type=_mime or "text/plain", text=first_content.text)
+                                    elif hasattr(first_content, "blob"):
+                                        # MCP transports carry blobs as base64 strings; ResourceContent.blob
+                                        # holds RAW bytes (the ingress re-encodes on the way out). Decode here
+                                        # or binary resources get double-encoded on the wire.
+                                        _raw = base64.b64decode(first_content.blob) if isinstance(first_content.blob, str) else first_content.blob
+                                        content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type=_mime or "application/octet-stream", blob=_raw)
                                     else:
-                                        content = TextResourceContents(uri=uri, text="")
+                                        content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type=_mime or "text/plain", text="")
+                                else:
+                                    content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type="text/plain", text="")
 
-                                    content_resolved = True
-                                    logger.info(
-                                        "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                                        SecurityValidator.sanitize_log_message(gateway.id),
-                                        meta_data is not None,
-                                    )
-                                    # Skip the rest of the DB lookup logic
+                                content_resolved = True
+                                logger.info(
+                                    "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                                    SecurityValidator.sanitize_log_message(gateway.id),
+                                    meta_data is not None,
+                                )
+                                # Skip the rest of the DB lookup logic
 
                         except Exception as e:
                             sanitized_error = sanitize_exception_message(str(e))
@@ -3031,7 +3048,7 @@ class ResourceService(BaseService):
                 resource_id=str(resource_id),
                 error=e,
             )
-            raise ResourceError(f"Failed to set resource state: {str(e)}")
+            raise ResourceError(f"Failed to set resource state: {unexpected_error_detail(e)}")
 
     async def subscribe_resource(
         self,
@@ -3089,7 +3106,7 @@ class ResourceService(BaseService):
             raise
         except Exception as e:
             db.rollback()
-            raise ResourceError(f"Failed to subscribe: {str(e)}")
+            raise ResourceError(f"Failed to subscribe: {unexpected_error_detail(e)}")
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """
@@ -3140,6 +3157,10 @@ class ResourceService(BaseService):
     ) -> ResourceRead:
         """
         Update a resource.
+
+        A non-null custom_name explicitly replaces the base and takes precedence
+        over name. Legacy name submissions matching the derived name or base are
+        no-ops for federated resources. Local renames remain literal.
 
         MIME Type Detection Priority (NEW BEHAVIOR):
         1. **URL-detected type** (highest priority) - If MIME type can be detected from URI extension
@@ -3246,8 +3267,16 @@ class ResourceService(BaseService):
             # Update fields if provided
             if resource_update.uri is not None:
                 resource.uri = resource_update.uri
-            if resource_update.name is not None:
-                resource.name = resource_update.name
+            if resource.gateway_id:
+                # Federated names are derived. Only custom_name is an explicit base rename;
+                # legacy name values may be stale copies of a previously derived name.
+                if resource_update.custom_name is not None:
+                    resource.custom_name_slug = slugify(resource_update.custom_name)
+            else:
+                requested_name = resource_update.custom_name if resource_update.custom_name is not None else resource_update.name
+                if requested_name is not None:
+                    resource.name = requested_name
+                    resource.custom_name_slug = slugify(requested_name)
             if resource_update.title is not None:
                 resource.title = resource_update.title
             if resource_update.description is not None:
@@ -3550,7 +3579,7 @@ class ResourceService(BaseService):
                 resource_id=str(resource_id),
                 error=e,
             )
-            raise ResourceError(f"Failed to update resource: {str(e)}")
+            raise ResourceError(f"Failed to update resource: {unexpected_error_detail(e)}")
 
     async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
@@ -3712,7 +3741,7 @@ class ResourceService(BaseService):
                 resource_id=str(resource_id),
                 error=e,
             )
-            raise ResourceError(f"Failed to delete resource: {str(e)}")
+            raise ResourceError(f"Failed to delete resource: {unexpected_error_detail(e)}")
 
     async def get_resource_by_id(
         self,
@@ -4080,12 +4109,12 @@ class ResourceService(BaseService):
                 content = template.uri_template.format(**params)
                 return ResourceContent(type="resource", id=str(template.id) or None, uri=template.uri_template or None, mime_type=template.mime_type or None, text=content)
             # # Handle binary template
-            raise NotImplementedError("Binary resource templates not yet supported")
+            raise ResourceError("Binary resource templates not yet supported")
 
         except ResourceNotFoundError:
             raise
         except Exception as e:
-            raise ResourceError(f"Failed to process template: {str(e)}") from e
+            raise ResourceError(f"Failed to process template: {unexpected_error_detail(e)}") from e
 
     @staticmethod
     @lru_cache(maxsize=256)

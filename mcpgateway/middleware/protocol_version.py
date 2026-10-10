@@ -12,8 +12,9 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
-from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
-from mcp.types import LATEST_PROTOCOL_VERSION
+from mcp_types import UNSUPPORTED_PROTOCOL_VERSION, UnsupportedProtocolVersionErrorData
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, LATEST_HANDSHAKE_VERSION, LATEST_PROTOCOL_VERSION
+from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
@@ -67,9 +68,11 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             >>> resp.status_code
             200
 
-            MCP endpoints default the version when the header is missing:
+            A headerless MCP request records the mode default in request state.
+            Era routing stays header-driven in the SDK, so an absent header still
+            takes the legacy handshake path:
 
-            >>> from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION
+            >>> from mcp_types.version import LATEST_PROTOCOL_VERSION
             >>> scope_rpc = {
             ...     "type": "http",
             ...     "asgi": {"version": "3.0"},
@@ -84,7 +87,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ... }
             >>> req = Request(scope_rpc)
             >>> _ = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(req, call_next))
-            >>> req.state.mcp_protocol_version == DEFAULT_PROTOCOL_VERSION
+            >>> req.state.mcp_protocol_version == LATEST_PROTOCOL_VERSION
             True
 
             Unsupported versions return `400`:
@@ -102,8 +105,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ...     "scheme": "http",
             ... }
             >>> bad_resp = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(Request(bad_scope), call_next))
-            >>> (bad_resp.status_code, b"Unsupported protocol version: bad" in bad_resp.body)
-            (400, True)
+            >>> import orjson; bad_err = orjson.loads(bad_resp.body)["error"]
+            >>> (bad_resp.status_code, bad_err["code"], bad_err["data"]["requested"])
+            (400, -32022, 'bad')
         """
         path = request.url.path
 
@@ -114,18 +118,36 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
         # Get the protocol version from headers (case-insensitive)
         protocol_version = request.headers.get("mcp-protocol-version")
 
+        # Resolve accepted versions based on inbound protocol mode
+        # Import here to avoid circular import at module level
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        if settings.mcp_inbound_protocol_mode == "legacy":
+            accepted_versions = HANDSHAKE_PROTOCOL_VERSIONS
+            default_version = LATEST_HANDSHAKE_VERSION
+        else:
+            accepted_versions = SUPPORTED_PROTOCOL_VERSIONS
+            default_version = DEFAULT_PROTOCOL_VERSION
+
         # If no protocol version provided, assume default version (backwards compatibility)
         if protocol_version is None:
-            protocol_version = DEFAULT_PROTOCOL_VERSION
-            logger.debug(f"No MCP-Protocol-Version header, assuming {DEFAULT_PROTOCOL_VERSION}")
+            protocol_version = default_version
+            logger.debug("No MCP-Protocol-Version header, assuming %s", default_version)
 
         # Validate protocol version
-        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
-            supported = ", ".join(SUPPORTED_PROTOCOL_VERSIONS)
-            logger.warning(f"Unsupported protocol version: {protocol_version}")
+        if protocol_version not in accepted_versions:
+            logger.warning("Unsupported protocol version: %s", protocol_version)
             return ORJSONResponse(
                 status_code=400,
-                content={"error": "Bad Request", "message": f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"},
+                content={
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": UNSUPPORTED_PROTOCOL_VERSION,
+                        "message": "Unsupported protocol version",
+                        "data": UnsupportedProtocolVersionErrorData(supported=list(accepted_versions), requested=protocol_version).model_dump(mode="json"),
+                    },
+                },
             )
 
         # Store validated version in request state for use by handlers
