@@ -486,3 +486,106 @@ def test_get_security_logger_singleton():
     with patch("mcpgateway.services.security_logger._security_logger", None):
         lg = get_security_logger()
         assert isinstance(lg, SecurityLogger)
+
+
+# ---------- log_authorization_denial ----------
+
+
+def test_log_authorization_denial_security_logging_disabled(sec_logger, mock_db):
+    with patch("mcpgateway.services.security_logger.settings") as mock_settings:
+        mock_settings.security_logging_enabled = False
+        result = sec_logger.log_authorization_denial(
+            method="tools/call",
+            permission="tools.execute",
+            denial_type="rbac",
+            client_ip="1.2.3.4",
+            db=mock_db,
+        )
+    assert result is None
+    mock_db.add.assert_not_called()
+
+
+def test_log_authorization_denial_token_scope(sec_logger, mock_db):
+    mock_db.refresh = MagicMock()
+    with patch("mcpgateway.services.security_logger.settings") as mock_settings, \
+         patch("mcpgateway.services.security_logger.get_correlation_id", return_value="corr-ts"):
+        mock_settings.security_logging_enabled = True
+        event = sec_logger.log_authorization_denial(
+            method="tools/call",
+            permission="tools.execute",
+            denial_type="token_scope",
+            client_ip="10.0.0.1",
+            user_email="alice@example.com",
+            db=mock_db,
+        )
+    assert event is not None
+    assert mock_db.add.called
+    assert mock_db.commit.called
+
+
+def test_log_authorization_denial_rbac(sec_logger, mock_db):
+    mock_db.refresh = MagicMock()
+    with patch("mcpgateway.services.security_logger.settings") as mock_settings, \
+         patch("mcpgateway.services.security_logger.get_correlation_id", return_value="corr-rbac"):
+        mock_settings.security_logging_enabled = True
+        event = sec_logger.log_authorization_denial(
+            method="prompts/get",
+            permission="prompts.read",
+            denial_type="rbac",
+            client_ip="10.0.0.2",
+            additional_context={"team_id": "team-1"},
+            db=mock_db,
+        )
+    assert event is not None
+
+
+# ---------- log_plugin_violation ----------
+
+
+def test_log_plugin_violation_security_logging_disabled(sec_logger, mock_db):
+    with patch("mcpgateway.services.security_logger.settings") as mock_settings:
+        mock_settings.security_logging_enabled = False
+        result = sec_logger.log_plugin_violation(
+            plugin_name="PIIFilterPlugin",
+            violation_code="PII_DETECTED_IN_TOOL_ARGS",
+            description="PII detected",
+            client_ip="1.2.3.4",
+            db=mock_db,
+        )
+    assert result is None
+    mock_db.add.assert_not_called()
+
+
+def test_log_plugin_violation_creates_security_event(sec_logger, mock_db):
+    mock_db.refresh = MagicMock()
+    with patch("mcpgateway.services.security_logger.settings") as mock_settings, \
+         patch("mcpgateway.services.security_logger.get_correlation_id", return_value="corr-pii"):
+        mock_settings.security_logging_enabled = True
+        event = sec_logger.log_plugin_violation(
+            plugin_name="PIIFilterPlugin",
+            violation_code="PII_DETECTED_IN_TOOL_ARGS",
+            description="Request blocked: PII in tool args",
+            client_ip="192.168.1.50",
+            user_email="bob@example.com",
+            user_agent="claude/3",
+            additional_context={"tool_name": "echo"},
+            db=mock_db,
+        )
+    assert event is not None
+    assert mock_db.add.called
+    assert mock_db.commit.called
+
+
+def test_log_plugin_violation_no_plugin_name(sec_logger, mock_db):
+    mock_db.refresh = MagicMock()
+    with patch("mcpgateway.services.security_logger.settings") as mock_settings, \
+         patch("mcpgateway.services.security_logger.get_correlation_id", return_value="corr-no-name"):
+        mock_settings.security_logging_enabled = True
+        event = sec_logger.log_plugin_violation(
+            plugin_name=None,
+            violation_code=None,
+            description="Unknown plugin blocked request",
+            client_ip="1.1.1.1",
+            db=mock_db,
+        )
+    assert event is not None
