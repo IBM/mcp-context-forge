@@ -3453,6 +3453,10 @@ class Tool(Base):
         UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),
         UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_email_name_tool"),
         Index("idx_tools_created_at_id", "created_at", "id"),
+        # Non-unique lookup index for name-based tool lookups and federated collision checks.
+        # Names may repeat across teams and private scopes, so this must never be unique.
+        # Also created for existing databases by alembic migration 87e895734718.
+        Index("idx_tools_name", "name"),
     )
 
     @hybrid_property
