@@ -1,0 +1,13 @@
+{
+  "name": "cf-perf-fast-time",
+  "description": "Temporary virtual server for ContextForge performance testing",
+  "associated_tools": [
+    "REPLACE_WITH_TOOL_ID"
+  ],
+  "visibility": "team",
+  "oauth_enabled": false,
+  "tags": [
+    "performance-test",
+    "temporary"
+  ]
+}

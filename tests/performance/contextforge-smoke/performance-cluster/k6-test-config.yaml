@@ -1,0 +1,12 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cf-k6-test-config
+  namespace: mcp-context-forge
+  labels:
+    app.kubernetes.io/name: cf-k6-performance
+    app.kubernetes.io/part-of: cf-performance-test
+data:
+  endpoint: "http://mcp-context-forge.mcp-context-forge.svc/servers/REPLACE_WITH_SERVER_ID/mcp"
+  tool-name: "cf-perf-fast-time-get-system-time"

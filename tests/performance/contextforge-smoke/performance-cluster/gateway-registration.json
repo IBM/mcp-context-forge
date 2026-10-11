@@ -1,0 +1,13 @@
+{
+  "name": "cf-perf-fast-time",
+  "url": "http://cf-perf-fast-time.mcp-context-forge.svc:9080/mcp",
+  "description": "Temporary fast-time MCP gateway for ContextForge performance testing",
+  "transport": "STREAMABLEHTTP",
+  "auth_type": "none",
+  "gateway_mode": "cache",
+  "visibility": "team",
+  "tags": [
+    "performance-test",
+    "temporary"
+  ]
+}
