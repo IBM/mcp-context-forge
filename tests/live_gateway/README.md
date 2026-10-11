@@ -206,6 +206,21 @@ on teardown. It also removes its users, roles, team, tool, virtual server, and m
 Run serially, without xdist, and do not run another suite against the shared provider/client
 until teardown completes. The fixture rejects parallel execution.
 
+The suite includes four authorization-code/PKCE cases. Each creates a separate public Keycloak
+client with PKCE `S256` required and password grants disabled. The protocol client follows the
+Keycloak login form over HTTPS, checks callback state, and exchanges the code with its verifier.
+No browser, IDE, or Inspector UI is started. The original ten bearer-token cases retain their
+existing confidential-client setup.
+
+The PKCE fixture starts a loopback HTTP echo endpoint in the test process. Both gateways must
+run on that host and permit test-only localhost egress (`SSRF_ALLOW_LOCALHOST=true`). Container
+gateways need a host-reachable upstream address, so run these cases with host gateway processes.
+The fixture creates a separate team tool and virtual server whose resource URL matches the token
+audience. Its successful MCP call must return the exact message and reach the endpoint once.
+The deny case keeps discovery access but removes execution rights; it must leave the endpoint
+untouched. Wrong verifier and wrong callback-state cases must fail before MCP access.
+Teardown removes the public client, tool, server, and execution role, then closes the echo listener.
+
 REST checks use `GET /v1/tools` and assert the protected tool's UUID. MCP checks initialize a real
 SDK session at `/servers/{id}/mcp/`, call `tools/list`, and assert the corresponding tool name.
 The fixture virtual server is public and OAuth-enabled, with the Keycloak issuer and test audience.
