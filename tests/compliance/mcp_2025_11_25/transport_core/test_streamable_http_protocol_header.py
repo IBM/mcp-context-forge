@@ -41,5 +41,6 @@ def test_streamable_http_rejects_unsupported_protocol_header(
 
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error"] == "Bad Request"
-    assert "Unsupported protocol version: 1999-01-01" in payload["message"]
+    assert payload["error"]["code"] == -32022
+    assert payload["error"]["data"]["requested"] == "1999-01-01"
+    assert payload["error"]["data"]["supported"]

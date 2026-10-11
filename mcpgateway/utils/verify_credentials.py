@@ -1672,7 +1672,7 @@ async def require_admin_auth(
                 db_session = next(get_db())
                 try:
                     # Decode and verify JWT token (use cached version for performance)
-                    payload = await verify_jwt_token_cached(token, request)
+                    payload = await verify_credentials_cached(token, request)
                     await _enforce_revocation_and_active_user(payload)
                     username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
 
@@ -1949,6 +1949,7 @@ async def verify_oauth_access_token(
     authorization_servers: list[str],
     *,
     expected_audience: Optional[Union[str, list[str]]] = None,
+    jwks_uri_override: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Verify an OAuth access token issued by a configured authorization server.
 
@@ -1965,6 +1966,14 @@ async def verify_oauth_access_token(
         expected_audience: Audience value(s) to validate against. Typically
             the canonical MCP resource URL (RFC 8707/9728), optionally plus
             the OAuth client_id for IdPs that populate ``aud`` that way.
+        jwks_uri_override: Use this JWKS URI directly instead of live RFC 8414
+            discovery. Only for a pre-configured, admin-trusted SSOProvider
+            row (see verify_external_idp_token) -- its jwks_uri was set once
+            by an admin action, not derived per-request from the token's own
+            claims, so the same-origin SSRF defense below doesn't apply to
+            it (there's no live discovery response to have been tampered
+            with) and it may legitimately live on a different, internal-only
+            origin than the issuer (split internal/public IdP hostnames).
 
     Returns:
         Verified claims dict on success, None on failure.
@@ -1985,28 +1994,33 @@ async def verify_oauth_access_token(
         logger.warning("OAuth token issuer %s not in allowlist %s", sanitize_for_log(normalized_issuer), normalized_allowed)
         return None
 
-    # Discover OIDC metadata and resolve JWKS URI
-    metadata = await _discover_oidc_metadata(normalized_issuer)
-    if not metadata:
-        return None
+    if jwks_uri_override and jwks_uri_override.strip():
+        jwks_uri = jwks_uri_override.strip()
+    else:
+        # Discover OIDC metadata and resolve JWKS URI
+        metadata = await _discover_oidc_metadata(normalized_issuer)
+        if not metadata:
+            return None
 
-    jwks_uri = metadata.get("jwks_uri")
-    if not isinstance(jwks_uri, str) or not jwks_uri.strip():
-        logger.warning("No jwks_uri in OIDC metadata for issuer %s", sanitize_for_log(normalized_issuer))
-        return None
+        jwks_uri = metadata.get("jwks_uri")
+        if not isinstance(jwks_uri, str) or not jwks_uri.strip():
+            logger.warning("No jwks_uri in OIDC metadata for issuer %s", sanitize_for_log(normalized_issuer))
+            return None
+        jwks_uri = jwks_uri.strip()
 
-    # Defense-in-depth: the jwks_uri from metadata must share the issuer's
-    # origin and use HTTPS. A compromised metadata endpoint could otherwise
-    # redirect key fetches to an attacker-controlled or internal host.
-    jwks_parts = urlsplit(jwks_uri.strip())
-    issuer_parts = urlsplit(normalized_issuer)
-    if jwks_parts.scheme != "https" or jwks_parts.netloc != issuer_parts.netloc:
-        logger.warning(
-            "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
-            sanitize_for_log(jwks_uri),
-            sanitize_for_log(normalized_issuer),
-        )
-        return None
+        # Defense-in-depth: a *live-discovered* jwks_uri must share the
+        # issuer's origin and use HTTPS. A compromised metadata endpoint
+        # could otherwise redirect key fetches to an attacker-controlled or
+        # internal host. Doesn't apply to jwks_uri_override (see above).
+        jwks_parts = urlsplit(jwks_uri)
+        issuer_parts = urlsplit(normalized_issuer)
+        if jwks_parts.scheme != "https" or jwks_parts.netloc != issuer_parts.netloc:
+            logger.warning(
+                "jwks_uri %s does not match issuer origin %s; rejecting (SSRF defense)",
+                sanitize_for_log(jwks_uri),
+                sanitize_for_log(normalized_issuer),
+            )
+            return None
 
     # Reject OIDC ID tokens before signature verification. ID tokens are
     # front-channel credentials (authorization code / implicit flow) and
@@ -2115,6 +2129,7 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
         token,
         authorization_servers=[provider.issuer],
         expected_audience=provider.api_audience,
+        jwks_uri_override=provider.jwks_uri or None,
     )
     if claims is None:
         logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))

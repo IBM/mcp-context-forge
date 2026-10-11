@@ -13,6 +13,11 @@ from mcpgateway.utils.verify_credentials import verify_credentials
 from mcpgateway.db import EmailUser
 
 
+
+
+_TEST_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
+
+
 class TestVerifyCredentialsUuidCoverage:
     """Tests targeting missing coverage lines in verify_credentials.py."""
 
@@ -896,7 +901,7 @@ async def test_verify_oauth_access_token_no_issuer(monkeypatch):
     import jwt
 
     # Create token without issuer
-    token = jwt.encode({"sub": "user@example.com"}, "secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user@example.com"}, "unit-test-signing-key-0123456789abcdef", algorithm="HS256")  # pragma: allowlist secret
 
     result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"])
 
@@ -910,7 +915,7 @@ async def test_verify_oauth_access_token_issuer_not_in_allowlist(monkeypatch):
     import jwt
 
     # Create token with issuer not in allowlist
-    token = jwt.encode({"sub": "user@example.com", "iss": "https://untrusted.example.com"}, "secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://untrusted.example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"])
 
@@ -926,7 +931,7 @@ async def test_verify_oauth_access_token_success(monkeypatch):
 
     # Create a valid token
     token_payload = {"sub": "user@example.com", "iss": "https://auth.example.com", "aud": "my-api", "exp": 9999999999}
-    token = jwt.encode(token_payload, "secret", algorithm="HS256")
+    token = jwt.encode(token_payload, _TEST_SIGNING_KEY, algorithm="HS256")
 
     # Mock metadata discovery
     mock_metadata = {"issuer": "https://auth.example.com", "jwks_uri": "https://auth.example.com/jwks"}
@@ -960,7 +965,7 @@ async def test_verify_oauth_access_token_no_metadata(monkeypatch):
     from unittest.mock import AsyncMock
     import jwt
 
-    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, "secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     # Mock metadata discovery to return None
     monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value=None))
@@ -977,7 +982,7 @@ async def test_verify_oauth_access_token_no_jwks_uri(monkeypatch):
     from unittest.mock import AsyncMock
     import jwt
 
-    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, "secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     # Mock metadata without jwks_uri
     mock_metadata = {"issuer": "https://auth.example.com"}
@@ -995,7 +1000,7 @@ async def test_verify_oauth_access_token_jwks_uri_origin_mismatch(monkeypatch):
     from unittest.mock import AsyncMock
     import jwt
 
-    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, "secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     # Mock metadata with mismatched jwks_uri origin
     mock_metadata = {"issuer": "https://auth.example.com", "jwks_uri": "https://attacker.com/jwks"}  # Different origin!
@@ -1007,6 +1012,106 @@ async def test_verify_oauth_access_token_jwks_uri_origin_mismatch(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_verify_oauth_access_token_jwks_uri_override_skips_discovery(monkeypatch):
+    """An admin-configured jwks_uri_override is used as-is, without discovery or the same-origin check."""
+    from mcpgateway.utils import verify_credentials as vc
+    from unittest.mock import AsyncMock
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import jwt
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    token_payload = {"sub": "user@example.com", "iss": "https://auth.example.com", "aud": "my-api", "exp": 9999999999}
+    token = jwt.encode(token_payload, private_key, algorithm="RS256")
+    override = "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
+
+    class FakeJWKSClient:
+        def __init__(self, uri):
+            self.uri = uri
+
+        def get_signing_key_from_jwt(self, _token):
+            return MagicMock(key=private_key.public_key())
+
+    discover = AsyncMock()
+    monkeypatch.setattr(vc, "_discover_oidc_metadata", discover)
+    monkeypatch.setattr(vc, "_oauth_jwks_client_cache", {})
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKSClient)
+
+    result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"], expected_audience="my-api", jwks_uri_override=f"  {override}  ")
+
+    assert result is not None
+    assert result["sub"] == "user@example.com"
+    discover.assert_not_called()
+    assert list(vc._oauth_jwks_client_cache) == [override]
+
+
+@pytest.mark.asyncio
+async def test_verify_oauth_access_token_jwks_uri_override_bad_signature_returns_none(monkeypatch):
+    """A token not signed by a key from the jwks_uri_override JWKS is rejected."""
+    from mcpgateway.utils import verify_credentials as vc
+    from unittest.mock import AsyncMock
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import jwt
+
+    signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwks_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com", "aud": "my-api", "exp": 9999999999}, signing_key, algorithm="RS256")
+
+    class FakeJWKSClient:
+        def __init__(self, uri):
+            self.uri = uri
+
+        def get_signing_key_from_jwt(self, _token):
+            return MagicMock(key=jwks_key.public_key())
+
+    discover = AsyncMock()
+    monkeypatch.setattr(vc, "_discover_oidc_metadata", discover)
+    monkeypatch.setattr(vc, "_oauth_jwks_client_cache", {})
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKSClient)
+
+    result = await vc.verify_oauth_access_token(
+        token, ["https://auth.example.com"], expected_audience="my-api", jwks_uri_override="http://keycloak:8080/realms/m/protocol/openid-connect/certs"
+    )
+
+    assert result is None
+    discover.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_oauth_access_token_jwks_uri_override_does_not_bypass_issuer_allowlist(monkeypatch):
+    """jwks_uri_override never admits a token whose issuer is outside the allowlist."""
+    from mcpgateway.utils import verify_credentials as vc
+    from unittest.mock import AsyncMock
+    import jwt
+
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://evil.example.com"}, "secret", algorithm="HS256")
+    discover = AsyncMock()
+    monkeypatch.setattr(vc, "_discover_oidc_metadata", discover)
+
+    result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"], jwks_uri_override="https://evil.example.com/jwks")
+
+    assert result is None
+    discover.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_oauth_access_token_blank_jwks_uri_override_uses_discovery(monkeypatch):
+    """A blank jwks_uri_override falls back to discovery, so the same-origin SSRF check still applies."""
+    from mcpgateway.utils import verify_credentials as vc
+    from unittest.mock import AsyncMock
+    import jwt
+
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, "secret", algorithm="HS256")
+    mock_metadata = {"issuer": "https://auth.example.com", "jwks_uri": "https://attacker.com/jwks"}
+    discover = AsyncMock(return_value=mock_metadata)
+    monkeypatch.setattr(vc, "_discover_oidc_metadata", discover)
+
+    result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"], jwks_uri_override="   ")
+
+    assert result is None
+    discover.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_verify_oauth_access_token_id_token_rejection(monkeypatch):
     """Lines 1690-1770: verify_oauth_access_token rejects OIDC ID tokens."""
     from mcpgateway.utils import verify_credentials as vc
@@ -1014,7 +1119,7 @@ async def test_verify_oauth_access_token_id_token_rejection(monkeypatch):
     import jwt
 
     # Create token with ID token markers (nonce)
-    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com", "nonce": "abc123"}, "secret", algorithm="HS256")  # ID token marker
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com", "nonce": "abc123"}, _TEST_SIGNING_KEY, algorithm="HS256")  # ID token marker
 
     mock_metadata = {"issuer": "https://auth.example.com", "jwks_uri": "https://auth.example.com/jwks"}
     monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value=mock_metadata))
@@ -1031,7 +1136,7 @@ async def test_verify_oauth_access_token_jwt_error(monkeypatch):
     from unittest.mock import AsyncMock
     import jwt
 
-    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, "secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com"}, _TEST_SIGNING_KEY, algorithm="HS256")
 
     mock_metadata = {"issuer": "https://auth.example.com", "jwks_uri": "https://auth.example.com/jwks"}
 

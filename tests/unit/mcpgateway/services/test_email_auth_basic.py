@@ -230,7 +230,7 @@ class TestEmailAuthBasic:
         ("admin_api_enabled", "expected_forgot_url", "expected_reset_url"),
         [
             (True, "https://gateway.example.com/root/admin/forgot-password", "https://gateway.example.com/root/admin/reset-password/tok%20en"),
-            (False, "https://gateway.example.com/root/forgot-password", "https://gateway.example.com/root/reset-password/tok%20en"),
+            (False, "https://gateway.example.com/root/app/forgot-password", "https://gateway.example.com/root/app/reset-password/tok%20en"),
         ],
     )
     def test_build_password_reset_urls(self, service, admin_api_enabled, expected_forgot_url, expected_reset_url):
@@ -255,8 +255,8 @@ class TestEmailAuthBasic:
             forgot_url = service._build_forgot_password_url()
             reset_url = service._build_reset_password_url("tok/en")
 
-        assert forgot_url == "https://ui.example.com/contextforge/forgot-password"
-        assert reset_url == "https://ui.example.com/contextforge/reset-password/tok%2Fen"
+        assert forgot_url == "https://ui.example.com/contextforge/app/forgot-password"
+        assert reset_url == "https://ui.example.com/contextforge/app/reset-password/tok%2Fen"
 
     @pytest.mark.parametrize(
         ("password_hash", "password_hash_type", "expected"),
@@ -526,8 +526,90 @@ class TestEmailAuthServiceUserManagement:
         )
 
         assert user.password_hash == DISABLED_PASSWORD_HASH
+        assert user.password_hash_type == "argon2id"
+        assert user.password_changed_at is not None
         mock_password_service.hash_password_async.assert_not_called()
         mock_db.add.assert_called_once_with(user)
+
+    @pytest.mark.asyncio
+    async def test_create_user_passwordless_rejects_non_empty_password(self, service, mock_db):
+        """Passwordless creation cannot silently discard a supplied password."""
+        with pytest.raises(ValueError, match="Password is not allowed"):
+            await service.create_user(email="passwordless@example.com", password="SecurePass4$x", passwordless=True)  # pragma: allowlist secret
+
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_user_passwordless_rejects_password_change_required(self, service, mock_db):
+        """Passwordless users cannot be created into a local password-change flow."""
+        with pytest.raises(ValueError, match="Password change cannot be required"):
+            await service.create_user(email="passwordless@example.com", password="", passwordless=True, password_change_required=True)
+
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_user_email_verified_default_preserves_self_registration(self, service, mock_db, mock_password_service):
+        """Without granted_by, create_user preserves the existing unverified default."""
+        service.password_service = mock_password_service
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        user = await service.create_user(
+            email="self-register@example.com",
+            password="SecurePass4$x",  # pragma: allowlist secret
+            skip_password_validation=True,
+            skip_onboarding=True,
+        )
+
+        assert user.email_verified_at is None
+
+    @pytest.mark.asyncio
+    async def test_create_user_granted_by_still_marks_email_verified(self, service, mock_db, mock_password_service):
+        """Admin-vouched users retain the existing verified behavior."""
+        service.password_service = mock_password_service
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        user = await service.create_user(
+            email="admin-created@example.com",
+            password="SecurePass4$x",  # pragma: allowlist secret
+            skip_password_validation=True,
+            skip_onboarding=True,
+            granted_by="admin@example.com",
+        )
+
+        assert user.email_verified_at is not None
+
+    @pytest.mark.asyncio
+    async def test_create_user_explicit_email_verified_false_wins_over_granted_by(self, service, mock_db, mock_password_service):
+        """Explicit email_verified=False overrides the granted_by-derived default."""
+        service.password_service = mock_password_service
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        user = await service.create_user(
+            email="explicit-unverified@example.com",
+            password="SecurePass4$x",  # pragma: allowlist secret
+            skip_password_validation=True,
+            skip_onboarding=True,
+            granted_by="admin@example.com",
+            email_verified=False,
+        )
+
+        assert user.email_verified_at is None
+
+    @pytest.mark.asyncio
+    async def test_create_user_admin_origin_defaults_to_api_for_admins(self, service, mock_db, mock_password_service):
+        """Existing admin creation callers keep admin_origin='api' by default."""
+        service.password_service = mock_password_service
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        user = await service.create_user(
+            email="admin-origin@example.com",
+            password="SecurePass4$x",  # pragma: allowlist secret
+            is_admin=True,
+            skip_password_validation=True,
+            skip_onboarding=True,
+        )
+
+        assert user.admin_origin == "api"
 
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio

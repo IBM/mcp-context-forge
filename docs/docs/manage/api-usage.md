@@ -2,6 +2,31 @@
 
 This guide provides comprehensive examples for using ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
 
+## Completion compatibility and permission migration
+
+The release that includes [PR #6760](https://github.com/IBM/mcp-context-forge/pull/6760)
+changes authorization for `POST /protocol/completion/complete`.
+ContextForge 1.0.11 accepts authenticated callers on this endpoint without an explicit
+`tools.read` RBAC check. The new release requires `tools.read`, matching `/rpc` and
+Streamable HTTP `completion/complete`. Authentication alone no longer grants access.
+Callers without this permission receive HTTP 403 before any upstream request.
+
+Before upgrading, grant `tools.read` to each completion caller's role through the
+[RBAC role management API](rbac.md). Built-in `viewer`, `developer`, and `team_admin`
+roles already include this permission. For tokens with explicit `scope.permissions`,
+include `tools.read` when creating replacement tokens. Empty token scopes inherit
+RBAC permissions. Token visibility still limits accessible prompts and resources.
+Verify an authorized completion request and an insufficient-permission request before
+moving production callers to the new release. No database migration is required.
+
+Federated completions support both legacy `2025-11-25` and modern `2026-07-28` MCP
+negotiation. Each connection negotiates independently through the existing transport
+configuration. Completion forwarding imposes no modern-only gate; mixed-era
+connections remain eligible when the upstream advertises `completions`.
+The gateway forwards the reference, argument, context, and request `_meta` to the
+owning upstream. Local schema completion remains available for local references.
+An upstream without `completions` returns JSON-RPC `-32601` on MCP routes.
+
 ## Prerequisites
 
 Before using the API, you need to:
@@ -322,6 +347,8 @@ When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration rem
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
+Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](../../../CHANGELOG.md#unreleased).
+
 **Async create response example (`202 Accepted`):**
 
 ```json
@@ -366,6 +393,8 @@ Gateway name is the natural deduplication key for async lifecycle retries. With 
 
 Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. After each failed initialization attempt, the next delay is `min(2 ** (registrationAttempts - 1), 300)` seconds. `nextRetryAt` is the source of truth for when the worker may retry next.
 
+An async tool-name collision keeps the gateway `pending`, stores the generic collision message in `statusMessage` and `lastError`, and follows this retry schedule. Remove or rename the conflicting tool, then poll the gateway until initialization succeeds or delete the pending gateway.
+
 DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Retrying DELETE while the gateway is already `deleting` is safe: clients should treat the resource as still being removed and keep polling until `404 Not Found`. Once deleted, polling returns `404 Not Found`.
 
 **Pending retry response example (`200 OK`):**
@@ -387,7 +416,7 @@ DELETE changes `pending` or `active` gateways to `deleting`; the worker then sto
     - `STREAMABLEHTTP`: HTTP/SSE-based MCP server
     - `SSE`: Server-Sent Events transport
     - `STDIO`: Standard I/O (for local processes)
-    - `WEBSOCKET`: WebSocket transport
+    - `WEBSOCKET`: WebSocket transport (deprecated, sunsets 2027-01-18)
 
 #### Complete Example: Registering a Gateway
 

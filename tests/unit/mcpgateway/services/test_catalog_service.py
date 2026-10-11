@@ -25,6 +25,7 @@ from mcpgateway.schemas import (
     CatalogServerRegisterRequest,
 )
 from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError, CatalogService
+from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 
 
 @pytest.fixture
@@ -329,6 +330,26 @@ async def test_register_catalog_server_exception_mapping(service):
         with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", AsyncMock(side_effect=Exception("Connection refused"))):
             result = await service.register_catalog_server("1", None, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
             assert "offline" in result.message
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_tool_name_collision(service):
+    """Catalog registration keeps its HTTP-200 business failure envelope."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        conflict = GatewayToolNameConflictError("prod-api-search")
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", AsyncMock(side_effect=conflict)):
+            result = await service.register_catalog_server("1", None, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
+
+    assert result.model_dump() == {
+        "success": False,
+        "server_id": "",
+        "message": "Gateway tool name conflicts with an existing tool",
+        "error": None,
+        "oauth_required": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -1423,7 +1444,7 @@ async def test_check_server_availability_outer_exception(service):
     with patch.object(service, "load_catalog", AsyncMock(side_effect=RuntimeError("catalog fail"))):
         result = await service.check_server_availability("1")
     assert result.is_available is False
-    assert "catalog fail" in (result.error or "")
+    assert result.error.startswith("An unexpected error occurred")
 
 
 @pytest.mark.asyncio
@@ -1433,7 +1454,7 @@ async def test_bulk_register_breaks_on_exception_when_not_skipping_errors(servic
     with patch.object(service, "register_catalog_server", AsyncMock(side_effect=Exception("boom"))):
         db = MagicMock()
         result = await service.bulk_register_servers(fake_request, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
-    assert result.failed and result.failed[0]["error"] == "boom"
+    assert result.failed and result.failed[0]["error"].startswith("An unexpected error occurred")
 
 
 # ---------- Deny-path regression tests for catalog registration scope ----------

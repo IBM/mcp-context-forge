@@ -81,7 +81,7 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
       - DB_POOL_MAX_OVERFLOW={db_pool_max_overflow}
       - DB_POOL_TIMEOUT={db_pool_timeout}
 {redis_pool}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_SECRET_KEY=${{JWT_SECRET_KEY}}
       - MCPGATEWAY_ADMIN_API_ENABLED=true
       - MCPGATEWAY_UI_ENABLED=true
     ports:
@@ -115,29 +115,22 @@ REDIS_SERVICE = """  redis:
 """
 
 FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
-    build:
-      context: .
-      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
+    image: ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:110e1826f5d763e5afadba770b731dac93e0819c1bbadb68671b0124260603cf
     container_name: fast_time_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["-transport=sse", "-addr=0.0.0.0:8002", "-log-level=info"]
+    environment:
+      - BIND_ADDRESS=0.0.0.0:9080
+      - RUST_LOG=info
     ports:
-      - "8002:8002"
+      - "8888:9080"
     networks:
       - mcpnet
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8002/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 """
 
 
 BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
-    build:
-      context: .
-      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
+    image: ghcr.io/ibm/cfex-mcp-benchmark-server:latest
     container_name: benchmark_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -229,9 +222,8 @@ class DockerComposeGenerator:
         # Generate gateway services
         gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
-        # Generate fast-time server (Rust - always included for basic MCP testing)
+        # Generate fast-time server (published image - always included for basic MCP testing)
         fast_time_server = FAST_TIME_SERVER_TEMPLATE
-
 
         # Generate benchmark servers
         benchmark_servers = ""

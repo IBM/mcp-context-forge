@@ -30,7 +30,6 @@ on:
             - "uv.lock"
             - "plugins/config.yaml"
             - "tests/live_gateway/plugins/**"
-            - "mcp-servers/rust/fast-time-server/**"
             - ".github/workflows/plugin-integration.yml"
 
 permissions:

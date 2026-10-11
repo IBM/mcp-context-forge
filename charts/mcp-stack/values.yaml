@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.10"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    tag: "v1.0.11"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
     pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
@@ -409,6 +409,8 @@ mcpContextForge:
     CORS_ENABLED: "true"             # enable CORS processing in gateway
     CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
     ALLOWED_ORIGINS: '["https://gateway.local"]' # JSON list of allowed CORS origins (CHANGE to match APP_DOMAIN)
+    # MCP_ALLOWED_ORIGINS: ""        # opt-in MCP Origin allowlist (DNS-rebinding guard); comma-separated list
+    # MCP_ALLOWED_HOSTS: ""          # opt-in MCP Host allowlist; exact "host:port" entries
     SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
 
     # ─ Security Headers ─
@@ -592,14 +594,6 @@ mcpContextForge:
     # MCP_SESSION_POOL_TTL: "300.0"
     # MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"
     # MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD: "5"
-
-    # ─ CPU Spin Loop Mitigation (Issue #2360, anyio#695) ─
-    # See docs/docs/operations/cpu-spin-loop-mitigation.md
-    # Layer 1 (SSE_SEND_TIMEOUT, SSE_RAPID_YIELD_*) is in Transports above.
-    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"   # Layer 2: session cleanup timeout
-    SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"     # Layer 2: SSE task group timeout
-    ANYIO_CANCEL_DELIVERY_PATCH_ENABLED: "false" # Layer 3 (EXPERIMENTAL): anyio monkey-patch
-    # ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS: "100"  # only relevant when patch enabled
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
@@ -1062,7 +1056,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.10"                            # Should match mcpContextForge.image.tag
+    tag: "v1.0.11"                            # Should match mcpContextForge.image.tag
     pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job

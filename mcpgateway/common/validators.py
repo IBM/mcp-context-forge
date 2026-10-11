@@ -57,7 +57,7 @@ from pathlib import Path
 import re
 import shlex
 import socket
-from typing import Annotated, Any, Dict, Iterable, List, Optional, Pattern
+from typing import Annotated, Any, Dict, Iterable, List, Optional, Pattern, TypedDict
 import unicodedata
 from urllib.parse import unquote, urlparse
 import uuid
@@ -78,6 +78,27 @@ def pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
     pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
     pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
     return parsed._replace(netloc=pinned_netloc).geturl()
+
+
+def _authority_is_ipv6_literal(url: str) -> bool:
+    """Report whether ``url``'s authority is a bracketed IPv6 literal.
+
+    A bracketed authority (``[::1]`` or ``[::1]:8080``) is the only valid way an IPv6
+    address appears in a URL's netloc, so this needs no percent-decoding: it is a
+    structural, ASCII-only check that runs before the full URL validator so the
+    connection-pinning path can tell it is looking at an IP literal, not a hostname.
+
+    Args:
+        url: Candidate URL, not yet validated.
+
+    Returns:
+        bool: True when the URL's netloc begins with ``[``, false for a malformed URL or
+            any other parse failure (the caller's own validation then reports the failure).
+    """
+    try:
+        return urlparse(url).netloc.startswith("[")
+    except Exception:  # pylint: disable=broad-except
+        return False
 
 
 # ============================================================================
@@ -370,14 +391,54 @@ def _strip_html_tags(value: str) -> str:
     return s.get_data()
 
 
+def url_scheme_allowed(url: str, allowed_schemes: list[str]) -> bool:
+    """Return whether *url* starts with one of *allowed_schemes* (case-insensitive)."""
+    url_lower = url.lower()
+    return any(url_lower.startswith(s.lower()) for s in allowed_schemes)
+
+
+class UrlPolicyError(ValueError):
+    """A URL rejection that carries a stable, non-sensitive reason code.
+
+    Pydantic keeps the original exception object in ``ctx["error"]``, so the reason
+    code survives into ``ValidationError.errors()`` and can be logged without
+    logging the submitted value.
+
+    Examples:
+        >>> err = UrlPolicyError("url_scheme_not_allowed", "URL must start with https://")
+        >>> err.reason_code
+        'url_scheme_not_allowed'
+        >>> isinstance(err, ValueError)
+        True
+    """
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        """Store the reason code and the human-readable message.
+
+        Args:
+            reason_code: Stable machine-readable code, e.g. ``url_dns_resolution_failed``.
+            message: Human-readable message. Never logged by the error sanitizer.
+        """
+        self.reason_code = reason_code
+        super().__init__(message)
+
+
+class ConnectionPinningResult(TypedDict):
+    """Return type of ``SecurityValidator.validate_url_for_connection_pinning``."""
+
+    validated_url: str
+    hostname: str
+    original_authority: str
+    resolved_ip: Optional[str]
+    resolved_ips: List[str]
+
+
 class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
-    # Configurable patterns (from settings)
+    # Class attributes frozen at import time; validate_url() reads settings at call time for scheme enforcement
     DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern  # Default: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>'
     DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern  # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
-    ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # Default: ["http://", "https://", "ws://", "wss://"]
-
     # Character type patterns
     NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_.\- ]+$ (literal space, not \s)
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
@@ -1108,7 +1169,7 @@ class SecurityValidator:
             >>> SecurityValidator.validate_url('')
             Traceback (most recent call last):
                 ...
-            ValueError: URL cannot be empty
+            mcpgateway.common.validators.UrlPolicyError: URL cannot be empty
 
             Length validation:
 
@@ -1116,78 +1177,78 @@ class SecurityValidator:
             >>> SecurityValidator.validate_url(long_url)
             Traceback (most recent call last):
                 ...
-            ValueError: URL exceeds maximum length of 2048
+            mcpgateway.common.validators.UrlPolicyError: URL exceeds maximum length of 2048
 
             Scheme validation:
 
             >>> SecurityValidator.validate_url('ftp://example.com')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('file:///etc/passwd')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('javascript:alert(1)')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('data:text/plain,hello')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('vbscript:alert(1)')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('about:blank')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('chrome://settings')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
             >>> SecurityValidator.validate_url('mailto:test@example.com')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
 
             IPv6 URL blocking:
 
             >>> SecurityValidator.validate_url('https://[::1]:8080/')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains IPv6 address which is not supported
+            mcpgateway.common.validators.UrlPolicyError: URL contains IPv6 address which is not supported
             >>> SecurityValidator.validate_url('https://[2001:db8::1]/')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains IPv6 address which is not supported
+            mcpgateway.common.validators.UrlPolicyError: URL contains IPv6 address which is not supported
 
             Protocol-relative URL blocking:
 
             >>> SecurityValidator.validate_url('//example.com/path')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
 
             Control character injection:
 
             >>> SecurityValidator.validate_url('https://example.com\\rHost: evil.com')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains control characters which are not allowed
+            mcpgateway.common.validators.UrlPolicyError: URL contains control characters which are not allowed
             >>> SecurityValidator.validate_url('https://example.com\\nHost: evil.com')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains control characters which are not allowed
+            mcpgateway.common.validators.UrlPolicyError: URL contains control characters which are not allowed
 
             Space validation:
 
             >>> SecurityValidator.validate_url('https://exam ple.com')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains spaces which are not allowed in URLs
+            mcpgateway.common.validators.UrlPolicyError: URL contains spaces which are not allowed in URLs
             >>> SecurityValidator.validate_url('https://example.com/path?query=hello world')  # doctest: +SKIP
             'https://example.com/path?query=hello world'
 
@@ -1196,29 +1257,29 @@ class SecurityValidator:
             >>> SecurityValidator.validate_url('https://')
             Traceback (most recent call last):
                 ...
-            ValueError: URL is not a valid URL
+            mcpgateway.common.validators.UrlPolicyError: URL is not a valid URL
             >>> SecurityValidator.validate_url('not-a-url')
             Traceback (most recent call last):
                 ...
-            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            mcpgateway.common.validators.UrlPolicyError: URL must start with one of: http://, https://, ws://, wss://
 
             Restricted IP addresses:
 
             >>> SecurityValidator.validate_url('https://0.0.0.0/')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains invalid IP address (0.0.0.0)
+            mcpgateway.common.validators.UrlPolicyError: URL contains invalid IP address (0.0.0.0)
             >>> SecurityValidator.validate_url('https://169.254.169.254/')  # doctest: +ELLIPSIS
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains IP address blocked by SSRF protection ...
+            mcpgateway.common.validators.UrlPolicyError: URL contains IP address blocked by SSRF protection ...
 
             Invalid port numbers (SSRF runs before port check; skipped offline):
 
             >>> SecurityValidator.validate_url('https://example.com:0/')  # doctest: +SKIP
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains invalid port number
+            mcpgateway.common.validators.UrlPolicyError: URL contains invalid port number
             >>> try:  # doctest: +SKIP
             ...     SecurityValidator.validate_url('https://example.com:65536/')
             ... except ValueError as e:
@@ -1230,49 +1291,80 @@ class SecurityValidator:
             >>> SecurityValidator.validate_url('https://user@example.com/')  # doctest: +SKIP
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains credentials which are not allowed
+            mcpgateway.common.validators.UrlPolicyError: URL contains credentials which are not allowed
 
             XSS patterns in URLs:
 
             >>> SecurityValidator.validate_url('https://example.com/<script>')  # doctest: +SKIP
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains HTML tags that may cause security issues
+            mcpgateway.common.validators.UrlPolicyError: URL contains HTML tags that may cause security issues
             >>> SecurityValidator.validate_url('https://example.com?param=javascript:alert(1)')
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains unsupported or potentially dangerous protocol
+            mcpgateway.common.validators.UrlPolicyError: URL contains unsupported or potentially dangerous protocol
+        """
+        return cls._validate_url_impl(value, field_name, skip_ssrf=skip_ssrf, reject_ipv6=True)
+
+    @classmethod
+    def _validate_url_impl(cls, value: str, field_name: str, *, skip_ssrf: bool, reject_ipv6: bool) -> str:
+        """Run the URL checks shared by ``validate_url`` and IP-literal connection pinning.
+
+        ``validate_url`` always calls this with ``reject_ipv6=True``, preserving its documented
+        blanket IPv6 rejection for every other caller. ``validate_url_for_connection_pinning``
+        calls this directly with ``reject_ipv6=False``, and only after confirming the URL's
+        authority is a bracketed IPv6 literal: a literal has no hostname for DNS to rebind, so
+        the SSRF check that runs afterwards on the resolved literal address is what protects
+        the connection instead.
+
+        Args:
+            value: Value to validate.
+            field_name: Name of field being validated.
+            skip_ssrf: Skip DNS-based SSRF checks. Intended only for callers that immediately
+                resolve, validate, and pin the same outbound connection target.
+            reject_ipv6: Reject a bracketed IPv6 authority. Pass False only for the IP-literal
+                connection-pinning path described above; every other caller must pass True.
+
+        Returns:
+            str: The ORIGINAL (percent-encoded) URL if acceptable.
+
+        Raises:
+            UrlPolicyError: When input is not acceptable.
         """
         if not value:
-            raise ValueError(f"{field_name} cannot be empty")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} cannot be empty")
 
         # Length check
         if len(value) > cls.MAX_URL_LENGTH:
-            raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_URL_LENGTH}")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} exceeds maximum length of {cls.MAX_URL_LENGTH}")
 
         # Single-pass decode + double-encoding rejection (centralised in _decode_strict).
-        decoded_value = _decode_strict(value, field_name)
+        # _decode_strict is shared with non-URL validators, so it raises a plain ValueError;
+        # code it here so every URL rejection carries a reason code into the sanitized log.
+        try:
+            decoded_value = _decode_strict(value, field_name)
+        except ValueError as exc:
+            raise UrlPolicyError("url_invalid_syntax", str(exc)) from exc
 
         # Reject IIS-style `%uXXXX` escapes that urllib does not decode.
         # Check both original (`%uXXXX`) and decoded (`%25u003c` → `%u003c`) forms
         # to close the double-encoded `%25uXXXX` bypass.
         if _PERCENT_U_ESCAPE_RE.search(value) or _PERCENT_U_ESCAPE_RE.search(decoded_value):
-            raise ValueError(f"{field_name} contains non-standard %u-style escapes which are not allowed")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains non-standard %u-style escapes which are not allowed")
 
         # Reject JS-style `\uXXXX`/`\xXX` escapes that bypass blocklists in JS contexts.
         if _JS_ESCAPE_RE.search(decoded_value):
-            raise ValueError(f"{field_name} contains JavaScript-style escape sequences which are not allowed")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains JavaScript-style escape sequences which are not allowed")
 
         # `unquote()` emits U+FFFD for invalid UTF-8 / overlong sequences (e.g. `%c0%bc`);
         # legitimate percent-encoded UTF-8 never decodes to U+FFFD.
         if "\ufffd" in decoded_value:
-            raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
 
-        # Check allowed schemes (lowercase value once, not per scheme).
-        allowed_schemes = cls.ALLOWED_URL_SCHEMES
-        value_lower = value.lower()
-        if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
-            raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
+        # Check allowed schemes (case-insensitive).
+        allowed_schemes = settings.validation_allowed_url_schemes
+        if not url_scheme_allowed(value, allowed_schemes):
+            raise UrlPolicyError("url_scheme_not_allowed", f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
 
         # Block dangerous URL patterns anywhere in the decoded URL (defense-in-depth:
         # downstream consumers may extract query/fragment and reuse as URLs elsewhere).
@@ -1280,45 +1372,45 @@ class SecurityValidator:
         # be sent as separate structured fields rather than embedded in a URL.
         for pattern in _DANGEROUS_URL_PATTERNS:
             if pattern.search(decoded_value):
-                raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
+                raise UrlPolicyError("url_scheme_not_allowed", f"{field_name} contains unsupported or potentially dangerous protocol")
 
         # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
         # suffices: unquote() never removes non-`%` chars, so any `[` in
         # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
-        if "[" in decoded_value or "]" in decoded_value:
-            raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+        if reject_ipv6 and ("[" in decoded_value or "]" in decoded_value):
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains IPv6 address which is not supported")
 
         # Block protocol-relative URLs
         if value.startswith("//"):
-            raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains protocol-relative URL which is not supported")
 
         # Reject C0 control characters (literal or decoded from %00–%1f) and DEL.
         # Subsumes the prior CRLF-only check: NUL (%00), TAB (%09), VT (%0b),
         # FF (%0c), and DEL (%7f) are equally illegitimate in URLs.
         if any(ch != " " and ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
-            raise ValueError(f"{field_name} contains control characters which are not allowed")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains control characters which are not allowed")
 
         # Literal space check uses `value` (NOT decoded): `%20` is the standard
         # encoding for space in paths and must remain valid. Authority-level
         # encoded-space bypass is handled separately after urlparse below.
         if " " in value.split("?", maxsplit=1)[0]:
-            raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains spaces which are not allowed in URLs")
 
         # Basic URL structure validation
         try:
             result = urlparse(value)
             if not all([result.scheme, result.netloc]):
-                raise ValueError(f"{field_name} is not a valid URL")
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} is not a valid URL")
 
             # Additional validation: ensure netloc doesn't contain brackets (double-check)
-            if "[" in result.netloc or "]" in result.netloc:
-                raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+            if reject_ipv6 and ("[" in result.netloc or "]" in result.netloc):
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains IPv6 address which is not supported")
 
             # urlparse does not decode netloc; decode to catch `exam%20ple.com`-style
             # authority injection without breaking encoded-space in path/query.
             decoded_netloc = _unquote_if_needed(result.netloc)
             if any(ch.isspace() for ch in decoded_netloc):
-                raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains spaces which are not allowed in URLs")
 
             # SSRF hostname check: urlparse does NOT percent-decode `hostname`,
             # so `%31%32%37%2E%30%2E%30%2E%31` (= 127.0.0.1) bypasses without this.
@@ -1326,33 +1418,32 @@ class SecurityValidator:
             if hostname:
                 decoded_hostname = _unquote_if_needed(hostname)
                 if decoded_hostname == "0.0.0.0":  # nosec B104 - blocked for security
-                    raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
+                    raise UrlPolicyError("url_destination_blocked", f"{field_name} contains invalid IP address (0.0.0.0)")
 
                 if settings.ssrf_protection_enabled and not skip_ssrf:
                     cls._validate_ssrf(decoded_hostname, field_name)
 
-            # Validate port number
-            if result.port is not None:
-                if result.port < 1 or result.port > 65535:
-                    raise ValueError(f"{field_name} contains invalid port number")
+            # `urlsplit.port` already raises ValueError outside 1-65535, so only 0 reaches here.
+            if result.port == 0:
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains invalid port number")
 
             # Credentials: `result.username`/`password` catches literal `user:pass@`;
             # `@` in decoded_netloc catches percent-encoded userinfo (e.g. `user%3Apass@`).
             if result.username or result.password or "@" in decoded_netloc:
-                raise ValueError(f"{field_name} contains credentials which are not allowed")
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains credentials which are not allowed")
 
             # Check for XSS patterns in the entire URL
             if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
-                raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains HTML tags that may cause security issues")
 
             if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
-                raise ValueError(f"{field_name} contains script patterns that may cause security issues")
+                raise UrlPolicyError("url_invalid_syntax", f"{field_name} contains script patterns that may cause security issues")
 
-        except ValueError:
-            # Re-raise ValueError as-is
+        except UrlPolicyError:
             raise
         except Exception:
-            raise ValueError(f"{field_name} is not a valid URL")
+            # Includes the ValueError `result.port` raises for an out-of-range port.
+            raise UrlPolicyError("url_invalid_syntax", f"{field_name} is not a valid URL")
 
         return value
 
@@ -1411,7 +1502,7 @@ class SecurityValidator:
                 hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
                 return wildcard_prefix + hostname_normalized
             except idna.IDNAError as e:
-                raise ValueError(f"Invalid IDN hostname: {hostname}") from e
+                raise UrlPolicyError("url_invalid_syntax", f"Invalid IDN hostname: {hostname}") from e
 
         # For ASCII hostnames, try IDN first (covers ASCII-only IDN domains)
         try:
@@ -1426,7 +1517,7 @@ class SecurityValidator:
         if all(_rfc1123_label_re.match(label) for label in labels if label):
             return wildcard_prefix + hostname_normalized
 
-        raise ValueError(f"Invalid hostname: {hostname}")
+        raise UrlPolicyError("url_invalid_syntax", f"Invalid hostname: {hostname}")
 
     @classmethod
     def _validate_ssrf_blocked_hostname(cls, hostname: str, field_name: str) -> str:
@@ -1437,7 +1528,7 @@ class SecurityValidator:
         for blocked_host in settings.ssrf_blocked_hosts:
             blocked_normalized = cls._normalize_hostname(blocked_host)
             if hostname_normalized == blocked_normalized:
-                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+                raise UrlPolicyError("url_destination_blocked", f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
 
         return hostname_normalized
 
@@ -1520,13 +1611,13 @@ class SecurityValidator:
             except (socket.gaierror, socket.herror):
                 # DNS resolution failed
                 if settings.ssrf_dns_fail_closed:
-                    raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
+                    raise UrlPolicyError("url_dns_resolution_failed", f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
                 # Fail open: allow through (hostname blocking above catches known dangerous hostnames)
                 return
 
         if not ip_addresses:
             if settings.ssrf_dns_fail_closed:
-                raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+                raise UrlPolicyError("url_dns_no_addresses", f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
             return
 
         # Check ALL resolved addresses - if ANY is blocked, reject the request
@@ -1540,16 +1631,16 @@ class SecurityValidator:
                     continue
 
                 if ip_addr in network:
-                    raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
+                    raise UrlPolicyError("url_destination_blocked", f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
 
             restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
             if restricted_ip_kind == "cgnat":
-                raise ValueError(f"{field_name} contains shared address space which is blocked by SSRF protection")
+                raise UrlPolicyError("url_private_network_blocked", f"{field_name} contains shared address space which is blocked by SSRF protection")
 
             # Check localhost/loopback (if not allowed)
             if not settings.ssrf_allow_localhost:
                 if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
-                    raise ValueError(f"{field_name} contains localhost address which is blocked by SSRF protection")
+                    raise UrlPolicyError("url_private_network_blocked", f"{field_name} contains localhost address which is blocked by SSRF protection")
 
             # Check private networks (if not allowed)
             if not settings.ssrf_allow_private_networks:
@@ -1567,10 +1658,10 @@ class SecurityValidator:
                             break
 
                     if not allowed_private:
-                        raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+                        raise UrlPolicyError("url_private_network_blocked", f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
-    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> Dict[str, Optional[str]]:
+    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> ConnectionPinningResult:
         """Validate an outbound URL and return DNS metadata for connection pinning.
 
         This helper is intended for async request handlers that validate a URL
@@ -1584,10 +1675,11 @@ class SecurityValidator:
             field_name: Human-readable field name for validation errors.
 
         Returns:
-            Metadata containing ``validated_url``, original ``hostname``,
-            ``original_authority`` from the URL netloc, and an optional safe
-            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when SSRF
-            protection is disabled and DNS resolution is allowed to fail open.
+            Metadata containing ``validated_url``, the IDNA-encoded ``hostname``,
+            ``original_authority`` (that hostname plus any port, without userinfo),
+            every safe address in ``resolved_ips``, and ``resolved_ip`` as the
+            first of them. Both address fields are empty or ``None`` only when
+            DNS resolution is allowed to fail open.
 
         Raises:
             ValueError: If validation fails or the resolved target violates the
@@ -1606,9 +1698,13 @@ class SecurityValidator:
 
         dns_timeout = float(getattr(settings, "gateway_test_dns_timeout", 5.0))
         loop = asyncio.get_running_loop()
+        # An IPv6 literal authority has no hostname for DNS to rebind, so `validate_url`'s
+        # blanket IPv6 rejection does not apply here. The SSRF check below still runs on the
+        # literal address itself once it lands in `resolved_ips`.
+        reject_ipv6 = not _authority_is_ipv6_literal(value)
         try:
             validated_url = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name, skip_ssrf=True)),
+                loop.run_in_executor(None, lambda: cls._validate_url_impl(value, field_name, skip_ssrf=True, reject_ipv6=reject_ipv6)),
                 timeout=dns_timeout,
             )
         except asyncio.TimeoutError as exc:
@@ -1641,11 +1737,17 @@ class SecurityValidator:
             for resolved_ip in resolved_ips:
                 cls._validate_ssrf(resolved_ip, field_name)
 
+        # An IPv6 authority needs brackets in the `Host` header (RFC 3986 §3.2.2); `hostname`
+        # itself stays unbracketed, matching what httpx reports as `request.url.raw_host` for
+        # an IPv6 target and what a TLS SNI value expects.
+        authority_host = f"[{hostname_normalized}]" if ":" in hostname_normalized else hostname_normalized
+        authority = f"{authority_host}:{parsed.port}" if parsed.port is not None else authority_host
         return {
             "validated_url": validated_url,
-            "hostname": hostname,
-            "original_authority": parsed.netloc,
+            "hostname": hostname_normalized,
+            "original_authority": authority,
             "resolved_ip": resolved_ips[0] if resolved_ips else None,
+            "resolved_ips": resolved_ips,
         }
 
     @classmethod
@@ -1661,8 +1763,8 @@ class SecurityValidator:
                 timeout=timeout,
             )
         except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror) as exc:
-            if settings.ssrf_protection_enabled:
-                raise ValueError(f"{field_name} DNS resolution failed and connection pinning requires a resolved address") from exc
+            if settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
+                raise UrlPolicyError("url_dns_resolution_failed", f"{field_name} DNS resolution failed and connection pinning requires a resolved address") from exc
             return []
 
         resolved_ips: List[str] = []
@@ -1677,8 +1779,8 @@ class SecurityValidator:
             except ValueError:
                 continue
 
-        if not resolved_ips and settings.ssrf_protection_enabled:
-            raise ValueError(f"{field_name} DNS resolution returned no addresses and connection pinning requires a resolved address")
+        if not resolved_ips and settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
+            raise UrlPolicyError("url_dns_no_addresses", f"{field_name} DNS resolution returned no addresses and connection pinning requires a resolved address")
         return resolved_ips
 
     @classmethod

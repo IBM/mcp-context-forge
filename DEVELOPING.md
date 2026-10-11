@@ -155,8 +155,7 @@ mcp-context-forge/
 │   └── conftest.py            # Pytest fixtures
 ├── alembic/                   # Database migrations
 ├── docs/                      # Documentation
-├── plugins/                   # Plugin configurations
-└── mcp-servers/               # Example MCP servers
+└── plugins/                   # Plugin configurations
 ```
 
 ### Technology Stack

@@ -8,7 +8,7 @@ Style mechanics (formatting, naming conventions, import order, lint gates) live 
 
 Apply these rules to code you write or modify. Do not mass-refactor working code you did not touch — clean the code in your change, and leave neighboring code alone unless it violates a rule in a way that causes bugs.
 
-Languages: Python (`mcpgateway/`, `plugins/`, `mcp-servers/`), Rust (`crates/`), TypeScript/JavaScript (Admin UI). Examples are Python; the rules transfer.
+Languages: Python (`mcpgateway/`, `plugins/`), Rust (`crates/`), TypeScript/JavaScript (Admin UI). Examples are Python; the rules transfer.
 
 ## Names
 

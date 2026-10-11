@@ -736,7 +736,7 @@
         {% endif %}
 
         <!-- Global notification container for flash messages -->
-        <div id="global-notification" class="px-4 mt-4" style="display: none;">
+        <div id="global-notification" class="px-4 mt-4" style="display: none;" role="status" aria-live="polite" aria-atomic="true">
           <!-- Notification content will be inserted here -->
         </div>
 
@@ -9090,6 +9090,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-resource-form" method="POST">
+                  <input type="hidden" name="name" id="edit-resource-name" />
                   <div class="grid grid-cols-1 gap-7">
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
@@ -9108,14 +9109,14 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     <div class="relative">
                       <label
                         class="block text-sm font-medium text-gray-700"
-                        for="edit-resource-name"
+                        for="edit-resource-custom-name"
                         >Name</label
                       >
                       <input
                         type="text"
-                        name="name"
+                        name="customName"
                         required
-                        id="edit-resource-name"
+                        id="edit-resource-custom-name"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                       <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
@@ -12095,33 +12096,69 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       // Display flash messages from URL parameters
       (function() {
+        // Server redirects send codes, never text, so a crafted link cannot choose the banner wording.
+        const ERROR_MESSAGES = {
+          permission_denied: 'You do not have permission to perform this action.',
+          conflict: 'This item is being modified by another request. Please try again.',
+          name_conflict: 'A tool with the same name already exists. Rename the tool and try again.',
+          not_found: 'The requested item was not found.',
+          invalid_input: 'Invalid input. Please check the values and try again.',
+          invalid_uri: 'Invalid URI. Please check the URI format.',
+          state_change_failed: 'Failed to change the state. Please try again.',
+          delete_failed: 'Failed to delete the item. Please try again.',
+          create_failed: 'Failed to create the item. Please try again.',
+          update_failed: 'Failed to update the item. Please try again.',
+          team_name_required: 'Team name is required.',
+          team_name_invalid: 'Team name contains invalid characters.',
+        };
+        const INFO_MESSAGES = {
+          gateway_delete_pending: 'Gateway deletion accepted and pending cleanup.',
+        };
+        const GENERIC_ERROR = 'Something went wrong. Please try again.';
+
         const urlParams = new URLSearchParams(window.location.search);
-        const error = urlParams.get('error');
-        const success = urlParams.get('success');
+        const errorCode = urlParams.get('error');
+        const infoCode = urlParams.get('message');
+        const infoText = infoCode !== null && Object.hasOwn(INFO_MESSAGES, infoCode) ? INFO_MESSAGES[infoCode] : null;
         const notificationDiv = document.getElementById('global-notification');
+        if (!errorCode && !infoText) {
+          return;
+        }
 
-        if (error || success) {
-          let messageHtml = '';
-          if (error) {
-            messageHtml = `<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ ${decodeURIComponent(error)}</div>`;
-          } else if (success) {
-            messageHtml = `<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ ${decodeURIComponent(success)}</div>`;
-          }
+        const cleanUrl = new URL(window.location);
+        cleanUrl.searchParams.delete('error');
+        cleanUrl.searchParams.delete('message');
+        cleanUrl.searchParams.delete('success');
+        try {
+          window.history.replaceState({}, '', cleanUrl);
+        } catch (e) {
+          // Sandboxed iframes block history access; the banner still renders.
+        }
 
-          notificationDiv.innerHTML = messageHtml;
-          notificationDiv.style.display = 'block';
+        const banner = document.createElement('div');
+        const text = document.createElement('span');
+        const closeBtn = document.createElement('button');
+        if (errorCode) {
+          banner.className = 'flex items-start justify-between gap-4 bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200';
+          text.textContent = `❌ ${Object.hasOwn(ERROR_MESSAGES, errorCode) ? ERROR_MESSAGES[errorCode] : GENERIC_ERROR}`;
+        } else {
+          banner.className = 'flex items-start justify-between gap-4 bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200';
+          text.textContent = `✅ ${infoText}`;
+        }
+        closeBtn.type = 'button';
+        closeBtn.className = 'shrink-0 rounded px-2 font-bold leading-none hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-current';
+        closeBtn.setAttribute('aria-label', 'Dismiss notification');
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', () => {
+          notificationDiv.style.display = 'none';
+          notificationDiv.replaceChildren();
+        });
+        banner.append(text, closeBtn);
 
-          // Auto-dismiss after 5 seconds
-          setTimeout(() => {
-            notificationDiv.style.display = 'none';
-            notificationDiv.innerHTML = '';
-
-            // Clean up URL by removing the message parameters
-            const cleanUrl = new URL(window.location);
-            cleanUrl.searchParams.delete('error');
-            cleanUrl.searchParams.delete('success');
-            window.Admin?.safeReplaceState?.({}, '', cleanUrl);
-          }, 5000);
+        notificationDiv.style.display = 'block';
+        notificationDiv.replaceChildren(banner);
+        if (errorCode) {
+          closeBtn.focus();
         }
       })();
 

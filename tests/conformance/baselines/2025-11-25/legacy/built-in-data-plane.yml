@@ -1,8 +1,4 @@
 findings:
-- scenario: completion-complete
-  check: completion-complete
-  name: CompletionComplete
-  status: FAILURE
 - scenario: dns-rebinding-protection
   check: localhost-host-rebinding-rejected
   name: DNSRebindingRejected

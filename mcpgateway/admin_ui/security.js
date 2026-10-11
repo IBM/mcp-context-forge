@@ -10,6 +10,7 @@ import {
   MAX_NAME_LENGTH,
 } from "./constants.js";
 import { AppState } from "./appState.js";
+import DOMPurify from "dompurify";
 
 // ===================================================================
 // SECURITY: HTML-escape function to prevent XSS attacks
@@ -316,7 +317,8 @@ export function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
     element.textContent = htmlContent; // Fallback to safe text
     return;
   }
-  element.innerHTML = sanitizeHtmlForInsertion(htmlContent);
+  // Native setter: the installed innerHTML guard would sanitize a second time.
+  INNER_HTML_DESCRIPTOR.set.call(element, sanitizeHtmlForInsertion(htmlContent));
 }
 
 /**
@@ -366,64 +368,47 @@ const INNER_HTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(
   "innerHTML"
 );
 
-export function hasUnsafeUrlProtocol(value) {
-  if (typeof value !== "string") {
-    return false;
-  }
-  const trimmed = value.trim().toLowerCase();
-  return (
-    trimmed.startsWith("javascript:") ||
-    trimmed.startsWith("vbscript:") ||
-    trimmed.startsWith("data:text/html")
-  );
-}
+// htmx/Alpine attributes the UI depends on; DOMPurify keeps data-* and aria-* by default. None execute code:
+// htmx.config.allowEval = false (admin.js) disables hx-vals="js:", hx-vars and trigger filters,
+// JSON hx-vals is parsed with JSON.parse, and data-hx-vals-* are app pagination data, not htmx.
+const KEEP_ATTR = /^(hx-|x-|@|:)/;
+// htmx evaluates hx-on* and its data-hx-on* alias as code; DOMPurify keeps data-* before ADD_ATTR runs.
+// The hook is global, so it also covers window.DOMPurify callers such as the LLM chat Markdown renderer.
+const HTMX_CODE_ATTR = /^(data-)?hx-on/;
 
+DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+  if (HTMX_CODE_ATTR.test(data.attrName)) {
+    data.keepAttr = false;
+  }
+});
+
+const GUARD_CONFIG = {
+  ADD_ATTR: (name) => KEEP_ATTR.test(name),
+  FORBID_TAGS: ["iframe", "object", "embed", "meta", "base"],
+  // Keeps a leading <template>/<style> in the fragment instead of hoisting it to <head>.
+  FORCE_BODY: true,
+};
+
+/**
+ * SECURITY: Sanitize an HTML string with DOMPurify and the admin UI guard config.
+ *
+ * @param {*} rawHtml - Markup to sanitize; null and undefined become "".
+ * @returns {string} Sanitized markup without script, event handlers or htmx code attributes.
+ */
 export function sanitizeHtmlForInsertion(rawHtml) {
-  if (rawHtml === null || rawHtml === undefined) {
-    return "";
-  }
-  const html = String(rawHtml);
-
-  if (
-    !INNER_HTML_DESCRIPTOR ||
-    typeof INNER_HTML_DESCRIPTOR.set !== "function" ||
-    typeof INNER_HTML_DESCRIPTOR.get !== "function"
-  ) {
-    return html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
-  }
-
-  const template = document.createElement("template");
-  INNER_HTML_DESCRIPTOR.set.call(template, html);
-
-  template.content
-    .querySelectorAll("script,iframe,object,embed,meta,base")
-    .forEach((node) => node.remove());
-
-  template.content.querySelectorAll("*").forEach((element) => {
-    for (const attribute of Array.from(element.attributes)) {
-      const attrName = attribute.name.toLowerCase();
-      if (attrName.startsWith("on")) {
-        element.removeAttribute(attribute.name);
-        continue;
-      }
-
-      if (
-        (attrName === "href" ||
-          attrName === "src" ||
-          attrName === "xlink:href" ||
-          attrName === "action" ||
-          attrName === "formaction" ||
-          attrName === "srcdoc") &&
-        hasUnsafeUrlProtocol(attribute.value)
-      ) {
-        element.removeAttribute(attribute.name);
-      }
-    }
-  });
-
-  return INNER_HTML_DESCRIPTOR.get.call(template);
+  return DOMPurify.sanitize(String(rawHtml ?? ""), GUARD_CONFIG);
 }
 
+/**
+ * SECURITY: Route every Element.innerHTML write through sanitizeHtmlForInsertion().
+ *
+ * This is the sanitizer for the admin JS modules that build markup with innerHTML.
+ * It installs from the deferred module bundle, so inline <script> blocks that run
+ * while admin.html parses execute before it and must use textContent instead.
+ * htmx swaps parse with DOMParser and do not pass through it.
+ * CSP script-src-attr 'none' and htmx.config.allowEval = false are the backstops.
+ * Installs once; later calls are no-ops.
+ */
 export function installInnerHtmlGuard() {
   if (window.__mcpgatewayInnerHtmlGuardInstalled) {
     return;

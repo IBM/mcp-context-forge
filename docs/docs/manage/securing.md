@@ -180,6 +180,55 @@ volumes:
       defaultMode: 0600
 ```
 
+### Database Reset and JWT Signing Keys
+
+JWT signature validation depends on signing-key continuity, not database continuity.
+Normal gateway restarts preserve valid local JWTs when the signing key remains unchanged.
+Deleting or recreating the database also leaves those JWTs cryptographically valid when the
+same key remains configured. Database loss removes token catalog entries and revocation
+records stored only in that database; it does not revoke self-contained JWTs.
+
+If a user or platform-admin identity remains available, is recreated, or qualifies for
+configured platform-admin bootstrap, an old signed JWT can pass current authorization checks.
+Actual external IdP tokens follow the external provider's lifecycle. Local session JWTs issued
+after an SSO login follow the local signing-key lifecycle described here. Restored database state
+can restore users, grants, and revocations from the backup point. Persistent storage remains
+required for production database state.
+
+Rotate `JWT_SECRET_KEY` whenever an environment is destructively reset or rebuilt and previous
+local JWTs must become invalid. Key rotation invalidates local session, CLI, and automation JWTs.
+Issue replacement tokens after rotation. All gateway replicas must receive the same new key
+before serving traffic; mixed old-key and new-key replicas produce inconsistent authentication.
+For asymmetric signing, rotate the signing key pair and remove the retired verification key
+when immediate invalidation is required.
+
+#### Destructive Reset Procedure
+
+1. Stop gateway instances and local token issuers.
+2. Reset or recreate the database.
+3. Generate a new JWT signing key through the existing secret-management workflow.
+4. Update the Kubernetes Secret, Compose environment, or external secret manager.
+5. Restart all gateway instances with the same new key.
+6. Reissue required CLI and automation tokens.
+7. Confirm an old token returns `401`.
+8. Confirm a replacement token succeeds.
+
+Do not generate a new signing key independently inside each gateway process. That breaks
+replicas and ordinary restarts.
+
+For production deployments:
+
+- Use persistent database storage.
+- Set `REQUIRE_USER_IN_DB=true` to reject tokens for missing non-platform-admin users.
+- Do not treat `REQUIRE_USER_IN_DB=true` as global token revocation; a recreated identity can satisfy user lookup again.
+- Store `JWT_SECRET_KEY` or the signing key pair in a managed secret store.
+- Use distinct signing keys for each environment.
+- Keep session JWT lifetimes short.
+- Avoid 30-day CLI JWTs for routine automation.
+- Prefer managed catalog tokens when revocation and usage tracking are required. Their revocation
+  state depends on persistent or restored database records.
+- Treat non-expiring JWTs as high-risk credentials.
+
 #### Environment Isolation
 
 When deploying ContextForge across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.
@@ -699,7 +748,45 @@ credentials embedded in `DATABASE_URL` and `REDIS_URL`, plus
 `BASIC_AUTH_PASSWORD`. Audit existing tools for hostile `jsonpath_filter` values
 before upgrading, since those tools will begin failing at invoke time.
 
-### 14. Database Security
+### 14. JSON Schema Regex Sandbox
+
+A JSON Schema `pattern` or `patternProperties` keyword is a regular expression,
+and tool, prompt, and output schemas are attacker-influenced. A schema that
+carries either keyword has its whole validation run in a killable worker
+process, under a wall-clock limit. A schema with neither keyword validates
+inline, with no sandbox overhead. Routing looks only at keyword presence,
+never at pattern content.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `REGEX_TIMEOUT_SECONDS` | `1.0` | Wall-clock limit for one schema validation that carries a regex keyword. Must be `> 0` and `<= 60`. |
+| `REGEX_WORKERS` | `2` | Schema-validation worker processes per gateway worker. Range: `1`–`16`. |
+| `REGEX_MAX_SUBJECT_BYTES` | `262144` | Maximum serialized instance size sent to the sandbox. A larger instance fails validation closed. Range: `1024`–`10485760` (1KB–10MB). |
+
+!!! warning "Fail-closed, not fail-open"
+    A timeout, an oversize instance, or a sandbox that failed to start all
+    fail the validation. None of these ever falls back to an unbounded
+    inline match. No setting disables the sandbox for a regex-bearing schema.
+
+**Platform.** The sandbox forks worker processes on Linux. On any other
+platform it falls back to `spawn`, matching the jq filter sandbox's own
+platform split (see section 13). The shipped container images are Linux.
+
+**Plugin-configured regex.** Regex patterns that an operator supplies in
+plugin configuration are not routed through this sandbox — they come from
+deploy-time configuration, not from a request. The gateway logs one warning
+per pattern at plugin load, so an operator has an inventory of unbounded
+patterns, but does not bound their compile or match time.
+
+**Federated MCP output validation.** The MCP client SDK's own result
+validation (`mcp.ClientSession._validate_tool_result`, in the installed `mcp`
+package, not `mcpgateway`) validates a federated peer's `structuredContent`
+against that peer's advertised `outputSchema` with a stock `jsonschema` validator, before
+the gateway's own sandboxed check runs. A hostile federated MCP server
+controls both the schema and the instance on this path, and it is not yet
+bounded by this sandbox; tracked as a follow-up.
+
+### 15. Database Security
 
 - [ ] Use TLS for database connections
 - [ ] Configure strong passwords
@@ -707,7 +794,7 @@ before upgrading, since those tools will begin failing at invoke time.
 - [ ] Enable audit logging
 - [ ] Regular backups with encryption
 
-### 15. Monitoring & Logging
+### 16. Monitoring & Logging
 
 - [ ] Set up structured logging without sensitive data
 - [ ] Configure log rotation and secure storage
@@ -715,7 +802,7 @@ before upgrading, since those tools will begin failing at invoke time.
 - [ ] Set up anomaly detection
 - [ ] Create incident response procedures
 
-### 16. Integration Security
+### 17. Integration Security
 
 ContextForge should be integrated with:
 
@@ -725,7 +812,7 @@ ContextForge should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 17. Well-Known URI Security
+### 18. Well-Known URI Security
 
 Configure well-known URIs appropriately for your deployment:
 
@@ -749,7 +836,7 @@ Security considerations:
 - [ ] Update security.txt Expires field before expiration
 - [ ] Consider custom well-known files only if necessary
 
-### 18. Downstream Application Security
+### 19. Downstream Application Security
 
 Applications consuming ContextForge data must:
 

@@ -3,7 +3,6 @@
 
 # Rust projects
 /crates/ @lucarlig @dawid-nowak
-/mcp-servers/rust/ @lucarlig @dawid-nowak
 /Cargo.toml @lucarlig @dawid-nowak
 /Cargo.lock @lucarlig @dawid-nowak
 /deny.toml @lucarlig @dawid-nowak

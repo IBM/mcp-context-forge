@@ -16,7 +16,9 @@ Tests will FAIL until implementation is complete (TDD Red Phase).
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -26,6 +28,82 @@ import pytest
 from mcpgateway.db import Gateway, OAuthState, RegisteredOAuthClient
 from mcpgateway.services.dcr_service import DcrService
 from mcpgateway.services.oauth_manager import OAuthManager
+
+PUBLIC_TEST_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def clear_as_metadata_cache():
+    """Clear the module-global AS metadata cache around every test.
+
+    ``_metadata_cache`` in ``dcr_service`` lives for the process, so a cached
+    document from another test module leaks into these tests and makes them
+    order-dependent.
+
+    Yields:
+        None: The cache is empty for the test and cleared again afterwards.
+    """
+    # First-Party
+    from mcpgateway.services.dcr_service import _metadata_cache
+
+    _metadata_cache.clear()
+    yield
+    _metadata_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def stub_dns_for_pinning(monkeypatch):
+    """Resolve every hostname in this module to one public address.
+
+    Connection pinning resolves DNS for real. The test hostnames do not exist,
+    so without this stub every pinned request fails to resolve.
+
+    This patches the global ``socket`` module, because ``validators.py`` uses a
+    plain ``import socket``. Every consumer of ``getaddrinfo`` in the process is
+    redirected while a test runs.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    def _fake_getaddrinfo(_host, port, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_TEST_IP, port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", _fake_getaddrinfo)
+
+
+@contextmanager
+def patch_isolated_client(mock_client):
+    """Patch the isolated HTTP client factory so it yields ``mock_client``.
+
+    Args:
+        mock_client: Mock standing in for ``httpx.AsyncClient``.
+
+    Yields:
+        None: The patch stays active for the duration of the block.
+    """
+    context_manager = MagicMock()
+    context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+    context_manager.__aexit__ = AsyncMock(return_value=False)
+    with patch("mcpgateway.services.dcr_service.get_isolated_http_client", return_value=context_manager):
+        yield
+
+
+@contextmanager
+def patch_oauth_isolated_client(mock_client):
+    """Patch the OAuth isolated HTTP client factory.
+
+    Args:
+        mock_client: Mock standing in for ``httpx.AsyncClient``.
+
+    Yields:
+        None: The patch stays active for the duration of the block.
+    """
+    context_manager = MagicMock()
+    context_manager.__aenter__ = AsyncMock(return_value=mock_client)
+    context_manager.__aexit__ = AsyncMock(return_value=False)
+    with patch("mcpgateway.services.oauth_manager.get_isolated_http_client", return_value=context_manager):
+        yield
 
 
 @pytest.mark.integration
@@ -40,6 +118,7 @@ class TestPKCEFlowIntegration:
         from unittest.mock import patch
 
         # First-Party
+        from mcpgateway.config import get_settings
         from mcpgateway.db import OAuthState
         from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -47,11 +126,10 @@ class TestPKCEFlowIntegration:
         def mock_get_db():
             yield test_db
 
-        with patch("mcpgateway.db.get_db", mock_get_db):
-            with patch("mcpgateway.config.get_settings") as mock_settings:
-                # Configure settings to use database cache
-                mock_settings.return_value.cache_type = "database"
+        database_settings = get_settings().model_copy(update={"cache_type": "database"})
 
+        with patch("mcpgateway.db.get_db", mock_get_db):
+            with patch("mcpgateway.services.oauth_manager.get_settings", return_value=database_settings):
                 token_storage = TokenStorageService(test_db)
                 oauth_manager = OAuthManager(token_storage=token_storage)
 
@@ -74,7 +152,13 @@ class TestPKCEFlowIntegration:
 
                 # Manually store state in database for this test
                 oauth_state_record = OAuthState(
-                    gateway_id="test-gateway-123", state=state, code_verifier=pkce_params["code_verifier"], expires_at=datetime.now(timezone.utc) + timedelta(seconds=600), used=False
+                    gateway_id="test-gateway-123",
+                    state=state,
+                    code_verifier=pkce_params["code_verifier"],
+                    app_user_email="user@example.com",
+                    redirect_uri=credentials["redirect_uri"],
+                    expires_at=datetime.now(timezone.utc) + timedelta(seconds=600),
+                    used=False,
                 )
                 test_db.add(oauth_state_record)
                 test_db.commit()
@@ -103,7 +187,7 @@ class TestPKCEFlowIntegration:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_response)
 
-                with patch.object(oauth_manager, "_get_client", return_value=mock_client):
+                with patch_oauth_isolated_client(mock_client):
                     # Complete flow
                     _result = await oauth_manager.complete_authorization_code_flow(gateway_id="test-gateway-123", code=code, state=state, credentials=credentials)  # noqa: F841
 
@@ -168,7 +252,7 @@ class TestDCRFlowIntegration:
         mock_client.get = AsyncMock(return_value=mock_get_response)
         mock_client.post = AsyncMock(return_value=mock_post_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # Step 1: Register client via DCR
             registered_client = await dcr_service.register_client(
                 gateway_id="test-gw-456",
@@ -360,7 +444,7 @@ class TestDCRErrorHandling:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First-Party
             from mcpgateway.services.dcr_service import DcrError
 
@@ -395,7 +479,7 @@ class TestDCRErrorHandling:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+        with patch_isolated_client(mock_client):
             # First-Party
             from mcpgateway.services.dcr_service import DcrError
 

@@ -39,7 +39,6 @@ from dataclasses import dataclass
 from enum import Enum
 import re
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 # Third-Party
@@ -47,7 +46,6 @@ import anyio
 from cpex.framework import GlobalContext, PluginContextTable, PluginViolationError
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
-import httpx
 import jwt
 from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import MCPError
@@ -55,7 +53,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import mcp_types as types
 from mcp_types import JSONRPCMessage
-from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 import orjson
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -74,8 +72,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
-from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.http_client_service import get_http_client, get_http_limits
+from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -119,6 +116,144 @@ from mcpgateway.utils.verify_credentials import (
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _parse_mcp_scope_headers(scope: Scope) -> dict[str, str]:
+    """Extract and normalise HTTP headers from an ASGI scope into a lowercase str dict.
+
+    Args:
+        scope: ASGI scope dict.
+
+    Returns:
+        Dict mapping lowercase header name to decoded value.
+    """
+    result: dict[str, str] = {}
+    for item in scope.get("headers") or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        name, value = item
+        if not isinstance(name, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
+            continue
+        result[name.decode("latin-1").lower()] = value.decode("latin-1")
+    return result
+
+
+def _check_mcp_origin(origin: Optional[str]) -> bool:
+    """Return True when the Origin header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Origin (``None``) is always accepted. An empty-string Origin is treated as
+    present-and-must-match. When ``mcp_allowed_origins`` is empty, all origins are
+    accepted (opt-in enforcement). Otherwise the origin must be an exact member of the
+    configured set or the request must be rejected with HTTP 403.
+
+    Args:
+        origin: Value of the Origin header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if origin is None:
+        return True
+    if not settings.mcp_allowed_origins:
+        return True
+    return origin in settings.mcp_allowed_origins
+
+
+# Loopback hostname literals. Port is stripped before the check.
+# A DNS-rebound page cannot control the loopback address in Host; only genuine
+# same-host callers (e.g. test_server_handshake in-process self-calls) send these.
+_LOOPBACK_HOSTNAMES: frozenset[str] = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+
+def _check_mcp_host(host: Optional[str]) -> bool:
+    """Return True when the Host header is allowed for MCP Streamable HTTP ingress.
+
+    Missing Host (``None``) is always accepted. An empty-string Host is treated as
+    present-and-must-match. Loopback literals (``127.0.0.1``, ``localhost``,
+    ``[::1]``) are always accepted regardless of the allowlist — in-process
+    self-calls (e.g. ``test_server_handshake``) send these and a DNS-rebound page
+    cannot forge a loopback hostname in ``Host``. When ``mcp_allowed_hosts`` is
+    empty all other hosts are accepted (opt-in enforcement). Otherwise the host
+    must be an exact member of the configured set or the request is rejected.
+
+    Args:
+        host: Value of the Host header, or None when absent.
+
+    Returns:
+        True when the request should proceed, False when it must be rejected.
+    """
+    if host is None:
+        return True
+    # Strip port suffix (host:port or [::1]:port) before loopback check.
+    bare = host.rsplit(":", 1)[0] if ":" in host else host
+    # De-bracket IPv6 literals: "[::1]" → "::1"
+    if bare.startswith("[") and bare.endswith("]"):
+        bare = bare[1:-1]
+    if bare in _LOOPBACK_HOSTNAMES:
+        return True
+    if not settings.mcp_allowed_hosts:
+        return True
+    return host in settings.mcp_allowed_hosts
+
+
+class MCPOriginHostGate:
+    """ASGI gate that enforces MCP Origin/Host allowlists at the public /mcp mount.
+
+    Runs before any ingress dispatch (Python, rust-internal, rust-public) so the
+    check is not duplicated per-transport. The ``/_internal/mcp/transport`` bridge
+    is mounted separately and intentionally bypasses this gate — requests on that
+    path arrive from the trusted Rust sidecar at 127.0.0.1 only.
+
+    When session-affinity is enabled, loopback-sourced requests carrying
+    ``x-forwarded-internally: true`` are also bypassed (worker-to-worker routing).
+    The bypass is gated on affinity being enabled so a DNS-rebound page on loopback
+    cannot spoof the header when affinity is off (the default).
+    """
+
+    def __init__(self, app: Any) -> None:
+        """Wrap an ASGI application with the Origin/Host gate.
+
+        Args:
+            app: Downstream ASGI callable.
+        """
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Enforce Origin/Host allowlists before dispatching to the wrapped app.
+
+        Args:
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+
+        hdrs = _parse_mcp_scope_headers(scope)
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_loopback_forward = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and hdrs.get("x-forwarded-internally") == "true"
+
+        if not is_loopback_forward:
+            _raw_origin: Optional[str] = hdrs.get("origin")
+            _raw_host: Optional[str] = hdrs.get("host")
+            if not _check_mcp_origin(_raw_origin):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Origin: %s",
+                    sanitize_for_log(str(_raw_origin)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Origin not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+            if not _check_mcp_host(_raw_host):
+                logger.warning(
+                    "MCPOriginHostGate: rejecting request — invalid Host: %s",
+                    sanitize_for_log(str(_raw_host)),
+                )
+                await ORJSONResponse({"detail": "Forbidden: Host not allowed"}, status_code=HTTP_403_FORBIDDEN)(scope, receive, send)
+                return
+
+        await self._app(scope, receive, send)
 
 
 def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
@@ -323,8 +458,15 @@ class ContextForgeMCPServer(Server[Any]):
         *,
         protocol_version: Optional[str] = None,
     ) -> types.ServerCapabilities:
-        """Return SDK capabilities plus enabled ContextForge MCP extensions."""
+        """Return SDK capabilities plus enabled ContextForge MCP extensions.
+
+        Modern protocol versions omit the logging capability. MCP 2026-07-28
+        deprecates it (SEP-2577), and ContextForge sends no request-scoped logs.
+        The SDK derives it from the legacy ``logging/setLevel`` handler only.
+        """
         capabilities = super().get_capabilities(notification_options, experimental_capabilities, extensions, protocol_version=protocol_version)
+        if protocol_version in MODERN_PROTOCOL_VERSIONS:
+            capabilities.logging = None
         user_context = user_context_var.get()
         extra_extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
         if extra_extensions:
@@ -417,9 +559,6 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
 
 
 _shared_session_registry: Optional[Any] = None
-_rust_event_store_client: Optional[httpx.AsyncClient] = None
-_rust_event_store_client_lock = asyncio.Lock()
-_RUST_EVENT_STORE_DEFAULT_KEY_PREFIX = "mcpgw:eventstore"
 
 # ------------------------------ Event store ------------------------------
 
@@ -716,128 +855,6 @@ class InMemoryEventStore(EventStore):
             await send_callback(EventMessage(entry.message, entry.event_id))
 
         return last_event.stream_id
-
-
-class RustEventStore(EventStore):
-    """Rust-backed event store that delegates resumable stream state to the sidecar."""
-
-    def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600, key_prefix: str = _RUST_EVENT_STORE_DEFAULT_KEY_PREFIX):
-        """Initialize the Rust-backed event store wrapper.
-
-        Args:
-            max_events_per_stream: Maximum number of events retained per stream.
-            ttl: Event retention time in seconds.
-            key_prefix: Redis key prefix shared with the Rust sidecar.
-        """
-        self.max_events_per_stream = max_events_per_stream
-        self.ttl = ttl
-        self.key_prefix = key_prefix.rstrip(":")
-
-    async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
-        """Store an event in the Rust-backed resumable event store.
-
-        Args:
-            stream_id: Stream that owns the event.
-            message: JSON-RPC payload to persist for replay.
-
-        Returns:
-            The generated event identifier returned by the Rust sidecar.
-
-        Raises:
-            RuntimeError: If the Rust sidecar event store is unavailable or returns invalid data.
-        """
-        client = await _get_rust_event_store_client()
-        message_dict = None if message is None else (message.model_dump() if hasattr(message, "model_dump") else dict(message))
-        response = await client.post(
-            _build_rust_runtime_internal_url("/_internal/event-store/store"),
-            json={
-                "streamId": stream_id,
-                "message": message_dict,
-                "keyPrefix": self.key_prefix,
-                "maxEventsPerStream": self.max_events_per_stream,
-                "ttlSeconds": self.ttl,
-            },
-            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
-            follow_redirects=False,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        event_id = payload.get("eventId")
-        if not isinstance(event_id, str) or not event_id:
-            raise RuntimeError("Rust event store returned an invalid eventId")
-        return event_id
-
-    async def replay_events_after(self, last_event_id: EventId, send_callback: EventCallback) -> Union[StreamId, None]:
-        """Replay events newer than ``last_event_id`` through the provided callback.
-
-        Args:
-            last_event_id: Last event acknowledged by the reconnecting client.
-            send_callback: Callback invoked for each replayed event payload.
-
-        Returns:
-            The associated stream identifier when replay succeeds, else ``None``.
-        """
-        client = await _get_rust_event_store_client()
-        response = await client.post(
-            _build_rust_runtime_internal_url("/_internal/event-store/replay"),
-            json={
-                "lastEventId": last_event_id,
-                "keyPrefix": self.key_prefix,
-            },
-            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
-            follow_redirects=False,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        stream_id = payload.get("streamId")
-        if not isinstance(stream_id, str) or not stream_id:
-            return None
-        for event in payload.get("events", []):
-            if not isinstance(event, dict):
-                continue
-            await send_callback(event.get("message"))
-        return stream_id
-
-
-async def _get_rust_event_store_client() -> httpx.AsyncClient:
-    """Return the HTTP client used for Python -> Rust event-store calls.
-
-    Returns:
-        An async HTTP client configured for Rust event-store access.
-    """
-    global _rust_event_store_client  # pylint: disable=global-statement
-
-    uds_path = settings.experimental_rust_mcp_runtime_uds
-    if not uds_path:
-        return await get_http_client()
-
-    if _rust_event_store_client is not None:
-        return _rust_event_store_client
-
-    async with _rust_event_store_client_lock:
-        if _rust_event_store_client is None:
-            _rust_event_store_client = httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=uds_path),
-                limits=get_http_limits(),
-                timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
-                follow_redirects=False,
-            )
-        return _rust_event_store_client
-
-
-def _build_rust_runtime_internal_url(path: str) -> str:
-    """Build a Rust sidecar internal URL for UDS or loopback HTTP transport.
-
-    Args:
-        path: Internal Rust runtime path to append to the configured base URL.
-
-    Returns:
-        Absolute URL targeting the Rust sidecar over HTTP or UDS-backed transport.
-    """
-    base = urlsplit(settings.experimental_rust_mcp_runtime_url)
-    base_path = base.path.rstrip("/")
-    target_path = f"{base_path}{path}" if base_path else path
-    return urlunsplit((base.scheme, base.netloc, target_path, "", ""))
 
 
 # ------------------------------ Streamable HTTP Transport ------------------------------
@@ -1350,9 +1367,6 @@ async def _validate_streamable_session_access(
         return True, 200, ""
 
     if not _should_enforce_streamable_rbac(user_context):
-        return True, 200, ""
-
-    if isinstance(user_context, dict) and user_context.get("_rust_session_validated") is True:
         return True, 200, ""
 
     # Initialize establishes a new session and is authorized separately.
@@ -3182,6 +3196,7 @@ async def complete(
     ref: Union[types.PromptReference, types.ResourceTemplateReference],
     argument: types.CompleteRequest,
     context: Optional[types.CompletionContext] = None,
+    meta: Optional[types.RequestParamsMeta] = None,
 ) -> types.CompleteResult:
     """
     Provides argument completion suggestions for prompts or resources.
@@ -3193,6 +3208,7 @@ async def complete(
             position for which completion suggestions should be generated.
         context: Optional contextual information for the completion request,
             such as user, environment, or invocation metadata.
+        meta: Optional MCP request metadata.
 
     Returns:
         types.CompleteResult: A normalized completion result containing
@@ -3210,6 +3226,13 @@ async def complete(
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
+            raise PermissionError(_ACCESS_DENIED_MSG)
+        has_permission = await _check_streamable_permission(
+            user_context=user_context,
+            permission="tools.read",
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
+        )
+        if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
@@ -3234,6 +3257,8 @@ async def complete(
                 "argument": argument.model_dump() if hasattr(argument, "model_dump") else argument,
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
             }
+            if meta is not None:
+                params["_meta"] = meta.model_dump(by_alias=True) if hasattr(meta, "model_dump") else meta
 
             result = await completion_service.handle_completion(
                 db,
@@ -3274,6 +3299,13 @@ async def complete(
             # Fallback: return empty completion
             return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
+    except CompletionError as e:
+        # Surface as an MCPError instead of a silently-empty CompleteResult,
+        # matching the JSON-RPC code #6629 requires (spec §8.5). This is a
+        # deliberate behavior change: today this path fails open (the caller
+        # gets a *successful* empty completion) — a federated-forwarding
+        # failure is now visible as a proper JSON-RPC error instead.
+        raise MCPError(code=completion_error_code(e), message=str(e)) from e
     except Exception as e:
         logger.exception("Error handling completion: %s", e)
         return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
@@ -3427,7 +3459,7 @@ async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
     token = _v2_request_ctx.set(ctx)
     try:
         completion_context = getattr(params, "context", None)
-        return await complete(params.ref, params.argument, completion_context)
+        return await complete(params.ref, params.argument, completion_context, getattr(params, "meta", None))
     finally:
         _v2_request_ctx.reset(token)
 
@@ -4322,14 +4354,8 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
-            if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled and settings.experimental_rust_mcp_event_store_enabled:
-                event_store = RustEventStore(
-                    max_events_per_stream=settings.streamable_http_max_events_per_stream,
-                    ttl=settings.streamable_http_event_ttl,
-                )
-                logger.debug("Using RustEventStore for stateful sessions")
             # Use Redis event store for single-worker stateful deployments
-            elif settings.cache_type == "redis" and settings.redis_url:
+            if settings.cache_type == "redis" and settings.redis_url:
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
                 logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
             else:
@@ -4472,16 +4498,16 @@ class SessionManagerWrapper:
         match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
-        raw_headers = scope.get("headers") or []
-        headers: dict[str, str] = {}
-        for item in raw_headers:
-            if not isinstance(item, (tuple, list)) or len(item) != 2:
-                continue
-            k, v = item
-            if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
-                continue
-            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
-            headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+        headers = _parse_mcp_scope_headers(scope)
+
+        # Internal-forward bypass: only valid when session-affinity is enabled (the sole code path
+        # that sets x-forwarded-internally). Gate on loopback source to prevent external spoofing.
+        # Origin/Host checks are enforced at the /mcp mount level (main.py MCPOriginHostGate) so
+        # that all ingress shapes — Python, rust-internal, and rust-public — are covered by a single
+        # gate without duplicating the logic here.
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        is_internally_forwarded = settings.mcpgateway_session_affinity_enabled and _client_host in ("127.0.0.1", "::1") and headers.get("x-forwarded-internally") == "true"
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
@@ -4497,11 +4523,6 @@ class SessionManagerWrapper:
 
         # Multi-worker session affinity: check if we should forward to another worker
         # This must happen BEFORE the SDK's session manager handles the request
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _client = scope.get("client")
-        _client_host = _client[0] if _client else None
-        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
-        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
@@ -4766,21 +4787,21 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
-                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": WORKER_ID}) as affinity_span:
+                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": get_worker_id()}) as affinity_span:
                     # The span wraps the Redis owner lookup itself — that round-trip
                     # is the latency this instrumentation exists to measure.
                     owner = await pool.get_session_owner(mcp_session_id)
                     if affinity_span is not None:
                         set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
-                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != get_worker_id()) else "local")
+                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", get_worker_id(), mcp_session_id[:8], owner)
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", get_worker_id(), mcp_session_id[:8], owner)
 
                     # Package the edge-validated identity so the owner can dispatch via
                     # the trusted internal /_internal/mcp/rpc endpoint without
@@ -4836,17 +4857,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", get_worker_id(), mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", get_worker_id(), mcp_session_id[:8])
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", get_worker_id(), mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -5231,13 +5252,13 @@ class SessionManagerWrapper:
                 try:
                     # First-Party - lazy import to avoid circular dependencies
                     # First-Party
-                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                     pool = get_session_affinity()
                     await pool.register_session_owner(session_to_register)
                     logger.debug(
                         "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
+                        get_worker_id(),
                         session_to_register[:8],
                     )
                 except Exception as e:
@@ -5353,9 +5374,9 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
 def get_streamable_http_auth_context() -> dict[str, Any]:
     """Return the current StreamableHTTP auth context for trusted internal forwarding.
 
-    The Rust MCP proxy uses this to carry already-authenticated MCP request context
-    across the Python -> Rust -> Python seam so the internal dispatcher does not
-    need to repeat JWT verification and team normalization on the hot path.
+    Trusted internal dispatch uses this to carry already-authenticated MCP request
+    context so the internal dispatcher does not need to repeat JWT verification and
+    team normalization on the hot path.
 
     Returns:
         A shallow copy of the trusted auth context fields that may be forwarded

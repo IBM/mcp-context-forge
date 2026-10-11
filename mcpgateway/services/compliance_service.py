@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import AuditTrail, EmailUser, UserRole
+from mcpgateway.utils.error_formatter import unexpected_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +342,7 @@ class ComplianceService:
             }
         except Exception as exc:
             logger.warning("Failed to collect user/role evidence for %s: %s", control_id, exc)
-            return {"error": str(exc), "control_id": control_id}
+            return {"error": unexpected_error_detail(exc), "control_id": control_id}
 
     def collect_audit_log_evidence(self, db: Session, start: datetime, end: datetime, control_id: str) -> Dict[str, Any]:
         """Collect audit log evidence for the assessment period.
@@ -389,7 +390,7 @@ class ComplianceService:
             }
         except Exception as exc:
             logger.warning("Failed to collect audit log evidence for %s: %s", control_id, exc)
-            return {"error": str(exc), "control_id": control_id, "audit_enabled": getattr(settings, "audit_trail_enabled", False)}
+            return {"error": unexpected_error_detail(exc), "control_id": control_id, "audit_enabled": getattr(settings, "audit_trail_enabled", False)}
 
     def collect_config_snapshot(self, control_id: str) -> Dict[str, Any]:
         """Collect relevant configuration settings as evidence.

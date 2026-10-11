@@ -132,6 +132,70 @@ def test_tool_request_type_validation_unknown_integration():
         ToolCreate.validate_request_type("GET", info)
 
 
+_X_MCP_HEADER_VIOLATIONS = [
+    pytest.param(
+        {"type": "object", "properties": {"r": {"type": "string", "x-mcp-header": ""}}},
+        "property 'r': x-mcp-header '' is not an RFC 9110 token",
+        id="empty-token",
+    ),
+    pytest.param(
+        {"type": "object", "properties": {"r": {"type": "string", "x-mcp-header": "Re gion"}}},
+        "property 'r': x-mcp-header 'Re gion' is not an RFC 9110 token",
+        id="illegal-characters",
+    ),
+    pytest.param(
+        {"type": "object", "properties": {"r": {"type": "string", "x-mcp-header": 5}}},
+        "property 'r': x-mcp-header must be a string, not int",
+        id="non-string-token",
+    ),
+    pytest.param(
+        {"type": "object", "properties": {"r": {"type": "number", "x-mcp-header": "R"}}},
+        "property 'r': x-mcp-header is only permitted on integer/string/boolean properties (got 'number')",
+        id="number-typed-property",
+    ),
+    pytest.param(
+        {"type": "object", "properties": {"a": {"type": "string", "x-mcp-header": "Region"}, "b": {"type": "string", "x-mcp-header": "region"}}},
+        "x-mcp-header 'Region' on property 'a' duplicates property 'b'",
+        id="case-insensitive-duplicate",
+    ),
+    pytest.param(
+        {"type": "object", "properties": {"l": {"type": "array", "items": {"type": "string", "x-mcp-header": "R"}}}},
+        "x-mcp-header found at a schema position not reachable via a pure `properties` chain",
+        id="under-items",
+    ),
+]
+
+
+def test_tool_create_keeps_valid_x_mcp_header():
+    """valid headers accepted on create"""
+    schema = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}, "query": {"type": "string"}}}
+    assert ToolCreate.model_validate({"name": "t", "description": "synced from an MCP server", "inputSchema": schema}).input_schema == schema
+    plain = {"type": "object", "properties": {"query": {"type": "string"}}}
+    assert ToolCreate.model_validate({"name": "t", "description": "synced from an MCP server", "inputSchema": plain}).input_schema == plain
+
+
+@pytest.mark.parametrize("schema, reason", _X_MCP_HEADER_VIOLATIONS)
+def test_tool_create_rejects_invalid_x_mcp_header(schema, reason):
+    """invalid headers rejected on create"""
+    with pytest.raises(ValidationError) as exc_info:
+        ToolCreate.model_validate({"name": "t", "description": "synced from an MCP server", "inputSchema": schema})
+    assert exc_info.value.errors()[0]["msg"] == f"Value error, invalid x-mcp-header annotation: {reason}"
+
+
+def test_tool_update_keeps_valid_x_mcp_header():
+    """valid headers accepted on update"""
+    schema = {"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}}}
+    assert ToolUpdate(input_schema=schema).input_schema == schema
+
+
+@pytest.mark.parametrize("schema, reason", _X_MCP_HEADER_VIOLATIONS)
+def test_tool_update_rejects_invalid_x_mcp_header(schema, reason):
+    """invalid headers rejected on update"""
+    with pytest.raises(ValidationError) as exc_info:
+        ToolUpdate(input_schema=schema)
+    assert exc_info.value.errors()[0]["msg"] == f"Value error, invalid x-mcp-header annotation: {reason}"
+
+
 def test_tool_update_validators():
     too_long = "x" * (SecurityValidator.MAX_NAME_LENGTH + 1)
     with pytest.raises(ValueError):

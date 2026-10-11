@@ -107,7 +107,7 @@ class TestJSONRPCPassthroughValidation:
 
         # FastAPI/Pydantic validation returns 422 for invalid body type
         # (Line 5357's isinstance check is defensive but unreachable via normal paths)
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_valid_jsonrpc_request(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that valid JSON-RPC request is accepted."""

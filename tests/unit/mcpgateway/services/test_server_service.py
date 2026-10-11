@@ -8,6 +8,7 @@ Tests for server service implementation.
 
 # Standard
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
@@ -630,6 +631,56 @@ class TestServerService:
         test_db.get = Mock(return_value=None)
         with pytest.raises(ServerNotFoundError):
             await server_service.get_server(test_db, 999)
+
+    @pytest.mark.asyncio
+    async def test_ensure_server_access_uses_lightweight_query_without_view_audit(self, server_service, test_db):
+        """RPC preflight should select only visibility columns and avoid view auditing."""
+        server = SimpleNamespace(id="server-1", visibility="public", team_id=None, owner_email=None)
+        test_db.execute = Mock(return_value=Mock(one_or_none=Mock(return_value=server)))
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        await server_service.ensure_server_access(
+            test_db,
+            "server-1",
+            user_email="user@example.com",
+            token_teams=[],
+        )
+
+        test_db.execute.assert_called_once()
+        statement = test_db.execute.call_args.args[0]
+        assert {column.key for column in statement.selected_columns} == {"id", "visibility", "team_id", "owner_email"}
+        server_service._structured_logger.log.assert_not_called()
+        server_service._audit_trail.log_action.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ensure_server_access_wrong_team_matches_missing_response(self, server_service, test_db):
+        """Wrong-team and absent servers must both use the generic not-found contract."""
+        hidden_server = SimpleNamespace(id="server-1", visibility="team", team_id="team-a", owner_email="owner@example.com")
+        server_service._structured_logger = MagicMock()
+        server_service._audit_trail = MagicMock()
+
+        test_db.execute = Mock(return_value=Mock(one_or_none=Mock(return_value=hidden_server)))
+        with pytest.raises(ServerNotFoundError) as hidden_error:
+            await server_service.ensure_server_access(
+                test_db,
+                "server-1",
+                user_email="user@example.com",
+                token_teams=["team-b"],
+            )
+
+        test_db.execute = Mock(return_value=Mock(one_or_none=Mock(return_value=None)))
+        with pytest.raises(ServerNotFoundError) as missing_error:
+            await server_service.ensure_server_access(
+                test_db,
+                "server-1",
+                user_email="user@example.com",
+                token_teams=["team-b"],
+            )
+
+        assert str(hidden_error.value) == str(missing_error.value) == "Server not found: server-1"
+        server_service._structured_logger.log.assert_called_once()
+        server_service._audit_trail.log_action.assert_not_called()
 
     # --------------------------- update -------------------------------- #
     @pytest.mark.asyncio

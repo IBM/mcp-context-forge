@@ -25,6 +25,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             with pytest.raises(ValueError, match="is not allowed"):
                 await SecurityValidator.validate_gateway_test_url(
@@ -39,6 +40,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = False
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution to return the private IP
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -62,6 +64,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             with pytest.raises(ValueError, match="is not allowed"):
                 await SecurityValidator.validate_gateway_test_url(
@@ -76,6 +79,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = False
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -98,6 +102,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             with pytest.raises(ValueError, match="is not allowed"):
                 await SecurityValidator.validate_gateway_test_url(
@@ -112,6 +117,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             with pytest.raises(ValueError, match="is not allowed"):
                 await SecurityValidator.validate_gateway_test_url(
@@ -126,6 +132,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution to return a public IP
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -149,6 +156,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution to return a private IP
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -169,6 +177,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = False
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution to return a private IP
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -192,6 +201,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = False
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -212,6 +222,7 @@ class TestGatewayTestSSRFProtection:
         """Test that empty allowlist rejects all URLs regardless of SSRF flag."""
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = False
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
             mock_settings.gateway_test_dns_timeout = 5.0
 
             # Mock DNS resolution
@@ -233,6 +244,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution to return a public IP
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -256,6 +268,7 @@ class TestGatewayTestSSRFProtection:
         """Test that IPv6 loopback addresses are blocked when SSRF protection is enabled."""
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
             mock_settings.gateway_test_dns_timeout = 5.0
 
             with pytest.raises(ValueError, match="is not allowed"):
@@ -270,6 +283,7 @@ class TestGatewayTestSSRFProtection:
         """Test that IPv6 link-local addresses are blocked when SSRF protection is enabled."""
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
             mock_settings.gateway_test_dns_timeout = 5.0
 
             with pytest.raises(ValueError, match="is not allowed"):
@@ -285,6 +299,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock DNS resolution to return a public IP
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
@@ -307,6 +322,7 @@ class TestGatewayTestSSRFProtection:
         """Test that trailing dots in FQDNs are normalized to prevent bypass."""
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
             mock_settings.gateway_test_dns_timeout = 5.0
 
             # Mock DNS resolution to return a public IP
@@ -331,6 +347,7 @@ class TestGatewayTestSSRFProtection:
         """Test that gateway test validation calls standard validate_url first."""
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
             mock_settings.gateway_test_dns_timeout = 5.0
 
             # Invalid URL should be caught by standard validation
@@ -347,6 +364,7 @@ class TestGatewayTestSSRFProtection:
         with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 0.1  # Very short timeout
+            mock_settings.validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
             # Mock slow DNS resolution - socket.getaddrinfo is synchronous, so we mock it with time.sleep
             with patch("socket.getaddrinfo") as mock_getaddrinfo:

@@ -76,6 +76,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -89,6 +90,7 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Plugin support imports (conditional)
 try:
@@ -219,11 +221,11 @@ def _validate_resource_team_assignment(db: Session, user_email: Optional[str], t
         ValueError: If team does not exist or caller lacks ownership.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     if not user_email:
         return
@@ -234,7 +236,7 @@ def _validate_resource_team_assignment(db: Session, user_email: Optional[str], t
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 class ResourceService(BaseService):
@@ -805,7 +807,7 @@ class ResourceService(BaseService):
                     "resource_uri": resource.uri,
                 },
             )
-            raise ResourceError(f"Failed to register resource: {str(e)}")
+            raise ResourceError(f"Failed to register resource: {unexpected_error_detail(e)}")
 
     async def register_resources_bulk(
         self,
@@ -954,7 +956,13 @@ class ResourceService(BaseService):
                                 continue
                             if conflict_strategy == "update":
                                 # Update existing resource
-                                existing_resource.name = resource.name
+                                # Bulk import supplies operator intent, not a new upstream identity.
+                                if existing_resource.gateway_id:
+                                    if resource.name not in (existing_resource.name, existing_resource.custom_name_slug):
+                                        existing_resource.custom_name_slug = slugify(resource.name)
+                                else:
+                                    existing_resource.name = resource.name
+                                    existing_resource.custom_name_slug = slugify(resource.name)
                                 existing_resource.title = getattr(resource, "title", None)
                                 existing_resource.description = resource.description
                                 existing_resource.mime_type = getattr(resource, "mime_type", None)
@@ -2517,7 +2525,7 @@ class ResourceService(BaseService):
                     try:
                         SecurityValidator.validate_path(uri, getattr(settings, "allowed_roots", None))
                     except ValueError as e:
-                        raise ResourceError(f"Path validation failed: {e}")
+                        raise ResourceError(f"Path validation failed: {unexpected_error_detail(e)}")
 
                 # Original resource fetching logic
                 logger.info("Fetching resource: %s (URI: %s)", resource_id, uri)
@@ -3040,7 +3048,7 @@ class ResourceService(BaseService):
                 resource_id=str(resource_id),
                 error=e,
             )
-            raise ResourceError(f"Failed to set resource state: {str(e)}")
+            raise ResourceError(f"Failed to set resource state: {unexpected_error_detail(e)}")
 
     async def subscribe_resource(
         self,
@@ -3098,7 +3106,7 @@ class ResourceService(BaseService):
             raise
         except Exception as e:
             db.rollback()
-            raise ResourceError(f"Failed to subscribe: {str(e)}")
+            raise ResourceError(f"Failed to subscribe: {unexpected_error_detail(e)}")
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """
@@ -3149,6 +3157,10 @@ class ResourceService(BaseService):
     ) -> ResourceRead:
         """
         Update a resource.
+
+        A non-null custom_name explicitly replaces the base and takes precedence
+        over name. Legacy name submissions matching the derived name or base are
+        no-ops for federated resources. Local renames remain literal.
 
         MIME Type Detection Priority (NEW BEHAVIOR):
         1. **URL-detected type** (highest priority) - If MIME type can be detected from URI extension
@@ -3255,8 +3267,16 @@ class ResourceService(BaseService):
             # Update fields if provided
             if resource_update.uri is not None:
                 resource.uri = resource_update.uri
-            if resource_update.name is not None:
-                resource.name = resource_update.name
+            if resource.gateway_id:
+                # Federated names are derived. Only custom_name is an explicit base rename;
+                # legacy name values may be stale copies of a previously derived name.
+                if resource_update.custom_name is not None:
+                    resource.custom_name_slug = slugify(resource_update.custom_name)
+            else:
+                requested_name = resource_update.custom_name if resource_update.custom_name is not None else resource_update.name
+                if requested_name is not None:
+                    resource.name = requested_name
+                    resource.custom_name_slug = slugify(requested_name)
             if resource_update.title is not None:
                 resource.title = resource_update.title
             if resource_update.description is not None:
@@ -3559,7 +3579,7 @@ class ResourceService(BaseService):
                 resource_id=str(resource_id),
                 error=e,
             )
-            raise ResourceError(f"Failed to update resource: {str(e)}")
+            raise ResourceError(f"Failed to update resource: {unexpected_error_detail(e)}")
 
     async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
@@ -3721,7 +3741,7 @@ class ResourceService(BaseService):
                 resource_id=str(resource_id),
                 error=e,
             )
-            raise ResourceError(f"Failed to delete resource: {str(e)}")
+            raise ResourceError(f"Failed to delete resource: {unexpected_error_detail(e)}")
 
     async def get_resource_by_id(
         self,
@@ -4089,12 +4109,12 @@ class ResourceService(BaseService):
                 content = template.uri_template.format(**params)
                 return ResourceContent(type="resource", id=str(template.id) or None, uri=template.uri_template or None, mime_type=template.mime_type or None, text=content)
             # # Handle binary template
-            raise NotImplementedError("Binary resource templates not yet supported")
+            raise ResourceError("Binary resource templates not yet supported")
 
         except ResourceNotFoundError:
             raise
         except Exception as e:
-            raise ResourceError(f"Failed to process template: {str(e)}") from e
+            raise ResourceError(f"Failed to process template: {unexpected_error_detail(e)}") from e
 
     @staticmethod
     @lru_cache(maxsize=256)

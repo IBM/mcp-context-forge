@@ -300,7 +300,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.MCP_SESSION_POOL_ACQUIRE_TIMEOUT | string | `"30.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET | string | `"60.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD | string | `"5"` |  |
-| mcpContextForge.config.MCP_SESSION_POOL_CLEANUP_TIMEOUT | string | `"5.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_CREATE_TIMEOUT | string | `"30.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC | string | `"false"` |  |
@@ -550,10 +549,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.MCP_SESSION_POOL_HEALTH_CHECK_METHODS | string | `"[\"ping\", \"skip\"]"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT | string | `"5.0"` |  |
 | mcpContextForge.config.MCP_SESSION_POOL_IDENTITY_HEADERS | string | `"[\"authorization\", \"x-tenant-id\", \"x-user-id\", \"x-api-key\", \"cookie\"]"` |  |
-| mcpContextForge.config.MCP_SESSION_POOL_CLEANUP_TIMEOUT | string | `"5.0"` |  |
-| mcpContextForge.config.SSE_TASK_GROUP_CLEANUP_TIMEOUT | string | `"5.0"` |  |
-| mcpContextForge.config.ANYIO_CANCEL_DELIVERY_PATCH_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS | string | `"100"` |  |
 | mcpContextForge.config.DEV_MODE | string | `"false"` |  |
 | mcpContextForge.config.RELOAD | string | `"false"` |  |
 | mcpContextForge.config.TEMPLATES_AUTO_RELOAD | string | `"false"` |  |

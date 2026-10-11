@@ -10,6 +10,7 @@ RBAC roles, and token scopes. Protocol tests use an async MCP SDK client;
 RBAC tests use Playwright API setup plus synchronous MCP SDK helpers.
 
 Requirements:
+    - Chromium for the Admin form regression: ``uv run playwright install chromium``
     - Gateway running (default: http://localhost:8080 via docker-compose)
     - Upstream ``fast_time_server`` registered
       (provided by the default compose stack)
@@ -21,10 +22,15 @@ Requirements:
                                Set true in both gateway and test process to run MCP Apps cases
         MCP_E2E_GATEWAY_SYNC_DEADLINE
                                Gateway tool-sync poll deadline in seconds (default: 30.0)
+        GATEWAY_TOOL_NAME_SEPARATOR
+                               Expected gateway separator (default: -)
+        MCP_RESOURCE_NAME_EXPANSION
+                               Set true to enable the dedicated -- expansion case
 
 Usage:
     make test-e2e
-    pytest tests/live_gateway/e2e/test_e2e.py -v -s --tb=short
+    GATEWAY_TOOL_NAME_SEPARATOR=-- MCP_RESOURCE_NAME_EXPANSION=true make test-e2e K=postgres_expansion
+    pytest -p playwright tests/live_gateway/e2e/test_e2e.py -v -s --tb=short
 """
 
 # Future
@@ -32,36 +38,48 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import base64
 from collections.abc import AsyncIterator, Callable
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import version
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Generator
+from urllib.parse import unquote
 import uuid
 
 # Third-Party
 import httpx
 import httpx2
 from mcp import ClientSession, MCPError as McpError
+from mcp.client import Client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+from mcp.server.mcpserver import MCPServer
+from mcp.types import PaginatedRequestParams
+from mcp_types import LoggingMessageNotificationParams
 import pytest
+import uvicorn
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
-from playwright.sync_api import APIRequestContext, APIResponse, Error as PlaywrightError, Playwright
+# Third-Party
+from playwright.sync_api import APIRequestContext, APIResponse
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import expect, Playwright
 
-# Local
+# First-Party
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
 
 # Local
-from tests.helpers.api_helpers import ApiTestHelper
-from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+from ..fixtures.resource_templates import template_upstreams, TemplatePeer
 from ..helpers.mcp_test_helpers import (
     ADMIN_EMAIL,
     BASE_URL,
@@ -72,6 +90,8 @@ from ..helpers.mcp_test_helpers import (
     TEST_PASSWORD,
     TOKEN_EXPIRY,
 )
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +132,11 @@ _MCP_APPS_E2E_ENABLED = os.getenv("MCPGATEWAY_MCP_APPS_ENABLED", "false").strip(
 skip_no_mcp_apps = pytest.mark.skipif(
     not _MCP_APPS_E2E_ENABLED,
     reason="MCP Apps E2E requires a gateway started with MCPGATEWAY_MCP_APPS_ENABLED=true",
+)
+_MODERN_INBOUND_E2E_ENABLED = os.getenv("MCP_INBOUND_PROTOCOL_MODE", "legacy").strip().lower() == "auto"
+skip_no_modern_inbound = pytest.mark.skipif(
+    not _MODERN_INBOUND_E2E_ENABLED,
+    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto and RUST_MCP_MODE=off",
 )
 
 
@@ -171,6 +196,166 @@ async def client(jwt_token: str, mcp_url: str):
 # ---------------------------------------------------------------------------
 # Connectivity / lifecycle
 # ---------------------------------------------------------------------------
+@pytest.fixture
+def resource_namespacing_upstreams():
+    """Serve two real MCP peers reachable from the gateway under test.
+
+    Compose on Docker Desktop/Colima uses host.docker.internal. For a gateway
+    running on the host, set MCP_NAMESPACING_UPSTREAM_HOST=127.0.0.1. Linux
+    container deployments need a gateway-reachable host address or host-gateway
+    mapping. No database writes or gateway internals are used by this fixture.
+    """
+    host = os.getenv("MCP_NAMESPACING_UPSTREAM_HOST", "host.docker.internal")
+    identifier = uuid.uuid4().hex[:12]
+    uri = f"test://namespacing/{identifier}"
+    long_name = "a-" * 127 + "a"
+    peers = []
+    running = []
+    try:
+        for index in range(2):
+            content = f"upstream-{identifier}-{index}"
+            app = MCPServer(f"namespacing-{index}")
+
+            def make_reader(value: str):
+                """Bind each peer's response independently of the registration loop."""
+
+                def read() -> str:
+                    """Return this peer's distinctive resource content."""
+                    return value
+
+                return read
+
+            app.resource(uri, name="Shared Report")(make_reader(content))
+            app.resource(f"{uri}/long", name=long_name)(make_reader(content))
+            listener = socket.socket()
+            listener.bind(("0.0.0.0", 0))
+            port = listener.getsockname()[1]
+            server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+            thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+            running.append((server, thread, listener))
+            thread.start()
+            deadline = time.monotonic() + 10
+            while not server.started and thread.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert server.started, "Resource namespacing upstream failed to start"
+            peers.append({"url": f"http://{host}:{port}/mcp", "content": content, "uri": uri})
+        yield peers
+    finally:
+        for server, thread, listener in running:
+            server.should_exit = True
+            thread.join(timeout=10)
+            listener.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "require_expansion",
+    [
+        pytest.param(False, id="configured_separator"),
+        pytest.param(
+            True,
+            id="postgres_expansion",
+            marks=pytest.mark.skipif(
+                os.getenv("MCP_RESOURCE_NAME_EXPANSION", "false").lower() != "true",
+                reason="Dedicated PostgreSQL expansion run requires MCP_RESOURCE_NAME_EXPANSION=true and a -- gateway",
+            ),
+        ),
+    ],
+)
+async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resource_namespacing_upstreams, require_expansion):
+    """Federate colliding URIs and verify prefixing, full bases, and scoped reads.
+
+    Set GATEWAY_TOOL_NAME_SEPARATOR to match the running gateway. The separate
+    postgres_expansion case requires a PostgreSQL-backed stack using -- and
+    explicitly asserts the 382-character base; it is opt-in for the normal gate.
+    """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    assert separator in ("-", "--", "_", ".")
+    if require_expansion:
+        assert separator == "--", "The dedicated expansion run requires GATEWAY_TOOL_NAME_SEPARATOR=--"
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    gateway_ids = []
+    server_ids = []
+    expected_names = []
+    identifier = uuid.uuid4().hex[:12]
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+        try:
+            for index, peer in enumerate(resource_namespacing_upstreams):
+                gateway_name = f"namespacing{identifier}{index}"
+                response = await http.post("/gateways", json={"name": gateway_name, "url": peer["url"], "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                gateway_ids.append(gateway_id)
+                deadline = time.monotonic() + 60
+                rows = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream resources: {rows}; check MCP_NAMESPACING_UPSTREAM_HOST"
+                resource = next(row for row in rows if row["uri"] == peer["uri"])
+                expected = f"{gateway_name}{separator}shared{separator}report"
+                assert resource["name"] == expected, "GATEWAY_TOOL_NAME_SEPARATOR must match the running gateway"
+                expected_names.append(expected)
+                expanded = next(row for row in rows if row["uri"].endswith("/long"))
+                assert expanded["customNameSlug"] == f"a{separator}" * 127 + "a"
+                if require_expansion:
+                    assert len(expanded["customNameSlug"]) == 382
+                assert len(expanded["name"]) == 255
+                response = await http.post(
+                    "/servers",
+                    json={"server": {"name": f"namespacing{identifier}{index}", "associated_resources": [resource["id"]]}, "visibility": "public"},
+                )
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                server_ids.append(server_id)
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                async with streamable_http_client(f"{BASE_URL}/servers/{server_id}/mcp/", http_client=http_client) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        listed = await session.list_resources()
+                        assert [(str(item.uri), item.name) for item in listed.resources] == [(peer["uri"], expected)]
+                        result = await session.read_resource(peer["uri"])
+                        assert result.contents[0].text == peer["content"]
+
+            http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+            async with streamable_http_client(f"{BASE_URL}/mcp/", http_client=http_client) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    names = []
+                    cursor = None
+                    while True:
+                        page = await session.list_resources(params=PaginatedRequestParams(cursor=cursor))
+                        names.extend(item.name for item in page.resources if str(item.uri) == resource_namespacing_upstreams[0]["uri"])
+                        cursor = page.next_cursor
+                        if not cursor:
+                            break
+                    assert sorted(names) == sorted(expected_names)
+
+            # Explicit API bases win over legacy name while upstream identity stays intact.
+            for payload, base in (
+                ({"name": "Ignored", "custom_name": "Weekly Report"}, f"weekly{separator}report"),
+                ({"name": "Stale Derived Name", "custom_name": None, "description": "Legacy name ignored"}, f"weekly{separator}report"),
+                ({"customName": expected}, expected),
+            ):
+                response = await http.put(f"/resources/{resource['id']}", json=payload)
+                assert response.status_code == 200, response.text
+                updated = response.json()
+                assert updated["name"] == f"{gateway_name}{separator}{base}"
+                assert updated["customNameSlug"] == base
+                assert updated["originalName"] == "Shared Report"
+            response = await http.put(f"/resources/{resource['id']}", json={"custom_name": ""})
+            assert response.status_code == 422, response.text
+        finally:
+            for server_id in server_ids:
+                await http.delete(f"/servers/{server_id}")
+            for gateway_id in gateway_ids:
+                await http.delete(f"/gateways/{gateway_id}")
+
+
 class TestConnectivity:
 
     async def test_ping(self, client: ClientSession) -> None:
@@ -194,6 +379,40 @@ class TestConnectivity:
         assert caps.prompts is not None, f"prompts capability missing: {caps}"
         advertised = [k for k in ("tools", "resources", "prompts", "logging", "completions") if getattr(caps, k, None) is not None]
         print(f"    -> Capabilities: {advertised}")
+
+    @skip_no_modern_inbound
+    @pytest.mark.flaky(reruns=1, reruns_delay=2)
+    async def test_modern_logging_is_not_advertised_or_emitted(self, jwt_token: str, mcp_url: str) -> None:
+        """Modern discovery omits logging, and debug opt-in requests receive no log message."""
+        received: list[LoggingMessageNotificationParams] = []
+
+        async def _collect(params: LoggingMessageNotificationParams) -> None:
+            received.append(params)
+
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        transport = streamable_http_client(mcp_url, http_client=http_client)
+        async with Client(transport, mode="2026-07-28", cache=None, log_level="debug", logging_callback=_collect) as modern_client:
+            raw_result = await modern_client.session.send_discover("2026-07-28")
+            assert "tools" in raw_result["capabilities"], f"unexpected discover result: {raw_result}"
+            assert "logging" not in raw_result["capabilities"], f"logging advertised to modern client: {raw_result['capabilities']}"
+
+            tools = (await modern_client.list_tools()).tools
+            assert any(tool.name == "a2a-a2a-echo-agent" for tool in tools), "echo agent tool unavailable for the modern call check"
+            tool_result = await modern_client.call_tool("a2a-a2a-echo-agent", {"query": "modern logging check"})
+            assert tool_result.is_error is False, f"modern tools/call failed (upstream may be down): {tool_result.content}"
+
+            for resource in (await modern_client.list_resources()).resources[:3]:
+                with suppress(McpError):
+                    await modern_client.read_resource(resource.uri)
+
+            for prompt in (await modern_client.list_prompts()).prompts:
+                if all(not argument.required for argument in prompt.arguments or []):
+                    with suppress(McpError):
+                        await modern_client.get_prompt(prompt.name)
+                    break
+
+        assert received == [], f"modern client received log notifications: {received}"
+        print(f"    -> Modern capabilities: {sorted(raw_result['capabilities'])}")
 
     async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""
@@ -417,6 +636,29 @@ class TestRawJsonRpc:
             resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=build_initialize(1))
         assert resp.status_code in (401, 403), f"expected 401/403 without auth, got {resp.status_code}: {resp.text}"
         print(f"    -> unauthenticated /mcp/ -> status={resp.status_code}")
+
+    def test_unsupported_protocol_version_returns_32022(self, jwt_token: str) -> None:
+        """A modern-era POST at an unserved version gets JSON-RPC -32022 with HTTP 400."""
+        headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2099-01-01",
+        }
+        body = {
+            "jsonrpc": "2.0",
+            "id": "ping-2099",
+            "method": "ping",
+            "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2099-01-01"}},
+        }
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=body)
+        assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text}"
+        error = resp.json()["error"]
+        assert error["code"] == -32022, error
+        assert error["data"]["requested"] == "2099-01-01", error
+        assert error["data"]["supported"], error
+        print(f"    -> unsupported version -> status={resp.status_code} supported={error['data']['supported']}")
 
     def test_invalid_method_returns_error(self, jwt_token: str) -> None:
         """Unknown MCP method surfaces a JSON-RPC error envelope."""
@@ -657,6 +899,69 @@ def _get_gateway_tools(admin_api: APIRequestContext, gateway_id: str, probe: str
     """Read all tools for one gateway through Nginx using a unique cache key."""
     response = admin_api.get(_replica_tools_path(gateway_id, probe))
     return _assert_replica_response(response, read_index)
+
+
+# Keep synchronous Playwright cases after the async MCP protocol cases: its
+# session-scoped driver owns the thread's event loop until fixture teardown.
+def test_resource_namespacing_admin_rename(playwright: Playwright, jwt_token: str, resource_namespacing_upstreams: list[dict[str, str]], create_user: Any) -> None:
+    """The shipped Admin form edits a base and never prefixes it twice."""
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    gateway_name = f"adminrename{uuid.uuid4().hex[:12]}"
+    peer = resource_namespacing_upstreams[0]
+    admin_email, _, created = create_user(is_admin=True, password="V7!mQ2@zR8#pL5$xT9%wN4&k")  # pragma: allowlist secret
+    assert created.status == 201, created.text()
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    with httpx.Client(base_url=BASE_URL, headers=headers, timeout=60) as http:
+        response = http.post("/gateways", json={"name": gateway_name, "url": peer["url"], "transport": "STREAMABLEHTTP", "visibility": "public"})
+        assert response.status_code in (200, 201, 202), response.text
+        gateway_id = response.json()["id"]
+        try:
+            deadline = time.monotonic() + 60
+            resource = None
+            while time.monotonic() < deadline:
+                response = http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                assert response.status_code == 200, response.text
+                resource = next((row for row in response.json() if row["uri"] == peer["uri"]), None)
+                if resource:
+                    break
+                time.sleep(0.5)
+            assert resource, "Gateway did not discover the Admin rename fixture"
+            expected = f"{gateway_name}{separator}shared{separator}report"
+            assert resource["name"] == expected
+            browser = playwright.chromium.launch()
+            try:
+                context = browser.new_context()
+                admin_token = make_test_jwt(admin_email, is_admin=True, teams=None, secret=JWT_SECRET)
+                context.add_cookies([{"name": "jwt_token", "value": admin_token, "url": f"{BASE_URL}/", "httpOnly": True, "sameSite": "Lax"}])
+                page = context.new_page()
+                for attempt in range(2):
+                    page.goto(f"{BASE_URL}/admin/?resources_q={gateway_name}#resources")
+                    assert page.url.split("?")[0].rstrip("/") == f"{BASE_URL}/admin", f"Admin authentication failed: {page.url}"
+                    row = page.locator("#resources-table-body tr").filter(has_text=expected)
+                    row.get_by_role("button", name="Actions", exact=True).click()
+                    with page.expect_response(lambda result: result.request.method == "GET" and result.url.endswith(f"/admin/resources/{resource['id']}")) as detail:
+                        page.get_by_role("menuitem", name="Edit", exact=True).click()
+                    field = page.locator("#edit-resource-custom-name")
+                    field.wait_for(state="visible")
+                    base = f"shared{separator}report" if attempt == 0 else f"weekly{separator}report"
+                    assert detail.value.json()["resource"]["customNameSlug"] == base
+                    expect(field).to_have_value(base)
+                    field.fill("Weekly Report" if attempt == 0 else f"weekly{separator}report")
+                    page.locator("#edit-resource-description").fill(f"Admin rename regression {attempt}")
+                    with page.expect_navigation(wait_until="domcontentloaded"):
+                        with page.expect_response(lambda result: result.request.method == "POST" and result.url.endswith(f"/admin/resources/{resource['id']}/edit")) as saved:
+                            page.locator("#edit-resource-form").get_by_role("button", name="Save Changes").click()
+                    assert saved.value.status == 200
+                    response = http.get("/resources", params={"gateway_id": gateway_id, "limit": 100})
+                    updated = next(row for row in response.json() if row["id"] == resource["id"])
+                    expected = f"{gateway_name}{separator}weekly{separator}report"
+                    assert updated["name"] == expected
+                    assert updated["customNameSlug"] == f"weekly{separator}report"
+                    assert updated["originalName"] == "Shared Report"
+            finally:
+                browser.close()
+        finally:
+            http.delete(f"/gateways/{gateway_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -1196,6 +1501,348 @@ async def _async_mcp_resources_list(access_token: str, server_url: str = BASE_UR
         return (await session.list_resources()).resources
 
 
+async def _template_catalog(session: ClientSession, *, templates: bool) -> list[Any]:
+    """Read every catalog page and reject repeated cursors.
+
+    Args:
+        session: Initialized MCP session.
+        templates: Select templates instead of concrete resources.
+    """
+    items = []
+    cursor = None
+    seen = set()
+    while True:
+        params = PaginatedRequestParams(cursor=cursor)
+        page = await (session.list_resource_templates(params=params) if templates else session.list_resources(params=params))
+        items.extend(page.resource_templates if templates else page.resources)
+        cursor = page.next_cursor
+        if not cursor:
+            return items
+        assert cursor not in seen, f"Repeated catalog cursor: {cursor}"
+        seen.add(cursor)
+
+
+@asynccontextmanager
+async def _federated_templates(peers: list[TemplatePeer], token: str, *, standard: bool = True) -> AsyncIterator[dict[str, Any]]:
+    """Discover upstream records through public APIs and create scoped servers.
+
+    Args:
+        peers: Live upstream fixtures.
+        token: Administrative setup token.
+        standard: Require template discovery for standard upstreams.
+
+    Yields:
+        HTTP client, discovered rows, and created virtual servers.
+    """
+    gateways: list[str] = []
+    servers: list[str] = []
+    resources: set[str] = set()
+    rows: dict[str, dict[str, Any]] = {}
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60, follow_redirects=True) as http:
+        try:
+            health = await http.get("/health")
+            health.raise_for_status()
+            runtime = health.headers.get("x-contextforge-mcp-transport-mounted", "python")
+            if runtime == "rust":
+                pytest.skip("Issue #6625 covers the Python MCP runtime")
+            print(json.dumps({"issue": 6625, "gateway_commit": os.getenv("MCP_TEMPLATE_GATEWAY_COMMIT", "unverified"), "runtime": runtime, "client_mcp_sdk": version("mcp")}))
+            for peer in peers:
+                response = await http.post("/gateways", json={"name": peer.label, "url": peer.url, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateways.append(response.json()["id"])
+            deadline = time.monotonic() + float(os.getenv("MCP_E2E_GATEWAY_SYNC_DEADLINE", "30"))
+            while True:
+                for gateway_id in gateways:
+                    response = await http.get("/resources", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    for row in response.json():
+                        rows[row["uri"]] = row
+                        resources.add(row["id"])
+                response = await http.get("/resources/templates/list")
+                assert response.status_code == 200, response.text
+                for row in response.json()["resource_templates"]:
+                    if row["uriTemplate"] in {peer.template for peer in peers}:
+                        rows[row["uriTemplate"]] = row
+                        resources.add(row["id"])
+                required = {peer.concrete for peer in peers}
+                if standard:
+                    required.update(peer.template for peer in peers)
+                if required <= rows.keys():
+                    break
+                assert time.monotonic() < deadline, f"Discovery missing {required - rows.keys()}; check MCP_TEMPLATE_UPSTREAM_HOST"
+                await asyncio.sleep(0.25)
+            for index, association in enumerate(([row["id"] for row in rows.values()], [rows[peers[0].concrete]["id"]])):
+                response = await http.post("/servers", json={"server": {"name": f"{peers[0].label}server{index}", "associated_resources": association}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                servers.append(response.json()["id"])
+            yield {"http": http, "rows": rows, "server": f"{BASE_URL}/servers/{servers[0]}", "empty_server": f"{BASE_URL}/servers/{servers[1]}"}
+        finally:
+            failures = []
+            for path in [*(f"/servers/{value}" for value in servers), *(f"/resources/{value}" for value in resources), *(f"/gateways/{value}" for value in gateways)]:
+                try:
+                    response = await http.delete(path)
+                    if response.status_code not in (200, 204, 404):
+                        failures.append(f"{path}: {response.status_code}")
+                except httpx.HTTPError as exc:
+                    failures.append(f"{path}: {exc}")
+            assert not failures, f"Template fixture cleanup failed: {failures}"
+
+
+async def _assert_template_read(session: ClientSession, peer: TemplatePeer, other: TemplatePeer, item_id: str) -> None:
+    """Verify response content and correlated upstream routing.
+
+    Args:
+        session: Initialized MCP session.
+        peer: Expected upstream owner.
+        other: Upstream that must receive no request.
+        item_id: Unique path parameter for this request.
+    """
+    uri = peer.expanded(item_id)
+    previous = len(peer.reads)
+    other_previous = len(other.reads)
+    result = await session.read_resource(uri)
+    assert len(result.contents) == 1, result
+    assert result.contents[0].text == peer.content(item_id), result
+    assert str(result.contents[0].uri) == uri, result
+    assert peer.reads[previous:] == [uri], peer.reads
+    assert len(other.reads) == other_previous, other.reads
+    print(json.dumps({"method": "resources/read", "uri": uri, "result": result.model_dump(mode="json"), "upstream": peer.label}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["global", "server"])
+async def test_resource_template_federation(admin_token: str, endpoint: str) -> None:
+    """Verify #6625 discovery, list separation, reads, and #6621 template naming.
+
+    Args:
+        admin_token: Administrative token with unrestricted team scope.
+        endpoint: Global or virtual-server MCP endpoint.
+    """
+    separator = os.getenv("GATEWAY_TOOL_NAME_SEPARATOR", "-")
+    with template_upstreams() as peers:
+        for index, peer in enumerate(peers):
+            async with _mcp_session(peer.local_url) as session:
+                templates = await _template_catalog(session, templates=True)
+                assert [(item.uri_template, item.name) for item in templates] == [(peer.template, "Shared Template")]
+                assert {str(item.uri) for item in await _template_catalog(session, templates=False)} == {peer.concrete}
+                await _assert_template_read(session, peer, peers[1 - index], "baseline")
+        async with _federated_templates(peers, admin_token) as fixture:
+            url = BASE_URL if endpoint == "global" else fixture["server"]
+            async with _mcp_session(url, admin_token) as session:
+                print(json.dumps({"endpoint": endpoint, "protocol": session.initialize_result.protocol_version}))
+                templates = {item.uri_template: item for item in await _template_catalog(session, templates=True)}
+                expected = {peer.template for peer in peers}
+                assert expected <= templates.keys(), templates
+                expected_names = {f"{peer.label}{separator}shared{separator}template" for peer in peers}
+                assert {templates[uri].name for uri in expected} == expected_names, "#6621 baseline and configured separator must match the gateway"
+                resources = await _template_catalog(session, templates=False)
+                concrete_uris = {unquote(str(item.uri)) for item in resources}
+                assert {peer.concrete for peer in peers} <= concrete_uris, resources
+                assert not expected & concrete_uris, f"Templates leaked into resources/list: {expected & concrete_uris}"
+                print(
+                    json.dumps(
+                        {"endpoint": endpoint, "templates": [templates[uri].model_dump(mode="json") for uri in sorted(expected)], "resources": sorted(concrete_uris), "naming_baseline": "post-6621"}
+                    )
+                )
+                for repeat in range(2):
+                    for index, peer in enumerate(peers):
+                        await _assert_template_read(session, peer, peers[1 - index], f"{endpoint}-{repeat}-{uuid.uuid4().hex[:8]}")
+
+
+async def _assert_template_hidden(url: str, token: str, hidden: TemplatePeer, visible: TemplatePeer, case: str) -> None:
+    """Check template filtering and reject reads without upstream traffic.
+
+    Args:
+        url: Gateway MCP base URL.
+        token: Token whose visibility is under test.
+        hidden: Template that must remain inaccessible.
+        visible: Public template that provides a positive control.
+        case: Visibility boundary recorded in the evidence.
+    """
+    async with _mcp_session(url, token) as session:
+        templates = {item.uri_template for item in await _template_catalog(session, templates=True)}
+        assert visible.template in templates, templates
+        assert hidden.template not in templates, templates
+        before = len(hidden.reads)
+        try:
+            await session.read_resource(hidden.expanded(f"denied-{uuid.uuid4().hex[:8]}"))
+        except McpError as exc:
+            detail = str(exc).lower()
+            assert "not found" in detail or "unknown resource" in detail or "access denied" in detail, exc
+            print(json.dumps({"case": case, "endpoint": url, "denied_uri": hidden.template, "error": exc.error.model_dump(mode="json")}))
+        else:
+            pytest.fail(f"Hidden template was readable: {hidden.template}")
+        assert len(hidden.reads) == before, hidden.reads
+
+
+@pytest.mark.asyncio
+async def test_resource_template_visibility(admin_token: str) -> None:
+    """Exercise team, private, public-only, disabled, and wrong-server boundaries.
+
+    Args:
+        admin_token: Administrative token used for fixture setup and restoration.
+    """
+    with template_upstreams() as peers:
+        async with _federated_templates(peers, admin_token) as fixture:
+            http = fixture["http"]
+            resource_id = fixture["rows"][peers[0].template]["id"]
+            email = f"{peers[0].label}@example.com"
+            teams = []
+            created_users = []
+            assigned_roles = []
+            try:
+                for index in range(2):
+                    response = await http.post("/teams", json={"name": f"{peers[0].label}team{index}", "visibility": "private"})
+                    assert response.status_code in (200, 201), response.text
+                    teams.append(response.json()["id"])
+                for user_email, is_admin in ((email, False), (f"admin-{email}", True)):
+                    response = await http.post(
+                        "/auth/email/admin/users",
+                        json={"email": user_email, "password": TEST_PASSWORD, "full_name": "Template Reader", "is_active": True, "is_admin": is_admin, "password_change_required": False},
+                    )
+                    assert response.status_code in (200, 201), response.text
+                    created_users.append(user_email)
+                roles = await http.get("/rbac/roles")
+                assert roles.status_code == 200, roles.text
+                viewer_id = next(role["id"] for role in roles.json() if role["name"] == "viewer")
+                for team_id in teams:
+                    response = await http.post(f"/teams/{team_id}/members", json={"email": email, "role": "member"})
+                    assert response.status_code in (200, 201), response.text
+                    response = await http.post(f"/rbac/users/{email}/roles", json={"role_id": viewer_id, "scope": "team", "scope_id": team_id})
+                    if response.status_code in (400, 409):
+                        assigned = await http.get(f"/rbac/users/{email}/roles")
+                        assert assigned.status_code == 200, assigned.text
+                        assert any(role["role_id"] == viewer_id and role["scope_id"] == team_id for role in assigned.json()), response.text
+                    else:
+                        assert response.status_code in (200, 201), response.text
+                    assigned_roles.append((team_id, viewer_id))
+                token = make_test_jwt(email, teams=[teams[0]], secret=JWT_SECRET)
+                wrong_team = make_test_jwt(email, teams=[teams[1]], secret=JWT_SECRET)
+                public_only = make_test_jwt(email, teams=[], secret=JWT_SECRET)
+                other_admin = make_test_jwt(f"admin-{email}", is_admin=True, teams=None, secret=JWT_SECRET)
+                response = await http.put(f"/resources/{resource_id}", json={"visibility": "team", "team_id": teams[0]})
+                assert response.status_code == 200, response.text
+                for url in (BASE_URL, fixture["server"]):
+                    async with _mcp_session(url, token) as session:
+                        await _assert_template_read(session, peers[0], peers[1], f"member-{uuid.uuid4().hex[:8]}")
+                    await _assert_template_hidden(url, wrong_team, peers[0], peers[1], "wrong-team")
+                    await _assert_template_hidden(url, public_only, peers[0], peers[1], "public-only")
+                response = await http.put(f"/resources/{resource_id}", json={"visibility": "private"})
+                assert response.status_code == 200, response.text
+                for url in (BASE_URL, fixture["server"]):
+                    await _assert_template_hidden(url, token, peers[0], peers[1], "private-other-user")
+                    await _assert_template_hidden(url, other_admin, peers[0], peers[1], "private-other-admin")
+                    async with _mcp_session(url, admin_token) as session:
+                        await _assert_template_read(session, peers[0], peers[1], f"owner-{uuid.uuid4().hex[:8]}")
+                response = await http.post(f"/resources/{resource_id}/state", params={"activate": "false"})
+                assert response.status_code == 200, response.text
+                for url in (BASE_URL, fixture["server"]):
+                    await _assert_template_hidden(url, admin_token, peers[0], peers[1], "disabled")
+                async with _mcp_session(fixture["empty_server"], admin_token) as session:
+                    assert await _template_catalog(session, templates=True) == []
+                    before = len(peers[1].reads)
+                    with pytest.raises(McpError, match="(?i)(not found|unknown resource)"):
+                        await session.read_resource(peers[1].expanded("wrong-server"))
+                    assert len(peers[1].reads) == before
+            finally:
+                response = await http.post(f"/resources/{resource_id}/state", params={"activate": "true"})
+                assert response.status_code == 200, response.text
+                for team_id, role_id in assigned_roles:
+                    await http.delete(f"/rbac/users/{email}/roles/{role_id}", params={"scope": "team", "scope_id": team_id})
+                for team_id in teams:
+                    await http.delete(f"/teams/{team_id}/members/{email}")
+                for team_id in teams:
+                    response = await http.delete(f"/teams/{team_id}")
+                    assert response.status_code in (200, 204), response.text
+                for user_email in created_users:
+                    response = await http.delete(f"/auth/email/admin/users/{user_email}")
+                    if response.status_code == 409:
+                        response = await http.patch(f"/auth/email/admin/users/{user_email}", json={"is_active": False})
+                    assert response.status_code in (200, 204), response.text
+
+
+@pytest.mark.asyncio
+async def test_resource_template_permission_denials(admin_token: str) -> None:
+    """Require authentication and resources.read before template actions.
+
+    Args:
+        admin_token: Administrative token for fixture setup.
+    """
+    restricted = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, scopes={"permissions": ["servers.use", "tools.read"]}, secret=JWT_SECRET)
+    with template_upstreams() as peers:
+        async with _federated_templates(peers, admin_token) as fixture:
+            for url in (BASE_URL, fixture["server"]):
+                async with _mcp_session(url, restricted) as session:
+                    for method, params in (("resources/templates/list", {}), ("resources/read", {"uri": peers[0].expanded("forbidden")})):
+                        try:
+                            if method == "resources/templates/list":
+                                await session.list_resource_templates()
+                            else:
+                                await session.read_resource(params["uri"])
+                        except McpError as exc:
+                            assert "access denied" in str(exc).lower() or "permission" in str(exc).lower(), exc
+                        else:
+                            pytest.fail(f"Token without resources.read could call {method}")
+                async with httpx.AsyncClient() as http:
+                    response = await http.post(_mcp_client_url(url), json=build_initialize(), headers={"Accept": "application/json, text/event-stream"})
+                    assert response.status_code == 401, "This denial case requires MCP_REQUIRE_AUTH=true on the gateway"
+            assert all(not peer.reads for peer in peers), "Denied calls reached an upstream"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["list-extension", "list-missing-template", "list-invalid-template", "no-mime", "binary"])
+async def test_resource_template_edge_probe(admin_token: str, variant: str, record_property: Any) -> None:
+    """Assert current behavior for nonstandard discovery and MIME variants.
+
+    Args:
+        admin_token: Administrative setup token.
+        variant: Nonstandard advertisement or unsupported MIME variant.
+        record_property: Pytest evidence recorder for the JUnit report.
+    """
+    with template_upstreams(variant) as peers:
+        upstream = []
+        for peer in peers:
+            async with _mcp_session(peer.local_url) as session:
+                upstream.append(
+                    {
+                        "resources": [item.model_dump(mode="json", by_alias=True) for item in await _template_catalog(session, templates=False)],
+                        "templates": [item.model_dump(mode="json", by_alias=True) for item in await _template_catalog(session, templates=True)],
+                        "read": (await session.read_resource(peer.expanded("baseline"))).model_dump(mode="json", by_alias=True),
+                    }
+                )
+        async with _federated_templates(peers, admin_token, standard=not variant.startswith("list-")) as fixture:
+            async with _mcp_session(fixture["server"], admin_token) as session:
+                templates = {item.uri_template for item in await _template_catalog(session, templates=True)}
+                concrete = {unquote(str(item.uri)) for item in await _template_catalog(session, templates=False)}
+                evidence: dict[str, Any] = {"variant": variant, "upstream": upstream, "templates": sorted(templates), "concrete": sorted(concrete), "reads": []}
+                evidence["classification"] = {peer.template: "concrete" if peer.template in concrete else "template" if peer.template in templates else "rejected" for peer in peers}
+                expected_classification = "concrete" if variant.startswith("list-") else "template"
+                assert evidence["classification"] == {peer.template: expected_classification for peer in peers}
+                for peer in peers:
+                    before = len(peer.reads)
+                    uri = peer.expanded("edge-probe")
+                    observation: dict[str, Any] = {"uri": uri}
+                    if variant == "no-mime":
+                        result = await session.read_resource(uri)
+                        content = result.contents[0]
+                        actual = content.text if hasattr(content, "text") else base64.b64decode(content.blob).decode()
+                        assert actual == peer.content("edge-probe"), result
+                        assert str(content.uri) == uri, result
+                        assert peer.reads[before:] == [uri], peer.reads
+                        observation["result"] = result.model_dump(mode="json")
+                    else:
+                        with pytest.raises(McpError) as exc_info:
+                            await session.read_resource(uri)
+                        assert exc_info.value.error.code == -32602, exc_info.value
+                        assert peer.reads[before:] == [], peer.reads
+                        observation["error"] = exc_info.value.error.model_dump(mode="json")
+                    observation["upstream_requests"] = peer.reads[before:]
+                    evidence["reads"].append(observation)
+                record_property("resource_template_probe", json.dumps(evidence))
+                print(json.dumps(evidence))
+
+
 async def _async_mcp_prompts_list(access_token: str, server_url: str = BASE_URL) -> list:
     async with _mcp_session(server_url, access_token) as session:
         return (await session.list_prompts()).prompts
@@ -1250,6 +1897,22 @@ def _mcp_tool_call(access_token: str, tool_name: str, arguments: dict[str, Any] 
 
 def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
     return _run_async(_async_mcp_initialize(access_token, server_url))
+
+
+def _public_rpc_tool_call(server_id: str, tool_name: str, arguments: dict[str, Any], access_token: str | None = None) -> httpx.Response:
+    """Call a tool through the public JSON-RPC endpoint."""
+    headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
+    return httpx.post(
+        f"{BASE_URL}/rpc",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": f"scoped-rpc-{uuid.uuid4().hex}",
+            "method": "tools/call",
+            "params": {"name": tool_name, "server_id": server_id, "arguments": arguments},
+        },
+        timeout=_CLIENT_TIMEOUT,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1584,6 +2247,119 @@ class TestMcpPerServerEndpoint:
         with pytest.raises(Exception) as excinfo:
             _mcp_initialize_only(outsider_user["access_token"], server_url=server_url)
         print(f"    -> Outsider denied private server: {excinfo.value}")
+
+
+class TestPublicRpcScopedAuthorization:
+    """Public ``/rpc`` enforces authentication, token permissions, and server visibility."""
+
+    tool_name = f"{STREAMABLE_HTTP_GATEWAY_NAME}-get-system-time"
+
+    def test_unauthenticated_call_is_rejected(self, visibility_servers: dict) -> None:
+        """A scoped public tool call requires a bearer token."""
+        response = _public_rpc_tool_call(visibility_servers["public"]["id"], self.tool_name, {"timezone": "UTC"})
+        assert response.status_code == 401, f"Unauthenticated POST /rpc returned {response.status_code}: {response.text[:500]}"
+
+    def test_read_only_token_cannot_execute(self, scoped_token_read_only: dict, visibility_servers: dict) -> None:
+        """MCP transport access does not imply ``tools.execute``."""
+        response = _public_rpc_tool_call(
+            visibility_servers["public"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            scoped_token_read_only["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert body.get("error", {}).get("code") == -32003, f"Read-only token returned the wrong error: {body}"
+
+    def test_cross_team_developer_cannot_probe_team_server(
+        self,
+        admin_api: APIRequestContext,
+        playwright: Playwright,
+        create_team: Any,
+        visibility_servers: dict,
+    ) -> None:
+        """A caller with execute permission in another team sees generic not-found."""
+        _, other_team = _created_team(create_team, name=f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}")
+        caller = _create_user_with_token(
+            admin_api,
+            playwright,
+            f"{RBAC_PREFIX}-rpc-other-{uuid.uuid4().hex[:8]}@test.com",
+            team_id=other_team["id"],
+            rbac_role="developer",
+        )
+        server_id = visibility_servers["team"]["id"]
+        try:
+            response = _public_rpc_tool_call(server_id, self.tool_name, {"timezone": "UTC"}, caller["access_token"])
+            assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+            body = response.json()
+            assert body.get("error") == {"code": -32002, "message": f"Server not found: {server_id}", "data": {"server_id": server_id}}, f"Hidden server returned the wrong error: {body}"
+        finally:
+            _cleanup_user(admin_api, caller)
+
+    def test_team_developer_can_invoke(self, test_users: dict, visibility_servers: dict) -> None:
+        """A team member with ``tools.execute`` can invoke an attached tool."""
+        response = _public_rpc_tool_call(
+            visibility_servers["team"]["id"],
+            self.tool_name,
+            {"timezone": "UTC"},
+            test_users["developer"]["access_token"],
+        )
+        assert response.status_code == 200, f"POST /rpc returned {response.status_code}: {response.text[:500]}"
+        body = response.json()
+        assert "error" not in body, f"Authorized scoped invocation failed: {body}"
+        assert body.get("result", {}).get("content"), f"Authorized scoped invocation returned no content: {body}"
+
+
+# ---------------------------------------------------------------------------
+# Test: Invitee invitation lifecycle
+# ---------------------------------------------------------------------------
+class TestTeamInvitationLifecycle:
+    """Exercise invitation inbox and decline routes through the live gateway."""
+
+    def test_invitee_lists_and_declines_invitation(self, admin_api: APIRequestContext, playwright: Playwright, rbac_team: dict[str, Any]) -> None:
+        """Create, list, and decline an invitation using authenticated HTTP clients."""
+        email = f"{RBAC_PREFIX}-invitee-{uuid.uuid4().hex[:8]}@test.com"
+        invitee = _create_user_with_token(admin_api, playwright, email)
+        invitee_api = _api_context(playwright, invitee["access_token"])
+
+        try:
+            create_response = admin_api.post(
+                f"/v1/teams/{rbac_team['id']}/invitations",
+                data={"email": email, "role": "member"},
+            )
+            assert create_response.status == 201, f"Invitation creation failed: {create_response.status} {create_response.text()}"
+            created = create_response.json()
+            invitation_id = created["id"]
+            invitation_token = created["token"]
+
+            owner_inbox_response = admin_api.get("/v1/users/me/invitations")
+            assert owner_inbox_response.status == 200, f"Owner inbox failed: {owner_inbox_response.status} {owner_inbox_response.text()}"
+            assert invitation_id not in {item["id"] for item in owner_inbox_response.json()}
+
+            inbox_response = invitee_api.get("/v1/users/me/invitations")
+            assert inbox_response.status == 200, f"Invitee inbox failed: {inbox_response.status} {inbox_response.text()}"
+            matching = [item for item in inbox_response.json() if item["id"] == invitation_id]
+            assert len(matching) == 1
+            assert matching[0]["email"] == email
+            assert matching[0]["team_id"] == rbac_team["id"]
+            assert matching[0]["team_name"] == rbac_team["name"]
+            assert matching[0]["role"] == "member"
+            assert matching[0]["is_active"] is True
+            assert matching[0]["is_expired"] is False
+
+            decline_response = invitee_api.post(f"/v1/teams/invitations/{invitation_token}/decline")
+            assert decline_response.status == 200, f"Invitation decline failed: {decline_response.status} {decline_response.text()}"
+            assert decline_response.json()["message"] == "Team invitation declined successfully"
+
+            final_inbox_response = invitee_api.get("/v1/users/me/invitations")
+            assert final_inbox_response.status == 200
+            assert invitation_id not in {item["id"] for item in final_inbox_response.json()}
+
+            repeated_decline_response = invitee_api.post(f"/v1/teams/invitations/{invitation_token}/decline")
+            assert repeated_decline_response.status == 404
+        finally:
+            invitee_api.dispose()
+            _cleanup_user(admin_api, invitee)
 
 
 # ---------------------------------------------------------------------------
@@ -2442,6 +3218,68 @@ class TestVirtualServerLifecycle:
         assert detached.is_error, f"Detached tool remained invocable: {detached}"
         assert "not found" in detached.content[0].text.lower(), f"Detached tool returned the wrong error: {detached}"
 
+    def test_public_rpc_tools_call_honors_server_attachment(
+        self,
+        create_server: Any,
+        lifecycle_tools: list[dict[str, Any]],
+        admin_token: str,
+    ) -> None:
+        """Public /rpc should invoke an attached tool and reject an unassociated one.
+
+        Args:
+            create_server: Factory that returns the raw creation response.
+            lifecycle_tools: The gateway's enabled tools.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        echo_tool = next((tool for tool in lifecycle_tools if tool["name"].endswith("-echo")), None)
+        unassociated_tool = next((tool for tool in lifecycle_tools if tool["id"] != (echo_tool or {}).get("id")), None)
+        assert echo_tool, "The live gateway fixture must expose an echo tool"
+        assert unassociated_tool, "The live gateway fixture must expose an unassociated tool"
+
+        resp = create_server(tool_ids=[echo_tool["id"]])
+        assert resp.status == 201, f"POST /servers returned {resp.status}: {resp.text()[:500]}"
+        server_id = _json_or_fail(resp, "POST /servers")["id"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        invoked = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-call",
+                "method": "tools/call",
+                "params": {
+                    "name": echo_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {"message": "scoped-rpc-live"},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert invoked.status_code == 200, f"POST /rpc returned {invoked.status_code}: {invoked.text[:500]}"
+        invoked_body = invoked.json()
+        assert "error" not in invoked_body, f"Attached tool invocation failed: {invoked_body}"
+        assert "scoped-rpc-live" in json.dumps(invoked_body["result"]), f"Attached tool returned the wrong result: {invoked_body}"
+
+        rejected = httpx.post(
+            f"{BASE_URL}/rpc",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "scoped-live-rejection",
+                "method": "tools/call",
+                "params": {
+                    "name": unassociated_tool["name"],
+                    "server_id": server_id,
+                    "arguments": {},
+                },
+            },
+            timeout=_CLIENT_TIMEOUT,
+        )
+        assert rejected.status_code == 200, f"POST /rpc returned {rejected.status_code}: {rejected.text[:500]}"
+        rejected_body = rejected.json()
+        assert rejected_body.get("error", {}).get("code") == -32601, f"Unassociated tool returned the wrong error: {rejected_body}"
+
     @pytest.mark.parametrize(
         ("first_tenant", "second_tenant"),
         [("tenant-a", "tenant-b"), ("tenant-b", "tenant-a")],
@@ -2584,7 +3422,9 @@ class TestVirtualServerLifecycle:
                     json=build_initialize(1),
                 )
 
-            assert probe.status_code == 403, f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
+            assert (
+                probe.status_code == 403
+            ), f"narrowed token against a deleted server returned {probe.status_code}. Expected 403 from the servers.use check, not the 404 an admin sees: {probe.text[:300]}"
         finally:
             _cleanup_user(admin_api, user)
 
@@ -2780,11 +3620,11 @@ def create_user(admin_api: APIRequestContext, owned_users: _OwnedUsers) -> Any:
         A callable returning ``(email, payload, response)``.
     """
 
-    def _create(*, email: str | None = None, full_name: str = "E2E User", is_admin: bool = False, is_active: bool = True) -> tuple[str, dict[str, Any], APIResponse]:
+    def _create(*, email: str | None = None, full_name: str = "E2E User", is_admin: bool = False, is_active: bool = True, password: str = USER_PASSWORD) -> tuple[str, dict[str, Any], APIResponse]:
         address = email or _user_email()
         payload: dict[str, Any] = {
             "email": address,
-            "password": USER_PASSWORD,
+            "password": password,
             "full_name": full_name,
             "is_admin": is_admin,
             "is_active": is_active,
@@ -3443,20 +4283,10 @@ def _wait_for_gateway_tool_names(admin_api: APIRequestContext, gateway_id: str, 
 def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[APIResponse, None, None]:
     """Register a throwaway gateway against ``fast_time_server`` and delete it after.
 
-    Registered ``private`` so it never collides with the suite's shared
-    public ``streamable_http_gateway`` fixture, which already holds the same
-    upstream URL for the whole module (``gateway_service`` rejects a second
-    public gateway at one URL; uniqueness is visibility-scoped, so a private
-    registration by the same owner is a distinct row).
-
-    ``streamable_http_gateway``'s own displacement scan matches on name OR
-    url regardless of visibility, and its teardown restores whatever it
-    displaced without a ``visibility`` field (so the restored row comes
-    back public). That scan only runs once, at that fixture's first use,
-    which file order places before ``TestGatewayLifecycle``. A private row
-    from this fixture can only be swept up by it if this class ran first
-    and a delete below failed silently — reorder the class or harden the
-    delete below if that ever needs closing.
+    Relies on ``_displace_url_for_lifecycle_class`` (a class-scoped autouse
+    fixture on ``TestGatewayLifecycle``) to clear existing gateways at the
+    same upstream URL once before the whole class runs, so this function-scoped
+    fixture does not need to displace on every individual test call.
 
     Args:
         admin_api: Authenticated admin API context.
@@ -3466,25 +4296,63 @@ def ephemeral_gateway(admin_api: APIRequestContext) -> Generator[APIResponse, No
     """
     uid = uuid.uuid4().hex[:8]
     name = f"{GATEWAY_LIFECYCLE_PREFIX}-{uid}"
-    resp = admin_api.post(
-        "/gateways",
-        data={
-            "name": name,
-            "url": _GATEWAY_UPSTREAM_URL,
-            "transport": "STREAMABLEHTTP",
-            "visibility": "private",
-        },
-    )
-    assert resp.status in (200, 201, 202), f"POST /gateways returned {resp.status}: {resp.text()[:500]}"
-    yield resp
-    with suppress(Exception):
+    gw_id: str | None = None
+    try:
+        resp = admin_api.post(
+            "/gateways",
+            data={
+                "name": name,
+                "url": _GATEWAY_UPSTREAM_URL,
+                "transport": "STREAMABLEHTTP",
+            },
+        )
+        assert resp.status in (200, 201, 202), f"POST /gateways returned {resp.status}: {resp.text()[:500]}"
         gw_id = resp.json().get("id")
-        if gw_id:
-            admin_api.delete(f"/gateways/{gw_id}")
+        yield resp
+    finally:
+        with suppress(Exception):
+            if gw_id:
+                admin_api.delete(f"/gateways/{gw_id}")
 
 
 class TestGatewayLifecycle:
     """Register an MCP gateway, wait for tool sync, then delete it."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _displace_url_for_lifecycle_class(self, admin_api: APIRequestContext) -> Generator[None, None, None]:
+        """Displace gateways at the fast_time URL once for the whole class.
+
+        Removes any existing public gateway at ``_GATEWAY_UPSTREAM_URL``
+        (e.g. the module-scoped ``streamable_http_gateway``) before any test
+        in this class runs, so that the DB-level uniqueness constraint
+        ``uq_team_owner_email_name_tool`` does not block the per-test
+        ``ephemeral_gateway`` fixture.  Restores the displaced gateways once
+        after the last test in the class completes.
+
+        Args:
+            admin_api: Authenticated admin API context.
+
+        Yields:
+            None
+        """
+        displaced: list[dict] = []
+        with suppress(Exception):
+            for gw in admin_api.get("/gateways").json():
+                if gw.get("url") == _GATEWAY_UPSTREAM_URL:
+                    displaced.append(gw)
+                    admin_api.delete(f"/gateways/{gw['id']}")
+        yield
+        for gw in displaced:
+            with suppress(Exception):
+                admin_api.post(
+                    "/gateways",
+                    data={
+                        "name": gw["name"],
+                        "url": gw["url"],
+                        "transport": gw.get("transport", "STREAMABLEHTTP"),
+                        "description": gw.get("description"),
+                    },
+                )
 
     def test_register_returns_id_and_metadata(self, ephemeral_gateway: APIResponse) -> None:
         """Registration succeeds and echoes id, name, url, and transport.
@@ -3556,7 +4424,7 @@ class TestGatewayLifecycle:
         assert detail.status == 404, f"GET /gateways/{gw_id} returned {detail.status} after deletion, expected 404"
 
     def test_duplicate_registration_conflicts(self, admin_api: APIRequestContext, ephemeral_gateway: APIResponse) -> None:
-        """Re-registering the same name, url, and visibility returns 409.
+        """Re-registering the same URL and visibility returns 409.
 
         Args:
             admin_api: Authenticated admin API context.
@@ -3567,10 +4435,189 @@ class TestGatewayLifecycle:
         duplicate = admin_api.post(
             "/gateways",
             data={
-                "name": gw["name"],
+                "name": gw["name"] + "-dup",
                 "url": gw["url"],
                 "transport": gw["transport"],
-                "visibility": "private",
             },
         )
         assert duplicate.status == 409, f"duplicate POST /gateways returned {duplicate.status}, expected 409: {duplicate.text()[:500]}"
+
+    def test_tool_name_collision_rejects_second_gateway(self, admin_api: APIRequestContext, admin_token: str) -> None:
+        """A second gateway cannot persist a normalized tool-name collision.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            admin_token: Un-narrowed platform-admin JWT.
+        """
+        uid = uuid.uuid4().hex[:8]
+        first_name = f"gateway-collision-{uid}-api"
+        second_name = f"{first_name}-api"
+        collision_name = f"{first_name}-api-echo"
+        first_id: str | None = None
+        second_id: str | None = None
+        try:
+            first = admin_api.post(
+                "/gateways",
+                data={
+                    "name": first_name,
+                    "url": f"{_GATEWAY_UPSTREAM_URL}?gateway_collision={uid}",
+                    "transport": "STREAMABLEHTTP",
+                },
+            )
+            assert first.status in (200, 201), f"first POST /gateways returned {first.status}: {first.text()[:500]}"
+            first_id = _json_or_fail(first, "first POST /gateways")["id"]
+            assert _wait_for_gateway_tool_names(admin_api, first_id), f"gateway {first_id} did not sync tools"
+
+            echo_tool = next((tool for tool in _gateway_tools(admin_api, first_id) if tool["name"].endswith("-echo")), None)
+            assert echo_tool, f"gateway {first_id} did not expose echo tool"
+            renamed = admin_api.put(f"/tools/{echo_tool['id']}", data={"custom_name": "api-echo"})
+            assert renamed.status == 200, f"PUT /tools/{echo_tool['id']} returned {renamed.status}: {renamed.text()[:500]}"
+            assert collision_name in _wait_for_gateway_tool_names(admin_api, first_id), f"renamed tool {collision_name} did not persist"
+
+            second = admin_api.post(
+                "/gateways",
+                data={
+                    "name": second_name,
+                    "url": _GATEWAY_UPSTREAM_URL,
+                    "transport": "STREAMABLEHTTP",
+                },
+            )
+            if second.status in (200, 201):
+                second_id = second.json().get("id")
+            assert second.status == 409, f"colliding POST /gateways returned {second.status}: {second.text()[:500]}"
+            assert second.json() == {"message": "Gateway tool name conflicts with an existing tool"}
+
+            gateways = _json_or_fail(admin_api.get("/gateways"), "GET /gateways")
+            assert all(gateway["name"] != second_name for gateway in gateways), "colliding gateway persisted"
+            tools = _json_or_fail(admin_api.get("/tools", params={"limit": 0}), "GET /tools")
+            assert sum(tool["name"] == collision_name for tool in tools) == 1, "colliding tool persisted"
+
+            result = _mcp_tool_call(admin_token, collision_name, {"message": "collision-guard"})
+            assert result.is_error is False, f"original tool call failed: {result.content}"
+        finally:
+            for gateway_id in (second_id, first_id):
+                if gateway_id:
+                    with suppress(Exception):
+                        admin_api.delete(f"/gateways/{gateway_id}")
+
+
+# ---------------------------------------------------------------------------
+# Schema ReDoS: a hostile input-schema pattern must not stall the gateway
+# ---------------------------------------------------------------------------
+# The phrase the sandboxed regex timeout contributes to the tool-call error text.
+# Mirrors BOUNDED in tests/unit/mcpgateway/services/test_tool_service_regex_safety.py,
+# asserted here at the wire level instead of against the validator directly.
+_REDOS_BOUNDED_PHRASE = "exceeded the execution time limit"
+
+
+class TestSchemaRegexReDoS:
+    """A catastrophic input-schema pattern must not stall the live gateway."""
+
+    @pytest.mark.timeout(60)
+    def test_hostile_pattern_does_not_stall_the_gateway(self, admin_api: APIRequestContext, admin_token: str, create_server: Any) -> None:
+        """Register a tool with a catastrophic pattern, invoke it, and prove the gateway stays up.
+
+        Drives the full path a unit test cannot: HTTP routing, auth, RBAC, and the
+        sandboxed validator built at real app startup. The load-bearing assertion is
+        the health check taken immediately after the hostile call -- the original
+        vulnerability was one request freezing the worker for every other tenant on
+        it, not merely a slow validation.
+
+        Args:
+            admin_api: Authenticated admin API context.
+            admin_token: Un-narrowed platform-admin JWT, for the MCP session.
+            create_server: Factory that creates a throwaway virtual server.
+        """
+        tool_name = f"redos-probe-{uuid.uuid4().hex[:8]}"
+        created = admin_api.post(
+            "/tools",
+            data={
+                "tool": {
+                    "name": tool_name,
+                    "url": f"{BASE_URL}/health",
+                    "description": "Schema ReDoS probe tool",
+                    "integration_type": "REST",
+                    "request_type": "GET",
+                    "input_schema": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {"q": {"type": "string", "pattern": "^(a+)+$"}},
+                    },
+                },
+                "team_id": None,
+            },
+        )
+        assert created.status in (200, 201), f"POST /tools returned {created.status}: {created.text()[:500]}"
+        tool_id = _json_or_fail(created, "POST /tools")["id"]
+
+        server_id: str | None = None
+        try:
+            server_resp = create_server(tool_ids=[tool_id])
+            assert server_resp.status == 201, f"POST /servers returned {server_resp.status}: {server_resp.text()[:500]}"
+            server_id = _json_or_fail(server_resp, "POST /servers")["id"]
+
+            observed = _names_when_ready(lambda: {tool.name for tool in _mcp_tools_list(admin_token, server_url=_server_mcp_base(server_id))}, {tool_name})
+            assert tool_name in observed, f"probe tool never appeared in the scoped MCP catalog; observed={sorted(observed)}"
+
+            # _mcp_tool_call opens a session and does initialize() then call_tool() on it,
+            # each a separately-bounded send_request round trip capped at _CLIENT_TIMEOUT
+            # (mcp/shared/session.py's anyio.fail_after) -- see _unwrap_exception_group's
+            # docstring above: "initialize() followed by call_tool() on the same session
+            # wraps twice". A genuine regression -- the sandbox no longer bounding the
+            # match -- surfaces as an McpError from one of those round trips, wrapped in
+            # (possibly nested) ExceptionGroup by the SDK's anyio TaskGroups on the way out,
+            # not as a slow "took Xs" assertion below: catastrophic backtracking on this
+            # input would run far longer than any client timeout, so the client gives up
+            # first. Catching it here turns that opaque nested traceback into a diagnostic
+            # that also names the other explanation -- an overloaded CI box exceeding
+            # MCP_E2E_CLIENT_TIMEOUT -- rather than leaving raw exception-group nesting to
+            # interpret. Matches the except/_unwrap_exception_group pattern used above at
+            # TestTokenLifecycle.test_scoped_token_denied_tool_execute.
+            start = time.perf_counter()
+            try:
+                result = _mcp_tool_call(admin_token, tool_name, {"q": "a" * 40 + "b"}, server_url=_server_mcp_base(server_id))
+            except (McpError, ExceptionGroup) as exc:
+                elapsed = time.perf_counter() - start
+                leaf = _unwrap_exception_group(exc)[0]
+                pytest.fail(
+                    f"tools/call did not return within the {_CLIENT_TIMEOUT:.1f}s MCP client timeout "
+                    f"(waited {elapsed:.1f}s): {leaf!r}. Either the sandbox stopped bounding the catastrophic "
+                    "pattern, or this CI box is slow enough to exceed MCP_E2E_CLIENT_TIMEOUT -- raise that "
+                    "env var to rule out the latter before treating this as a regression."
+                )
+            elapsed = time.perf_counter() - start
+            # _CLIENT_TIMEOUT bounds one send_request round trip, not this whole call: the
+            # session opens, then initialize() and call_tool() each make their own bounded
+            # round trip on it. The honest ceiling past this point is a small multiple of
+            # _CLIENT_TIMEOUT, not the raw value -- generous headroom for setup plus two
+            # round trips without being so loose it stops guarding a future regression that
+            # adds more round trips to this path.
+            assert elapsed < 3 * _CLIENT_TIMEOUT, f"hostile call took {elapsed:.1f}s across session setup/initialize/call_tool; expected under {3 * _CLIENT_TIMEOUT:.1f}s"
+            print(f"    -> hostile call rejected in {elapsed:.2f}s (bound: {3 * _CLIENT_TIMEOUT:.1f}s)")
+            assert result.isError, f"expected the hostile argument to be rejected, got: {result}"
+            text = result.content[0].text if result.content else ""
+            assert _REDOS_BOUNDED_PHRASE in text, f"the timeout must be what stopped it; got {text!r}"
+
+            # Load-bearing: the vulnerability was one hostile request freezing the
+            # worker for every other tenant. This must succeed immediately, not
+            # eventually -- no retry loop, unlike the catalog-convergence poll above.
+            health = admin_api.get("/health")
+            assert health.status == 200, f"gateway did not answer /health immediately after the hostile call: {health.status} {health.text()[:200]}"
+        finally:
+            # Delete the server before the tool: the tool is associated to it, and no
+            # other test in this file deletes an associated tool ahead of its server.
+            # create_server's own owned_objects teardown would also delete the server,
+            # but that runs after this function returns -- deleting it here first keeps
+            # deletion order the same as everywhere else, and _delete_owned treats the
+            # fixture's later redundant attempt as a harmless 404. Failures are surfaced,
+            # not swallowed: a cleanup problem here is itself worth knowing about.
+            failures = []
+            if server_id is not None:
+                failure = _delete_owned(admin_api, "/servers", server_id)
+                if failure:
+                    failures.append(failure)
+            failure = _delete_owned(admin_api, "/tools", tool_id)
+            if failure:
+                failures.append(failure)
+            if failures:
+                pytest.fail("Cleanup did not remove every owned object:\n  " + "\n  ".join(failures))

@@ -23,7 +23,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape, TemplateNot
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings
+from mcpgateway.config import FRONTEND_MOUNT_PREFIX, settings
 from mcpgateway.schemas import EmailDeliveryStatus
 from mcpgateway.services.logging_service import LoggingService
 
@@ -31,11 +31,14 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+PASSWORD_ROUTES = frozenset({"/forgot-password", "/reset-password"})
+
+
 def build_frontend_url(path: str, token: Optional[str] = None) -> str:
     """Build a trusted browser-facing URL for email notifications.
 
     Args:
-        path: Frontend route beginning with ``/``.
+        path: Frontend route beginning with ``/``, without the UI mount prefix.
         token: Optional secret token appended as one URL-encoded path segment.
 
     Returns:
@@ -47,16 +50,19 @@ def build_frontend_url(path: str, token: Optional[str] = None) -> str:
     if not path.startswith("/") or path.startswith("//"):
         raise ValueError("Frontend path must start with exactly one slash")
 
-    configured_ui_base = getattr(settings, "ui_base_url", None)
+    if path == FRONTEND_MOUNT_PREFIX or path.startswith(f"{FRONTEND_MOUNT_PREFIX}/"):
+        raise ValueError("Frontend path must exclude the /app mount prefix")
+
+    configured_ui_base = settings.ui_base_url
     if configured_ui_base:
         base_url = str(configured_ui_base).rstrip("/")
     else:
-        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
-        root_path = str(getattr(settings, "app_root_path", "") or "").strip("/")
+        app_domain = str(settings.app_domain).rstrip("/")
+        root_path = str(settings.app_root_path or "").strip("/")
         base_url = f"{app_domain}/{root_path}" if root_path else app_domain
-        # Preserve bundled Admin UI password recovery only when those routes are mounted.
-        if path in {"/forgot-password", "/reset-password"} and settings.mcpgateway_admin_api_enabled:
-            path = f"/admin{path}"
+
+    use_admin = not configured_ui_base and path in PASSWORD_ROUTES and settings.mcpgateway_admin_api_enabled
+    path = f"/admin{path}" if use_admin else f"{FRONTEND_MOUNT_PREFIX}{path}"
 
     url = f"{base_url}{path}"
     if token is not None:

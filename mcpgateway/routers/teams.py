@@ -26,7 +26,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth_context import extract_token_team_ids
+from mcpgateway.auth_context import extract_token_team_ids, get_user_email
 from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginationCursorGeneric
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -55,7 +55,12 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.team_invitation_service import failed_invitation_delivery_result, TeamInvitationService
+from mcpgateway.services.team_invitation_service import (
+    failed_invitation_delivery_result,
+    InvitationEmailMismatchError,
+    InvitationNotFoundError,
+    TeamInvitationService,
+)
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
     JoinRequestNotFoundError,
@@ -953,6 +958,37 @@ async def accept_team_invitation(token: str, current_user: dict = Depends(get_cu
     except Exception as e:
         logger.error("Error accepting invitation: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to accept invitation")
+
+
+@teams_router.post("/invitations/{token}/decline", response_model=SuccessResponse)
+@require_permission("teams.join")
+async def decline_team_invitation(token: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
+    """Decline an active team invitation addressed to the caller.
+
+    Expired invitations may still be declined so they can be deactivated.
+
+    Args:
+        token: Invitation token
+        current_user: Authenticated user context
+        db: Database session
+
+    Returns:
+        SuccessResponse: Success confirmation
+
+    Raises:
+        HTTPException: If the invitation is missing, belongs to another user, or cannot be declined
+    """
+    user_email = get_user_email(current_user)
+    try:
+        await TeamInvitationService(db).decline_invitation(token, user_email)
+        return SuccessResponse(message="Team invitation declined successfully")
+    except InvitationNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found") from error
+    except InvitationEmailMismatchError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG) from error
+    except Exception as error:
+        logger.error("Error declining invitation for user %s: %s", SecurityValidator.sanitize_log_message(user_email), error)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to decline invitation") from error
 
 
 @teams_router.delete("/invitations/{invitation_id}", response_model=SuccessResponse)

@@ -254,14 +254,26 @@ sequenceDiagram
     DB-->>G: Invitation token generated
 
     G-->>O: Invitation created (token)
-    O-->>I: Share invite link (out of band)
+    O-->>I: Notify invited user
 
-    Note over I,G: Acceptance Process
-    I->>G: POST /teams/invitations/{token}/accept
-    G->>DB: Validate token + user
-    G->>DB: Create team membership
-    G->>DB: Deactivate invitation (is_active=false)
-    G-->>I: Welcome to team
+    Note over I,G: Invitation Inbox
+    I->>G: GET /users/me/invitations
+    G->>DB: Find active, unexpired invitations for authenticated email
+    DB-->>G: Pending invitations with team details
+    G-->>I: Invitation inbox
+
+    alt Accept invitation
+        I->>G: POST /teams/invitations/{token}/accept
+        G->>DB: Validate token and authenticated email
+        G->>DB: Create team membership
+        G->>DB: Deactivate invitation
+        G-->>I: Welcome to team
+    else Decline invitation
+        I->>G: POST /teams/invitations/{token}/decline
+        G->>DB: Validate token and authenticated email
+        G->>DB: Deactivate invitation without membership
+        G-->>I: Invitation declined
+    end
 ```
 
 ---

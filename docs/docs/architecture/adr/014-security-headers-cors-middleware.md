@@ -1,10 +1,16 @@
 # ADR-0014: Security Headers and Environment-Aware CORS Middleware
 
-- _Status:_ Accepted
+- _Status:_ Superseded by [ADR-0056](056-csp-hardening-no-eval-no-inline-handlers.md)
 - _Date:_ 2025-08-17
 - _Deciders:_ Core Engineering Team
 - _Issues:_ [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)
 - _Related:_ Addresses all 9 security headers identified by nodejsscan
+
+> ⚠️ The CSP directives and trade-off notes in this ADR have been superseded by
+> [ADR-0056](056-csp-hardening-no-eval-no-inline-handlers.md), which removes
+> `'unsafe-eval'` and `'unsafe-inline'` from `script-src` / `script-src-attr`,
+> disables HTMX eval, and replaces the hand-rolled sanitiser with DOMPurify.
+> The rest of this ADR (CORS, cookie utilities, SRI) remains authoritative.
 
 ## Context
 
@@ -45,11 +51,13 @@ response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP
 response.headers["X-Download-Options"] = "noopen"  # Prevent IE downloads
 response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-# Content Security Policy (Admin UI compatible)
+# Content Security Policy (nonce-based, no eval, no inline handlers)
 csp_directives = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
-    "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+    f"script-src-elem 'self' 'nonce-{csp_nonce}'",
+    "script-src-attr 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
     "connect-src 'self' ws: wss: https:",
@@ -165,7 +173,7 @@ nodejsscan:
 
 ### ❌ Trade-offs
 
-- **CSP Flexibility**: Using 'unsafe-inline' and 'unsafe-eval' for Admin UI compatibility
+- **CSP Flexibility**: `style-src` keeps 'unsafe-inline' for inline style attributes used by the Admin UI
 - **External Asset Allowlisting**: CSP may need to allow specific external origins when the UI adds third-party assets
 - **Configuration Complexity**: More environment variables to configure
 - **Development Overhead**: Additional middleware processing on every request
@@ -207,8 +215,10 @@ app.add_middleware(DocsAuthMiddleware)       # 3. Auth protection
 
 ### CSP Design Decisions
 
-- **'unsafe-inline'**: Required for Tailwind CSS inline styles
-- **'unsafe-eval'**: Still required — HTMX evaluates `hx-vals="js:{...}"` and `hx-on:*` attributes via `htmx.config.allowEval`. Tracked in issue #4655.
+- **'unsafe-inline'**: Allowed only in `style-src`, for inline style attributes
+- **No 'unsafe-eval'**: Alpine.js uses the `@alpinejs/csp` build, and `htmx.config.allowEval = false` disables HTMX code evaluation (`hx-vals="js:{...}"`, `hx-vars`, trigger filters)
+- **`script-src-elem` nonces**: Inline `<script>` blocks run only with the per-request nonce
+- **`script-src-attr 'none'`**: Inline `on*` handler attributes never execute, so injected markup cannot become script execution
 - **Specific CDN domains**: Whitelisted known-good CDN sources instead of wildcard
 - **'frame-ancestors none'**: Prevents all framing to prevent clickjacking
 
@@ -276,7 +286,6 @@ When updating Admin UI frontend dependencies:
 
 Potential improvements for future iterations:
 
-- **CSP Nonces**: Replace 'unsafe-inline' with nonces for dynamic content
 - **CSP Violation Reporting**: Implement CSP violation reporting endpoint
 - **Per-Route CSP**: Different CSP policies for different endpoints
 - **Security Header Compliance**: Monitoring dashboard for header compliance

@@ -633,3 +633,107 @@ class TestCheckSingleGatewayHealthReal:
 
         # url should have been rewritten by apply_query_param_auth and used in stream().
         assert "api_key=secret" in client.stream.call_args.args[1]
+
+
+class TestSSEHealthCheckNoRedirects:
+    """Regression: SSE health-check client must never follow redirects.
+
+    An attacker with gateways.create can register an SSE gateway whose URL
+    302-redirects the health check to an internal host (SSRF) or to a host
+    they control (credential forwarding for authheaders gateways). Guard
+    against accidental reversion by asserting follow_redirects=False is
+    always passed to get_isolated_http_client.
+    """
+
+    def _make_gateway(self, *, auth_type="none", auth_value=None):
+        """Build a minimal SSE DbGateway mock."""
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "ssrf-regression-gw"
+        gw.name = "ssrf-regression"
+        gw.url = "http://sse.example.com/mcp"
+        gw.transport = "sse"
+        gw.enabled = True
+        gw.reachable = True
+        gw.auth_type = auth_type
+        gw.auth_value = auth_value or {}
+        gw.oauth_config = None
+        gw.ca_certificate = None
+        gw.client_cert = None
+        gw.client_key = None
+        gw.last_refresh_at = None
+        gw.lifecycle_claimed_by = None
+        gw.failure_count = 0
+        gw.auth_query_params = None
+        return gw
+
+    @pytest.mark.asyncio
+    async def test_sse_health_check_passes_follow_redirects_false(self):
+        """get_isolated_http_client must receive follow_redirects=False for SSE health checks."""
+        service = GatewayService()
+        service._instance_id = "test-instance"
+        service._gateway_failure_counts = {}
+        service._active_gateways = set()
+        service._mark_gateway_reachable = AsyncMock()
+        service._handle_gateway_failure = AsyncMock()
+        service._classification_service = None
+
+        gateway = self._make_gateway(auth_type="none")
+
+        captured_kwargs: dict = {}
+
+        class _IsoClientCM:
+            async def __aenter__(self_inner):
+                client = MagicMock()
+                stream_cm = MagicMock()
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.raise_for_status = MagicMock()
+                stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+                stream_cm.__aexit__ = AsyncMock(return_value=False)
+                client.stream = MagicMock(return_value=stream_cm)
+                return client
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        def _capture_isolated_client(**kwargs):
+            captured_kwargs.update(kwargs)
+            return _IsoClientCM()
+
+        class _DBCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    httpx_admin_read_timeout=5,
+                    health_check_timeout=5,
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", side_effect=_capture_isolated_client),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=MagicMock(__aenter__=AsyncMock(return_value=None), __aexit__=AsyncMock(return_value=False))),
+            patch("mcpgateway.services.gateway_service.sanitize_url_for_logging", side_effect=lambda u, *_a, **_k: u),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+            patch("mcpgateway.services.gateway_service.apply_query_param_auth", side_effect=lambda u, *_a, **_k: u),
+            patch("mcpgateway.services.gateway_service.SecurityValidator") as mock_sv,
+        ):
+            mock_sv.sanitize_log_message.side_effect = lambda x: x
+            mock_sv.sanitize_credential_value.side_effect = lambda x: x
+            await service._check_single_gateway_health(gateway)
+
+        assert "follow_redirects" in captured_kwargs, "follow_redirects kwarg was not passed to get_isolated_http_client"
+        assert captured_kwargs["follow_redirects"] is False, (
+            f"SSE health-check client must set follow_redirects=False to prevent SSRF via redirect; got {captured_kwargs['follow_redirects']!r}"
+        )

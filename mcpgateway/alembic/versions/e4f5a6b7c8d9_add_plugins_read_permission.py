@@ -75,9 +75,13 @@ def _update_permission(role_name: str, scope: str, add: bool) -> None:
     permission_json = json.dumps(updated)
     if bind.dialect.name == "postgresql":
         statement = text("UPDATE roles SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at WHERE id = :role_id")
+        updated_at: object = datetime.now(timezone.utc)
     else:
         statement = text("UPDATE roles SET permissions = :permissions, updated_at = :updated_at WHERE id = :role_id")
-    bind.execute(statement, {"permissions": permission_json, "updated_at": datetime.now(timezone.utc), "role_id": row[0]})
+        # Match the sqlite3 default adapter's storage format exactly; binding a
+        # datetime object would trip the Python 3.12+ deprecated-adapter warning.
+        updated_at = datetime.now(timezone.utc).isoformat(" ")
+    bind.execute(statement, {"permissions": permission_json, "updated_at": updated_at, "role_id": row[0]})
 
 
 def upgrade() -> None:

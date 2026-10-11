@@ -42,8 +42,10 @@ import mcp_types
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout
 from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.session_compat import RequestResponder
+from mcpgateway.utils.ssrf_pinning import PinnedTarget, resolve_pinned_target
 from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
@@ -477,6 +479,150 @@ class UpstreamSession:
         return _mcp_transport_is_broken(self.session)
 
 
+async def _resolve_pinned_session_target(url: str) -> PinnedTarget:
+    """Resolve and validate the upstream URL once for the whole session factory.
+
+    Every transport construction below dials the address this returns, so a
+    single resolve covers all of them; re-resolving per branch would let two
+    branches pin to different addresses if DNS changed in between.
+
+    Args:
+        url: Upstream MCP URL this session will connect to.
+
+    Returns:
+        PinnedTarget: The validated target.
+
+    Raises:
+        RuntimeError: If the URL is blocked by the outbound URL policy. Every
+            caller of ``UpstreamSessionRegistry.acquire()`` catches a broad
+            ``Exception`` or ``BaseException`` around it and wraps whatever
+            propagates into its own error type, so any exception type reaches
+            them; ``RuntimeError`` matches the type this factory already
+            raises for every other session-creation failure below.
+    """
+    try:
+        return await resolve_pinned_target(url, "Upstream MCP URL")
+    except ValueError as pin_exc:
+        safe_url = sanitize_url_for_logging(url)
+        raise RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [url_policy] outbound URL blocked by URL policy") from pin_exc
+
+
+def _build_pinned_httpx_client_factory(pinned_target: PinnedTarget) -> HttpxClientFactory:
+    """Build a default httpx client factory dialing the validated address.
+
+    Used when the caller passed no ``httpx_client_factory`` of its own.
+
+    Args:
+        pinned_target: The target validated for this session's URL.
+
+    Returns:
+        HttpxClientFactory: A factory whose client dials ``pinned_target``'s
+        validated address, verifying TLS per ``get_default_verify()``.
+    """
+
+    def _pinned_factory(
+        headers: Optional[dict[str, str]] = None,
+        timeout: Optional[httpx2.Timeout] = None,
+        auth: Optional[httpx2.Auth] = None,
+    ) -> httpx2.AsyncClient:
+        """Build the pinned httpx client.
+
+        Args:
+            headers: Optional headers for the client.
+            timeout: Optional timeout for the client.
+            auth: Optional auth for the client.
+
+        Returns:
+            httpx2.AsyncClient: Configured HTTPX async client.
+        """
+        return httpx2.AsyncClient(
+            follow_redirects=False,
+            headers=headers,
+            timeout=timeout if timeout else get_httpx2_timeout(),
+            auth=auth,
+            **pinned_target.client_kwargs(
+                verify=get_default_verify(),
+                limits=httpx2.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            ),
+        )
+
+    return _pinned_factory
+
+
+def _wrap_httpx_client_factory(pinned_target: PinnedTarget, inner_factory: HttpxClientFactory) -> HttpxClientFactory:
+    """Wrap a caller-supplied httpx client factory so its client dials the pinned address.
+
+    A caller that passed its own factory did so for its TLS settings (custom
+    CA, client certs); building a fresh client here instead would silently
+    drop those and break mTLS gateways. This builds the caller's client
+    unchanged and only swaps its transport, reusing the TLS context the
+    caller's factory already configured on it.
+
+    Args:
+        pinned_target: The target validated for this session's URL.
+        inner_factory: The caller's own httpx client factory.
+
+    Returns:
+        HttpxClientFactory: A factory that pins the caller's client when
+        ``pinned_target`` is pinned, and returns it unchanged otherwise.
+    """
+
+    def _pinned_factory(
+        headers: Optional[dict[str, str]] = None,
+        timeout: Optional[httpx2.Timeout] = None,
+        auth: Optional[httpx2.Auth] = None,
+    ) -> httpx2.AsyncClient:
+        """Build the caller's client, then pin its transport.
+
+        Args:
+            headers: Optional headers for the client.
+            timeout: Optional timeout for the client.
+            auth: Optional auth for the client.
+
+        Returns:
+            httpx2.AsyncClient: The caller's client, pinned when applicable.
+
+        Raises:
+            RuntimeError: If ``pinned_target`` is pinned but the caller's
+                built client carries no discoverable TLS context. Failing
+                closed here avoids silently dialing with default trust
+                material in place of whatever the caller configured.
+        """
+        client = inner_factory(headers, timeout, auth)
+        if not pinned_target.is_pinned:
+            return client
+        # A transport with no connection pool (e.g. an in-process ASGITransport in
+        # tests) never dials the network, so there is no DNS-rebinding surface to pin.
+        inner_pool = getattr(client._transport, "_pool", None)  # pylint: disable=protected-access
+        if inner_pool is None:
+            return client
+        # The caller's factory already built the correct TLS trust material (custom CA,
+        # client cert) into its transport's connection pool. Reusing it here is what keeps
+        # this wrap from silently breaking mTLS gateways. Fail closed rather than fall back
+        # to get_default_verify() if that material can't be found: with SKIP_SSL_VERIFY=true,
+        # get_default_verify() returns False, so a silent fallback would downgrade a caller's
+        # strict custom-CA context to no verification at all.
+        verify = getattr(inner_pool, "_ssl_context", None)
+        if verify is None:
+            raise RuntimeError("Cannot pin the caller's httpx client: its TLS context was not found; refusing to dial with default trust material")
+        pinned_kwargs = pinned_target.client_kwargs(
+            verify=verify,
+            limits=httpx2.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+        )
+        client._transport = pinned_kwargs["transport"]  # pylint: disable=protected-access
+        return client
+
+    return _pinned_factory
+
+
 async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, SessionLifecycle]:
     """Owner-task wrapper that builds the real transport + SDK Client.
 
@@ -491,35 +637,32 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     ``initialize()`` handshake (byte-identical to the previous raw
     ``ClientSession`` path); ``"auto"`` negotiates modern protocol revisions
     (2026-07-28) via ``server/discover`` with an ``initialize()`` fallback.
+
+    The URL is resolved and pinned once here, at the entry point every
+    ``UpstreamSessionRegistry.acquire()`` caller routes through — pinning
+    only a caller's own per-call fallback path (as some already do) would
+    leave this pooled path, which every such caller also uses, unpinned.
     """
-    if req.transport_type is TransportType.SSE:
-        if req.httpx_client_factory is not None:
-            transport_ctx = sse_client(
-                url=req.url,
-                headers=req.headers,
-                httpx_client_factory=req.httpx_client_factory,
-                timeout=req.timeout_seconds,
-            )
-        else:
-            transport_ctx = sse_client(
-                url=req.url,
-                headers=req.headers,
-                timeout=req.timeout_seconds,
-            )
+    pinned_target = await _resolve_pinned_session_target(req.url)
+    if req.httpx_client_factory is not None:
+        pinned_httpx_client_factory = _wrap_httpx_client_factory(pinned_target, req.httpx_client_factory)
     else:
-        if req.httpx_client_factory is not None:
-            transport_ctx = streamable_http_client(
-                url=req.url,
-                headers=req.headers,
-                httpx_client_factory=req.httpx_client_factory,
-                timeout=req.timeout_seconds,
-            )
-        else:
-            transport_ctx = streamable_http_client(
-                url=req.url,
-                headers=req.headers,
-                timeout=req.timeout_seconds,
-            )
+        pinned_httpx_client_factory = _build_pinned_httpx_client_factory(pinned_target)
+
+    if req.transport_type is TransportType.SSE:
+        transport_ctx = sse_client(
+            url=req.url,
+            headers=req.headers,
+            httpx_client_factory=pinned_httpx_client_factory,
+            timeout=req.timeout_seconds,
+        )
+    else:
+        transport_ctx = streamable_http_client(
+            url=req.url,
+            headers=req.headers,
+            httpx_client_factory=pinned_httpx_client_factory,
+            timeout=req.timeout_seconds,
+        )
 
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()

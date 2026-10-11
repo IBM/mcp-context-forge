@@ -643,7 +643,7 @@ describe("editResource - extended", () => {
     form.id = "edit-resource-form";
     document.body.appendChild(form);
 
-    ["edit-resource-name", "edit-resource-uri", "edit-resource-description",
+    ["edit-resource-name", "edit-resource-custom-name", "edit-resource-uri", "edit-resource-description",
       "edit-resource-mime-type", "edit-resource-tags"].forEach((id) => {
       const input = document.createElement("input");
       input.id = id;
@@ -686,6 +686,38 @@ describe("editResource - extended", () => {
     expect(document.getElementById("edit-resource-uri").value).toBe("res://r1");
     expect(document.getElementById("edit-resource-visibility-team").checked).toBe(true);
     consoleSpy.mockRestore();
+  });
+
+  test.each(["report", "", "a--".repeat(127) + "a"])("edits the full federated base %s, not the derived name", async (base) => {
+    buildEditForm();
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: async () => ({ resource: {
+        id: "r1", name: "gateway-report", uri: "test://report",
+        gatewayId: "gw", customNameSlug: base,
+      } }),
+    });
+    await editResource("r1");
+    const visible = document.getElementById("edit-resource-custom-name");
+    expect(visible.value).toBe(base);
+    expect(visible.dataset.originalValue).toBe(base);
+    const hidden = document.getElementById("edit-resource-name");
+    expect(hidden.value).toBe("gateway-report");
+    expect(hidden.disabled).toBe(true);
+  });
+
+  test("keeps local names verbatim even when a base slug exists", async () => {
+    buildEditForm();
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: async () => ({ resource: {
+        id: "r1", name: "My Report", uri: "test://local",
+        gatewayId: null, customNameSlug: "my-report",
+      } }),
+    });
+    await editResource("r1");
+    expect(document.getElementById("edit-resource-custom-name").value).toBe("My Report");
+    expect(document.getElementById("edit-resource-name").disabled).toBe(false);
   });
 
   test("sets public visibility radio correctly", async () => {

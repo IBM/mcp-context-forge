@@ -182,7 +182,9 @@ def upgrade() -> None:
         print("email_teams table not found. Skipping migration.")
         return
 
-    now = datetime.now(timezone.utc)
+    # Bind an adapter-identical string on SQLite; binding a datetime object
+    # would trip the Python 3.12+ deprecated-adapter warning.
+    now: object = datetime.now(timezone.utc) if bind.dialect.name == "postgresql" else datetime.now(timezone.utc).isoformat(" ")
 
     # Step 1: Update existing role permissions
     print("\n=== Step 1: Updating role permissions ===")
@@ -453,7 +455,9 @@ def downgrade() -> None:
         print("Required tables not found. Nothing to downgrade.")
         return
 
-    now = datetime.now(timezone.utc)
+    # Bind an adapter-identical string on SQLite; binding a datetime object
+    # would trip the Python 3.12+ deprecated-adapter warning.
+    now: object = datetime.now(timezone.utc) if bind.dialect.name == "postgresql" else datetime.now(timezone.utc).isoformat(" ")
 
     # Step 1: Remove migration-assigned role assignments
     # Identify them by migration_source = MIGRATION_SOURCE (set on insert in

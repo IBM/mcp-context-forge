@@ -179,6 +179,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
+    GatewayToolNameConflictError,
     test_gateway_connectivity,
 )
 from mcpgateway.services.import_service import ConflictStrategy
@@ -201,7 +202,7 @@ from mcpgateway.services.team_management_service import JoinRequestNotFoundError
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
-from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
+from mcpgateway.utils.error_formatter import ErrorFormatter, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
@@ -210,6 +211,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -247,6 +249,18 @@ except ImportError:
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
+
+
+class CaSigningError(RuntimeError):
+    """Raised when CA certificate signing fails because of server key or crypto configuration.
+
+    Subclasses RuntimeError so the existing handler maps it to 500: a signing fault is a
+    server fault, not invalid client input.
+    """
+
+    reason_code = "gateway_ca_signing_failed"
+
+
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "overview": ("overview",),
     "servers": ("catalog",),
@@ -1063,7 +1077,8 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
                 data["tags"] = [tag.strip() for tag in data["tags"].split(",") if tag.strip()]
             return data
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}")
+            LOGGER.warning("Invalid JSON body: %s", e)
+            raise HTTPException(status_code=400, detail=safe_error_detail(e, "Invalid JSON body"))
 
     # Handle form data requests (multipart/form-data or application/x-www-form-urlencoded)
     elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
@@ -1168,8 +1183,8 @@ def _build_admin_redirect(
     Args:
         root_path: The root path prefix for the application.
         fragment: The URL fragment/hash (e.g. "tools", "catalog").
-        error: Optional error message to include as a query parameter.
-        message: Optional success/info message to include as a query parameter.
+        error: Optional error code for the flash banner; admin.html maps it to display text.
+        message: Optional info code for the flash banner; admin.html maps it to display text.
         include_inactive: Whether the include_inactive flag was set.
         team_id: Optional team ID to preserve in the redirect.
 
@@ -2405,7 +2420,6 @@ async def get_overview_partial(
             "redis_available": redis_available,
             "redis_reachable": redis_reachable,
             "uptime_seconds": uptime_seconds,
-            "mcp_runtime": version_module.mcp_runtime_status_payload(),
         }
 
         return request.app.state.templates.TemplateResponse(request, "overview_partial.html", context)
@@ -2415,7 +2429,7 @@ async def get_overview_partial(
         error_html = f"""
         <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded">
             <strong class="font-bold">Error loading overview:</strong>
-            <span class="block sm:inline">{html.escape(str(e))}</span>
+            <span class="block sm:inline">{html.escape(unexpected_error_detail(e))}</span>
         </div>
         """
         return HTMLResponse(content=error_html, status_code=500)
@@ -3245,7 +3259,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         )
 
     except CoreValidationError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except ServerNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
@@ -3406,7 +3420,8 @@ async def admin_edit_server(
     except ValueError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception("Unexpected error in admin_edit_server")
+        return ORJSONResponse(content={"message": unexpected_error_detail(ex), "success": False}, status_code=500)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except PermissionError as e:
@@ -3452,7 +3467,7 @@ async def admin_set_server_state(
         'admin_set_server_state'
     """
     form = await request.form()
-    error_message = None
+    error_code = None
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is setting server ID {server_id} state with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
@@ -3461,17 +3476,17 @@ async def admin_set_server_state(
         await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
     except ServerLockConflictError as e:
         LOGGER.warning("Lock conflict for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
-        error_message = "Server is being modified by another request. Please try again."
+        error_code = "conflict"
     except Exception as e:
         LOGGER.error(f"Error setting server status: {e}")
-        error_message = "Error setting server status. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -3503,21 +3518,21 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
-    error_message = None
+    error_code = None
     try:
         user_email = get_user_email(user)
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s deleting server %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), SecurityValidator.sanitize_log_message(server_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting server: {e}")
-        error_message = "Failed to delete server. Please try again."
+        error_code = "delete_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -3723,7 +3738,7 @@ async def admin_set_gateway_state(
         >>> admin_set_gateway_state.__name__
         'admin_set_gateway_state'
     """
-    error_message = None
+    error_code = None
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is setting gateway state for ID {gateway_id}")
     form = await request.form()
@@ -3734,14 +3749,16 @@ async def admin_set_gateway_state(
         await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
+    except GatewayToolNameConflictError:
+        error_code = "name_conflict"
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
-        error_message = "Failed to set gateway state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -6061,7 +6078,7 @@ async def admin_list_teams(
 
     except Exception as e:
         LOGGER.error(f"Error listing teams for admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(str(e))}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(unexpected_error_detail(e))}</p></div>', status_code=200)
 
 
 def _parse_form_max_members(raw: object) -> Optional[int]:
@@ -6173,13 +6190,13 @@ async def admin_create_team(
         if "UNIQUE constraint failed: email_teams.slug" in str(e):
             error_content = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">A team with this name already exists. Please choose a different name.</div>'
         else:
-            error_content = f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Database error: {html.escape(str(e))}</div>'
+            error_content = f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(ErrorFormatter.format_database_error(e)["message"])}</div>'
         response = HTMLResponse(content=error_content, status_code=400)
         return response
     except Exception as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
         response = HTMLResponse(
-            content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Error creating team: {html.escape(str(e))}</div>',
+            content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Error creating team: {html.escape(unexpected_error_detail(e))}</div>',
             status_code=400,
         )
         return response
@@ -6347,7 +6364,7 @@ async def admin_view_team_members(
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading members: {html.escape(str(e))}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading members: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/members/add")
@@ -6483,7 +6500,7 @@ async def admin_add_team_members_view(
 
     except Exception as e:
         LOGGER.error(f"Error loading add members view for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(str(e))}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/edit")
@@ -6602,7 +6619,7 @@ async def admin_get_team_edit(
 
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(str(e))}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
 
 
 @admin_router.post("/teams/{team_id}/update")
@@ -6654,8 +6671,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote("Team name is required")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="team_name_required"), status_code=303)
 
         # Validate name and description for XSS (same validation as schema)
         if not re.match(settings.validation_name_pattern, name):
@@ -6668,8 +6684,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote("Team name contains invalid characters")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="team_name_invalid"), status_code=303)
 
         try:
             SecurityValidator.validate_no_xss(name, "Team name")
@@ -6689,8 +6704,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote(str(ve))
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="invalid_input"), status_code=303)
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
@@ -6717,8 +6731,7 @@ async def admin_update_team(
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
                 return response
-            error_msg = urllib.parse.quote("Team cannot be updated")
-            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(_build_admin_redirect(root_path, "teams", error="update_failed"), status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -6746,8 +6759,7 @@ async def admin_update_team(
             response.headers["HX-Retarget"] = "#edit-team-error"
             response.headers["HX-Reswap"] = "innerHTML"
             return response
-        error_msg = urllib.parse.quote(str(e))
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(_build_admin_redirect(root_path, "teams", error="invalid_input"), status_code=303)
     except Exception as e:
         db.rollback()
         LOGGER.error(f"Error updating team {team_id}: {e}")
@@ -6756,10 +6768,9 @@ async def admin_update_team(
         is_htmx = request.headers.get("HX-Request") == "true"
 
         if is_htmx:
-            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=500)
+            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
         # For regular form submission, redirect to admin page with error parameter
-        error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
-        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(_build_admin_redirect(root_path, "teams", error="update_failed"), status_code=303)
 
 
 @admin_router.delete("/teams/{team_id}")
@@ -6814,7 +6825,7 @@ async def admin_delete_team(
 
     except Exception as e:
         LOGGER.error(f"Error deleting team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/add-member")
@@ -6948,7 +6959,7 @@ async def admin_add_team_members(
 
             except Exception as member_error:
                 LOGGER.error(f"Error processing {user_email} for team {team_id}: {member_error}")
-                errors.append(f"{user_email} ({str(member_error)})")
+                errors.append(f"{user_email} ({unexpected_error_detail(member_error)})")
 
         # 2. Handle removals - only remove members who were LOADED in the form AND unchecked
         # This prevents accidentally removing members from pages that weren't loaded yet (infinite scroll safety)
@@ -6977,7 +6988,7 @@ async def admin_add_team_members(
                 removed.append(existing_email)
             except Exception as removal_error:
                 LOGGER.error(f"Error removing {existing_email} from team {team_id}: {removal_error}")
-                errors.append(f"{existing_email} (removal failed: {str(removal_error)})")
+                errors.append(f"{existing_email} (removal failed: {unexpected_error_detail(removal_error)})")
 
         # Build result message
         result_parts = []
@@ -7034,7 +7045,7 @@ async def admin_add_team_members(
 
     except Exception as e:
         LOGGER.error(f"Error adding member(s) to team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
@@ -7110,7 +7121,7 @@ async def admin_update_team_member_role(
 
     except Exception as e:
         LOGGER.error(f"Error updating member role in team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error updating role: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating role: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
@@ -7187,7 +7198,7 @@ async def admin_remove_team_member(
 
     except Exception as e:
         LOGGER.error(f"Error removing member from team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error removing member: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error removing member: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/leave")
@@ -7255,7 +7266,7 @@ async def admin_leave_team(
 
     except Exception as e:
         LOGGER.error(f"Error leaving team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 # ============================================================================ #
@@ -7349,7 +7360,7 @@ async def admin_create_join_request(
         return HTMLResponse(content=f'<div class="text-red-500">{error_msg}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error creating join request for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
@@ -7409,7 +7420,7 @@ async def admin_cancel_join_request(
 
     except Exception as e:
         LOGGER.error(f"Error canceling join request {request_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error canceling join request: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error canceling join request: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.get("/teams/{team_id}/join-requests")
@@ -7498,7 +7509,7 @@ async def admin_list_join_requests(
 
     except Exception as e:
         LOGGER.error(f"Error listing join requests for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading join requests: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading join requests: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
@@ -7552,7 +7563,7 @@ async def admin_approve_join_request(
         return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
@@ -7606,7 +7617,7 @@ async def admin_reject_join_request(
         return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 # ============================================================================ #
@@ -7960,7 +7971,7 @@ async def admin_users_partial_html(
 
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(unexpected_error_detail(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/teams/{team_id}/members/partial", response_class=HTMLResponse)
@@ -8051,7 +8062,7 @@ async def admin_team_members_partial_html(
 
     except Exception as e:
         LOGGER.error(f"Error loading team members partial for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading members: {html.escape(str(e))}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading members: {html.escape(unexpected_error_detail(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/teams/{team_id}/non-members/partial", response_class=HTMLResponse)
@@ -8159,7 +8170,7 @@ async def admin_team_non_members_partial_html(
 
     except Exception as e:
         LOGGER.error(f"Error loading team non-members partial for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading non-members: {html.escape(str(e))}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading non-members: {html.escape(unexpected_error_detail(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)
@@ -8277,7 +8288,7 @@ async def admin_create_user(
 
     except Exception as e:
         LOGGER.error(f"Error creating user by admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error creating user: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating user: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.get("/users/{user_email}/edit")
@@ -8438,7 +8449,7 @@ async def admin_get_user_edit(
 
     except Exception as e:
         LOGGER.error(f"Error getting user edit form for {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading user: {html.escape(str(e))}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading user: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
 
 
 @admin_router.post("/users/{user_email}/update")
@@ -8525,7 +8536,7 @@ async def admin_update_user(
         return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {html.escape(str(exc))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
     except Exception as e:
         LOGGER.error(f"Error updating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(unexpected_error_detail(e))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
 
 @admin_router.post("/users/{user_email}/activate")
@@ -8570,7 +8581,7 @@ async def admin_activate_user(
 
     except Exception as e:
         LOGGER.error(f"Error activating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error activating user: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error activating user: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/deactivate")
@@ -8615,7 +8626,7 @@ async def admin_deactivate_user(
 
     except Exception as e:
         LOGGER.error(f"Error deactivating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deactivating user: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error deactivating user: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.delete("/users/{user_email}")
@@ -8667,7 +8678,7 @@ async def admin_delete_user(
 
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/unlock")
@@ -8705,7 +8716,7 @@ async def admin_unlock_user(
         return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(exc))}</div>', status_code=404)
     except Exception as exc:
         LOGGER.error("Error unlocking user %s: %s", user_email, exc)
-        return HTMLResponse(content=f'<div class="text-red-500">Error unlocking user: {html.escape(str(exc))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error unlocking user: {html.escape(unexpected_error_detail(exc))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/force-password-change")
@@ -8784,7 +8795,7 @@ async def admin_force_password_change(
         return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(exc))}</div>', status_code=404)
     except Exception as e:
         LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
 
 
 @admin_router.get("/tools", response_model=PaginatedResponse)
@@ -12231,7 +12242,7 @@ async def admin_add_tool(
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
         LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": unexpected_error_detail(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
@@ -12498,6 +12509,9 @@ async def generate_schemas_from_openapi(
             status_code=500,
         )
 
+    warn_unprovable_patterns(input_schema, source=f"openapi:{spec_url}")
+    warn_unprovable_patterns(output_schema, source=f"openapi:{spec_url}")
+
     return ORJSONResponse(
         content={
             "message": "Schemas generated successfully from OpenAPI spec",
@@ -12541,19 +12555,19 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
-    error_message = None
+    error_code = None
     try:
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting tool: {e}")
-        error_message = "Failed to delete tool. Please try again."
+        error_code = "delete_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -12589,7 +12603,7 @@ async def admin_set_tool_state(
         >>> admin_set_tool_state.__name__
         'admin_set_tool_state'
     """
-    error_message = None
+    error_code = None
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling tool ID {tool_id}")
     form = await request.form()
@@ -12599,17 +12613,17 @@ async def admin_set_tool_state(
         await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting tool state {tool_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except ToolLockConflictError as e:
         LOGGER.warning(f"Lock conflict for user {user_email} setting tool {tool_id} state: {e}")
-        error_message = "Tool is being modified by another request. Please try again."
+        error_code = "conflict"
     except Exception as e:
         LOGGER.error(f"Error setting tool state: {e}")
-        error_message = "Failed to set tool state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -12672,7 +12686,6 @@ async def admin_discover_oauth(
     """
     # First-Party
     from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
-    from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
     try:
         body = await request.json()
@@ -12740,7 +12753,7 @@ async def admin_discover_oauth(
         )
     except Exception as e:
         LOGGER.warning("OAuth discovery failed: %s", e)
-        sanitized = sanitize_exception_message(str(e))
+        sanitized = unexpected_error_detail(e)
         return JSONResponse(
             {
                 "success": False,
@@ -12802,7 +12815,8 @@ async def admin_add_gateway(
     except HTTPException:
         raise
     except Exception as e:
-        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
+        LOGGER.warning("Invalid request data: %s", e)
+        return ORJSONResponse(content={"message": safe_error_detail(e, "Invalid request data"), "success": False}, status_code=400)
 
     team_id = data.get("team_id")
     if team_id and isinstance(team_id, str):
@@ -12833,8 +12847,8 @@ async def admin_add_gateway(
                     data["ca_certificate_sig"] = sig
                     data["signing_algorithm"] = "ed25519"
                 except Exception as e:
-                    LOGGER.error(f"Error signing CA certificate: {e}")
-                    raise RuntimeError("Failed to sign CA certificate") from e
+                    LOGGER.error("CA certificate signing failed: error=%s", type(e).__name__)
+                    raise CaSigningError("Failed to sign CA certificate") from e
             else:
                 # Explicitly set to None when signing is disabled
                 data["ca_certificate_sig"] = None
@@ -12849,14 +12863,15 @@ async def admin_add_gateway(
         gateway = GatewayCreate(**data)
 
     except ValidationError as ex:
-        # --- Getting only the custom message from the ValueError ---
-        error_ctx = [str(err.get("ctx", {}).get("error", err.get("msg", str(err)))) for err in ex.errors()]
-        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+        LOGGER.warning("Gateway registration rejected: %s", sanitize_validation_error_for_log(ex))
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
 
     except RuntimeError as err:
-        # --- Getting only the custom message from the RuntimeError ---
-        error_ctx = [str(err)]
-        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+        # Encryption and signing faults are server-side: they are not client input errors.
+        reason_code = getattr(err, "reason_code", "gateway_initialization_failed")
+        LOGGER.error("Gateway registration failed before validation: reason_code=%s error=%s", reason_code, type(err).__name__)
+        message = str(err) if isinstance(err, CaSigningError) else unexpected_error_detail(err)
+        return ORJSONResponse(content={"success": False, "message": message, "reason_code": reason_code}, status_code=500)
 
     user_email = get_user_email(user)
 
@@ -12909,13 +12924,17 @@ async def admin_add_gateway(
     except GatewayCredentialError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except GatewayConnectionError as ex:
+        LOGGER.warning("Gateway registration rejected: reason_code=%s", getattr(ex, "reason_code", "gateway_connection_failed"))
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except GatewayToolNameConflictError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except RuntimeError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception("Unexpected error in admin_add_gateway")
+        return ORJSONResponse(content={"message": unexpected_error_detail(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
@@ -12927,7 +12946,7 @@ async def admin_add_gateway(
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=400)
     except Exception as ex:
         LOGGER.exception(f"Unexpected error in admin_add_gateway: {ex}")
-        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": unexpected_error_detail(ex), "success": False}, status_code=500)
 
 
 # RESTful PUT endpoint for gateway updates (JSON/form-data support)
@@ -12970,7 +12989,8 @@ async def admin_update_gateway_rest(
     except HTTPException:
         raise
     except Exception as e:
-        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
+        LOGGER.warning("Invalid request data: %s", e)
+        return ORJSONResponse(content={"message": safe_error_detail(e, "Invalid request data"), "success": False}, status_code=400)
 
     team_id = data.get("team_id")
     if team_id and isinstance(team_id, str):
@@ -13049,12 +13069,15 @@ async def admin_update_gateway_rest(
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as ex:
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, RuntimeError):
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+            LOGGER.exception("Unexpected error in admin_update_gateway_rest")
+            return ORJSONResponse(content={"message": unexpected_error_detail(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
@@ -13333,12 +13356,15 @@ async def admin_edit_gateway(
     except HTTPException:
         raise
     except Exception as ex:
+        if isinstance(ex, GatewayToolNameConflictError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, GatewayCredentialError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, RuntimeError):
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+            LOGGER.exception("Unexpected error in admin_edit_gateway")
+            return ORJSONResponse(content={"message": unexpected_error_detail(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
@@ -13378,18 +13404,18 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
-    error_message = None
+    error_code = None
     accepted_message = None
     try:
         result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
         if getattr(result, "status", None) == "deleting":
-            accepted_message = "Gateway deletion accepted and pending cleanup."
+            accepted_message = "gateway_delete_pending"
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
-        error_message = "Failed to delete gateway. Please try again."
+        error_code = "delete_failed"
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -13398,7 +13424,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     redirect_url = _build_admin_redirect(
         root_path,
         "gateways",
-        error=error_message,
+        error=error_code,
         message=accepted_message,
         include_inactive=is_inactive_checked.lower() == "true",
         team_id=team_id,
@@ -13693,7 +13719,8 @@ async def admin_edit_resource(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         resource = ResourceUpdate(
             uri=str(form.get("uri", "")),
-            name=str(form.get("name", "")),
+            **({"name": str(form["name"])} if "name" in form else {}),
+            custom_name=str(form["customName"]) if "customName" in form else None,
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),
             content=str(form.get("content", "")),
@@ -13793,7 +13820,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
-    error_message = None
+    error_code = None
     try:
         await resource_service.delete_resource(
             db,  # Use endpoint's db session (user["db"] is now closed early)
@@ -13803,13 +13830,13 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
         )
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting resource: {e}")
-        error_message = "Failed to delete resource. Please try again."
+        error_code = "delete_failed"
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -13848,21 +13875,21 @@ async def admin_set_resource_state(
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling resource ID {resource_id}")
     form = await request.form()
-    error_message = None
+    error_code = None
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting resource state {resource_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error setting resource state: {e}")
-        error_message = "Failed to set resource state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14185,18 +14212,18 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
-    error_message = None
+    error_code = None
     try:
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {prompt_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error deleting prompt: {e}")
-        error_message = "Failed to delete prompt. Please try again."
+        error_code = "delete_failed"
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14234,7 +14261,7 @@ async def admin_set_prompt_state(
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling prompt ID {prompt_id}")
-    error_message = None
+    error_code = None
     form = await request.form()
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
@@ -14242,14 +14269,14 @@ async def admin_set_prompt_state(
         await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting prompt state {prompt_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except Exception as e:
         LOGGER.error(f"Error setting prompt state: {e}")
-        error_message = "Failed to set prompt state. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14449,7 +14476,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> admin_add_root.__name__
         'admin_add_root'
     """
-    error_message = None
+    error_code = None
     await _require_unrestricted_root_admin(request, user, db)
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is adding a new root")
@@ -14468,20 +14495,20 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
     except RootServiceValidationError as e:
         LOGGER.warning("Failed to add root for user %s: reason=%s", user_email, e.reason_code)
-        error_message = "Failed to add root. Please check the URI format."
+        error_code = "invalid_uri"
     except RootServiceError:
         LOGGER.warning("Failed to add root for user %s", user_email)
-        error_message = "Failed to add root. Please check the URI format."
+        error_code = "invalid_uri"
     except ValueError as e:
         LOGGER.warning(f"Invalid input from user {user_email}: {e}")
-        error_message = "Invalid input. Please try again."
+        error_code = "invalid_input"
     except Exception as e:
         LOGGER.error(f"Error adding root: {e}")
-        error_message = "Failed to add root. Please try again."
+        error_code = "create_failed"
 
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "roots", error=error_message, team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "roots", error=error_code, team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -14540,7 +14567,7 @@ async def admin_update_root(uri: str, request: Request, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail=str(e))
     except RootServiceValidationError:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="Failed to update root. Please check the URI format."), status_code=303)
+        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="invalid_uri"), status_code=303)
     except Exception as e:
         LOGGER.error(f"Error updating root {uri}: {e}")
         raise e
@@ -14581,7 +14608,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     try:
         await root_service.remove_root(uri)
     except RootServiceValidationError:
-        redirect_url = _build_admin_redirect(root_path, "roots", error="Failed to delete root. Please check the URI format.", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        redirect_url = _build_admin_redirect(root_path, "roots", error="invalid_uri", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
         return RedirectResponse(redirect_url, status_code=303)
     redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
@@ -15179,13 +15206,13 @@ async def admin_import_tools(
                 payload = await _read_request_json(request)
             except Exception as ex:
                 LOGGER.exception("Invalid JSON body")
-                return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+                return ORJSONResponse({"success": False, "message": safe_error_detail(ex, "Invalid JSON")}, status_code=422)
         else:
             try:
                 form = await request.form()
             except Exception as ex:
                 LOGGER.exception("Invalid form body")
-                return ORJSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
+                return ORJSONResponse({"success": False, "message": safe_error_detail(ex, "Invalid form data")}, status_code=422)
             # Check for file upload first
             if "tools_file" in form:
                 file = form["tools_file"]
@@ -15208,7 +15235,7 @@ async def admin_import_tools(
                     payload = orjson.loads(raw)
                 except Exception as ex:
                     LOGGER.exception("Invalid JSON in form field")
-                    return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+                    return ORJSONResponse({"success": False, "message": safe_error_detail(ex, "Invalid JSON")}, status_code=422)
 
         if not isinstance(payload, list):
             return ORJSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
@@ -15245,20 +15272,22 @@ async def admin_import_tools(
                 try:
                     formatted = ErrorFormatter.format_database_error(ex)
                 except Exception:
-                    formatted = {"message": str(ex)}
+                    LOGGER.exception("Unexpected error in admin_import_tools")
+                    formatted = {"message": unexpected_error_detail(ex)}
                 errors.append({"index": i, "name": name, "error": formatted})
             except (ValidationError, CoreValidationError) as ex:
                 # Ditto: guard the formatter
                 try:
                     formatted = ErrorFormatter.format_validation_error(ex)
                 except Exception:
-                    formatted = {"message": str(ex)}
+                    LOGGER.exception("Unexpected error in admin_import_tools")
+                    formatted = {"message": unexpected_error_detail(ex)}
                 errors.append({"index": i, "name": name, "error": formatted})
             except ToolError as ex:
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
             except Exception as ex:
                 LOGGER.exception("Unexpected error importing tool %r at index %d", name, i)
-                errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+                errors.append({"index": i, "name": name, "error": {"message": unexpected_error_detail(ex)}})
 
         # Format response to match both frontend and test expectations
         response_data = {
@@ -15296,7 +15325,7 @@ async def admin_import_tools(
     except Exception as ex:
         # absolute catch-all: report instead of crashing
         LOGGER.exception("Fatal error in admin_import_tools")
-        return ORJSONResponse({"success": False, "message": str(ex)}, status_code=500)
+        return ORJSONResponse({"success": False, "message": unexpected_error_detail(ex)}, status_code=500)
 
 
 ####################
@@ -15474,7 +15503,7 @@ async def admin_stream_logs(
 
         except Exception as e:
             LOGGER.error(f"Error in log streaming: {e}")
-            yield f"event: error\ndata: {orjson.dumps({'error': str(e)}).decode()}\n\n"
+            yield f"event: error\ndata: {orjson.dumps({'error': unexpected_error_detail(e)}).decode()}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -15570,7 +15599,7 @@ async def admin_get_log_file(
             raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception as e:
             LOGGER.error("Error opening log file for download: %s", sanitize_for_log(e))
-            raise HTTPException(500, f"Error reading file for download: {e}")
+            raise HTTPException(500, f"Error reading file for download: {unexpected_error_detail(e)}")
 
         LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
 
@@ -15715,7 +15744,7 @@ async def admin_get_log_file(
 
     except Exception as e:
         LOGGER.error(f"Error listing log files: {e}")
-        raise HTTPException(500, f"Error listing log files: {e}")
+        raise HTTPException(500, f"Error listing log files: {unexpected_error_detail(e)}")
 
     return {
         "log_directory": str(log_dir),
@@ -16469,7 +16498,7 @@ async def admin_add_a2a_agent(
         )
 
     except CoreValidationError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except A2AAgentNameConflictError as ex:
         LOGGER.error(f"A2A agent name conflict: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
@@ -16691,9 +16720,9 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
 
     except ValidationError as ve:
-        return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
+        return ORJSONResponse(ErrorFormatter.format_validation_error(ve), status_code=422)
     except IntegrityError as ie:
-        return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
+        return ORJSONResponse(ErrorFormatter.format_database_error(ie), status_code=409)
     except PermissionError as e:
         LOGGER.warning(
             "Permission denied for user %s editing A2A agent %s: %s",
@@ -16741,7 +16770,7 @@ async def admin_set_a2a_agent_state(
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
-    error_message = None
+    error_code = None
     is_inactive_checked = "false"
     team_id = ""
     try:
@@ -16755,16 +16784,16 @@ async def admin_set_a2a_agent_state(
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent state change failed - not found: {e}")
-        error_message = "A2A agent not found."
+        error_code = "not_found"
     except Exception as e:
         LOGGER.error(f"Error setting A2A agent state: {e}")
-        error_message = "Failed to set state of A2A agent. Please try again."
+        error_code = "state_change_failed"
 
     root_path = _resolve_root_path(request)
-    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -16794,7 +16823,7 @@ async def admin_delete_a2a_agent(
         root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
-    error_message = None
+    error_code = None
     is_inactive_checked = "false"
     team_id = ""
     try:
@@ -16806,16 +16835,16 @@ async def admin_delete_a2a_agent(
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting A2A agent {agent_id}: {e}")
-        error_message = str(e)
+        error_code = "permission_denied"
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent delete failed - not found: {e}")
-        error_message = "A2A agent not found."
+        error_code = "not_found"
     except Exception as e:
         LOGGER.error(f"Error deleting A2A agent: {e}")
-        error_message = "Failed to delete A2A agent. Please try again."
+        error_code = "delete_failed"
 
     root_path = _resolve_root_path(request)
-    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_code, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -16924,13 +16953,13 @@ async def admin_test_a2a_agent(
     except ValidationError as e:
         LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
         return ORJSONResponse(
-            content={"success": False, "error": str(e), "error_type": "validation_error", "agent_id": agent_id},
+            content={"success": False, "error": ErrorFormatter.format_validation_error(e)["message"], "error_type": "validation_error", "agent_id": agent_id},
             status_code=422,
         )
     except Exception as e:
         LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
         return ORJSONResponse(
-            content={"success": False, "error": str(e), "error_type": "internal_error", "agent_id": agent_id},
+            content={"success": False, "error": unexpected_error_detail(e), "error_type": "internal_error", "agent_id": agent_id},
             status_code=500,
         )
 
@@ -17288,7 +17317,7 @@ async def get_resources_section(
 
     except Exception as e:
         LOGGER.error(f"Error loading resources section: {e}")
-        return ORJSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": unexpected_error_detail(e)}, status_code=500)
 
 
 @admin_router.get("/sections/prompts")
@@ -17347,7 +17376,7 @@ async def get_prompts_section(
 
     except Exception as e:
         LOGGER.error(f"Error loading prompts section: {e}")
-        return ORJSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": unexpected_error_detail(e)}, status_code=500)
 
 
 @admin_router.get("/sections/servers")
@@ -17406,7 +17435,7 @@ async def get_servers_section(
 
     except Exception as e:
         LOGGER.error(f"Error loading servers section: {e}")
-        return ORJSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": unexpected_error_detail(e)}, status_code=500)
 
 
 @admin_router.get("/sections/gateways")
@@ -17466,7 +17495,7 @@ async def get_gateways_section(
 
     except Exception as e:
         LOGGER.error(f"Error loading gateways section: {e}")
-        return ORJSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": unexpected_error_detail(e)}, status_code=500)
 
 
 ####################
@@ -17516,7 +17545,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         error_html = f"""
         <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
             <strong class="font-bold">Error loading plugins:</strong>
-            <span class="block sm:inline">{html.escape(str(e))}</span>
+            <span class="block sm:inline">{html.escape(unexpected_error_detail(e))}</span>
         </div>
         """
         return HTMLResponse(content=error_html, status_code=500)
@@ -17554,7 +17583,7 @@ async def get_a2a_plugin_bindings_partial(
         error_html = f"""
         <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
             <strong class="font-bold">Error loading A2A plugin bindings:</strong>
-            <span class="block sm:inline">{html.escape(str(e))}</span>
+            <span class="block sm:inline">{html.escape(unexpected_error_detail(e))}</span>
         </div>
         """
         return HTMLResponse(content=error_html, status_code=500)
@@ -17652,7 +17681,7 @@ async def admin_create_a2a_plugin_binding(
     except Exception as e:
         LOGGER.error(f"Error creating A2A plugin binding: {e}")
         return HTMLResponse(
-            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(str(e))}</div>',
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(unexpected_error_detail(e))}</div>',
             status_code=500,
         )
 
@@ -17704,7 +17733,7 @@ async def admin_delete_a2a_plugin_binding(
     except Exception as e:
         LOGGER.error(f"Error deleting A2A plugin binding {binding_id}: {e}")
         return HTMLResponse(
-            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(str(e))}</div>',
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(unexpected_error_detail(e))}</div>',
             status_code=500,
         )
 
@@ -18854,7 +18883,7 @@ async def save_observability_query(
     except Exception as e:
         db.rollback()
         LOGGER.error(f"Failed to save query: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=unexpected_error_detail(e))
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19026,7 +19055,7 @@ async def update_observability_query(
     except Exception as e:
         db.rollback()
         LOGGER.error(f"Failed to update query: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=unexpected_error_detail(e))
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19111,7 +19140,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
     except Exception as e:
         db.rollback()
         LOGGER.error(f"Failed to track query usage: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=unexpected_error_detail(e))
     finally:
         # Ensure close() always runs even if commit() fails
         try:

@@ -469,7 +469,7 @@ class TestOAuthRouter:
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_dcr_disabled_missing_client_id(self, mock_db, mock_request, mock_current_user):
-        """Test OAuth flow when issuer exists but DCR auto-registration is disabled."""
+        """Disabling DCR blocks auto-registration even when its trigger remains enabled."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Test Gateway"
@@ -483,9 +483,9 @@ class TestOAuthRouter:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+        with patch("mcpgateway.routers.oauth_router.DcrService") as mock_dcr_service, patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
             mock_settings.dcr_enabled = False
-            mock_settings.dcr_auto_register_on_missing_credentials = False
+            mock_settings.dcr_auto_register_on_missing_credentials = True
 
             from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
@@ -494,6 +494,7 @@ class TestOAuthRouter:
 
             assert exc_info.value.status_code == 400
             assert "incomplete" in str(exc_info.value.detail).lower()
+            mock_dcr_service.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_uses_persisted_resource_as_is(self, mock_db, mock_request, mock_current_user):
@@ -1764,6 +1765,32 @@ class TestOAuthRouter:
             assert "Failed to fetch tools" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_tool_name_collision_maps_to_409(self, mock_db, mock_current_user):
+        """OAuth catalog fetch preserves sanitized collision meaning."""
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+        from mcpgateway.services.gateway_service import GatewayToolNameConflictError
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.fetch_tools_after_oauth = AsyncMock(side_effect=GatewayToolNameConflictError("prod-api-search"))
+            mock_service_class.return_value = mock_service
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                with pytest.raises(HTTPException) as exc_info:
+                    await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "Gateway tool name conflicts with an existing tool"
+
+    @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_malformed_result(self, mock_db, mock_current_user):
         """Test tools fetching when service returns malformed result."""
         # Setup
@@ -2297,6 +2324,33 @@ class TestResolveTokenTeamsForScopeCheck:
                     await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_tool_name_collision_maps_to_409(self, mock_db, mock_current_user):
+        """Token-exchange refresh returns sanitized collision response."""
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+        from mcpgateway.services.gateway_service import GatewayToolNameConflictError
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        request.headers = {}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {"grant_type": "token-exchange", "token_url": "https://as.example.com/token", "target_audience": "aud"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.refresh_gateway_manually = AsyncMock(side_effect=GatewayToolNameConflictError("prod-api-search"))
+            mock_service_class.return_value = mock_service
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                with pytest.raises(HTTPException) as exc_info:
+                    await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "Gateway tool name conflicts with an existing tool"
 
     @pytest.mark.asyncio
     async def test_fetch_tools_token_exchange_gateway_not_found_maps_to_404(self, mock_db, mock_current_user):

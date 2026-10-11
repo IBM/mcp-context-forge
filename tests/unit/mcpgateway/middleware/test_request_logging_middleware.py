@@ -988,6 +988,28 @@ async def test_boundary_only_no_detailed(mock_structured_logger, dummy_call_next
     assert call_kwargs.get("metadata", {}).get("event") == "request_completed"
 
 
+@pytest.mark.asyncio
+async def test_completion_log_carries_team_id_resolved_during_request(mock_structured_logger):
+    """team_id is set by auth during the request, so the completion log must pick it up from request.state."""
+
+    async def _call_next(request):
+        request.state.team_id = "team-acme"
+        return Response(content="OK", status_code=200)
+
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
+    )
+    request = make_request(body=b"")
+    response = await middleware.dispatch(request, _call_next)
+
+    assert response.status_code == 200
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("metadata", {}).get("event") == "request_completed"
+    assert call_kwargs.get("team_id") == "team-acme"
+
+
 # --- Logger TypeError fallback ---
 
 

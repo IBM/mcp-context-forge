@@ -17,22 +17,23 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-09-22T23:59:59Z"
-cpex-url-reputation = "2026-09-22T23:59:59Z"
-cpex-rate-limiter = "2026-09-22T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-09-22T23:59:59Z"
-cpex-pii-filter = "2026-09-22T23:59:59Z"
-cpex-retry-with-backoff = "2026-09-22T23:59:59Z"
-cpex-output-length-guard = "2026-09-22T23:59:59Z"
-cpex-secrets-detection = "2026-09-22T23:59:59Z"
-cpex-sql-sanitizer = "2026-09-22T23:59:59Z"
+oauthlib = "2026-10-05T23:59:59Z" # allow 4.0.0 (2026-09-28); PYSEC-2026-4114 fixed in 4.0.0
+cpex = "2026-10-05T23:59:59Z"
+cpex-url-reputation = "2026-10-05T23:59:59Z"
+cpex-rate-limiter = "2026-10-05T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-10-05T23:59:59Z"
+cpex-pii-filter = "2026-10-05T23:59:59Z"
+cpex-retry-with-backoff = "2026-10-05T23:59:59Z"
+cpex-output-length-guard = "2026-10-05T23:59:59Z"
+cpex-secrets-detection = "2026-10-05T23:59:59Z"
+cpex-sql-sanitizer = "2026-10-05T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.10"
+version = "1.0.11"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -67,6 +68,7 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "alembic>=1.19.1",
+    "anyio>=4.15.0", # 4.15.0 fixes the _deliver_cancellation CPU spin (anyio#695/#1111); SSE cancel-deadline workarounds removed in #5427
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
     "brotli>=1.2.0",
@@ -101,7 +103,8 @@ dependencies = [
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "redis>=8.0.1",
-    "requests>=2.34.2", # Transivite pin (requests-oauthlib)
+    "oauthlib>=4.0.0", # Transitive pin (requests-oauthlib);
+    "requests>=2.34.2", # Transitive pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.52",
     "sse-starlette>=3.4.8",
@@ -226,7 +229,7 @@ llmchat = [
     "langchain-mcp-adapters>=0.3.0",
     "langchain-ollama>=1.1.0",
     "langchain-openai<=1.4.1",
-    "langgraph<=1.2.0",
+    "langgraph<=1.2.12",
     "langsmith>=0.10.10", # Transitive pin (langchain-core)
 ]
 
@@ -291,11 +294,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.10",
+    "mcp-contextforge-gateway[redis]>=1.0.11",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.10",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.11",
 ]
 
 # --------------------------------------------------------------------
@@ -483,7 +486,6 @@ preview = true
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D1", "D417", "E402"]
 "scripts/**/*.py" = ["D1", "D417"]
-"mcp-servers/**/*.py" = ["D1", "D417"]
 ".github/**/*.py" = ["D1", "D417"]
 "migration_add_annotations.py" = ["D1", "D417"]
 "playwright.config.py" = ["D1", "D417"]
@@ -673,8 +675,11 @@ asyncio_mode = "auto"
 filterwarnings = [
   "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
   "ignore:Use `streamable_http_client` instead\\.:DeprecationWarning",
-  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:DeprecationWarning",
+  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:UserWarning", # StarletteDeprecationWarning subclasses UserWarning
   "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
+  "ignore:\\w+\\.headers is deprecated; use extensions\\.http\\.headers instead\\.:DeprecationWarning", # cpex payloads have no extensions field yet; gateway + tests must keep using headers=
+  "ignore:Using `httpx` with `starlette\\.testclient` is deprecated:UserWarning", # StarletteDeprecationWarning subclasses UserWarning; dependency drift until httpx2 migration
+  "ignore:rbac\\.get_db\\(\\) is deprecated\\.:DeprecationWarning", # doctest documents the deprecated helper itself
 ]
 
 # Set environment variables for all tests.

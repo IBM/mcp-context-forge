@@ -50,6 +50,7 @@ import json
 import logging
 import mimetypes
 import os
+import socket
 import ssl
 import tempfile
 import time
@@ -94,7 +95,7 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceSubscription
+from mcpgateway.db import resource_has_name_override, ResourceMetric, ResourceSubscription
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
@@ -132,7 +133,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
-from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
@@ -140,15 +141,18 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.ssrf_pinning import resolve_pinned_target, SniPinningTransport as _SniPinningTransport
 from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 
 class MCPListMethod(Enum):
@@ -190,6 +194,58 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
         response = await list_method(cursor=cursor)
         mcp_responses.extend(getattr(response, response_attribute, []))
     return mcp_responses
+
+
+def _safe_connection_error_text(exc: BaseException) -> str:
+    """Describe a gateway connection failure without exposing library exception text.
+
+    Args:
+        exc: The exception raised while connecting to, or initializing, an upstream MCP server.
+
+    Returns:
+        str: A short fixed phrase for common transport failures, the exception's own message
+            for project-defined errors, or the generic unexpected-error text with a reference.
+
+    Examples:
+        >>> _safe_connection_error_text(httpx.ConnectTimeout("x"))
+        'connection timed out'
+        >>> _safe_connection_error_text(httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
+        'TLS handshake failed'
+        >>> _safe_connection_error_text(httpx.ConnectError("[Errno 111] Connection refused"))
+        'connection refused'
+        >>> _safe_connection_error_text(httpx.ConnectError("All connection attempts failed"))
+        'connection failed'
+        >>> _safe_connection_error_text(ConnectionRefusedError(111, "Connection refused"))
+        'connection refused'
+        >>> _safe_connection_error_text(socket.gaierror(-2, "Name or service not known"))
+        'hostname could not be resolved'
+        >>> _safe_connection_error_text(GatewayConnectionError("upstream rejected the token"))
+        'upstream rejected the token'
+        >>> _safe_connection_error_text(RuntimeError("anyio.EndOfStream at /usr/lib/python3.12/site-packages/..."))
+        'An unexpected error occurred'
+        >>> _safe_connection_error_text(UnicodeEncodeError("ascii", "tok\u2060en", 3, 4, "ordinal not in range(128)"))
+        'contains a character that is not valid ASCII (position 3)'
+    """
+    if isinstance(exc, (UnicodeEncodeError, UnicodeDecodeError)):
+        return f"contains a character that is not valid {exc.encoding.upper()} (position {exc.start})"
+    if isinstance(exc, (httpx.TimeoutException, httpx2.TimeoutException)):
+        return "connection timed out"
+    if isinstance(exc, ssl.SSLError):
+        return "TLS handshake failed"
+    if isinstance(exc, (httpx.ConnectError, httpx2.ConnectError, ConnectionError, socket.gaierror)):
+        text = str(exc).lower()
+        if "ssl" in text or "certificate" in text or "tls" in text:
+            return "TLS handshake failed"
+        if isinstance(exc, ConnectionRefusedError) or "refused" in text:
+            return "connection refused"
+        if isinstance(exc, socket.gaierror) or "getaddrinfo" in text or "resolve" in text or "nodename" in text:
+            return "hostname could not be resolved"
+        return "connection failed"
+    if isinstance(exc, TimeoutError):
+        return "connection timed out"
+    if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        return f"server responded with HTTP {exc.response.status_code}"
+    return unexpected_error_detail(exc)
 
 
 def _resolve_tool_title(tool) -> Optional[str]:
@@ -346,6 +402,22 @@ class GatewayError(Exception):
     """
 
 
+class GatewayToolNameConflictError(GatewayError):
+    """Raised when a federated tool would shadow a tool in its visibility scope."""
+
+    message = "Gateway tool name conflicts with an existing tool"
+
+    def __init__(self, invocation_name: str):
+        """Store only normalized conflicting invocation name for safe diagnostics."""
+        super().__init__(self.message)
+        self.invocation_name = invocation_name
+
+
+def _build_gateway_tool_invocation_name(gateway_name: str, tool_name: str) -> str:
+    """Return gateway-prefixed invocation name using ORM naming semantics."""
+    return build_gateway_tool_invocation_name(gateway_name, tool_name)
+
+
 class GatewayNotFoundError(GatewayError):
     """Raised when a requested gateway is not found.
 
@@ -497,13 +569,75 @@ class GatewayLookupConflictError(GatewayError):
 class GatewayConnectionError(GatewayError):
     """Raised when gateway connection fails.
 
+    Carries a stable ``reason_code`` so callers log why the connection failed without
+    parsing the human-readable message.
+
     Examples:
         >>> error = GatewayConnectionError("Connection failed")
         >>> str(error)
         'Connection failed'
+        >>> error.reason_code
+        'gateway_connection_failed'
         >>> isinstance(error, GatewayError)
         True
     """
+
+    def __init__(self, message: str, reason_code: str = "gateway_connection_failed") -> None:
+        """Store the failure message and its stable reason code.
+
+        Args:
+            message: Human-readable, already sanitized failure message.
+            reason_code: Stable machine-readable code, e.g. ``gateway_tls_failed``.
+        """
+        self.reason_code = reason_code
+        super().__init__(message)
+
+
+def classify_connection_failure(exc: BaseException) -> str:
+    """Map a transport exception to a stable gateway reason code.
+
+    Walks the ``__cause__``/``__context__`` chain and every ``ExceptionGroup`` member:
+    httpx wraps a TLS failure in a transport error, and the MCP SDK task group wraps that
+    again, both of which would otherwise read as a plain initialization failure.
+
+    Args:
+        exc: The exception raised while connecting to or initializing a gateway.
+
+    Returns:
+        str: ``gateway_tls_failed``, ``gateway_connection_failed``, or ``gateway_initialization_failed``.
+
+    Examples:
+        >>> classify_connection_failure(ssl.SSLError("handshake failed"))
+        'gateway_tls_failed'
+        >>> classify_connection_failure(OSError("connection refused"))
+        'gateway_connection_failed'
+        >>> classify_connection_failure(ValueError("bad payload"))
+        'gateway_initialization_failed'
+        >>> classify_connection_failure(ExceptionGroup("tg", [ssl.SSLError("handshake failed")]))
+        'gateway_tls_failed'
+        >>> classify_connection_failure(ExceptionGroup("tg", [OSError("refused")]))
+        'gateway_connection_failed'
+    """
+    transport_errors = (httpx.TransportError, httpx2.TransportError, OSError, TimeoutError, asyncio.TimeoutError)
+    seen: Set[int] = set()
+    pending: List[Optional[BaseException]] = [exc]
+    transport_seen = False
+
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLError):
+            return "gateway_tls_failed"
+        if isinstance(current, transport_errors):
+            transport_seen = True
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        pending.append(current.__cause__)
+        pending.append(current.__context__)
+
+    return "gateway_connection_failed" if transport_seen else "gateway_initialization_failed"
 
 
 class GatewayCredentialError(GatewayError):
@@ -542,11 +676,11 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
         ValueError: If team does not exist or caller lacks ownership.
     """
     if not target_team_id:
-        raise ValueError("Cannot set visibility to 'team' without a team_id")
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
 
     team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
     if not team:
-        raise ValueError(f"Team {target_team_id} not found")
+        raise PublicValidationError(f"Team {target_team_id} not found")
 
     if not user_email:
         return
@@ -557,7 +691,7 @@ def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], ta
         .first()
     )
     if not membership:
-        raise ValueError("User membership in team not sufficient for this update.")
+        raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
 async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
@@ -894,10 +1028,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return oauth_config
 
         if not oauth_config.get("target_audience"):
-            raise ValueError("target_audience is required for token-exchange grant type")
+            raise PublicValidationError("target_audience is required for token-exchange grant type")
         token_url = oauth_config.get("token_url")
         if not token_url:
-            raise ValueError("token_url is required for token-exchange grant type")
+            raise PublicValidationError("token_url is required for token-exchange grant type")
         # SSRF guard (B4): the user's inbound CF JWT is sent to token_url as the
         # subject_token, so token_url must pass the same egress validation the
         # auto-discover path applies to `issuer`. Raises ValueError on internal /
@@ -912,7 +1046,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         source = oauth_config.setdefault("subject_token_source", "inbound_user_jwt")
         if source not in GatewayService._VALID_SUBJECT_TOKEN_SOURCES:
-            raise ValueError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
+            raise PublicValidationError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
 
         oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
         oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
@@ -1092,10 +1226,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             started = time.monotonic()
             try:
                 response = await self.oauth_manager.token_exchange(
-                    token_url=oauth_config["token_url"],
+                    oauth_config=oauth_config,
                     subject_token=subject_token,
-                    client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
@@ -1356,7 +1488,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 await self._redis_client.ping()
             except Exception as e:
-                raise ConnectionError(f"Redis ping failed: {e}") from e
+                raise ConnectionError(f"Redis ping failed: {unexpected_error_detail(e)}") from e
 
             is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
@@ -1848,6 +1980,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 initialize_timeout=initialize_timeout,
             )
 
+            tools = [tool for tool in tools if tool is not None]
+            self._validate_tool_name_collisions(
+                db,
+                gateway_name=gateway.name,
+                gateway_id=None,
+                gateway_team_id=team_id,
+                gateway_owner_email=owner_email,
+                gateway_visibility=visibility,
+                tools=tools,
+            )
+
             if gateway.one_time_auth:
                 # For one-time auth, clear auth_type and auth_value after initialization
                 auth_type = "one_time_auth"
@@ -1899,6 +2042,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             visibility=visibility,
                         )
                     )
+                    # Warn after the tool is already in db_tools, not before: this call is
+                    # diagnostic-only and must never be able to remove a tool from federation.
+                    # It shares this try/except with the DbTool construction above, so if it
+                    # ran first, a future change that made it raise would silently drop the
+                    # tool here instead of merely failing to log.
+                    warn_unprovable_patterns(tool.input_schema, source=f"gateway:{preparation.normalized_url}/tool:{tool.name}")
+                    warn_unprovable_patterns(tool.output_schema, source=f"gateway:{preparation.normalized_url}/tool:{tool.name}")
                 except Exception as e:
                     logger.warning("Failed to process tool %s during gateway registration: %s", getattr(tool, "name", "unknown"), e)
                     continue
@@ -1947,7 +2097,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if lookup_key in orphaned_resources_map:
                         # Update orphaned resource - reassign to new gateway
                         existing = orphaned_resources_map[lookup_key]
-                        existing.name = r.name
+                        has_override = resource_has_name_override(existing)
+                        if existing.original_name != r.name:
+                            existing.original_name = r.name
+                            if not has_override:
+                                existing.custom_name_slug = slugify(r.name)
                         existing.description = r.description
                         existing.mime_type = mime_type
                         existing.uri_template = r.uri_template or None
@@ -2202,6 +2356,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if validation_errors:
                 logger.warning(f"Gateway '{db_gateway.name}' registered successfully but {len(validation_errors)} tool(s) were skipped due to validation errors: {validation_errors}")
             return gateway_read
+        except* GatewayToolNameConflictError as conflict:  # pragma: no mutate
+            if TYPE_CHECKING:
+                conflict: ExceptionGroup[GatewayToolNameConflictError]
+            db.rollback()
+            logger.warning("Gateway tool name collision during registration: %s", conflict.exceptions[0].invocation_name)
+            raise conflict.exceptions[0]
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -2338,14 +2498,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ).scalar_one_or_none()
 
             if not gateway:
-                raise ValueError(f"Gateway {gateway_id} not found")
+                raise PublicValidationError(f"Gateway {gateway_id} not found")
 
             if not gateway.oauth_config:
-                raise ValueError(f"Gateway {gateway_id} has no OAuth configuration")
+                raise PublicValidationError(f"Gateway {gateway_id} has no OAuth configuration")
 
             grant_type = gateway.oauth_config.get("grant_type")
             if grant_type != "authorization_code":
-                raise ValueError(f"Gateway {gateway_id} is not using Authorization Code flow")
+                raise PublicValidationError(f"Gateway {gateway_id} is not using Authorization Code flow")
 
             # Get OAuth tokens for this gateway using team-aware path selection.
             # SECURITY: Use teams parameter from request.state.token_teams to determine storage path:
@@ -2448,7 +2608,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         )
                     raise
             else:
-                raise ValueError(f"Unsupported transport type: {gateway.transport}")
+                raise PublicValidationError(f"Unsupported transport type: {gateway.transport}")
 
             catalog_sync = self._sync_gateway_catalog(
                 db,
@@ -2457,12 +2617,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resources=resources,
                 prompts=prompts,
                 created_via="oauth",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
             )
+
+            skip_stale_cleanup = not tools and not resources and not prompts
+            if skip_stale_cleanup:
+                logger.warning("Empty catalog from auth_code gateway %s during OAuth fetch, preserving existing items", SecurityValidator.sanitize_log_message(gateway.name))
+
+            # Only prune entries that came from MCP discovery. API/UI and legacy
+            # entries can share the gateway but are not authoritative upstream data.
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway OAuth fetch",
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+                skip_stale_cleanup=skip_stale_cleanup,
             )
 
             # Update gateway capabilities and last_seen
@@ -2491,11 +2661,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
+        except GatewayToolNameConflictError:
+            db.rollback()
+            raise
         except GatewayConnectionError as gce:
             db.rollback()
             # Surface validation or depth-related failures directly to the user
             logger.error("GatewayConnectionError during OAuth fetch for %s: %s", SecurityValidator.sanitize_log_message(gateway_id), gce)
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}", gce.reason_code)
         except Exception as e:
             db.rollback()
             # Extract actual error from TaskGroup or ExceptionGroup if present
@@ -2512,7 +2685,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 type(actual_error).__name__,
                 exc_info=True,  # Include full traceback
             )
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}", classify_connection_failure(e))
 
     async def list_gateways(
         self,
@@ -2833,6 +3006,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and getattr(gateway, "status", None) == "pending":
                     return self.convert_gateway_to_read(gateway)
 
+                gateway_name_changed = gateway_update.name is not None and gateway_update.name != gateway.name
+                gateway_visibility_changed = gateway_update.visibility is not None and gateway_update.visibility != gateway.visibility
+                if gateway_name_changed or gateway_visibility_changed:
+                    self._validate_tool_name_collisions(
+                        db,
+                        gateway_name=gateway_update.name or gateway.name,
+                        gateway_id=str(gateway.id),
+                        gateway_team_id=gateway.team_id,
+                        gateway_owner_email=gateway.owner_email,
+                        gateway_visibility=gateway_update.visibility or gateway.visibility,
+                        tools=list(gateway.tools),
+                        existing_tools_by_original_name={tool.original_name: tool for tool in gateway.tools},
+                        project_gateway_rename=gateway_name_changed,
+                        project_gateway_visibility=gateway_visibility_changed,
+                        original_gateway_visibility=gateway.visibility,
+                    )
+
                 # Check for name conflicts if name is being changed
                 if gateway_update.name is not None and gateway_update.name != gateway.name:
                     # existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
@@ -3063,7 +3253,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if raw_oauth_update.get("grant_type") == "password":
                         original_grant_type = original_oauth_config.get("grant_type") if isinstance(original_oauth_config, dict) else None
                         if original_grant_type != "password":
-                            raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
+                            raise PublicValidationError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
 
                     await self._enforce_token_exchange_admin_only(db, raw_oauth_update, user_email)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
@@ -3122,7 +3312,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # Grandfather clause: Allow updates to existing query_param gateways
                         # unless they're trying to change credentials
                         if is_switching_to_queryparam or is_updating_queryparam_creds:
-                            raise ValueError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
+                            raise PublicValidationError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                     # Service-layer enforcement: Check host allowlist
                     if settings.insecure_queryparam_auth_allowed_hosts:
@@ -3131,7 +3321,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         hostname = (parsed.hostname or "").lower()
                         if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
                             allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                            raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
+                            raise PublicValidationError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
 
                     param_key = getattr(gateway_update, "auth_query_param_key", None) or (next(iter(gateway.auth_query_params.keys()), None) if gateway.auth_query_params else None)
                     param_value = getattr(gateway_update, "auth_query_param_value", None)
@@ -3294,7 +3484,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # a generic connection failure (502).
                         if init_affecting_changed and not isinstance(init_err, (GatewayConnectionError, GatewayCredentialError)):
                             safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
-                            safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
+                            safe_msg = _safe_connection_error_text(init_err)
                             raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
                         raise
                     if gateway_update.one_time_auth:
@@ -3312,6 +3502,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         prompts=prompts,
                         created_via="update",
                         update_visibility=_vis_changed,
+                        project_gateway_rename=gateway_name_changed,
                     )
                     self._reconcile_gateway_catalog(
                         db,
@@ -3331,6 +3522,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     self._active_gateways.discard(gateway.url)
                     self._active_gateways.add(gateway.url)
                     reinit_succeeded = True
+                except GatewayToolNameConflictError:
+                    raise
                 except (GatewayConnectionError, GatewayCredentialError) as gce:
                     if init_affecting_changed:
                         # Do NOT persist the broken update — propagate so the outer handler
@@ -3451,6 +3644,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 return self.convert_gateway_to_read(gateway)
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
+        except GatewayToolNameConflictError:
+            db.rollback()
+            raise
         except GatewayNameConflictError as ge:
             logger.error("GatewayNameConflictError in group: %s", ge)
             db.rollback()
@@ -3527,7 +3723,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to update gateway: {str(e)}")
+            raise GatewayError(f"Failed to update gateway: {unexpected_error_detail(e)}")
 
     async def _check_gateway_access(
         self,
@@ -3814,6 +4010,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
+                was_active = gateway.url in self._active_gateways
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
@@ -3891,6 +4088,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         register_gateway_capabilities_for_notifications(gateway.id, capabilities)
 
                         gateway.last_seen = datetime.now(timezone.utc)
+                    except GatewayToolNameConflictError:
+                        if not was_active:
+                            self._active_gateways.discard(gateway.url)
+                        raise
                     except Exception as e:
                         logger.warning("Failed to initialize reactivated gateway: %s", e)
                 else:
@@ -4026,6 +4227,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             return self.convert_gateway_to_read(gateway)
 
+        except GatewayToolNameConflictError:
+            db.rollback()
+            raise
         except PermissionError as e:
             db.rollback()
 
@@ -4055,7 +4259,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to set gateway state: {str(e)}")
+            raise GatewayError(f"Failed to set gateway state: {unexpected_error_detail(e)}")
 
     async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
         """
@@ -4243,7 +4447,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
-            raise GatewayError(f"Failed to delete gateway: {str(e)}")
+            raise GatewayError(f"Failed to delete gateway: {unexpected_error_detail(e)}")
 
     def _hard_delete_gateway(self, db: Session, gateway: DbGateway) -> None:
         """Delete gateway row plus dependent catalog rows."""
@@ -4586,7 +4790,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             await admin_stats_cache.invalidate_tags()
         except Exception as exc:
-            sanitized_error = sanitize_exception_message(str(exc), gateway.auth_query_params)
+            sanitized_error = _safe_connection_error_text(exc)
             next_attempt = (gateway.registration_attempts or 0) + 1
             if not self._finalize_pending_gateway_failure(db, gateway, sanitized_error, next_attempt):
                 db.rollback()
@@ -4678,15 +4882,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
-            raw_error = (str(error).strip() or type(error).__name__) if error is not None else "Unknown health-check failure"
-            sanitized_error = sanitize_exception_message(raw_error, auth_query_params or getattr(gateway, "auth_query_params", None))
+            sanitized_error = _safe_connection_error_text(error) if error is not None else "Unknown health-check failure"
+            if error is not None:
+                logger.error(
+                    "Gateway %s health-check error: %s",
+                    SecurityValidator.sanitize_log_message(gateway.name),
+                    sanitize_exception_message(str(error) or type(error).__name__, auth_query_params or getattr(gateway, "auth_query_params", None)),
+                )
             # Reset before the DB call: if set_gateway_state raises, a stale
             # count would retry the deactivation (and its audit entry) forever.
             self._gateway_failure_counts[gateway.id] = 0
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
 
-    async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
+    async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None, *, cycle_started_at: Optional[datetime] = None) -> bool:
         """Check health of a batch of gateways.
 
         Performs an asynchronous health-check for each gateway in `gateways` using
@@ -4710,6 +4919,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 stored OAuth tokens for gateways using the
                 "authorization_code" grant type. If not provided, authorization
                 code flows that require a user token will be treated as failed.
+            cycle_started_at: Timestamp of the health-check cycle that triggered
+                this batch. Forwarded to each per-gateway check so the refresh
+                throttle and last_refresh_at write use the same clock value.
 
         Returns:
             bool: True when the health-check batch completes. This return
@@ -4768,7 +4980,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             async with semaphore:
                 try:
                     await asyncio.wait_for(
-                        self._check_single_gateway_health(gateway, user_email),
+                        self._check_single_gateway_health(gateway, user_email, cycle_started_at=cycle_started_at),
                         timeout=settings.gateway_health_check_timeout,
                     )
                 except asyncio.TimeoutError:
@@ -4818,8 +5030,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         if gateway_enabled and not gateway_reachable:
             logger.info("Reactivating gateway: %s, as it is %s", gateway_name, reactivation_reason)
-            with cast(Any, SessionLocal)() as status_db:
-                await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+            try:
+                with cast(Any, SessionLocal)() as status_db:
+                    await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+            except GatewayToolNameConflictError:
+                await self._recover_gateway_reachability_after_catalog_conflict(gateway_id, gateway_name)
 
         try:
             with fresh_db_session() as update_db:
@@ -4839,7 +5054,35 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except Exception as update_error:
             logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
 
-    async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None) -> None:
+    async def _recover_gateway_reachability_after_catalog_conflict(self, gateway_id: str, gateway_name: str) -> None:
+        """Restore reachability after health recovery rejects a conflicting catalog refresh.
+
+        Args:
+            gateway_id: Gateway DB identifier.
+            gateway_name: Human-readable gateway name for logs.
+        """
+        now = datetime.now(timezone.utc)
+        with cast(Any, SessionLocal)() as recovery_db:
+            gateway = get_for_update(recovery_db, DbGateway, gateway_id)
+            if gateway is None or not gateway.enabled:
+                recovery_db.rollback()
+                return
+            gateway.reachable = True
+            gateway.last_seen = now
+            gateway.last_error = None
+            gateway.updated_at = now
+            recovery_db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable.is_(False)).values(reachable=True, updated_at=now))
+            recovery_db.commit()
+            self._active_gateways.add(gateway.url)
+
+        cache = _get_registry_cache()
+        await cache.invalidate_gateways()
+        await cache.invalidate_tools()
+        tool_lookup_cache = _get_tool_lookup_cache()
+        await tool_lookup_cache.invalidate_gateway(str(gateway_id))
+        logger.warning("Gateway %s recovered, but catalog refresh was rejected because of a tool-name collision", SecurityValidator.sanitize_log_message(gateway_name))
+
+    async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None, *, cycle_started_at: Optional[datetime] = None) -> None:
         """Check health of a single gateway.
 
         NOTE: This method intentionally does NOT take a db parameter.
@@ -4849,6 +5092,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         Args:
             gateway: Gateway to check (may be detached from session)
             user_email: Optional user email for OAuth token lookup
+            cycle_started_at: Cycle timestamp forwarded from the maintenance loop; used as the
+                reference point for the refresh throttle and last_refresh_at to keep both
+                sides of the comparison on the same clock.
         """
         # Extract gateway data upfront (gateway may be detached from session)
         gateway_id = gateway.id
@@ -4943,22 +5189,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     httpx2.AsyncClient: Configured HTTPX async client
                 """
                 return httpx2.AsyncClient(
-                    verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=False,
                     headers=headers,
                     timeout=timeout if timeout else get_httpx2_timeout(),
                     auth=auth,
-                    limits=httpx2.Limits(
-                        max_connections=settings.httpx_max_connections,
-                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    **pinned_target.client_kwargs(
+                        verify=ssl_context if ssl_context else get_default_verify(),
+                        limits=httpx2.Limits(
+                            max_connections=settings.httpx_max_connections,
+                            max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                            keepalive_expiry=settings.httpx_keepalive_expiry,
+                        ),
                     ),
                 )
 
             # Use isolated client for gateway health checks (each gateway may have custom CA cert)
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
-            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context, follow_redirects=False) as client:
                 logger.debug("Checking health of gateway: %s (%s)", gateway_name, gateway_url_sanitized)
                 try:
                     # Handle different authentication types
@@ -4976,7 +5224,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
                                 # Get user-specific OAuth token only if user_email is provided
                                 if user_email:
@@ -5047,10 +5295,25 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # checks self-heal without requiring a manual re-save.
                         headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
+                    try:
+                        pinned_target = await resolve_pinned_target(gateway_base_url, "Gateway URL")
+                    except ValueError as pin_exc:
+                        if span:
+                            set_span_attribute(span, "health.status", "unhealthy")
+                            set_span_error(span, pin_exc)
+                        await self._handle_gateway_failure(gateway, error=pin_exc, auth_query_params=auth_query_params_decrypted)
+                        return
+
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
-                        async with client.stream("GET", gateway_url, headers=headers, timeout=timeout) as response:
+                        async with client.stream(
+                            "GET",
+                            pinned_target.pin(gateway_url),
+                            headers=pinned_target.apply_headers(headers),
+                            timeout=timeout,
+                            extensions=pinned_target.extensions,
+                        ) as response:
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
@@ -5106,7 +5369,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if gateway.refresh_interval_seconds is not None:
                                     refresh_interval = gateway.refresh_interval_seconds
 
-                                time_since_refresh = (datetime.now(timezone.utc) - last_refresh).total_seconds()
+                                # Use cycle_started_at so the throttle comparison matches the last_refresh_at write below.
+                                ref_now = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
+                                time_since_refresh = (ref_now - last_refresh).total_seconds()
 
                                 if time_since_refresh < refresh_interval:
                                     refresh_needed = False
@@ -5124,6 +5389,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             created_via="health_check",
                                             pre_auth_headers=headers if headers else None,
                                             gateway=gateway,
+                                            cycle_started_at=cycle_started_at,
                                         )
                                         # mark_poll_completed is called inside _refresh_gateway_tools_resources_prompts
                                 else:
@@ -5419,7 +5685,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         authentication = {"Authorization": f"Bearer {access_token}"}
                     except Exception as e:
                         logger.error("Failed to obtain OAuth access token: %s", e)
-                        raise GatewayConnectionError(f"OAuth authentication failed: {str(e)}")
+                        raise GatewayConnectionError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
                 elif grant_type == "token-exchange":
                     # Token-exchange (RFC 8693) requires an inbound end-user JWT as the subject
                     # token. Gateway initialization/registration has no associated user request,
@@ -5471,9 +5737,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if isinstance(root_cause, GatewayError):
                 raise root_cause
 
-            raw_error = str(root_cause) or type(root_cause).__name__
-            sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
-            logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitized_error, exc_info=True)
+            sanitized_error = _safe_connection_error_text(root_cause)
+            logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitize_exception_message(str(root_cause) or type(root_cause).__name__, auth_query_params), exc_info=True)
 
             # A header value that reaches the HTTP client encoding step is either an
             # OAuth-derived value or something else this method didn't sanitize up front.
@@ -5481,7 +5746,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
                 raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
 
-            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}") from root_cause
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}", classify_connection_failure(e)) from root_cause
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
@@ -5647,9 +5912,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             health_due = now >= next_health_check_at
 
             if health_due:
+                cycle_started_at = datetime.now(timezone.utc)
                 gateways = await asyncio.to_thread(self._get_gateways)
                 if gateways:
-                    await self.check_health_of_gateways(gateways, user_email)
+                    await self.check_health_of_gateways(gateways, user_email, cycle_started_at=cycle_started_at)
+                # Re-base the deadline on the pre-batch wall time so that variable
+                # wake-up delays do not shorten the measured gap below the interval.
                 next_health_check_at = now + max(self._health_check_interval, 0)
 
             if require_leader is not None and not await require_leader():
@@ -5896,7 +6164,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Validate target user exists and is active
         target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
         if not target_user:
-            raise ValueError(f"Target user not found or inactive: {target_owner_email}")
+            raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
         gateway = get_for_update(db, DbGateway, gateway_id)
         if not gateway:
@@ -5904,9 +6172,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if token_teams is not None:
             current_team_id = gateway.team_id
             if not current_team_id or current_team_id not in token_teams:
-                raise ValueError("Gateway is outside the caller's token team scope")
+                raise PublicValidationError("Gateway is outside the caller's token team scope")
             if target_team_id and target_team_id not in token_teams:
-                raise ValueError("Target team is outside the caller's token team scope")
+                raise PublicValidationError("Target team is outside the caller's token team scope")
 
         previous_owner = gateway.owner_email
         previous_team = gateway.team_id
@@ -5922,7 +6190,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
             ).scalar_one_or_none()
             if not member:
-                raise ValueError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
+                raise PublicValidationError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
 
         if target_team_id and gateway.visibility != "team":
             # Validate target owner is active member of the explicit target team
@@ -5934,7 +6202,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
             ).scalar_one_or_none()
             if not member:
-                raise ValueError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
+                raise PublicValidationError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
 
         def _apply_team_transfer(entity: Any) -> None:
             """Assign a transferred entity to the target team and expose it to members."""
@@ -6253,10 +6521,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if existing_resource:
                     # Update existing resource if there are changes
                     fields_to_update = False
+                    has_override = resource_has_name_override(existing_resource)
+                    upstream_renamed = existing_resource.original_name != resource.name
 
                     upstream_visibility = getattr(resource, "visibility", None)
                     if (
-                        existing_resource.name != resource.name
+                        upstream_renamed
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
@@ -6267,7 +6537,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         fields_to_update = True
 
                     if fields_to_update:
-                        existing_resource.name = resource.name
+                        setattr(existing_resource, "gateway_name_cache", gateway.name)
+                        if upstream_renamed:
+                            existing_resource.original_name = resource.name
+                            if not has_override:
+                                existing_resource.custom_name_slug = slugify(resource.name)
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
@@ -6291,6 +6565,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         created_via=created_via,
                         visibility=getattr(resource, "visibility", None) or gateway.visibility,
                     )
+                    db_resource.gateway = gateway
                     resources_to_add.append(db_resource)
                     logger.debug("Created new resource: %s", resource.uri)
             except Exception as e:
@@ -6410,6 +6685,86 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return prompts_to_add
 
+    def _validate_tool_name_collisions(
+        self,
+        db: Session,
+        *,
+        gateway_name: str,
+        gateway_id: str | None,
+        gateway_team_id: str | None,
+        gateway_owner_email: str | None,
+        gateway_visibility: str,
+        tools: list[Any],
+        existing_tools_by_original_name: dict[str, DbTool] | None = None,
+        update_visibility: bool = False,
+        project_gateway_rename: bool = False,
+        project_gateway_visibility: bool = False,
+        original_gateway_visibility: str | None = None,
+        retained_tool_original_names: set[str] | None = None,
+    ) -> None:
+        """Reject federated tool names that collide in their persisted visibility scope.
+
+        This intentionally mirrors local tool namespace rules.  It is a
+        validation guard, not a replacement for a database uniqueness constraint;
+        concurrent writers remain outside this operation's transaction-level scope.
+        """
+        existing_tools_by_original_name = existing_tools_by_original_name or {}
+        projected: list[tuple[str, str, str | None, str | None]] = []
+        external_conflict_candidates: list[tuple[str, str, str | None, str | None]] = []
+        for tool in tools:
+            original_name = tool.original_name if isinstance(tool, DbTool) else tool.name
+            existing = existing_tools_by_original_name.get(original_name)
+            if existing is not None:
+                if project_gateway_rename:
+                    custom_name_slug = existing.custom_name_slug or slugify(existing.custom_name or existing.original_name)
+                    candidate_name = slugify(gateway_name) + settings.gateway_tool_name_separator + custom_name_slug
+                else:
+                    candidate_name = existing.name
+                visibility = existing.visibility
+                if project_gateway_visibility and visibility == original_gateway_visibility:
+                    visibility = gateway_visibility
+                upstream_visibility = getattr(tool, "visibility", None) if update_visibility else None
+                candidate = (candidate_name, upstream_visibility or visibility, existing.team_id, existing.owner_email)
+                projected.append(candidate)
+                if candidate_name != existing.name or candidate[1] != existing.visibility:
+                    external_conflict_candidates.append(candidate)
+            else:
+                candidate = (
+                    _build_gateway_tool_invocation_name(gateway_name, original_name),
+                    getattr(tool, "visibility", None) or gateway_visibility,
+                    gateway_team_id,
+                    gateway_owner_email,
+                )
+                projected.append(candidate)
+                external_conflict_candidates.append(candidate)
+
+        by_name: dict[str, int] = {}
+        for name, _visibility, _team_id, _owner_email in projected:
+            by_name[name] = by_name.get(name, 0) + 1
+        duplicates = sorted(name for name, count in by_name.items() if count > 1)
+        if duplicates:
+            raise GatewayToolNameConflictError(duplicates[0])
+
+        candidate_names = sorted({name for name, _visibility, _team_id, _owner_email in external_conflict_candidates})
+        if not candidate_names:
+            return
+
+        with db.no_autoflush:
+            matching_tools = db.execute(select(DbTool).where(DbTool.name.in_(candidate_names))).scalars().all()
+
+        for candidate_name, visibility, team_id, owner_email in sorted(external_conflict_candidates, key=lambda item: item[0]):
+            for existing in matching_tools:
+                if gateway_id is not None and str(existing.gateway_id) == str(gateway_id) and (not retained_tool_original_names or existing.original_name not in retained_tool_original_names):
+                    continue
+                if existing.name != candidate_name:
+                    continue
+                if visibility == "public" and existing.visibility == "public":
+                    raise GatewayToolNameConflictError(candidate_name)
+                if visibility == "team" and team_id and existing.visibility == "team" and existing.team_id == team_id:
+                    raise GatewayToolNameConflictError(candidate_name)
+                if visibility == "private" and owner_email and existing.visibility == "private" and existing.owner_email == owner_email:
+                    raise GatewayToolNameConflictError(candidate_name)
+
     def _sync_gateway_catalog(
         self,
         db: Session,
@@ -6422,8 +6777,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         update_visibility: bool = False,
         include_resources: bool = True,
         include_prompts: bool = True,
+        project_gateway_rename: bool = False,
+        stale_created_via_values: Optional[Set[str]] = None,
     ) -> GatewayCatalogSyncResult:
         """Update/create fetched catalog rows inside caller transaction."""
+        tools = [tool for tool in tools if tool is not None]
+        existing_tools_by_original_name = {tool.original_name: tool for tool in gateway.tools}
+        fetched_tool_names = {tool.name for tool in tools}
+        # Match the caller's pruning policy: retained local aliases must still
+        # participate in namespace validation, unlike stale discovered tools.
+        retained_tool_original_names = {
+            tool.original_name
+            for tool in gateway.tools
+            if stale_created_via_values is not None and tool.original_name not in fetched_tool_names and getattr(tool, "created_via", None) not in stale_created_via_values
+        }
+        self._validate_tool_name_collisions(
+            db,
+            gateway_name=gateway.name,
+            gateway_id=str(gateway.id),
+            gateway_team_id=gateway.team_id,
+            gateway_owner_email=gateway.owner_email,
+            gateway_visibility=gateway.visibility,
+            tools=tools,
+            existing_tools_by_original_name=existing_tools_by_original_name,
+            update_visibility=update_visibility,
+            project_gateway_rename=project_gateway_rename,
+            retained_tool_original_names=retained_tool_original_names,
+        )
         return GatewayCatalogSyncResult(
             new_tool_names=[tool.name for tool in tools],
             new_resource_uris=[resource.uri for resource in resources] if include_resources else None,
@@ -6621,6 +7001,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_resources: bool = True,
         include_prompts: bool = True,
         user_context: Optional[Dict[str, Any]] = None,
+        cycle_started_at: Optional[datetime] = None,
     ) -> Dict[str, int]:
         """Refresh tools, resources, and prompts for a gateway from the background health
         check, a manual API-triggered refresh, or the notification service.
@@ -6646,6 +7027,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to include prompts in the refresh
             user_context: Optional user context dict (email, teams, is_admin) forwarded to
                 token storage for Vault path selection on authorization_code gateways.
+            cycle_started_at: Cycle timestamp from the maintenance loop; written as last_refresh_at
+                so the throttle comparison uses the same reference time on both sides.
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
@@ -6840,7 +7223,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except Exception as e:
             logger.warning("Failed to fetch tools from gateway %s: %s", gateway_name, e)
             result["success"] = False
-            result["error"] = str(e)
+            result["error"] = _safe_connection_error_text(e)
             return result
 
         result["validation_errors"] = validation_errors
@@ -6905,7 +7288,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["resources_added"] = reconcile_result.resources_added
             result["prompts_added"] = reconcile_result.prompts_added
 
-            gateway.last_refresh_at = datetime.now(timezone.utc)
+            # Anchor to the cycle timestamp so the throttle comparison is symmetric.
+            gateway.last_refresh_at = cycle_started_at if cycle_started_at is not None else datetime.now(timezone.utc)
 
             total_changes = (
                 result["tools_added"]
@@ -7230,9 +7614,44 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if validation_warnings is None:
             validation_warnings = []
 
+        try:
+            pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
+        except ValueError as exc:
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}", getattr(exc, "reason_code", "url_destination_blocked")) from exc
+
+        def get_httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            """Build the SDK's httpx client so it dials the address pinned at validation time.
+
+            Args:
+                headers: Optional headers for the client
+                timeout: Optional timeout for the client
+                auth: Optional auth for the client
+
+            Returns:
+                httpx2.AsyncClient: Configured HTTPX async client
+            """
+            return httpx2.AsyncClient(
+                follow_redirects=False,
+                headers=headers,
+                timeout=timeout if timeout else get_httpx2_timeout(),
+                auth=auth,
+                **pinned_target.client_kwargs(
+                    verify=get_default_verify(),
+                    limits=httpx2.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
+                ),
+            )
+
         # Client auto-initializes on entry; no manual initialize() needed.
         try:
-            async with mcp_proxy_client(url=server_url, headers=authentication, transport="sse") as client:
+            async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
                 # Read negotiated capabilities from the auto-initialized session
                 capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
@@ -7330,15 +7749,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Note: This function is for OAuth servers only, which don't use query param auth
             # Still sanitize in case exception contains URL with static sensitive params
             sanitized_url = sanitize_url_for_logging(server_url)
-            sanitized_error = sanitize_exception_message(str(e))
-            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitized_error, exc_info=True)
+            sanitized_error = _safe_connection_error_text(e)
+            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitize_exception_message(str(e)), exc_info=True)
 
             # Surface diagnostic context for likely auth rejections (401/403)
             error_str = str(e).lower()
             if validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
                 diagnostics = "; ".join(validation_warnings)
                 raise GatewayConnectionError(f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(e).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes.")
-            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}")
+            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}", classify_connection_failure(e))
 
     async def connect_to_sse_server(
         self,
@@ -7369,6 +7788,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if authentication is None:
             authentication = {}
 
+        try:
+            pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
+        except ValueError as exc:
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}", getattr(exc, "reason_code", "url_destination_blocked")) from exc
+
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
             timeout: httpx2.Timeout | None = None,
@@ -7392,15 +7816,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = None
 
             return httpx2.AsyncClient(
-                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
-                limits=httpx2.Limits(
-                    max_connections=settings.httpx_max_connections,
-                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                **pinned_target.client_kwargs(
+                    verify=ctx if ctx else get_default_verify(),
+                    limits=httpx2.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 ),
             )
 
@@ -7532,6 +7958,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if authentication is None:
             authentication = {}
 
+        try:
+            pinned_target = await resolve_pinned_target(server_url, "Gateway URL")
+        except ValueError as exc:
+            raise GatewayConnectionError(f"Outbound gateway URL blocked by URL policy: {sanitize_url_for_logging(server_url)}", getattr(exc, "reason_code", "url_destination_blocked")) from exc
+
         # Use authentication directly instead
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -7556,15 +7987,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = None
 
             return httpx2.AsyncClient(
-                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
-                limits=httpx2.Limits(
-                    max_connections=settings.httpx_max_connections,
-                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
-                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                **pinned_target.client_kwargs(
+                    verify=ctx if ctx else get_default_verify(),
+                    limits=httpx2.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 ),
             )
 
@@ -7671,48 +8104,6 @@ _HANDSHAKE_PROTOCOL_COPY = (
     "The server responded but MCP negotiation failed. Confirm the URL points at an MCP endpoint (for example /mcp or /sse) and supports an MCP protocol this gateway understands."
 )
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
-
-
-class _SniPinningTransport(httpx2.AsyncHTTPTransport):
-    """Dial a DNS-pinned address while keeping the request's hostname authority and TLS identity.
-
-    The MCP SDK compares the origin it connected to against the origin the
-    server advertises (``mcp.client.sse`` raises on a mismatch), so pinning has
-    to happen below the SDK: requests keep the validated hostname in their URL
-    and ``Host`` header, while every connection goes to the address resolved at
-    validation time and TLS is verified against that hostname. Built on httpx2
-    because the SDK 2.0 client transports run on that stack.
-    """
-
-    def __init__(self, sni_hostname: str, pinned_host: str, **kwargs: Any) -> None:
-        """Record the validated hostname and the address to dial in its place.
-
-        Args:
-            sni_hostname: Validated hostname whose certificate must match.
-            pinned_host: Address resolved at validation time, dialled instead of re-resolving.
-            **kwargs: Forwarded to ``httpx2.AsyncHTTPTransport``.
-        """
-        super().__init__(**kwargs)
-        self._sni_hostname = sni_hostname
-        self._pinned_host = pinned_host
-
-    async def handle_async_request(self, request: "httpx2.Request") -> "httpx2.Response":
-        """Send the request to the pinned address with TLS pinned to the validated hostname.
-
-        Args:
-            request: Outbound request addressed to the validated hostname.
-
-        Returns:
-            httpx2.Response: The upstream response.
-
-        Raises:
-            httpx2.UnsupportedProtocol: If the request targets any other host.
-        """
-        if request.url.raw_host.decode("ascii") != self._sni_hostname:
-            raise httpx2.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
-        request.extensions.setdefault("sni_hostname", self._sni_hostname)
-        request.url = request.url.copy_with(host=self._pinned_host)
-        return await super().handle_async_request(request)
 
 
 def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
@@ -8151,7 +8542,7 @@ async def test_server_handshake(
                     root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
-                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                    copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
                 logger.warning("MCP handshake initialize failed for virtual server %s: %s", server_id, sanitize_exception_message(str(root_cause)))
                 return _failure(failure_class, copy)
     except TimeoutError:
@@ -8229,7 +8620,7 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import build_token_user_context, TokenStorageService  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
                     # SECURITY: Use token_teams from the authenticated user dict — this is
                     # already resolved by auth middleware and must not be widened by
@@ -8267,7 +8658,7 @@ async def test_gateway_connectivity(
                     return GatewayTestResponse(
                         status_code=500,
                         latency_ms=latency_ms,
-                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL."},
+                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL."},
                     )
             else:
                 # For Client Credentials flow, get token directly
@@ -8283,7 +8674,7 @@ async def test_gateway_connectivity(
                     return GatewayTestResponse(
                         status_code=502,
                         latency_ms=latency_ms,
-                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL."},
+                        body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL."},
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
@@ -8377,7 +8768,9 @@ async def test_gateway_connectivity(
         )
 
         return GatewayTestResponse(
-            status_code=502, latency_ms=latency_ms, body={"error": "The MCP server request failed. Verify the MCP server is running and reachable from this host.", "details": str(e)}
+            status_code=502,
+            latency_ms=latency_ms,
+            body={"error": "The MCP server request failed. Verify the MCP server is running and reachable from this host.", "details": _safe_connection_error_text(e)},
         )
 
 
@@ -8440,13 +8833,25 @@ async def test_gateway_handshake(
     hostname_url = _gateway_test_endpoint_url(validated_base_url, path_suffix)
     full_url = _gateway_test_endpoint_url(target["pinned_base_url"], path_suffix)
 
+    exact_gateway_requested = request.gateway_id is not None
     try:
-        query = select(DbGateway).where(DbGateway.url.in_(_gateway_url_match_variants(validated_base_url)), DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
+        if exact_gateway_requested:
+            query = select(DbGateway).where(DbGateway.id == request.gateway_id, DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
+        else:
+            query = select(DbGateway).where(DbGateway.url.in_(_gateway_url_match_variants(validated_base_url)), DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
         if team_id:
             query = query.where(DbGateway.team_id == team_id)
         gateway = db.execute(query).scalars().first()
     except Exception:
         gateway = None
+
+    if exact_gateway_requested and (gateway is None or gateway.url not in _gateway_url_match_variants(validated_base_url)):
+        return GatewayHandshakeResponse(
+            success=False,
+            latency_ms=_latency_ms(),
+            failure_class="transport",
+            error="The requested MCP gateway is unavailable for this handshake.",
+        )
 
     credential_source: Literal["stored", "form", "none"] = "none"
     headers: Dict[str, str] = {}
@@ -8455,10 +8860,11 @@ async def test_gateway_handshake(
     # A caller-supplied Host would aim the stored credentials at another virtual host on the
     # pinned address, and a differently-cased key would be sent as a second Host header.
     form_headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    candidate_only = request.credential_mode == "candidate_only"
     # A form-supplied Authorization header replaces stored credentials, so don't fail the
     # handshake on an unobtainable stored OAuth token the caller is not going to use.
     form_supplies_authorization = any(key.lower() == "authorization" for key in form_headers)
-    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
+    if not candidate_only and gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
         grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
         try:
             if grant_type == "authorization_code":
@@ -8486,9 +8892,9 @@ async def test_gateway_handshake(
                 success=False,
                 latency_ms=_latency_ms(),
                 failure_class="auth",
-                error=f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL.",
+                error=f"Token retrieval failed for MCP server '{gateway.name}': {_safe_connection_error_text(e)}. Check the OAuth client credentials and token URL.",
             )
-    elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+    elif not candidate_only and gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
         if isinstance(gateway.auth_value, dict):
             headers.update(gateway.auth_value)
         elif isinstance(gateway.auth_value, str):
@@ -8506,12 +8912,14 @@ async def test_gateway_handshake(
             # instead of both being sent to the target.
             headers = {key: value for key, value in headers.items() if key.lower() not in overridden_stored_keys}
         headers.update(form_headers)
-        if "authorization" in form_header_keys or overridden_stored_keys:
+        if candidate_only or "authorization" in form_header_keys or overridden_stored_keys:
             credential_source = "form"
 
     handshake_verify: Any = get_default_verify()
     if gateway and gateway.ca_certificate and not validated_base_url.lower().startswith("http://"):
-        handshake_verify = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+        client_cert = None if candidate_only else gateway.client_cert
+        client_key = None if candidate_only else gateway.client_key
+        handshake_verify = get_cached_ssl_context(gateway.ca_certificate, client_cert=client_cert, client_key=client_key)
 
     def get_httpx_client_factory(
         headers: Optional[Dict[str, str]] = None,
@@ -8537,7 +8945,7 @@ async def test_gateway_handshake(
             auth=auth,
             transport=_SniPinningTransport(
                 sni_hostname=validated_hostname,
-                pinned_host=target["resolved_ip"],
+                pinned_hosts=[target["resolved_ip"]],
                 verify=handshake_verify,
                 limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
@@ -8579,7 +8987,7 @@ async def test_gateway_handshake(
                         response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
                     except httpx.RequestError as e:
                         logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
-                        return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {sanitize_exception_message(str(e))}")
+                        return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {_safe_connection_error_text(e)}")
 
                     if response.status_code in (401, 403):
                         return _failure("auth", _HANDSHAKE_AUTH_COPY)
@@ -8676,7 +9084,7 @@ async def test_gateway_handshake(
                     root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
                 failure_class, copy = _classify_handshake_error(root_cause)
                 if failure_class == "transport":
-                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                    copy = f"{copy}: {_safe_connection_error_text(root_cause)}"
                 logger.warning("MCP handshake initialize failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(root_cause)))
                 return _failure(failure_class, copy)
     except TimeoutError:

@@ -102,7 +102,7 @@ class ResourcesPage(BasePage):
     @property
     def resource_edit_name_input(self) -> Locator:
         """Resource name input in edit modal."""
-        return self.resource_edit_modal.locator("#edit-resource-name")
+        return self.resource_edit_modal.locator("#edit-resource-custom-name")
 
     @property
     def resource_edit_description_input(self) -> Locator:

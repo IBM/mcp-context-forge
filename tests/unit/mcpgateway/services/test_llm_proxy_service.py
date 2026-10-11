@@ -7,6 +7,7 @@ Tests for LLM proxy service.
 """
 
 # Standard
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -36,6 +37,29 @@ class DummyScalar:
 @pytest.fixture
 def service():
     return LLMProxyService()
+
+
+def _patch_isolated_client(monkeypatch, service):
+    """Route get_isolated_http_client to the service's mocked client.
+
+    The pinned LLM provider calls acquire a per-call isolated client instead of
+    using `service._client` directly. This keeps tests that configure
+    `service._client` working by handing that same mock back whenever an
+    isolated client is requested.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        service: LLMProxyService instance whose `_client` mock is reused.
+
+    Returns:
+        None
+    """
+
+    @asynccontextmanager
+    async def _stub(*_args, **_kwargs):
+        yield service._client
+
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.get_isolated_http_client", _stub)
 
 
 def _make_model(**overrides):
@@ -144,7 +168,7 @@ def test_build_azure_request(service, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_openai_success(service):
+async def test_chat_completion_openai_success(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model()
     service._resolve_model = MagicMock(return_value=(provider, model))
@@ -162,6 +186,7 @@ async def test_chat_completion_openai_success(service):
     }
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(return_value=response)
 
     result = await service.chat_completion(MagicMock(), request)
@@ -171,7 +196,7 @@ async def test_chat_completion_openai_success(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_http_error(service):
+async def test_chat_completion_http_error(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model()
     service._resolve_model = MagicMock(return_value=(provider, model))
@@ -182,6 +207,7 @@ async def test_chat_completion_http_error(service):
     error = httpx.HTTPStatusError("bad", request=httpx_response.request, response=httpx_response)
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(side_effect=error)
 
     with pytest.raises(LLMProxyRequestError):
@@ -288,7 +314,7 @@ def test_transform_ollama_stream_chunk(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_anthropic_success(service):
+async def test_chat_completion_anthropic_success(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", config={})
     model = _make_model(model_id="claude")
     service._resolve_model = MagicMock(return_value=(provider, model))
@@ -304,6 +330,7 @@ async def test_chat_completion_anthropic_success(service):
     }
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(return_value=response)
 
     result = await service.chat_completion(MagicMock(), request)
@@ -313,7 +340,7 @@ async def test_chat_completion_anthropic_success(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_ollama_openai_compat(service):
+async def test_chat_completion_ollama_openai_compat(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local/v1")
     model = _make_model(model_id="llama3")
     service._resolve_model = MagicMock(return_value=(provider, model))
@@ -331,6 +358,7 @@ async def test_chat_completion_ollama_openai_compat(service):
     }
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(return_value=response)
 
     result = await service.chat_completion(MagicMock(), request)
@@ -339,7 +367,7 @@ async def test_chat_completion_ollama_openai_compat(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_openai(service):
+async def test_chat_completion_stream_openai(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
     service._resolve_model = MagicMock(return_value=(provider, model))
@@ -365,6 +393,7 @@ async def test_chat_completion_stream_openai(service):
 
     stream_response = DummyStreamResponse(['data: {"choices": []}', "data: [DONE]"])
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=stream_response)
 
     chunks = []
@@ -619,7 +648,7 @@ def test_build_ollama_openai_compat_request_max_tokens(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_auto_initialize(service):
+async def test_chat_completion_auto_initialize(service, monkeypatch):
     """chat_completion auto-initializes when client is None (line 413)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model()
@@ -643,6 +672,7 @@ async def test_chat_completion_auto_initialize(service):
     async def init_then_mock():
         await original_init()
         service._client = AsyncMock()
+        _patch_isolated_client(monkeypatch, service)
         service._client.post = AsyncMock(return_value=response)
 
     service.initialize = init_then_mock
@@ -652,7 +682,7 @@ async def test_chat_completion_auto_initialize(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_azure(service):
+async def test_chat_completion_azure(service, monkeypatch):
     """chat_completion with Azure provider (line 419)."""
     provider = _make_provider(
         provider_type=LLMProviderType.AZURE_OPENAI,
@@ -675,6 +705,7 @@ async def test_chat_completion_azure(service):
     }
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(return_value=response)
 
     result = await service.chat_completion(MagicMock(), request)
@@ -682,7 +713,7 @@ async def test_chat_completion_azure(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_ollama_native(service):
+async def test_chat_completion_ollama_native(service, monkeypatch):
     """chat_completion with Ollama native provider (line 444)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local")
     model = _make_model(model_id="llama3")
@@ -695,6 +726,7 @@ async def test_chat_completion_ollama_native(service):
     response.json.return_value = {"message": {"role": "assistant", "content": "ollama-ok"}, "done": True, "prompt_eval_count": 1, "eval_count": 2}
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(return_value=response)
 
     result = await service.chat_completion(MagicMock(), request)
@@ -702,7 +734,7 @@ async def test_chat_completion_ollama_native(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_request_error(service):
+async def test_chat_completion_request_error(service, monkeypatch):
     """chat_completion raises on connection error (lines 450-452)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model()
@@ -711,6 +743,7 @@ async def test_chat_completion_request_error(service):
     request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(side_effect=httpx.RequestError("timeout"))
 
     with pytest.raises(LLMProxyRequestError, match="Connection error"):
@@ -726,7 +759,7 @@ async def test_chat_completion_request_error(service):
     ],
     ids=["cloud-metadata", "bind-all"],
 )
-async def test_chat_completion_ssrf_blocked(service, api_base):
+async def test_chat_completion_ssrf_blocked(service, api_base, monkeypatch):
     """chat_completion rejects SSRF-risky provider URLs."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
     model = _make_model()
@@ -735,6 +768,7 @@ async def test_chat_completion_ssrf_blocked(service, api_base):
     request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
 
     with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
         await service.chat_completion(MagicMock(), request)
@@ -751,7 +785,7 @@ async def test_chat_completion_ssrf_blocked(service, api_base):
     ],
     ids=["localhost", "private-rfc1918"],
 )
-async def test_chat_completion_ssrf_blocked_private(service, api_base):
+async def test_chat_completion_ssrf_blocked_private(service, api_base, monkeypatch):
     """chat_completion rejects localhost/private IPs when SSRF protection is strict."""
     from mcpgateway.config import settings
 
@@ -765,6 +799,7 @@ async def test_chat_completion_ssrf_blocked_private(service, api_base):
         request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
 
         service._client = AsyncMock()
+        _patch_isolated_client(monkeypatch, service)
 
         with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
             await service.chat_completion(MagicMock(), request)
@@ -796,7 +831,7 @@ class DummyStreamResponse:
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_anthropic(service):
+async def test_chat_completion_stream_anthropic(service, monkeypatch):
     """Streaming with Anthropic provider (lines 508-509)."""
     provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", config={})
     model = _make_model(model_id="claude")
@@ -810,6 +845,7 @@ async def test_chat_completion_stream_anthropic(service):
         "data: [DONE]",
     ]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -821,7 +857,7 @@ async def test_chat_completion_stream_anthropic(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ollama_native(service):
+async def test_chat_completion_stream_ollama_native(service, monkeypatch):
     """Streaming with Ollama native API (lines 527-536)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local")
     model = _make_model(model_id="llama3")
@@ -835,6 +871,7 @@ async def test_chat_completion_stream_ollama_native(service):
         '{"message": {"content": ""}, "done": true}',
     ]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -845,7 +882,7 @@ async def test_chat_completion_stream_ollama_native(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ollama_openai_compat(service):
+async def test_chat_completion_stream_ollama_openai_compat(service, monkeypatch):
     """Streaming with Ollama OpenAI-compat endpoint (lines 512-514)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local/v1")
     model = _make_model(model_id="llama3")
@@ -858,6 +895,7 @@ async def test_chat_completion_stream_ollama_openai_compat(service):
         "data: [DONE]",
     ]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -868,7 +906,7 @@ async def test_chat_completion_stream_ollama_openai_compat(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_azure(service):
+async def test_chat_completion_stream_azure(service, monkeypatch):
     """Streaming with Azure provider (line 475)."""
     provider = _make_provider(
         provider_type=LLMProviderType.AZURE_OPENAI,
@@ -882,6 +920,7 @@ async def test_chat_completion_stream_azure(service):
 
     lines = ['data: {"choices": [{"delta": {"content": "azure"}}]}', "data: [DONE]"]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -892,7 +931,7 @@ async def test_chat_completion_stream_azure(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_empty_lines_and_bad_json(service):
+async def test_chat_completion_stream_empty_lines_and_bad_json(service, monkeypatch):
     """Streaming skips empty lines and invalid JSON (lines 494-495, 523-524)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
@@ -902,6 +941,7 @@ async def test_chat_completion_stream_empty_lines_and_bad_json(service):
 
     lines = ["", "data: not-json", 'data: {"choices": []}', "data: [DONE]"]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -912,7 +952,7 @@ async def test_chat_completion_stream_empty_lines_and_bad_json(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_http_error(service):
+async def test_chat_completion_stream_http_error(service, monkeypatch):
     """Streaming HTTP error yields error chunk (lines 538-545)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
@@ -933,6 +973,7 @@ async def test_chat_completion_stream_http_error(service):
             raise httpx.HTTPStatusError("fail", request=httpx_response.request, response=httpx_response)
 
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=ErrorStreamResponse())
 
     chunks = []
@@ -943,7 +984,7 @@ async def test_chat_completion_stream_http_error(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_request_error(service):
+async def test_chat_completion_stream_request_error(service, monkeypatch):
     """Streaming connection error yields error chunk (lines 546-553)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
@@ -959,6 +1000,7 @@ async def test_chat_completion_stream_request_error(service):
             return False
 
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=ConnErrorStreamResponse())
 
     chunks = []
@@ -977,7 +1019,7 @@ async def test_chat_completion_stream_request_error(service):
     ],
     ids=["cloud-metadata", "bind-all"],
 )
-async def test_chat_completion_stream_ssrf_blocked(service, api_base):
+async def test_chat_completion_stream_ssrf_blocked(service, api_base, monkeypatch):
     """chat_completion_stream rejects SSRF-risky provider URLs."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
     model = _make_model(model_id="gpt-4")
@@ -986,6 +1028,7 @@ async def test_chat_completion_stream_ssrf_blocked(service, api_base):
     request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
 
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
 
     with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
         chunks = []
@@ -1004,7 +1047,7 @@ async def test_chat_completion_stream_ssrf_blocked(service, api_base):
     ],
     ids=["localhost", "private-rfc1918"],
 )
-async def test_chat_completion_stream_ssrf_blocked_private(service, api_base):
+async def test_chat_completion_stream_ssrf_blocked_private(service, api_base, monkeypatch):
     """chat_completion_stream rejects localhost/private IPs when SSRF protection is strict."""
     from mcpgateway.config import settings
 
@@ -1018,6 +1061,7 @@ async def test_chat_completion_stream_ssrf_blocked_private(service, api_base):
         request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
 
         service._client = MagicMock()
+        _patch_isolated_client(monkeypatch, service)
 
         with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
             async for chunk in service.chat_completion_stream(MagicMock(), request):
@@ -1030,7 +1074,7 @@ async def test_chat_completion_stream_ssrf_blocked_private(service, api_base):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_auto_initialize(service):
+async def test_chat_completion_stream_auto_initialize(service, monkeypatch):
     """chat_completion_stream auto-initializes (line 469)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
@@ -1044,6 +1088,7 @@ async def test_chat_completion_stream_auto_initialize(service):
     async def init_then_mock():
         await original_init()
         service._client = MagicMock()
+        _patch_isolated_client(monkeypatch, service)
         service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     service.initialize = init_then_mock
@@ -1214,7 +1259,7 @@ def test_transform_anthropic_stream_chunk_non_text_delta(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ollama_native_data_prefix(service):
+async def test_chat_completion_stream_ollama_native_data_prefix(service, monkeypatch):
     """Ollama native streaming with 'data:' prefixed lines (line 516, branch 520->493)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local")
     model = _make_model(model_id="llama3")
@@ -1228,6 +1273,7 @@ async def test_chat_completion_stream_ollama_native_data_prefix(service):
         "data: [DONE]",
     ]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -1238,7 +1284,7 @@ async def test_chat_completion_stream_ollama_native_data_prefix(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_chunk_is_none(service):
+async def test_chat_completion_stream_chunk_is_none(service, monkeypatch):
     """Streaming where chunk returns None (branch 520->493 false)."""
     provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", config={})
     model = _make_model(model_id="claude")
@@ -1252,6 +1298,7 @@ async def test_chat_completion_stream_chunk_is_none(service):
         "data: [DONE]",
     ]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -1264,7 +1311,7 @@ async def test_chat_completion_stream_chunk_is_none(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_non_sse_line_non_ollama(service):
+async def test_chat_completion_stream_non_sse_line_non_ollama(service, monkeypatch):
     """Non-SSE line for non-Ollama provider is silently ignored (branch 527->493 false)."""
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
@@ -1275,6 +1322,7 @@ async def test_chat_completion_stream_non_sse_line_non_ollama(service):
     # A line without "data: " prefix, for a non-Ollama provider - should be skipped
     lines = ["some-random-line", 'data: {"choices": []}', "data: [DONE]"]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -1285,7 +1333,7 @@ async def test_chat_completion_stream_non_sse_line_non_ollama(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ollama_openai_compat_non_sse_line(service):
+async def test_chat_completion_stream_ollama_openai_compat_non_sse_line(service, monkeypatch):
     """Ollama OpenAI-compat non-SSE line is skipped (branch 529->493 false)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local/v1")
     model = _make_model(model_id="llama3")
@@ -1297,6 +1345,7 @@ async def test_chat_completion_stream_ollama_openai_compat_non_sse_line(service)
     # but base_url.endswith("/v1") check at 529 is True, so `not endswith("/v1")` is False
     lines = ["random-non-sse", "data: [DONE]"]
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -1307,7 +1356,7 @@ async def test_chat_completion_stream_ollama_openai_compat_non_sse_line(service)
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ollama_native_non_sse_bad_json(service):
+async def test_chat_completion_stream_ollama_native_non_sse_bad_json(service, monkeypatch):
     """Ollama native non-SSE line with bad JSON (lines 535-536)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local")
     model = _make_model(model_id="llama3")
@@ -1318,6 +1367,7 @@ async def test_chat_completion_stream_ollama_native_non_sse_bad_json(service):
     # Non-SSE line that isn't valid JSON - hits the except orjson.JSONDecodeError at 535-536
     lines = ["not-valid-json", '{"message": {"content": "ok"}, "done": false}']
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     chunks = []
@@ -1328,7 +1378,7 @@ async def test_chat_completion_stream_ollama_native_non_sse_bad_json(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_ollama_native_non_sse_null_chunk(service):
+async def test_chat_completion_stream_ollama_native_non_sse_null_chunk(service, monkeypatch):
     """Ollama native non-SSE line where transform returns None (branch 533->493 false)."""
     provider = _make_provider(provider_type=LLMProviderType.OLLAMA, api_base="http://ollama.local")
     model = _make_model(model_id="llama3")
@@ -1340,6 +1390,7 @@ async def test_chat_completion_stream_ollama_native_non_sse_null_chunk(service):
     # so we mock it to return None for one call
     lines = ['{"message": {"content": ""}, "done": false}', '{"message": {"content": "ok"}, "done": false}']
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(lines))
 
     # Patch transform to return None on first call, then normal on second
@@ -1363,7 +1414,7 @@ async def test_chat_completion_stream_ollama_native_non_sse_null_chunk(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_sets_langfuse_generation_attributes(service):
+async def test_chat_completion_sets_langfuse_generation_attributes(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model()
     service._resolve_model = MagicMock(return_value=(provider, model))
@@ -1384,6 +1435,7 @@ async def test_chat_completion_sets_langfuse_generation_attributes(service):
     }
 
     service._client = AsyncMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.post = AsyncMock(return_value=response)
 
     span = MagicMock()
@@ -1418,13 +1470,14 @@ async def test_chat_completion_sets_langfuse_generation_attributes(service):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_stream_sets_langfuse_output_when_enabled(service):
+async def test_chat_completion_stream_sets_langfuse_output_when_enabled(service, monkeypatch):
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model(model_id="gpt-4")
     service._resolve_model = MagicMock(return_value=(provider, model))
 
     request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
     service._client = MagicMock()
+    _patch_isolated_client(monkeypatch, service)
     service._client.stream = MagicMock(return_value=DummyStreamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}', "data: [DONE]"]))
 
     span = MagicMock()

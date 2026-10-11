@@ -71,7 +71,6 @@ def _is_server_streaming_path(path: str) -> bool:
 _SELF_MANAGED_PREFIXES: tuple[str, ...] = (
     "/sse",
     "/mcp",
-    "/_internal/mcp/transport",
 )
 
 

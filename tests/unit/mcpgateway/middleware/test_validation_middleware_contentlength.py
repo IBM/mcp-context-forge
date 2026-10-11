@@ -17,6 +17,10 @@ from unittest.mock import MagicMock
 # First-Party
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
+# The middleware under test is deprecated; constructing it in the fixture below
+# emits its deprecation warning by design.
+pytestmark = pytest.mark.filterwarnings("ignore:ValidationMiddleware is deprecated:DeprecationWarning")
+
 
 @pytest.fixture
 def validation_middleware():

@@ -12,6 +12,7 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
+from mcp_types import UNSUPPORTED_PROTOCOL_VERSION, UnsupportedProtocolVersionErrorData
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, LATEST_HANDSHAKE_VERSION, LATEST_PROTOCOL_VERSION
 from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -67,9 +68,11 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             >>> resp.status_code
             200
 
-            MCP endpoints default to the latest handshake version (legacy mode is the default):
+            A headerless MCP request records the mode default in request state.
+            Era routing stays header-driven in the SDK, so an absent header still
+            takes the legacy handshake path:
 
-            >>> from mcp_types.version import LATEST_HANDSHAKE_VERSION
+            >>> from mcp_types.version import LATEST_PROTOCOL_VERSION
             >>> scope_rpc = {
             ...     "type": "http",
             ...     "asgi": {"version": "3.0"},
@@ -84,7 +87,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ... }
             >>> req = Request(scope_rpc)
             >>> _ = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(req, call_next))
-            >>> req.state.mcp_protocol_version == LATEST_HANDSHAKE_VERSION
+            >>> req.state.mcp_protocol_version == LATEST_PROTOCOL_VERSION
             True
 
             Unsupported versions return `400`:
@@ -102,8 +105,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             ...     "scheme": "http",
             ... }
             >>> bad_resp = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(Request(bad_scope), call_next))
-            >>> (bad_resp.status_code, b"Unsupported protocol version: bad" in bad_resp.body)
-            (400, True)
+            >>> import orjson; bad_err = orjson.loads(bad_resp.body)["error"]
+            >>> (bad_resp.status_code, bad_err["code"], bad_err["data"]["requested"])
+            (400, -32022, 'bad')
         """
         path = request.url.path
 
@@ -132,11 +136,18 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
 
         # Validate protocol version
         if protocol_version not in accepted_versions:
-            supported = ", ".join(accepted_versions)
             logger.warning("Unsupported protocol version: %s", protocol_version)
             return ORJSONResponse(
                 status_code=400,
-                content={"error": "Bad Request", "message": f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"},
+                content={
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": UNSUPPORTED_PROTOCOL_VERSION,
+                        "message": "Unsupported protocol version",
+                        "data": UnsupportedProtocolVersionErrorData(supported=list(accepted_versions), requested=protocol_version).model_dump(mode="json"),
+                    },
+                },
             )
 
         # Store validated version in request state for use by handlers
