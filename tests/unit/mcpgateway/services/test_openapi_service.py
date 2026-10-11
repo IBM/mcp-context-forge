@@ -8,8 +8,10 @@ Unit tests for OpenAPI service.
 
 # Standard
 import asyncio
+import gc
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
+import weakref
 
 # Third-Party
 import httpx
@@ -20,6 +22,7 @@ import pytest
 from mcpgateway.services import openapi_service as openapi_service_module
 from mcpgateway.services.openapi_service import (
     _MAX_SPEC_BYTES,
+    _CachedFailure,
     _SPEC_CACHE_MAX,
     _SPEC_CACHE_TTL,
     _SPEC_ERROR_TTL,
@@ -445,6 +448,8 @@ class TestFetchOpenAPISpec:
 
         assert second == mock_spec_v2
         mock_val.assert_awaited_once()
+        assert openapi_service_module._spec_cache_bytes == _spec_cache[url][2]
+        assert openapi_service_module._spec_cache_bytes > 0
 
     @pytest.mark.asyncio
     async def test_concurrent_fetches_coalesce_to_single_request(self):
@@ -488,12 +493,78 @@ class TestFetchOpenAPISpec:
 
         assert fetch_count == 1, f"Expected 1 upstream fetch, got {fetch_count}"
         assert all(isinstance(r, ValueError) for r in waiters)
+        cached_failure = _spec_cache[url][1]
+        assert isinstance(cached_failure, _CachedFailure)
+        assert cached_failure.exception_type is ValueError
+        assert cached_failure.message == "boom"
 
         # The negative entry expires: backdate it and the next caller refetches.
         expires_at, err, size = _spec_cache[url]
         _spec_cache[url] = (expires_at - _SPEC_ERROR_TTL - 1, err, size)
         with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, return_value={"openapi": "3.0.0"}):
             assert await fetch_openapi_spec(url) == {"openapi": "3.0.0"}
+
+    @pytest.mark.asyncio
+    async def test_cached_failure_does_not_retain_fetch_traceback(self):
+        """Negative caching does not retain response-sized locals through an exception traceback."""
+
+        class Payload:
+            blob: bytearray
+
+        payload_ref: weakref.ReferenceType[Payload] | None = None
+
+        async def _failing_fetch(spec_url, timeout):
+            nonlocal payload_ref
+            payload = Payload()
+            payload.blob = bytearray(1024 * 1024)
+            payload_ref = weakref.ref(payload)
+            raise ValueError("invalid OpenAPI response")
+
+        url = "http://example.com/openapi.json"
+        with patch("mcpgateway.services.openapi_service._do_fetch", side_effect=_failing_fetch):
+            try:
+                await fetch_openapi_spec(url)
+            except ValueError as exc:
+                assert str(exc) == "invalid OpenAPI response"
+            else:
+                pytest.fail("expected a failed OpenAPI fetch")
+
+        gc.collect()
+        assert payload_ref is not None
+        assert payload_ref() is None
+        assert isinstance(_spec_cache[url][1], _CachedFailure)
+
+    @pytest.mark.asyncio
+    async def test_status_error_is_not_negative_cached(self):
+        """HTTP status errors are not cached with their request and response graphs."""
+        url = "http://example.com/openapi.json"
+        error = httpx.HTTPStatusError("request failed", request=MagicMock(), response=MagicMock())
+
+        with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, side_effect=error) as fetch:
+            for _ in range(2):
+                with pytest.raises(httpx.HTTPStatusError, match="request failed"):
+                    await fetch_openapi_spec(url)
+
+        assert fetch.await_count == 2
+        assert url not in _spec_cache
+        assert openapi_service_module._spec_cache_bytes == 0
+
+    @pytest.mark.asyncio
+    async def test_rebuildable_httpx_error_is_negative_cached_without_traceback(self):
+        """Rebuildable HTTPX errors retain single-flight behavior without their traceback."""
+        url = "http://example.com/openapi.json"
+        error = httpx.ConnectError("connection failed")
+
+        with patch("mcpgateway.services.openapi_service._do_fetch", new_callable=AsyncMock, side_effect=error) as fetch:
+            for _ in range(2):
+                with pytest.raises(httpx.ConnectError, match="connection failed"):
+                    await fetch_openapi_spec(url)
+
+        assert fetch.await_count == 1
+        cached_failure = _spec_cache[url][1]
+        assert isinstance(cached_failure, _CachedFailure)
+        assert cached_failure.exception_type is httpx.ConnectError
+        assert cached_failure.message == "connection failed"
 
     @pytest.mark.asyncio
     async def test_failed_fetches_stay_bounded(self):

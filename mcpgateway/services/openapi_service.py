@@ -13,7 +13,7 @@ import collections
 import logging
 import time
 from sys import getsizeof
-from typing import Any, Optional, Tuple
+from typing import Any, NamedTuple, Optional, Tuple
 import urllib.parse
 
 # Third-Party
@@ -65,7 +65,30 @@ _SPEC_CACHE_TTL = 60.0
 # queued single-flight waiter re-runs the failing fetch in turn, so N waiters pay N × timeout.
 _SPEC_ERROR_TTL = 5.0
 _SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
-_spec_cache: collections.OrderedDict[str, tuple[float, dict[str, Any] | Exception, int]] = collections.OrderedDict()
+
+
+class _CachedFailure(NamedTuple):
+    """A traceback-free failure record for the short negative-cache window."""
+
+    exception_type: type[Exception]
+    message: str
+
+
+def _cacheable_failure(exc: Exception) -> Optional[_CachedFailure]:
+    """Return a lightweight failure record when its exception can be rebuilt from its message."""
+    exception_type = type(exc)
+    if exception_type is not ValueError and exception_type.__module__ != "httpx":
+        return None
+
+    message = str(exc)
+    try:
+        exception_type(message)
+    except Exception:
+        return None
+    return _CachedFailure(exception_type, message)
+
+
+_spec_cache: collections.OrderedDict[str, tuple[float, dict[str, Any] | _CachedFailure, int]] = collections.OrderedDict()
 _spec_cache_bytes = 0
 _spec_locks: dict[str, asyncio.Lock] = {}
 _spec_locks_guard = asyncio.Lock()
@@ -74,10 +97,10 @@ _spec_locks_guard = asyncio.Lock()
 async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
     """Fetch an OpenAPI specification from a URL with SSRF protection.
 
-    Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds, failures for
-    ``_SPEC_ERROR_TTL`` seconds.  Concurrent callers for the same URL share a
-    single in-flight fetch (single-flight), and a caller that arrives while a
-    failure is still cached re-raises that failure instead of refetching.
+    Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds. Rebuildable
+    value and HTTPX failures are cached for ``_SPEC_ERROR_TTL`` seconds without
+    retaining their traceback or request objects. Concurrent callers for the
+    same URL share a single in-flight fetch (single-flight).
     The cache is bounded by entry count and aggregate memory; expired and
     overflow entries are evicted on access.
 
@@ -131,14 +154,16 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
         try:
             result = await _do_fetch(spec_url, timeout)
         except Exception as exc:
-            _store(spec_url, exc, _SPEC_ERROR_TTL)
+            failure = _cacheable_failure(exc)
+            if failure is not None:
+                _store(spec_url, failure, _SPEC_ERROR_TTL)
             raise
 
         _store(spec_url, result, _SPEC_CACHE_TTL)
         return copy.deepcopy(result)
 
 
-def _estimate_spec_cache_size(spec_url: str, value: dict[str, Any] | Exception, max_bytes: int) -> int:
+def _estimate_spec_cache_size(spec_url: str, value: dict[str, Any] | _CachedFailure, max_bytes: int) -> int:
     """Estimate retained bytes and stop once the cache budget is exceeded."""
     total = getsizeof(spec_url) + _SPEC_CACHE_ENTRY_OVERHEAD_BYTES
     seen: set[int] = set()
@@ -154,17 +179,15 @@ def _estimate_spec_cache_size(spec_url: str, value: dict[str, Any] | Exception, 
             pending.extend(item.values())
         elif isinstance(item, (list, tuple, set, frozenset)):
             pending.extend(item)
-        elif isinstance(item, Exception):
-            pending.extend(item.args)
     return total
 
 
-def _store(spec_url: str, value: dict | Exception, ttl: float) -> None:
+def _store(spec_url: str, value: dict[str, Any] | _CachedFailure, ttl: float) -> None:
     """Cache *value* under *spec_url* within the entry and byte limits.
 
     Args:
         spec_url: Cache key for the OpenAPI spec.
-        value: Parsed specification, or the exception raised by a failed fetch.
+        value: Parsed specification, or a traceback-free cached failure.
         ttl: Lifetime of the entry in seconds.
     """
     global _spec_cache_bytes
@@ -203,8 +226,8 @@ def _fresh_cached_copy(spec_url: str) -> Optional[dict]:
     if cached is None or cached[0] <= time.monotonic():
         return None
     _spec_cache.move_to_end(spec_url)
-    if isinstance(cached[1], Exception):
-        raise cached[1]
+    if isinstance(cached[1], _CachedFailure):
+        raise cached[1].exception_type(cached[1].message)
     return copy.deepcopy(cached[1])
 
 
