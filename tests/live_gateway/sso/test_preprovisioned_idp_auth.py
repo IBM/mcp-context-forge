@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Validate API-provisioned SSO users through external IdP bearer authentication.
+Validate API-provisioned SSO users through bearer and PKCE authentication.
 
 Run serially against externally started gateways and HTTPS Keycloak. The
 disabled-gateway case needs a second gateway sharing the first gateway's DB.
@@ -12,13 +12,20 @@ See tests/live_gateway/README.md for startup configuration and teardown rules.
 
 # Standard
 import asyncio
+import base64
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import hashlib
+from html.parser import HTMLParser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
+import secrets
+from threading import Thread
 import time
 from typing import Any, cast
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 
 # Third-Party
@@ -27,6 +34,7 @@ import httpx2
 import jwt
 from mcp import ClientSession, MCPError
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import TextContent
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -115,6 +123,35 @@ class Resources:
     server_id: str
     reader_role_id: str
     transport_role_id: str
+
+
+@dataclass(frozen=True)
+class PKCEEnvironment:
+    """Public OAuth client and isolated echo resources for authorization-code checks."""
+
+    client_id: str
+    redirect_uri: str
+    resource: str
+    authorization_endpoint: str
+    token_endpoint: str
+    resources: Resources
+    executor_role_id: str
+    received: list[str]
+
+
+class LoginForm(HTMLParser):
+    """Read Keycloak's generated login action without hard-coding session URLs."""
+
+    def __init__(self) -> None:
+        """Initialize the login form action."""
+        super().__init__()
+        self.action = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Capture only the username/password login form action."""
+        values = dict(attrs)
+        if tag == "form" and values.get("id") == "kc-form-login":
+            self.action = values.get("action") or ""
 
 
 @pytest.fixture(scope="module", name="idp")
@@ -251,7 +288,7 @@ def _delete_fixture_user(admin: httpx.Client, email: str) -> None:
             stored_email = cast(str | None, connection.execute(text("SELECT email FROM email_users WHERE email = :email"), {"email": email}).scalar_one_or_none())
             assert stored_email == email, "Cleanup database must contain the account created through this test gateway"
             connection.execute(
-                text("DELETE FROM email_team_member_history WHERE user_email = :email " "AND team_member_id IN (SELECT id FROM email_team_members WHERE user_email = :email)"), {"email": email}
+                text("DELETE FROM email_team_member_history WHERE user_email = :email AND team_member_id IN (SELECT id FROM email_team_members WHERE user_email = :email)"), {"email": email}
             )
     finally:
         engine.dispose()
@@ -327,8 +364,8 @@ def user_factory_fixture(admin: httpx.Client, keycloak_admin: httpx.Client, idp:
     """Create unique verified IdP users and optional matching gateway accounts, then delete them."""
     with ExitStack() as cleanup:
 
-        def create(*, provision: bool = True, active: bool = True, provider_id: str | None = None) -> User:
-            """Mint one IdP token without browser login or gateway JIT creation."""
+        def create(*, provision: bool = True, active: bool = True, provider_id: str | None = None, token_factory: Callable[[str, str], str] | None = None) -> User:
+            """Mint a password-grant or supplied-flow token without gateway JIT creation."""
             email = f"preprov-{uuid4().hex}@example.com"
             password = f"Test!{uuid4().hex}9a"
             response = _request(
@@ -359,20 +396,10 @@ def user_factory_fixture(admin: httpx.Client, keycloak_admin: httpx.Client, idp:
                 created_at = body["created_at"]
                 gateway_users.append(email)
                 personal_team_ids = _clear_roles(admin, email)
-            response = httpx.post(
-                f"{idp.url}/realms/{idp.realm}/protocol/openid-connect/token",
-                data={
-                    "grant_type": "password",
-                    "client_id": idp.client_id,
-                    "client_secret": idp.client_secret,
-                    "username": email,
-                    "password": password,
-                    "scope": "openid profile email",
-                },
-                timeout=20,
-            )
-            assert response.status_code == 200, "Unique Keycloak user must obtain an access token"
-            token = response.json()["access_token"]
+            if token_factory is not None:
+                token = token_factory(email, password)
+            else:
+                token = _password_grant(idp, email, password)
             claims = jwt.decode(token, options={"verify_signature": False})
             assert claims["iss"].rstrip("/") == idp.issuer
             audience = claims["aud"] if isinstance(claims["aud"], list) else [claims["aud"]]
@@ -382,6 +409,192 @@ def user_factory_fixture(admin: httpx.Client, keycloak_admin: httpx.Client, idp:
             return User(email, token, created_at, bound_provider, personal_team_ids)
 
         yield create
+
+
+def _password_grant(idp: IdP, email: str, password: str) -> str:
+    """Obtain the existing bearer-control token through the confidential test client."""
+    response = httpx.post(
+        f"{idp.url}/realms/{idp.realm}/protocol/openid-connect/token",
+        data={
+            "grant_type": "password",
+            "client_id": idp.client_id,
+            "client_secret": idp.client_secret,
+            "username": email,
+            "password": password,
+            "scope": "openid profile email",
+        },
+        timeout=20,
+    )
+    assert response.status_code == 200, "Unique Keycloak user must obtain an access token"
+    return cast(str, response.json()["access_token"])
+
+
+@pytest.fixture(name="pkce_environment")
+def pkce_environment_fixture(admin: httpx.Client, keycloak_admin: httpx.Client, idp: IdP, trusted_provider: str, resources: Resources, gateway_users: list[str]) -> Iterator[PKCEEnvironment]:
+    """Create a public PKCE client and echo endpoint without changing shared test resources."""
+    received: list[str] = []
+
+    class EchoHandler(BaseHTTPRequestHandler):
+        """Return only the submitted message from the local upstream."""
+
+        def do_POST(self) -> None:  # pylint: disable=invalid-name
+            """Record the message and return a JSON echo response."""
+            data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append(data["message"])
+            body = json.dumps({"message": data["message"]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:  # pylint: disable=redefined-builtin
+            """Keep upstream headers and arguments out of test logs."""
+
+    suffix = uuid4().hex[:12]
+    with ExitStack() as cleanup:
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), EchoHandler)
+        thread = Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        cleanup.callback(thread.join, 5)
+        cleanup.callback(upstream.server_close)
+        cleanup.callback(upstream.shutdown)
+        upstream_url = f"http://127.0.0.1:{upstream.server_port}"
+        tool = _object(
+            _request(
+                admin,
+                "POST",
+                "/v1/tools",
+                json={
+                    "tool": {
+                        "name": f"preprov-echo-{suffix}",
+                        "url": upstream_url + "/echo",
+                        "integration_type": "REST",
+                        "request_type": "POST",
+                        "visibility": "team",
+                        "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]},
+                    },
+                    "team_id": resources.team_id,
+                },
+            )
+        )
+        cleanup.callback(_request, admin, "DELETE", f"/v1/tools/{tool['id']}", expected=(200, 204, 404))
+        server = _object(
+            _request(
+                admin,
+                "POST",
+                "/v1/servers",
+                expected=(201,),
+                json={
+                    "server": {
+                        "name": f"preprov-pkce-{suffix}",
+                        "associated_tools": [tool["id"]],
+                        "oauth_enabled": True,
+                        "oauth_config": {"authorization_servers": [idp.issuer], "resource": trusted_provider},
+                    },
+                    "visibility": "public",
+                },
+            )
+        )
+        cleanup.callback(_request, admin, "DELETE", f"/v1/servers/{server['id']}", expected=(200, 204, 404))
+        resource = f"{BASE_URL}/servers/{server['id']}/mcp"
+        _request(admin, "PUT", f"/v1/servers/{server['id']}", json={"oauth_config": {"authorization_servers": [idp.issuer], "resource": resource}})
+        client_id = f"preprov-pkce-{suffix}"
+        redirect_uri = upstream_url + "/callback"
+        client = {
+            "clientId": client_id,
+            "enabled": True,
+            "publicClient": True,
+            "standardFlowEnabled": True,
+            "directAccessGrantsEnabled": False,
+            "redirectUris": [redirect_uri],
+            "attributes": {"pkce.code.challenge.method": "S256"},
+            "defaultClientScopes": ["profile", "email"],
+            "protocolMappers": [
+                {
+                    "name": f"audience-{index}",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-audience-mapper",
+                    "config": {"included.custom.audience": audience, "access.token.claim": "true", "id.token.claim": "false"},
+                }
+                for index, audience in enumerate((trusted_provider, resource))
+            ],
+        }
+        response = _request(keycloak_admin, "POST", "clients", expected=(201,), json=client)
+        client_uuid = response.headers["Location"].rsplit("/", 1)[-1]
+        cleanup.callback(_request, keycloak_admin, "DELETE", f"clients/{client_uuid}", expected=(204, 404))
+        role = _object(_request(admin, "POST", "/v1/rbac/roles", expected=(200, 201), json={"name": f"preprov-executor-{suffix}", "scope": "global", "permissions": ["tools.execute"]}))
+        cleanup.callback(_request, admin, "DELETE", f"/v1/rbac/roles/{role['id']}", expected=(200, 204, 404))
+
+        def release_executor_grants() -> None:
+            """Remove only this fixture's role references before deleting the role."""
+            for email in gateway_users:
+                assignments = _request(admin, "GET", _role_path(email)).json()
+                if any((item.get("role_id") or item.get("roleId")) == role["id"] for item in assignments):
+                    _request(admin, "DELETE", f"{_role_path(email)}/{role['id']}", params={"scope": "global"})
+
+        cleanup.callback(release_executor_grants)
+        discovery = httpx.get(f"{idp.url}/realms/{idp.realm}/.well-known/openid-configuration", timeout=20)
+        discovery.raise_for_status()
+        yield PKCEEnvironment(
+            client_id,
+            redirect_uri,
+            resource,
+            discovery.json()["authorization_endpoint"],
+            discovery.json()["token_endpoint"],
+            replace(resources, tool_id=tool["id"], tool_name=tool["name"], server_id=server["id"]),
+            role["id"],
+            received,
+        )
+
+
+def _pkce_token(pkce: PKCEEnvironment, email: str, password: str, *, wrong_verifier: bool = False, wrong_state: bool = False) -> str:
+    """Complete Keycloak authorization-code login over HTTP with PKCE and callback-state checks."""
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(24)
+    with httpx.Client(timeout=20) as login:
+        page = login.get(
+            pkce.authorization_endpoint,
+            params={
+                "client_id": pkce.client_id,
+                "redirect_uri": pkce.redirect_uri,
+                "response_type": "code",
+                "scope": "openid profile email",
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "resource": pkce.resource,
+            },
+            follow_redirects=True,
+        )
+        page.raise_for_status()
+        form = LoginForm()
+        form.feed(page.text)
+        assert urlsplit(form.action).scheme == "https", "Send test credentials only through HTTPS"
+        assert urlsplit(form.action).netloc == urlsplit(pkce.authorization_endpoint).netloc, "Post credentials only to the configured IdP"
+        response = login.post(form.action, data={"username": email, "password": password, "credentialId": ""}, follow_redirects=False)
+        assert response.status_code == 302, "Keycloak must return an authorization code after login"
+        callback = urlsplit(response.headers["Location"])
+        configured = urlsplit(pkce.redirect_uri)
+        assert (callback.scheme, callback.netloc, callback.path) == (configured.scheme, configured.netloc, configured.path)
+        params = parse_qs(callback.query)
+        expected_state = secrets.token_urlsafe(24) if wrong_state else state
+        if params.get("state") != [expected_state]:
+            raise ValueError("OAuth callback state mismatch")
+        token = login.post(
+            pkce.token_endpoint,
+            data={
+                "grant_type": "authorization_code",
+                "client_id": pkce.client_id,
+                "redirect_uri": pkce.redirect_uri,
+                "code": params["code"][0],
+                "code_verifier": secrets.token_urlsafe(48) if wrong_verifier else verifier,
+                "resource": pkce.resource,
+            },
+        )
+        token.raise_for_status()
+        return cast(str, token.json()["access_token"])
 
 
 def _grant_access(admin: httpx.Client, user: User, resources: Resources, *, read: bool = True, transport: bool = True, membership: bool = True) -> None:
@@ -588,3 +801,58 @@ def test_existing_user_authenticates_with_provisioning_disabled(admin: httpx.Cli
     assert response.json() == {"detail": "Not Found"}
     _assert_access(user, resources, base_url=disabled_url)
     _assert_existing_account(admin, user)
+
+
+def test_pkce_user_executes_real_upstream_tool(admin: httpx.Client, user_factory: Callable[..., User], pkce_environment: PKCEEnvironment, idp: IdP) -> None:
+    """An API-created user completes PKCE login and executes a real team tool."""
+    pkce = pkce_environment
+    metadata = httpx.get(f"{BASE_URL}/.well-known/oauth-protected-resource/servers/{pkce.resources.server_id}/mcp", timeout=20)
+    assert metadata.status_code == 200
+    assert metadata.json()["resource"] == pkce.resource
+    assert metadata.json()["authorization_servers"] == [idp.issuer]
+    user = user_factory(token_factory=lambda email, password: _pkce_token(pkce, email, password))
+    assert pkce.resource in jwt.decode(user.token, options={"verify_signature": False})["aud"]
+    _grant_access(admin, user, pkce.resources)
+    _request(admin, "POST", _role_path(user.email), json={"role_id": pkce.executor_role_id, "scope": "global"})
+    message = f"hello-{uuid4().hex}"
+
+    async def execute() -> None:
+        """Require discovery and an exact echo response through the MCP transport."""
+        async with _mcp_session(user, pkce.resources) as session:
+            tools = await session.list_tools()
+            assert pkce.resources.tool_name in {tool.name for tool in tools.tools}
+            result = await session.call_tool(pkce.resources.tool_name, arguments={"message": message})
+            assert result.is_error is False
+            echoed = [json.loads(content.text) for content in result.content if isinstance(content, TextContent)]
+            assert {"message": message} in echoed
+
+    asyncio.run(execute())
+    assert pkce.received == [message]
+    _assert_existing_account(admin, user)
+
+
+def test_pkce_user_without_execute_permission_cannot_reach_upstream(admin: httpx.Client, user_factory: Callable[..., User], pkce_environment: PKCEEnvironment) -> None:
+    """A valid PKCE token and discovery rights cannot bypass tools.execute."""
+    pkce = pkce_environment
+    user = user_factory(token_factory=lambda email, password: _pkce_token(pkce, email, password))
+    _grant_access(admin, user, pkce.resources)
+    _assert_access(user, pkce.resources)
+    asyncio.run(_assert_execution_denied(user, pkce.resources))
+    assert pkce.received == []
+    _assert_existing_account(admin, user)
+
+
+def test_pkce_wrong_verifier_rejected(user_factory: Callable[..., User], pkce_environment: PKCEEnvironment) -> None:
+    """Keycloak rejects an authorization code exchanged with a different PKCE verifier."""
+    with pytest.raises(httpx.HTTPStatusError) as denial:
+        user_factory(token_factory=lambda email, password: _pkce_token(pkce_environment, email, password, wrong_verifier=True))
+    assert denial.value.response.status_code == 400
+    assert denial.value.response.json()["error"] == "invalid_grant"
+    assert pkce_environment.received == []
+
+
+def test_pkce_wrong_callback_state_rejected(user_factory: Callable[..., User], pkce_environment: PKCEEnvironment) -> None:
+    """The protocol client refuses a callback that does not match its expected state."""
+    with pytest.raises(ValueError, match="OAuth callback state mismatch"):
+        user_factory(token_factory=lambda email, password: _pkce_token(pkce_environment, email, password, wrong_state=True))
+    assert pkce_environment.received == []
