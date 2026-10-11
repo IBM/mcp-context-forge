@@ -1,0 +1,49 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cf-k6-image-check
+  namespace: mcp-context-forge
+  labels:
+    app.kubernetes.io/name: cf-k6-image-check
+    app.kubernetes.io/part-of: cf-performance-test
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cf-k6-image-check
+        app.kubernetes.io/part-of: cf-performance-test
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: pull-secret
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: us.icr.io/perf_tools/watson-perf-k6@sha256:31e65b66982b146f628c3034d5179dc59dc3a8ea0c7ef118972017388d889f2f
+          imagePullPolicy: IfNotPresent
+          command: ["k6"]
+          args: ["version"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

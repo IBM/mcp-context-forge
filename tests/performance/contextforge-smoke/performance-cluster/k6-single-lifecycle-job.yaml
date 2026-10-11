@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cf-k6-single-lifecycle
+  namespace: mcp-context-forge
+  labels:
+    app.kubernetes.io/name: cf-k6-single-lifecycle
+    app.kubernetes.io/part-of: cf-performance-test
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 60
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cf-k6-single-lifecycle
+        app.kubernetes.io/part-of: cf-performance-test
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: pull-secret
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: us.icr.io/perf_tools/watson-perf-k6@sha256:31e65b66982b146f628c3034d5179dc59dc3a8ea0c7ef118972017388d889f2f
+          imagePullPolicy: IfNotPresent
+          command: ["k6"]
+          args: ["run", "--no-usage-report", "/scripts/k6-single-lifecycle.js"]
+          env:
+            - name: CF_MCP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: cf-k6-test-config
+                  key: endpoint
+            - name: CF_TOOL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cf-k6-test-config
+                  key: tool-name
+            - name: CF_TEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cf-k6-test-auth
+                  key: token
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: cf-k6-single-lifecycle-script
+            defaultMode: 0444
