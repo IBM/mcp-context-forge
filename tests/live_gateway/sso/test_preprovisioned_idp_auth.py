@@ -656,6 +656,14 @@ def _assert_access(user: User, resources: Resources, *, base_url: str = BASE_URL
     assert resources.tool_name in asyncio.run(_mcp_tools(user, resources, base_url=base_url))
 
 
+def _assert_authentication_denied(user: User, resources: Resources) -> None:
+    """Require REST and MCP authentication to reject the same IdP token with HTTP 401."""
+    assert _rest_tools(user).status_code == 401
+    with pytest.raises(httpx2.HTTPStatusError) as denial:
+        asyncio.run(_mcp_tools(user, resources))
+    assert denial.value.response.status_code == 401
+
+
 async def _assert_execution_denied(user: User, resources: Resources) -> None:
     """Require a tools.execute denial for a user who can establish MCP and list tools."""
     async with _mcp_session(user, resources) as session:
@@ -693,10 +701,11 @@ def test_preprovisioned_user_authenticates_without_browser_or_jit(admin: httpx.C
     _assert_existing_account(admin, user)
 
 
-def test_idp_token_alone_cannot_create_gateway_user(admin: httpx.Client, user_factory: Callable[..., User]) -> None:
-    """A valid IdP token cannot JIT-create a missing account when auto_create_users is false."""
+def test_idp_token_alone_cannot_create_gateway_user(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources) -> None:
+    """REST and MCP reject a missing account without JIT creation when auto_create_users is false."""
     user = user_factory(provision=False)
-    assert _rest_tools(user).status_code == 401
+    _request(admin, "GET", _user_path(user.email), expected=(404,))
+    _assert_authentication_denied(user, resources)
     _request(admin, "GET", _user_path(user.email), expected=(404,))
 
 
@@ -743,9 +752,13 @@ def test_team_removal_hides_tool_from_same_token(admin: httpx.Client, user_facto
     assert resources.tool_name not in asyncio.run(_mcp_tools(user, resources))
 
 
-def test_inactive_preprovisioned_user_denied(user_factory: Callable[..., User]) -> None:
-    """An IdP-issued token does not authenticate an inactive pre-provisioned account."""
-    assert _rest_tools(user_factory(active=False)).status_code == 401
+def test_inactive_preprovisioned_user_denied(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources) -> None:
+    """REST and MCP reject an initially inactive account despite valid roles and team membership."""
+    user = user_factory(active=False)
+    _grant_access(admin, user, resources)
+    assert _object(_request(admin, "GET", _user_path(user.email)))["is_active"] is False
+    _assert_authentication_denied(user, resources)
+    _assert_existing_account(admin, user)
 
 
 def test_deactivated_account_denies_cached_token(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources) -> None:
@@ -755,7 +768,8 @@ def test_deactivated_account_denies_cached_token(admin: httpx.Client, user_facto
     _assert_access(user, resources)
     _request(admin, "PATCH", _user_path(user.email), json={"is_active": False})
     _expire_identity(user)
-    assert _rest_tools(user).status_code == 401
+    _assert_authentication_denied(user, resources)
+    _assert_existing_account(admin, user)
 
 
 def test_provider_mismatch_preserves_binding(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources, record_property: Callable[[str, str], None]) -> None:
