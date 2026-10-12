@@ -1,8 +1,11 @@
-# ADR-056: Trust A2A Plugin Header Output
+# ADR-057: Trust A2A Plugin Header Output
 
 - *Status:* Accepted
 - *Date:* 2026-10-06
 - *Deciders:* Platform Team
+
+!!! note
+    Returning an empty value for a received header is equivalent to omitting it.
 
 ## Context
 
