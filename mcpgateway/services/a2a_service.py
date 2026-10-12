@@ -39,7 +39,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.http_client_service import get_isolated_http_client
@@ -405,6 +405,83 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
     )
     if not membership:
         raise PublicValidationError("User membership in team not sufficient for this update.")
+
+
+_SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "client_id", "authorization_url", "token_url", "scope")
+
+
+def _oauth2_security_scheme(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Build an ``oauth2SecurityScheme`` dict from non-secret OAuth config fields.
+
+    Reads only the allowlisted keys a client needs to start a flow (the same
+    allowlist ``gateway_service.py`` uses for OAuth config comparison).
+    Never reads ``client_secret``, ``private_key``, or any other credential value.
+
+    Args:
+        oauth_config: The agent's stored OAuth configuration dict.
+
+    Returns:
+        A dict shaped as A2A 1.0's ``SecurityScheme.oauth2SecurityScheme``.
+    """
+    safe = {key: oauth_config[key] for key in _SAFE_OAUTH_CONFIG_KEYS if oauth_config.get(key)}
+    scopes = {scope: scope for scope in str(safe.get("scope", "")).split()}
+
+    flow: Dict[str, Any] = {}
+    if safe.get("token_url"):
+        flow["tokenUrl"] = safe["token_url"]
+    if scopes:
+        flow["scopes"] = scopes
+
+    if safe.get("grant_type") == "client_credentials":
+        flows = {"clientCredentials": flow}
+    else:
+        if safe.get("authorization_url"):
+            flow["authorizationUrl"] = safe["authorization_url"]
+        flows = {"authorizationCode": flow}
+
+    return {"oauth2SecurityScheme": {"flows": flows}}
+
+
+def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """Derive ``securitySchemes``/``securityRequirements`` from an agent's auth config.
+
+    Only ever reads the auth *configuration* (type, header/query param names,
+    non-secret OAuth fields) — never ``auth_value`` or any decrypted credential,
+    matching the acceptance criterion that this must not disclose credential values.
+
+    Args:
+        agent: The agent to derive a security scheme for.
+
+    Returns:
+        A ``(securitySchemes, securityRequirements)`` pair, or ``(None, None)``
+        when the agent has no auth configured or its auth type is unrecognized.
+    """
+    auth_type = (agent.auth_type or "").lower()
+    if auth_type == "basic":
+        scheme: Dict[str, Any] = {"httpAuthSecurityScheme": {"scheme": "basic"}}
+    elif auth_type == "bearer":
+        scheme = {"httpAuthSecurityScheme": {"scheme": "bearer"}}
+    elif auth_type == "authheaders":
+        # The header name is stored inside the encrypted auth_value blob and
+        # cannot be surfaced without decryption. Emit the scheme shape without a name.
+        scheme = {"apiKeySecurityScheme": {"location": "header"}}
+    elif auth_type == "query_param":
+        # auth_query_params stores {"param_name": "<encrypted value>"}: the
+        # dict key is the plaintext param name, safe to surface on its own.
+        # A2A 1.0 models one security scheme per auth method, so only the
+        # first param name is surfaced when an agent configures more than one.
+        param_names = list((agent.auth_query_params or {}).keys())
+        scheme = {"apiKeySecurityScheme": {"location": "query", "name": param_names[0]}} if param_names else {"apiKeySecurityScheme": {"location": "query"}}
+    elif auth_type == "oauth":
+        scheme = _oauth2_security_scheme(agent.oauth_config or {})
+    else:
+        return None, None
+
+    scheme_name = f"{auth_type}Auth"
+    # An unscoped StringList serializes to {} (protobuf JSON omits the empty
+    # repeated "list" field), verified against the installed a2a SDK's own
+    # MessageToDict output — not {"list": []}.
+    return {scheme_name: scheme}, [{"schemes": {scheme_name: {}}}]
 
 
 class A2AAgentService(BaseService):
@@ -1367,16 +1444,48 @@ class A2AAgentService(BaseService):
         if not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
 
-        capabilities = agent.capabilities or {}
+        return self._build_agent_card(agent)
 
-        card: Dict[str, Any] = {
+    def _build_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+        """Dispatch card construction by the agent's declared protocol version.
+
+        v0.3 agents keep the historical card shape so existing v0.3 callers see
+        no behaviour change. v1.0+ agents get the corrected A2A 1.0 shape. Uses
+        the same :func:`is_v1_a2a_protocol` gate as message/task normalization
+        in ``a2a_protocol.py``, so the card and the wire format agree on which
+        agents are v1.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+
+        Returns:
+            AgentCard dict, shaped per the agent's declared protocol version.
+        """
+        if is_v1_a2a_protocol(agent.protocol_version):
+            return self._build_v1_agent_card(agent)
+        return self._build_legacy_agent_card(agent)
+
+    def _build_legacy_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+        """Build the pre-1.0 AgentCard shape for a v0.3 agent.
+
+        Preserved unchanged (aside from reading input/output modes from
+        stored data) so existing v0.3 callers see no behaviour change.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+
+        Returns:
+            AgentCard dict in the A2A v0.3 shape.
+        """
+        capabilities = agent.capabilities or {}
+        return {
             "name": agent.name,
             "description": agent.description or "",
             "url": agent.endpoint_url,
             "version": str(agent.version),
             "protocolVersion": agent.protocol_version,
-            "defaultInputModes": ["text"],
-            "defaultOutputModes": ["text"],
+            "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
+            "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
             "capabilities": {
                 "streaming": bool(capabilities.get("streaming", False)),
                 "pushNotifications": bool(capabilities.get("pushNotifications", False)),
@@ -1385,6 +1494,59 @@ class A2AAgentService(BaseService):
             "skills": capabilities.get("skills", []),
             "supportsAuthenticatedExtendedCard": True,
         }
+
+    def _build_v1_agent_card(self, agent: DbA2AAgent) -> Dict[str, Any]:
+        """Build the A2A 1.0 AgentCard shape for a v1+ agent.
+
+        Transport is reported through ``supportedInterfaces`` rather than a
+        bare ``url``, ``capabilities.extendedAgentCard`` replaces the legacy
+        ``supportsAuthenticatedExtendedCard``, and the non-1.0
+        ``stateTransitionHistory`` capability is dropped. Fields with no
+        stored source (``provider``, ``documentationUrl``, ``signatures``)
+        are omitted rather than filled with placeholders.
+
+        Args:
+            agent: The enabled, visibility-checked agent row.
+
+        Returns:
+            AgentCard dict in the A2A 1.0 shape.
+        """
+        capabilities = agent.capabilities or {}
+
+        interface: Dict[str, Any] = {
+            "url": agent.endpoint_url,
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": agent.protocol_version,
+        }
+        if agent.tenant:
+            interface["tenant"] = agent.tenant
+
+        card_capabilities: Dict[str, Any] = {
+            "streaming": bool(capabilities.get("streaming", False)),
+            "pushNotifications": bool(capabilities.get("pushNotifications", False)),
+            "extendedAgentCard": True,
+        }
+        extensions = capabilities.get("extensions")
+        if extensions:
+            card_capabilities["extensions"] = extensions
+
+        card: Dict[str, Any] = {
+            "name": agent.name,
+            "description": agent.description or "",
+            "version": str(agent.version),
+            "supportedInterfaces": [interface],
+            "capabilities": card_capabilities,
+            "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
+            "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
+            "skills": capabilities.get("skills", []),
+        }
+        if agent.icon_url:
+            card["iconUrl"] = agent.icon_url
+
+        security_schemes, security_requirements = _build_security_scheme(agent)
+        if security_schemes:
+            card["securitySchemes"] = security_schemes
+            card["securityRequirements"] = security_requirements
         return card
 
     async def update_agent(

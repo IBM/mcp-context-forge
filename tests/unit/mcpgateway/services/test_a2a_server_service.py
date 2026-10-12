@@ -33,12 +33,13 @@ def _make_server(name="test-server", sid=None, description="A test server", vers
     return server
 
 
-def _make_interface(binding="https://agent.example.com/a2a", version="1.0", protocol="a2a"):
+def _make_interface(binding="https://agent.example.com/a2a", version="1.0", protocol="a2a", tenant=None):
     """Return a lightweight mock that looks like a DbServerInterface row."""
     iface = MagicMock()
     iface.binding = binding
     iface.version = version
     iface.protocol = protocol
+    iface.tenant = tenant
     return iface
 
 
@@ -158,6 +159,121 @@ class TestA2AServerService:
         result = service.get_server_agent_card(mock_db, "private-server", user_email="user@example.com", token_teams=[])
 
         assert result is None
+
+    def test_get_server_agent_card_v1_reports_supported_interfaces(self, service, mock_db):
+        """A v1.0 interface's card reports transport via supportedInterfaces, not a bare url (#7027)."""
+        server = _make_server(name="my-server", version=2)
+        iface = _make_interface(binding="https://a2a.example.com/agent", version="1.0", protocol="a2a-jsonrpc", tenant="acme")
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, "my-server")
+
+        assert "url" not in card
+        assert "supportsAuthenticatedExtendedCard" not in card
+        assert "stateTransitionHistory" not in card["capabilities"]
+        assert card["capabilities"]["extendedAgentCard"] is True
+        assert card["supportedInterfaces"] == [{"url": "https://a2a.example.com/agent", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "acme"}]
+
+    def test_get_server_agent_card_legacy_shape_for_v03_interface(self, service, mock_db):
+        """A v0.3 interface keeps the pre-1.0 shape, so existing v0.3 callers see no change (#7027)."""
+        server = _make_server(name="my-server", version=2)
+        iface = _make_interface(binding="https://a2a.example.com/agent", version="0.3")
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, "my-server")
+
+        assert card["url"] == "https://a2a.example.com/agent"
+        assert card["supportsAuthenticatedExtendedCard"] is True
+        assert "supportedInterfaces" not in card
+
+    def test_get_server_agent_card_capabilities_reflect_associated_agents(self, service, mock_db):
+        """Streaming/pushNotifications are True when any enabled associated agent declares them (#7027)."""
+        streaming_agent = _make_agent(name="a1", capabilities={"streaming": True})
+        push_agent = _make_agent(name="a2", capabilities={"pushNotifications": True})
+        server = _make_server(a2a_agents=[streaming_agent, push_agent])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert card["capabilities"]["streaming"] is True
+        assert card["capabilities"]["pushNotifications"] is True
+
+    def test_get_server_agent_card_modes_reflect_associated_agents(self, service, mock_db):
+        """defaultInputModes/defaultOutputModes union across enabled agents, not hardcoded (#7027)."""
+        agent_a = _make_agent(name="a1", capabilities={"defaultInputModes": ["text"]})
+        agent_b = _make_agent(name="a2", capabilities={"defaultInputModes": ["text", "file"], "defaultOutputModes": ["image"]})
+        server = _make_server(a2a_agents=[agent_a, agent_b])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert card["defaultInputModes"] == ["text", "file"]
+        assert card["defaultOutputModes"] == ["image"]
+
+    def test_get_server_agent_card_modes_default_to_text_when_unset(self, service, mock_db):
+        """No associated agent declares modes → falls back to ["text"] (#7027)."""
+        server = _make_server(a2a_agents=[_make_agent(capabilities={})])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        assert card["defaultInputModes"] == ["text"]
+        assert card["defaultOutputModes"] == ["text"]
+
+    def test_get_server_agent_card_dedupes_skill_ids_across_agents(self, service, mock_db):
+        """Identical skill ids from different agents don't collide silently (#7027)."""
+        agent_a = _make_agent(name="a1", capabilities={"skills": [{"id": "shared", "name": "From A"}]})
+        agent_b = _make_agent(name="a2", capabilities={"skills": [{"id": "shared", "name": "From B"}, {"id": "unique", "name": "Unique"}]})
+        server = _make_server(a2a_agents=[agent_a, agent_b])
+        iface = _make_interface()
+
+        mock_db.execute.side_effect = [
+            MagicMock(**{"scalar_one_or_none.return_value": server}),
+            MagicMock(**{"scalar_one_or_none.return_value": iface}),
+        ]
+
+        card = service.get_server_agent_card(mock_db, server.name)
+
+        skill_ids = [s["id"] for s in card["skills"]]
+        assert skill_ids == ["shared", "unique"]
+        assert card["skills"][0]["name"] == "From A"
+
+    @pytest.mark.parametrize(
+        "protocol,expected_binding",
+        [
+            ("a2a-jsonrpc", "JSONRPC"),
+            ("a2a-grpc", "GRPC"),
+            ("a2a", "JSONRPC"),
+            ("a2a/v1", "JSONRPC"),
+        ],
+    )
+    def test_derive_protocol_binding(self, protocol, expected_binding):
+        from mcpgateway.services.a2a_server_service import _derive_protocol_binding
+
+        assert _derive_protocol_binding(protocol) == expected_binding
 
     # ------------------------------------------------------------------
     # resolve_server_agent
