@@ -7,20 +7,22 @@ OpenAPI Service for ContextForge AI Gateway.
 This module provides services for fetching and extracting schemas from OpenAPI specifications.
 """
 
+# Standard
 import asyncio
-import copy
 import collections
+import copy
+from itertools import chain
 import logging
-import time
 from sys import getsizeof
-from typing import Any, NamedTuple, Optional, Tuple
+import time
+from typing import Any, Iterator, NamedTuple, Optional, Tuple
 import urllib.parse
 
 # Third-Party
 import orjson
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator, pin_url_to_resolved_ip
+from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
@@ -64,7 +66,8 @@ _SPEC_CACHE_TTL = 60.0
 # A failed fetch is cached too, for a much shorter window. Without a negative entry every
 # queued single-flight waiter re-runs the failing fetch in turn, so N waiters pay N × timeout.
 _SPEC_ERROR_TTL = 5.0
-_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0))
+# Include the expiry object and OrderedDict node storage alongside the entry tuple.
+_SPEC_CACHE_ENTRY_OVERHEAD_BYTES = getsizeof((0.0, None, 0)) + getsizeof(0.0) + 48
 
 
 class _CachedFailure(NamedTuple):
@@ -72,6 +75,13 @@ class _CachedFailure(NamedTuple):
 
     exception_type: type[Exception]
     message: str
+
+
+class _SpecLock(NamedTuple):
+    """Per-URL single-flight lock and the number of callers using it."""
+
+    lock: asyncio.Lock
+    users: int
 
 
 def _cacheable_failure(exc: Exception) -> Optional[_CachedFailure]:
@@ -90,11 +100,11 @@ def _cacheable_failure(exc: Exception) -> Optional[_CachedFailure]:
 
 _spec_cache: collections.OrderedDict[str, tuple[float, dict[str, Any] | _CachedFailure, int]] = collections.OrderedDict()
 _spec_cache_bytes = 0
-_spec_locks: dict[str, asyncio.Lock] = {}
+_spec_locks: dict[str, _SpecLock] = {}
 _spec_locks_guard = asyncio.Lock()
 
 
-async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
+async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict[str, Any]:
     """Fetch an OpenAPI specification from a URL with SSRF protection.
 
     Results are cached in-process for ``_SPEC_CACHE_TTL`` seconds. Rebuildable
@@ -130,7 +140,6 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
     expired_keys = [k for k, (expires_at, _, _) in _spec_cache.items() if expires_at <= now]
     for k in expired_keys:
         _spec_cache_bytes -= _spec_cache.pop(k)[2]
-        _spec_locks.pop(k, None)
 
     fresh = _fresh_cached_copy(spec_url)
     if fresh is not None:
@@ -139,46 +148,68 @@ async def fetch_openapi_spec(spec_url: str, timeout: float = 10.0) -> dict:
 
     # --- single-flight: one fetch per URL, concurrent callers wait ---
     async with _spec_locks_guard:
-        if spec_url not in _spec_locks:
-            _spec_locks[spec_url] = asyncio.Lock()
-        lock = _spec_locks[spec_url]
+        shared_lock = _spec_locks.get(spec_url)
+        if shared_lock is None:
+            shared_lock = _SpecLock(asyncio.Lock(), 0)
+        lock = shared_lock.lock
+        _spec_locks[spec_url] = _SpecLock(lock, shared_lock.users + 1)
 
-    async with lock:
-        # Re-check after acquiring — another waiter may have populated the cache.
-        fresh = _fresh_cached_copy(spec_url)
-        if fresh is not None:
-            logger.debug("OpenAPI spec single-flight coalesced for %s", spec_url)
-            return fresh
+    try:
+        async with lock:
+            # Re-check after acquiring — another waiter may have populated the cache.
+            fresh = _fresh_cached_copy(spec_url)
+            if fresh is not None:
+                logger.debug("OpenAPI spec single-flight coalesced for %s", spec_url)
+                return fresh
 
-        logger.debug("OpenAPI spec cache miss, fetching %s", spec_url)
-        try:
-            result = await _do_fetch(spec_url, timeout)
-        except Exception as exc:
-            failure = _cacheable_failure(exc)
-            if failure is not None:
-                _store(spec_url, failure, _SPEC_ERROR_TTL)
-            raise
+            logger.debug("OpenAPI spec cache miss, fetching %s", spec_url)
+            try:
+                result = await _do_fetch(spec_url, timeout)
+            except Exception as exc:
+                failure = _cacheable_failure(exc)
+                if failure is not None:
+                    _store(spec_url, failure, _SPEC_ERROR_TTL)
+                raise
 
-        _store(spec_url, result, _SPEC_CACHE_TTL)
-        return copy.deepcopy(result)
+            _store(spec_url, result, _SPEC_CACHE_TTL)
+            return copy.deepcopy(result)
+    finally:
+        await _release_spec_lock(spec_url, lock)
+
+
+async def _release_spec_lock(spec_url: str, lock: asyncio.Lock) -> None:
+    """Remove an idle single-flight lock after its final caller leaves."""
+    async with _spec_locks_guard:
+        shared_lock = _spec_locks.get(spec_url)
+        if shared_lock is None or shared_lock.lock is not lock:
+            return
+        if shared_lock.users == 1:
+            _spec_locks.pop(spec_url, None)
+        else:
+            _spec_locks[spec_url] = _SpecLock(lock, shared_lock.users - 1)
 
 
 def _estimate_spec_cache_size(spec_url: str, value: dict[str, Any] | _CachedFailure, max_bytes: int) -> int:
-    """Estimate retained bytes and stop once the cache budget is exceeded."""
+    """Estimate retained bytes without building a second copy of a large graph."""
     total = getsizeof(spec_url) + _SPEC_CACHE_ENTRY_OVERHEAD_BYTES
     seen: set[int] = set()
-    pending: list[object] = [value]
+    pending: list[Iterator[object]] = [iter((value,))]
     while pending and total <= max_bytes:
-        item = pending.pop()
+        try:
+            item = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
         if id(item) in seen:
             continue
         seen.add(id(item))
         total += getsizeof(item)
+        if total > max_bytes:
+            break
         if isinstance(item, dict):
-            pending.extend(item.keys())
-            pending.extend(item.values())
+            pending.append(chain(item.keys(), item.values()))
         elif isinstance(item, (list, tuple, set, frozenset)):
-            pending.extend(item)
+            pending.append(iter(item))
     return total
 
 
@@ -197,19 +228,17 @@ def _store(spec_url: str, value: dict[str, Any] | _CachedFailure, ttl: float) ->
     if previous is not None:
         _spec_cache_bytes -= previous[2]
     if entry_size > _SPEC_CACHE_MAX_BYTES:
-        _spec_locks.pop(spec_url, None)
         return
 
     _spec_cache[spec_url] = (time.monotonic() + ttl, value, entry_size)
     _spec_cache_bytes += entry_size
     _spec_cache.move_to_end(spec_url)
     while len(_spec_cache) > _SPEC_CACHE_MAX or _spec_cache_bytes > _SPEC_CACHE_MAX_BYTES:
-        evicted_key, (_, _, evicted_size) = _spec_cache.popitem(last=False)
+        _, (_, _, evicted_size) = _spec_cache.popitem(last=False)
         _spec_cache_bytes -= evicted_size
-        _spec_locks.pop(evicted_key, None)
 
 
-def _fresh_cached_copy(spec_url: str) -> Optional[dict]:
+def _fresh_cached_copy(spec_url: str) -> Optional[dict[str, Any]]:
     """Return an independent copy of the cached spec while the entry is live.
 
     Args:
@@ -231,7 +260,7 @@ def _fresh_cached_copy(spec_url: str) -> Optional[dict]:
     return copy.deepcopy(cached[1])
 
 
-async def _do_fetch(spec_url: str, timeout: float) -> dict:
+async def _do_fetch(spec_url: str, timeout: float) -> dict[str, Any]:
     """Validate, pin, and fetch a single OpenAPI spec URL.
 
     Uses an isolated ephemeral HTTP client (no shared cookies, single
@@ -245,6 +274,7 @@ async def _do_fetch(spec_url: str, timeout: float) -> dict:
     Returns:
         Parsed JSON specification dict.
     """
+    # Third-Party
     import httpx  # pylint: disable=import-outside-toplevel
 
     # --- SSRF: validate + DNS-pin (closes the rebinding window) ---
