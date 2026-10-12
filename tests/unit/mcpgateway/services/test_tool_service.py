@@ -9421,7 +9421,7 @@ class TestToolServiceBulkImport:
     def test_process_tool_chunk_public_adds_and_audits(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_chunk")
-        db_tool = SimpleNamespace(id="tool-1")
+        db_tool = SimpleNamespace(id="tool-1", team_id=None)
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9459,11 +9459,13 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_create_tools"
         assert audit_kwargs["details"]["count"] == 1  # 1 added, 1 skipped — only adds counted
+        assert audit_kwargs["team_id"] is None
+        assert "db" not in audit_kwargs
 
     def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
         service = ToolService()
         tool = _make_bulk_tool_create(name="bulk_tool_update_only")
-        db_tool = SimpleNamespace(id="tool-2")
+        db_tool = SimpleNamespace(id="tool-2", team_id="team-1")
 
         db = MagicMock()
         mock_scalars = Mock()
@@ -9495,6 +9497,47 @@ class TestToolServiceBulkImport:
         audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
         assert audit_kwargs["action"] == "bulk_update_tools"
         assert audit_kwargs["details"]["count"] == 1
+        assert audit_kwargs["team_id"] == "team-1"
+        assert "db" not in audit_kwargs
+
+    def test_process_tool_chunk_audits_persisted_teams_with_group_counts(self, mock_logging_services):
+        """Mixed chunks audit successful resources by team with group-local counts and a shared batch ID."""
+        service = ToolService()
+        results = [
+            {"status": operation, "tool": SimpleNamespace(id=f"tool-{index}", team_id=team_id)}
+            for index, (operation, team_id) in enumerate([("add", "team-a"), ("add", "team-a"), ("update", "team-a"), ("update", "team-b"), ("update", "team-b"), ("add", None)])
+        ]
+        results.extend([{"status": "skip"}, {"status": "fail", "error": "invalid tool"}])
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        with patch.object(service, "_process_single_tool_for_bulk", side_effect=results):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[_make_bulk_tool_create(name=f"chunk-tool-{index}") for index in range(len(results))],
+                conflict_strategy="update",
+                visibility="public",
+                team_id="request-team",
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id="batch-team-groups",
+                federation_source=None,
+            )
+
+        assert (stats["created"], stats["updated"], stats["skipped"], stats["failed"]) == (3, 3, 1, 1)
+        db.commit.assert_called_once()
+        audit_calls = mock_logging_services["audit_trail"].log_action.call_args_list
+        assert len(audit_calls) == 3
+        assert {audit_call.kwargs["team_id"]: (audit_call.kwargs["action"], audit_call.kwargs["details"]["count"]) for audit_call in audit_calls} == {
+            "team-a": ("bulk_create_tools", 3),
+            "team-b": ("bulk_update_tools", 2),
+            None: ("bulk_create_tools", 1),
+        }
+        for audit_call in audit_calls:
+            assert audit_call.kwargs["details"]["import_batch_id"] == "batch-team-groups"
+            assert "db" not in audit_call.kwargs
 
     def test_process_tool_chunk_private_exception_rolls_back(self):
         service = ToolService()

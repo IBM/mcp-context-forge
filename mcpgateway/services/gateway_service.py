@@ -6246,6 +6246,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_id=actor_email,
             resource_type="gateway",
             resource_id=gateway_id,
+            team_id=gateway.team_id,
             details={
                 "previous_owner": previous_owner,
                 "new_owner": target_owner_email,
