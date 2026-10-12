@@ -18,7 +18,18 @@ import uuid
 
 import anyio
 
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonValue, ResponseMessage, encode_server_message, request
+from mcpgateway.services.reverse_proxy_protocol import (
+    DownstreamAuth,
+    JsonRpcId,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonValue,
+    ProtocolEra,
+    ResponseMessage,
+    encode_server_message,
+    request,
+    with_modern_protocol_meta,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +144,8 @@ class ReverseProxySession:
     message_count: int = 0
     bytes_transferred: int = 0
     server_info: Mapping[str, JsonValue] = field(default_factory=dict)
+    protocol_era: ProtocolEra = ProtocolEra.HANDSHAKE
+    protocol_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +328,19 @@ class ReverseProxySessionManager:
                 raise ConnectionNotFoundError(connection_id=connection_id)
             self._sessions[connection_id] = replace(session, server_info=dict(server_info))
 
+    async def record_protocol_era(self, connection_id: ConnectionId, era: ProtocolEra, version: str | None) -> None:
+        """Store the negotiated MCP protocol era on an active typed session.
+
+        Written once per registration by discovery after the era probe settles;
+        outbound requests on a ``ProtocolEra.MODERN`` session carry the version
+        in ``params._meta`` (see :func:`with_modern_protocol_meta`).
+        """
+        async with self._lock:
+            session = self._sessions.get(connection_id)
+            if session is None:
+                raise ConnectionNotFoundError(connection_id=connection_id)
+            self._sessions[connection_id] = replace(session, protocol_era=era, protocol_version=version)
+
     def record_received(self, connection_id: ConnectionId, character_count: int, *, now: datetime | None = None) -> None:
         """Account for one complete inbound WebSocket text frame."""
         self._record_activity(connection_id, character_count=character_count, increment_message_count=True, now=now)
@@ -390,6 +416,8 @@ class ReverseProxySessionManager:
         session = self._sessions.get(connection_id)
         if session is None:
             raise ConnectionNotFoundError(connection_id=connection_id)
+        if session.protocol_era is ProtocolEra.MODERN:
+            payload = with_modern_protocol_meta(payload, session.protocol_version)
         request_id = payload.id
         if request_id is None:
             raise MissingRequestIdError(connection_id=connection_id)
@@ -419,6 +447,8 @@ class ReverseProxySessionManager:
         session = self._sessions.get(connection_id)
         if session is None:
             raise ConnectionNotFoundError(connection_id=connection_id)
+        if session.protocol_era is ProtocolEra.MODERN:
+            payload = with_modern_protocol_meta(payload, session.protocol_version)
         with anyio.fail_after(timeout_seconds):
             frame = encode_server_message(request(str(connection_id), payload))
             await session.websocket.send_text(frame)
