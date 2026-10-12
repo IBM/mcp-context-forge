@@ -856,9 +856,9 @@ clean:
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
 # help: test-e2e             - Consolidated MCP protocol and RBAC E2E suite against live gateway (K=<filter>; MCP_E2E_CLIENT_TIMEOUT extends 5s client timeout)
 # help: test-mcp-protocol-e2e - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
-# help: test-mcp-cli         - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
+# help: test-mcp-cli         - Alias for test-e2e (accepts same K=<filter>)
 # help: test-bats            - Run all bats shell tests — alias for bats (tests/**/*.bats; requires bats-core)
-# help: test-mcp-rbac        - [DEPRECATED] Alias for test-e2e (accepts same K=<filter>)
+# help: test-mcp-rbac        - Alias for test-e2e (accepts same K=<filter>)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
