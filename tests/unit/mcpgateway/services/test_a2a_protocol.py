@@ -29,6 +29,7 @@ from mcpgateway.services.a2a_protocol import (
     normalize_a2a_version_header,
     prepare_a2a_invocation,
     prepare_pinned_a2a_invocation,
+    resolve_a2a_headers,
 )
 
 # ── is_v1_a2a_protocol ──────────────────────────────────────────────────────
@@ -476,6 +477,26 @@ class TestBuildA2AJsonrpcRequest:
 
 
 # ── prepare_a2a_invocation ───────────────────────────────────────────────────
+
+
+def test_resolve_a2a_headers_no_plugin_returns_caller_and_configured():
+    """Keep caller and configured headers without plugin output and strip Vault tokens."""
+    headers = resolve_a2a_headers(
+        caller_headers={"Authorization": "Bearer caller", "X-Request-ID": "caller", "x-vault-tokens": "caller"},
+        configured_headers={"authorization": "Bearer configured", "X-Agent-Key": "configured", "X-VAULT-TOKENS": "configured"},
+        plugin_input_headers={"X-Request-ID": "caller"},
+        plugin_output_headers=None,
+        uses_jsonrpc=False,
+        protocol_version_header="1.0",
+        correlation_id=None,
+    )
+
+    assert headers == {
+        "authorization": "Bearer configured",
+        "X-Request-ID": "caller",
+        "X-Agent-Key": "configured",
+        "Content-Type": "application/json",
+    }
 
 
 def test_prepare_a2a_invocation_trusts_plugin_headers_and_normalizes_casing():
