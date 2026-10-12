@@ -245,7 +245,7 @@ async def _read_reverse_proxied_resource(
 
     first_content = validated_result.contents[0]
     content_uri = str(first_content.uri)
-    content_mime_type = first_content.mimeType
+    content_mime_type = first_content.mime_type
     content_meta = first_content.meta
     if isinstance(first_content, types.TextResourceContents):
         content = TextResourceContents(uri=content_uri, mimeType=content_mime_type, text=first_content.text, _meta=content_meta)

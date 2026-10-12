@@ -409,12 +409,8 @@ class TestReadResourceReverseProxied:
         assert "mcp_call_failed" in events
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "transport, client_patch, stream_size",
-        [("sse", "sse_client", 2), ("streamablehttp", "streamablehttp_client", 3)],
-        ids=["sse_gateway", "streamablehttp_gateway"],
-    )
-    async def test_non_proxied_gateways_never_touch_session_manager(self, resource_service, proxied_resource, monkeypatch, transport, client_patch, stream_size):
+    @pytest.mark.parametrize("transport", ["sse", "streamablehttp"], ids=["sse_gateway", "streamablehttp_gateway"])
+    async def test_non_proxied_gateways_never_touch_session_manager(self, resource_service, proxied_resource, monkeypatch, transport):
         """Regression: SSE/streamablehttp gateways keep their existing dispatch, no proxy lookup."""
         gateway = proxied_resource.gateway
         gateway.transport = transport
@@ -435,23 +431,22 @@ class TestReadResourceReverseProxied:
             "mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
         )
 
-        mock_cs_instance = AsyncMock()
-        mock_cs_instance.initialize = AsyncMock()
-        mock_cs_instance.read_resource.return_value = MagicMock(contents=[MagicMock(text=f"{transport} ok", blob=None)])
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.read_resource.return_value = MagicMock(contents=[MagicMock(text=f"{transport} ok", blob=None)])
+        mock_client = MagicMock()
+        mock_client.session = mock_session
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_proxy_cm.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"mcpgateway.services.resource_service.{client_patch}") as mock_client,
-            patch("mcpgateway.services.resource_service.ClientSession") as mock_client_session,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=mock_proxy_cm),
             patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
         ):
-            mock_client_session.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
-            mock_client_session.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.return_value.__aenter__ = AsyncMock(return_value=tuple([AsyncMock(), AsyncMock(), None][:stream_size]))
-            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
-
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=gateway)
 
-        mock_cs_instance.read_resource.assert_awaited_once()
+        mock_session.read_resource.assert_awaited_once()
         manager_factory.assert_not_called()
         assert result == f"{transport} ok"
 
