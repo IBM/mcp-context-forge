@@ -2887,6 +2887,45 @@ async def test_process_tools_bulk_restores_original_description(import_service, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("personal_team_id", [None, "trusted-personal-team"])
+async def test_bulk_tools_use_importer_team_and_ignore_payload_scope(import_service, mock_db, personal_team_id):
+    """Bulk imports use the authenticated importer's personal team and preserve NULL when no team exists."""
+    actor = "importer@example.com"
+    user = MagicMock()
+    user.email = actor
+    user.get_personal_team.return_value = SimpleNamespace(id=personal_team_id, name="Personal Team") if personal_team_id else None
+    mock_db.query.return_value.filter.return_value.first.return_value = user
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+    payload = {"name": "importtool", "url": "https://api.example.com/tool", "integration_type": "REST", "team_id": "untrusted-team", "owner_email": "other@example.com", "visibility": "public"}
+    status = ImportStatus("import-team-audit")
+
+    await import_service._process_entities(
+        db=mock_db,
+        entity_type="tools",
+        entity_list=[payload],
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        rekey_secret=None,
+        status=status,
+        selected_entities=None,
+        imported_by=actor,
+    )
+
+    call = import_service.tool_service.register_tools_bulk.await_args.kwargs
+    assert call["team_id"] == personal_team_id
+    assert call["created_by"] == actor
+    assert call["created_via"] == "import"
+    assert call["tools"][0].team_id is None
+    assert call["tools"][0].owner_email is None
+    assert "owner_email" not in call
+    assert "visibility" not in call
+    assert payload["team_id"] == "untrusted-team"
+    assert status.created_entities == 1
+    assert status.errors == []
+    user.get_personal_team.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_process_tools_bulk_skips_restore_when_no_creates(import_service, mock_db):
     """Test that import does NOT restore original_description when all tools were skipped."""
     status = ImportStatus("skip-restore-1")

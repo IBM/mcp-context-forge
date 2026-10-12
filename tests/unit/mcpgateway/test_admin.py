@@ -16717,6 +16717,10 @@ async def test_get_plugin_details_success_and_not_found(monkeypatch, mock_reques
 
     detail = await get_plugin_details("alpha", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert detail.name == "alpha"
+    audit_service.log_audit.assert_called_once()
+    audit_kwargs = audit_service.log_audit.call_args.kwargs
+    assert audit_kwargs.get("team_id") is None
+    assert "db" not in audit_kwargs
 
     with pytest.raises(HTTPException) as excinfo:
         await get_plugin_details("missing", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})

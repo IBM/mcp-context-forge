@@ -625,6 +625,7 @@ async def refresh_session(request: Request, current_user: EmailUser = Depends(ge
         set_auth_cookie(response, access_token)
 
     audit_trail = get_audit_trail_service()
+    # Session refresh concerns platform identity; NULL team_id preserves its platform audit scope.
     audit_trail.log_action(
         user_id=current_user.email,
         action="session_refresh",

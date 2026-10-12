@@ -17999,7 +17999,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
             },
         )
 
-        # Create audit trail for plugin access
+        # Plugins belong to the platform; NULL team_id preserves their platform audit scope.
         audit_service.log_audit(
             user_id=get_user_id(user), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace"
         )
