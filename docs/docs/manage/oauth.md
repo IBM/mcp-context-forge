@@ -153,6 +153,14 @@ The gateway signs a client assertion JWT (`iss`, `sub`, `aud`, `iat`/`exp`, `jti
 !!! important
     The private key must match the public key uploaded to the Authorization Server. A missing key or an unsupported algorithm is rejected with a 422 at validation time and with an `OAuthError` at runtime. `private_key_jwt` never falls back to another auth method; `client_secret_basic` falls back to POST-body mode only when the secret is missing on a public PKCE client.
 
+!!! note "These values are case-sensitive"
+    `token_endpoint_auth_method` and `token_endpoint_auth_signing_alg` are matched exactly, so `rs256` is rejected while `RS256` is accepted. Use the spellings listed above.
+
+    An absent, null, empty, or whitespace-only `token_endpoint_auth_method` falls back to `client_secret_post`, preserving the default for configurations written before the field existed. Every layer reads the field through one shared policy — the request schema, the runtime dispatch, and the retry-time assertion refresh — so a value accepted at configuration time behaves identically at the token endpoint.
+
+!!! important "RSA keys must be at least 2048 bits"
+    `RS256`, `RS384`, `RS512`, and `PS256` require an RSA key of at least 2048 bits (RFC 7518 Sections 3.3 and 3.5). A smaller key is rejected at configuration time and again before signing. EC keys are pinned to exactly one curve per algorithm: `ES256` to P-256, `ES384` to P-384, and `ES512` to P-521.
+
 ### Resource Parameter and `omit_resource`
 
 By default ContextForge derives an RFC 8707 `resource` parameter from the gateway URL and includes it in token requests and refresh calls. Some IdPs (e.g. certain Atlassian configurations) reject requests that include the `resource` parameter. Set `omit_resource: true` to suppress it:

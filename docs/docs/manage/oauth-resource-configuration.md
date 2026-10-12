@@ -4,7 +4,7 @@ This guide explains how to configure the OAuth `resource` parameter (also known 
 
 ## Overview
 
-When ContextForge performs an OAuth 2.0 Authorization Code flow, it needs to tell the Identity Provider (IdP) which resource it is requesting access to. This is done using the `resource` parameter as defined in [RFC 8707](https://datatools.ietf.org/doc/html/rfc8707).
+When ContextForge performs an OAuth 2.0 Authorization Code flow, it needs to tell the Identity Provider (IdP) which resource it is requesting access to. This is done using the `resource` parameter as defined in [RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707).
 
 The IdP uses this parameter to mint an access token with a matching `aud` (audience) claim. If the audience in the token doesn't match what the upstream MCP server expects, the server will reject the token with a 401 Unauthorized error.
 
