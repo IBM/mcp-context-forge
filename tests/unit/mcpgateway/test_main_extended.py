@@ -6248,13 +6248,13 @@ class TestRpcHandling:
         tool.model_dump.return_value = {"id": "tool-body"}
 
         with (
-            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
+            patch("mcpgateway.main.list_catalog_page", new=AsyncMock(return_value=self._catalog_result("tools", [tool]))) as mock_list_server_tools,
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
 
         assert len(result["result"]["tools"]) == 1
-        assert mock_list_server_tools.await_args.args[1] == "body-srv"
+        assert mock_list_server_tools.await_args.kwargs["server_id"] == "body-srv"
 
     async def test_handle_rpc_ignores_internal_server_header_without_rust_runtime_marker(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
