@@ -326,6 +326,8 @@ async def get_redis_client() -> Optional[Any]:
         except asyncio.TimeoutError:
             logger.warning("Redis ping timed out after 10s — degrading to no-Redis operation")
             await _client.aclose()
+            _client = None
+            _initialized = True
             return None
         logger.info(
             f"Redis client initialized: parser={_parser_info}, "

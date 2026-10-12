@@ -221,14 +221,21 @@ async def test_get_redis_client_returns_none_on_ping_timeout(monkeypatch):
 
         monkeypatch.setattr(asyncio, "wait_for", short_wait_for)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
             start = time.monotonic()
             client = await get_redis_client()
             elapsed = time.monotonic() - start
 
+            # Timeout degrades to cached no-Redis state: no retry on re-entry.
+            client_after = await get_redis_client()
+
     assert client is None
+    assert client_after is None
+    assert mock_from_url.call_count == 1
     assert elapsed < 10.0
     mock_redis.aclose.assert_awaited_once()
+    # Sync accessor must not hand back the closed client.
+    assert get_redis_client_sync() is None
 
 
 
