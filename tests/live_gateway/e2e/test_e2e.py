@@ -356,6 +356,46 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
                 await http.delete(f"/gateways/{gateway_id}")
 
 
+@pytest.fixture
+def tool_error_upstream() -> Generator[str, None, None]:
+    """Start an in-process upstream whose tools fail the two ways a gateway must relay (issue #6576).
+
+    ``strict`` answers a formal JSON-RPC error, as a spec-strict server does for bad input;
+    ``boom`` fails during execution. The gateway must reach this process: set
+    MCP_TOOL_ERROR_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_TOOL_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    app = MCPServer("tool-error")
+
+    @app.tool()
+    def strict() -> str:
+        """Answer a JSON-RPC -32602 error."""
+        raise McpError(code=-32602, message="Invalid params from the strict upstream")
+
+    @app.tool()
+    def boom() -> str:
+        """Fail while running."""
+        raise RuntimeError("upstream exploded")
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Tool error upstream failed to start"
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+
 class TestConnectivity:
 
     async def test_ping(self, client: ClientSession) -> None:
@@ -687,6 +727,74 @@ class TestToolCalls:
             return
         assert result.is_error is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
+
+
+class TestToolErrorTranslation:
+    """Every tool failure through the gateway is an isError result; an upstream JSON-RPC code rides in _meta (issue #6576)."""
+
+    @staticmethod
+    async def _assert_tool_errors(call: Callable[[str], Any], tools: dict[str, str]) -> None:
+        """Check the three failure shapes through ``call(tool_name)``."""
+        strict = await call(tools["strict"])
+        assert strict.is_error is True, f"strict upstream error was not an isError result: {strict}"
+        assert "Invalid params from the strict upstream" in strict.content[0].text, strict.content
+        assert (strict.meta or {}).get("io.contextforge/upstreamError") == {"code": -32602}, f"upstream code not preserved: {strict.meta}"
+
+        boom = await call(tools["boom"])
+        assert boom.is_error is True, f"execution failure was not an isError result: {boom}"
+        # The SDK upstream hides the exception text; its own message passes through the gateway unchanged.
+        assert boom.content[0].text == "Error executing tool boom", boom.content
+        assert not (boom.meta or {}).get("io.contextforge/upstreamError"), f"execution failure must carry no upstream code: {boom.meta}"
+
+        unknown = await call(f"{tools['strict']}-missing")
+        assert unknown.is_error is True, f"unknown tool was not an isError result: {unknown}"
+        assert unknown.content[0].text.startswith("Unknown tool:"), unknown.content
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_tool_failures_answer_is_error_with_the_upstream_code(self, jwt_token: str, tool_error_upstream: str, era: str) -> None:
+        """Legacy and modern callers see the same isError shape for an upstream JSON-RPC error, an execution failure and an unknown tool."""
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        name = f"toolerror{uuid.uuid4().hex[:8]}"
+        gateway_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": name, "url": tool_error_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                deadline = time.monotonic() + 60
+                rows: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream tools: {rows}; check MCP_TOOL_ERROR_UPSTREAM_HOST"
+                tools = {row["name"].rsplit(name, 1)[-1].lstrip("-_."): row["name"] for row in rows}
+                assert set(tools) == {"strict", "boom"}, tools
+                response = await http.post("/servers", json={"server": {"name": name, "associated_tools": [row["id"] for row in rows]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                if era == "legacy":
+                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            await self._assert_tool_errors(lambda tool: session.call_tool(tool, {}), tools)
+                else:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                        await self._assert_tool_errors(lambda tool: modern_client.call_tool(tool, {}), tools)
+                print(f"    -> {era}: strict/boom/unknown all isError; upstream code preserved")
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
 
 
 # ---------------------------------------------------------------------------

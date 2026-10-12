@@ -29,32 +29,35 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
-import json
 from typing import Any, AsyncIterator, Callable, Optional
 
 # Third-Party
 import httpx2
 from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http_client
 from mcp.shared.exceptions import MCPError
+from mcp_types import JSONRPCError, jsonrpc_message_adapter
+from pydantic import ValidationError
 
 
-def _is_jsonrpc_error_body(body: bytes) -> bool:
-    """Return True if ``body`` is a JSON-RPC 2.0 error object (``{"jsonrpc": "2.0", "error": {"code": int, ...}}``).
+async def _carries_jsonrpc_error(response: httpx2.Response) -> bool:
+    """Return True if the SDK will read ``response`` as a JSON-RPC error.
+
+    Mirrors the SDK's own rule for a non-2xx response: the content type must be
+    ``application/json`` and the body must be a valid JSON-RPC error envelope.
+    Anything else makes the SDK raise its generic stand-in instead.
 
     Args:
-        body: Raw HTTP response body.
+        response: The POST response as the httpx2 event hook sees it.
 
     Returns:
-        bool: Whether the body is a JSON-RPC error the SDK will surface itself.
+        bool: Whether the SDK surfaces the body's error as it is.
     """
+    if not response.headers.get("content-type", "").lower().startswith("application/json"):
+        return False
     try:
-        payload = json.loads(body)
-    except (ValueError, UnicodeDecodeError):
+        return isinstance(jsonrpc_message_adapter.validate_json(await response.aread(), by_name=False), JSONRPCError)
+    except (httpx2.StreamError, ValidationError):
         return False
-    if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
-        return False
-    error = payload.get("error")
-    return isinstance(error, dict) and isinstance(error.get("code"), int)
 
 
 class ErrorResponseHook:
@@ -88,7 +91,7 @@ class ErrorResponseHook:
         if response.request.method != "POST":
             return
         self.response = response
-        self.response_carried_jsonrpc_error = response.status_code >= 400 and _is_jsonrpc_error_body(await response.aread())
+        self.response_carried_jsonrpc_error = response.status_code >= 400 and await _carries_jsonrpc_error(response)
 
     def to_http_status_error(self, exc: BaseException) -> Optional[httpx2.HTTPStatusError]:
         """Translate a failed handshake into an ``httpx2.HTTPStatusError``.

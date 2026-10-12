@@ -4254,10 +4254,16 @@ class ToolService(BaseService):
                     return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
+            # The SDK's task group wraps the failure; report the root cause, as the catalog path does.
+            root_cause: BaseException = e
+            if isinstance(e, BaseExceptionGroup):
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                    root_cause = root_cause.exceptions[0]
             # Sanitize before returning — exception text may contain auth tokens embedded in
             # gateway URLs (CWE-209).  Matches the SSE/StreamableHTTP error paths.
-            sanitized = sanitize_exception_message(str(e), _gw_auth_query_params)
-            return self._make_mcp_tool_error(sanitized)
+            sanitized = sanitize_exception_message(str(root_cause), _gw_auth_query_params)
+            upstream_code = root_cause.code if isinstance(root_cause, MCPError) else None
+            return self._make_mcp_tool_error(sanitized, upstream_error_code=upstream_code)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code

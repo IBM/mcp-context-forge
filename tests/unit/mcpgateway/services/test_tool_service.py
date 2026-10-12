@@ -23,6 +23,7 @@ from cpex.framework import PluginManager
 from cpex.framework.hooks.tools import ToolHookType
 from cpex.framework.models import PluginResult
 import jsonschema
+from mcp.shared.exceptions import MCPError
 import orjson
 import pytest
 from sqlalchemy import create_engine
@@ -60,6 +61,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
     ToolTimeoutError,
     ToolValidationError,
+    UPSTREAM_ERROR_CODE,
 )
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
@@ -9814,6 +9816,45 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure, expected_text, expected_meta",
+        [
+            pytest.param(
+                ExceptionGroup("task group", [MCPError(code=-32602, message="Invalid params from the strict upstream")]),
+                "MCP server error: Invalid params from the strict upstream",
+                {UPSTREAM_ERROR_CODE: {"code": -32602}},
+                id="upstream_json_rpc_error",
+            ),
+            pytest.param(RuntimeError("upstream exploded"), "MCP server error: upstream exploded", None, id="plain_failure"),
+        ],
+    )
+    async def test_invoke_tool_direct_failure_keeps_the_is_error_shape_and_upstream_code(self, tool_service, mock_direct_gateway, failure, expected_text, expected_meta):
+        """A failed direct-proxy call answers isError like the catalog path, with the upstream's JSON-RPC code preserved in _meta."""
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(side_effect=failure)
+        session_mock.session.call_tool = session_mock.call_tool
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={}, user_email="user@example.com", token_teams=["team-1"])
+
+        assert result.is_error is True
+        assert result.content[0].text == expected_text
+        assert result.meta == expected_meta
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):

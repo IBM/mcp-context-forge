@@ -157,9 +157,9 @@ async def test_factory_failure_raises_runtime_error() -> None:
             pass
 
 
-def _response(method: str, status: int, body: bytes = b"") -> httpx2.Response:
+def _response(method: str, status: int, body: bytes = b"", content_type: str = "application/json") -> httpx2.Response:
     """Build a response as the httpx2 event hook would see it."""
-    return httpx2.Response(status, request=httpx2.Request(method, "https://upstream.example.com/mcp"), content=body)
+    return httpx2.Response(status, request=httpx2.Request(method, "https://upstream.example.com/mcp"), content=body, headers={"content-type": content_type})
 
 
 _SDK_STAND_IN = MCPError(code=-32603, message="Server returned an error response")
@@ -211,13 +211,64 @@ async def test_error_response_hook_leaves_a_real_json_rpc_error_alone() -> None:
     assert hook.to_http_status_error(BaseExceptionGroup("task group", [_REAL_UPSTREAM_ERROR])) is None
 
 
+_JSON_RPC_ERROR_BODY = b'{"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Invalid params from the strict upstream"}}'
+
+
 @pytest.mark.asyncio
-async def test_error_response_hook_translates_an_http_rejection_without_a_json_rpc_body() -> None:
-    """A 401 whose body is not JSON-RPC (e.g. FastAPI's {"detail": ...}) is the SDK stand-in case: translate it."""
+@pytest.mark.parametrize(
+    "body, content_type",
+    [
+        pytest.param(b'{"detail": "Not authenticated"}', "application/json", id="not_json_rpc"),
+        pytest.param(_JSON_RPC_ERROR_BODY, "text/plain", id="json_rpc_error_under_wrong_content_type"),
+        pytest.param(b'{"jsonrpc": "2.0", "id": 1, "error": {"code": -32602}}', "application/json", id="json_rpc_error_missing_message"),
+        pytest.param(b"<html>Unauthorized</html>", "text/html", id="html_rejection"),
+    ],
+)
+async def test_error_response_hook_translates_bodies_the_sdk_does_not_read_as_json_rpc(body: bytes, content_type: str) -> None:
+    """Whatever the SDK will not accept as a JSON-RPC error (wrong content type, invalid envelope, not JSON-RPC) is the stand-in case: translate it."""
     hook = ErrorResponseHook()
-    await hook._get_error(_response("POST", 401, b'{"detail": "Not authenticated"}'))  # pylint: disable=protected-access
+    await hook._get_error(_response("POST", 401, body, content_type))  # pylint: disable=protected-access
 
     status_error = hook.to_http_status_error(_SDK_STAND_IN)
 
     assert isinstance(status_error, httpx2.HTTPStatusError)
     assert status_error.response.status_code == 401
+
+
+def _unwrap(exc: BaseException) -> BaseException:
+    """Return the leaf of a task-group wrapped exception."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status, content_type, body, expected",
+    [
+        pytest.param(400, "application/json", _JSON_RPC_ERROR_BODY, ("mcp", -32602), id="real_error_passes_through"),
+        pytest.param(401, "text/plain", _JSON_RPC_ERROR_BODY, ("http", 401), id="wrong_content_type_is_an_http_rejection"),
+        pytest.param(401, "application/json", b'{"jsonrpc": "2.0", "id": 1, "error": {"code": -32602}}', ("http", 401), id="invalid_envelope_is_an_http_rejection"),
+        pytest.param(401, "application/json", b'{"detail": "Not authenticated"}', ("http", 401), id="plain_rejection"),
+    ],
+)
+async def test_sdk_parsing_decides_what_the_hook_translates(status: int, content_type: str, body: bytes, expected: tuple) -> None:
+    """Through the real SDK transport: only a body the SDK reads as a JSON-RPC error reaches the caller as MCPError; the rest become HTTPStatusError."""
+
+    def answer(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status, content=body, headers={"content-type": content_type})
+
+    def factory(**kwargs):
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(answer), **{k: v for k, v in kwargs.items() if v is not None})
+
+    with pytest.raises(BaseException) as exc_info:  # noqa: B017 - the leaf type is asserted below
+        async with mcp_proxy_client(_URL, mode="legacy", httpx_client_factory=factory):
+            pass
+
+    leaf = _unwrap(exc_info.value)
+    if expected[0] == "mcp":
+        assert isinstance(leaf, MCPError), repr(leaf)
+        assert leaf.error.code == expected[1]
+    else:
+        assert isinstance(leaf, httpx2.HTTPStatusError), repr(leaf)
+        assert leaf.response.status_code == expected[1]
