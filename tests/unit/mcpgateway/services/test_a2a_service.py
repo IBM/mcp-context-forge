@@ -3034,7 +3034,7 @@ class TestInvokeAgentEdgeCases:
         # First-Party
         from mcpgateway.services.a2a_service import _build_security_scheme
 
-        agent = self._make_card_agent(auth_type="query_param", auth_query_params={"tavilyApiKey": "<encrypted>"})
+        agent = self._make_card_agent(auth_type="query_param", auth_query_params={"tavilyApiKey": "<encrypted>"})  # pragma: allowlist secret
 
         schemes, _requirements = _build_security_scheme(agent)
 
@@ -3047,7 +3047,7 @@ class TestInvokeAgentEdgeCases:
 
         agent = self._make_card_agent(
             auth_type="oauth",
-            oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "scope": "read write", "client_secret": "<should-never-appear>"},
+            oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "scope": "read write", "client_secret": "<should-never-appear>"},  # pragma: allowlist secret
         )
 
         schemes, _requirements = _build_security_scheme(agent)
