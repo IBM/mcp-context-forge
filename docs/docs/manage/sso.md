@@ -623,6 +623,16 @@ virtual-server path. Plain `/mcp` has no per-server OAuth configuration and reje
 tokens under the default internal-issuer verification setting. Provisioning API availability
 does not control authentication of an already-created user on a configured virtual server.
 
+!!! warning "MCP issuer trust and account provider binding"
+    This MCP OAuth path matches the verified token's email to an active local account without
+    checking the account's saved `auth_provider`. An account bound to provider B can authenticate
+    with a provider A token when the virtual server trusts A and the token's audience matches.
+    `SSO_ALLOW_PROVIDER_LINKING=false` does not enforce MCP authentication denial for this mismatch.
+    An unchanged saved binding does not prevent cross-provider impersonation.
+
+    Trust only issuers authorized to assert identities for accounts accessible through this
+    virtual server. DB role and team checks still apply.
+
 ### Directory sync through repeated single-user calls
 
 Submit one `POST /v1/admin/users/sso` per directory user. Each call has an independent outcome;
