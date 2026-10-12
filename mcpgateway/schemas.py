@@ -5122,8 +5122,18 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     base_url: AnyHttpUrl = Field(..., description="Base URL of the MCP server to test")
     path: Optional[str] = Field(None, description="Optional path appended to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
-    gateway_id: Optional[str] = Field(None, description="Exact registered gateway to use for transport and connection settings")
-    credential_mode: Literal["stored_with_override", "candidate_only"] = Field("stored_with_override", description="Whether the handshake may use stored gateway credentials")
+    gateway_id: Optional[str] = Field(
+        None,
+        description=("Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied"),
+    )
+    credential_mode: Literal["stored_with_override", "candidate_only"] = Field(
+        "stored_with_override",
+        description=(
+            "Credential handling mode. "
+            "'stored_with_override' applies stored gateway credentials; form headers take precedence. "
+            "'candidate_only' suppresses all stored credentials so only the supplied headers are tested."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":

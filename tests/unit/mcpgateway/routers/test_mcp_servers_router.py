@@ -53,7 +53,7 @@ from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorator
 def rbac_bypass():
     """Bypass RBAC decorators for unit tests."""
     originals = patch_rbac_decorators()
-    yield
+    yield originals
     restore_rbac_decorators(originals)
 
 
@@ -2086,3 +2086,212 @@ async def test_handshake_legacy_mode_skips_discover_uses_initialize(handshake_re
     assert result.negotiation_path == "initialize"
     # The discover probe must have been skipped entirely.
     mock_resilient.request.assert_not_called()
+
+
+# Tests: POST /v1/mcp-servers/test-handshake — HTTP-stack (black-box) coverage
+#
+# These tests drive requests through the real FastAPI ASGI app so that
+# FastAPI validation and the @require_permission decorator are exercised,
+# not just the handler function.
+#
+# SQLite note: TestClient runs the ASGI app in a separate thread.  The
+# sessions yielded by the db override must therefore come from an engine
+# created with check_same_thread=False and StaticPool so they survive
+# cross-thread use.  Each test builds its own engine + session factory.
+# ---------------------------------------------------------------------------
+
+
+def _make_handshake_app(session_factory, user_ctx, rbac_originals):
+    """Mount the real mcp_servers router on a throwaway FastAPI app.
+
+    ``session_factory`` is called per-request inside the DB override so each
+    TestClient thread gets a fresh, thread-safe session.
+
+    Restore the permission decorator saved by ``rbac_bypass`` when loading
+    the router. The shared permission-service fixture grants permissions.
+    """
+    import importlib
+
+    from fastapi import FastAPI
+    from mcpgateway.db import get_db
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    import mcpgateway.routers.mcp_servers_router as router_mod
+
+    with patch("mcpgateway.middleware.rbac.require_permission", rbac_originals["require_permission"]):
+        importlib.reload(router_mod)
+
+    test_app = FastAPI()
+    test_app.include_router(router_mod.router)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    async def override_user():
+        return user_ctx
+
+    test_app.dependency_overrides[get_db] = override_db
+    test_app.dependency_overrides[get_current_user_with_permissions] = override_user
+
+    return test_app
+
+
+def _make_thread_safe_db(visibility="team", owner_email="owner@example.com", url="http://example.com"):
+    """Return a (session_factory, engine) pair backed by a thread-safe in-memory SQLite DB.
+
+    Uses check_same_thread=False + StaticPool so the same connection is reused
+    safely across the test thread and TestClient's internal worker thread.
+    Inserts one team-B gateway row.
+    """
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+    with session_factory() as setup:
+        setup.add(
+            DbGateway(
+                id="gw-team-b",
+                name="Team B Server",
+                slug="team-b-server",
+                url=url,
+                transport="STREAMABLEHTTP",
+                capabilities={},
+                enabled=True,
+                auth_type="basic",
+                auth_value={"Authorization": "Basic teamb"},
+                visibility=visibility,
+                team_id="team-b",
+                owner_email=owner_email,
+            )
+        )
+        setup.commit()
+    return session_factory, engine
+
+
+def test_handshake_http_candidate_only_succeeds(monkeypatch, rbac_bypass):
+    """POST /v1/mcp-servers/test-handshake with candidate_only returns 200 and uses only form credentials.
+
+    Drives the request through the real FastAPI ASGI stack — FastAPI body
+    validation and @require_permission("gateways.read") are both exercised.
+    The DB runs with check_same_thread=False so TestClient's worker thread
+    can access the same in-memory SQLite database.
+    """
+    from fastapi.testclient import TestClient
+    from mcpgateway import config
+
+    monkeypatch.setattr(config.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["example.com", "*.example.com"])
+
+    import socket
+
+    monkeypatch.setattr(
+        "mcpgateway.common.validators.socket.getaddrinfo",
+        lambda host, port, *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 80))],
+    )
+
+    session_factory, engine = _make_thread_safe_db(visibility="public")
+    try:
+        user = {
+            "email": "admin@example.com",
+            "full_name": "Admin",
+            "is_admin": True,
+            "token_teams": None,
+            "permissions": ["gateways.read"],
+        }
+
+        test_app = _make_handshake_app(session_factory, user, rbac_bypass)
+        mock_client = _mock_resilient_client(_discover_success())
+
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+            client = TestClient(test_app, raise_server_exceptions=True)
+            response = client.post(
+                "/v1/mcp-servers/test-handshake",
+                json={
+                    "base_url": "http://example.com",
+                    "path": "/mcp",
+                    "headers": {"Api-Key": "candidate-token"},  # pragma: allowlist secret
+                    "gateway_id": "gw-team-b",
+                    "credential_mode": "candidate_only",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # FastAPI serialises response_model fields with camelCase aliases.
+        assert body["success"] is True
+        assert body["credentialSource"] == "form"
+        # Stored basic-auth header must NOT have been forwarded.
+        sent_headers = mock_client.request.call_args.kwargs["headers"]
+        assert sent_headers.get("Api-Key") == "candidate-token"
+        assert "Authorization" not in sent_headers
+    finally:
+        engine.dispose()
+
+
+def test_handshake_http_candidate_only_denies_hidden_gateway(monkeypatch, rbac_bypass):
+    """POST /v1/mcp-servers/test-handshake denies a gateway invisible to the caller.
+
+    When a team-A token requests a team-B private gateway via gateway_id the
+    handshake must fail with failure_class='transport' and the outbound probe
+    must never fire.  Exercises the HTTP stack so @require_permission is live.
+    The DB runs with check_same_thread=False so TestClient's worker thread
+    can access the same in-memory SQLite database.
+    """
+    from fastapi.testclient import TestClient
+    from mcpgateway import config
+
+    monkeypatch.setattr(config.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["example.com", "*.example.com"])
+
+    import socket
+
+    monkeypatch.setattr(
+        "mcpgateway.common.validators.socket.getaddrinfo",
+        lambda host, port, *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 80))],
+    )
+
+    # team-B gateway is team-scoped; caller token is limited to team-A only.
+    session_factory, engine = _make_thread_safe_db(visibility="team")
+    try:
+        team_a_user = {
+            "email": "user@example.com",
+            "full_name": "Team A User",
+            "is_admin": False,
+            "token_teams": ["team-a"],
+            "permissions": ["gateways.read"],
+        }
+
+        test_app = _make_handshake_app(session_factory, team_a_user, rbac_bypass)
+        mock_client = _mock_resilient_client()
+
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+            client = TestClient(test_app, raise_server_exceptions=True)
+            response = client.post(
+                "/v1/mcp-servers/test-handshake",
+                json={
+                    "base_url": "http://example.com",
+                    "headers": {"X-Api-Key": "candidate"},  # pragma: allowlist secret
+                    "gateway_id": "gw-team-b",
+                    "credential_mode": "candidate_only",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # FastAPI serialises response_model fields with camelCase aliases.
+        assert body["success"] is False
+        assert body["failureClass"] == "transport"
+        # Probe must never have been sent to the upstream.
+        mock_client.request.assert_not_called()
+    finally:
+        engine.dispose()
