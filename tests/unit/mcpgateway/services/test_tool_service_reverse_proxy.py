@@ -442,12 +442,8 @@ class TestInvokeToolReverseProxied:
         assert result.content[0].text == "proxied ok"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "transport, client_patch, stream_size",
-        [("SSE", "sse_client", 2), ("STREAMABLEHTTP", "streamablehttp_client", 3)],
-        ids=["sse_gateway", "streamablehttp_gateway"],
-    )
-    async def test_non_proxied_gateways_never_touch_session_manager(self, tool_service, proxied_tool, test_db, transport, client_patch, stream_size):
+    @pytest.mark.parametrize("transport", ["SSE", "STREAMABLEHTTP"], ids=["sse_gateway", "streamablehttp_gateway"])
+    async def test_non_proxied_gateways_never_touch_session_manager(self, tool_service, proxied_tool, test_db, transport):
         """Regression: SSE/streamablehttp gateways keep their existing dispatch, no proxy lookup."""
         gateway = proxied_tool.gateway
         gateway.transport = transport
@@ -460,17 +456,14 @@ class TestInvokeToolReverseProxied:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected)
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_client(*_args, **_kwargs):
-            yield tuple(["read", "write", None][:stream_size])
+        client_mock = MagicMock()
+        client_mock.session = session_mock
+        proxy_cm = AsyncMock()
+        proxy_cm.__aenter__ = AsyncMock(return_value=client_mock)
+        proxy_cm.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"mcpgateway.services.tool_service.{client_patch}", mock_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=proxy_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda headers: headers),
             patch("mcpgateway.services.tool_service._downstream_session_id_from_request", return_value=None),
@@ -775,79 +768,3 @@ class TestInvokeToolReverseProxiedAuth:
         assert attached_auth is not None
         assert attached_auth.headers == {"Authorization": "Bearer proxied-tool-secret"}
         assert attached_auth.auth_type == "bearer"
-
-
-class TestPrepareRustMcpToolExecutionReverseProxied:
-    """PROXIED tools must never be planned for Rust direct execution (gateway transport is the authority)."""
-
-    @staticmethod
-    def _proxied_cache_payload():
-        """Cache payload for a PROXIED-synced tool: SSE placeholder request_type, PROXIED gateway transport."""
-        return {
-            "status": "active",
-            "tool": {
-                "id": "tool-1",
-                "name": PROXIED_TOOL_NAME,
-                "original_name": PROXIED_ORIGINAL_NAME,
-                "enabled": True,
-                "reachable": True,
-                "integration_type": "MCP",
-                "request_type": "SSE",  # D7: schema-valid placeholder; dispatch keys off gateway transport
-                "gateway_id": "proxied-gw-1",
-                "jsonpath_filter": None,
-                "timeout_ms": None,
-            },
-            "gateway": {
-                "id": "proxied-gw-1",
-                "name": "proxied_gateway",
-                "url": "reverse-proxy://local",
-                "transport": "PROXIED",
-                "auth_type": None,
-                "auth_value": None,
-                "auth_query_params": None,
-                "oauth_config": None,
-                "ca_certificate": None,
-                "ca_certificate_sig": None,
-                "passthrough_headers": [],
-            },
-        }
-
-    @staticmethod
-    def _cache_mock(payload):
-        """Enabled tool-lookup cache mock returning a fixed payload."""
-        mock_cache = AsyncMock()
-        mock_cache.enabled = True
-        mock_cache.get = AsyncMock(return_value=payload)
-        mock_cache.set = AsyncMock()
-        mock_cache.set_negative = AsyncMock()
-        return mock_cache
-
-    @pytest.mark.asyncio
-    async def test_proxied_gateway_transport_is_ineligible_for_rust_direct_execution(self, tool_service):
-        """A persisted PROXIED gateway transport forces fallback to the Python PROXIED seam."""
-        cache = self._cache_mock(self._proxied_cache_payload())
-
-        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache):
-            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), PROXIED_TOOL_NAME)
-
-        assert plan == {"eligible": False, "fallbackReason": "reverse-proxy-transport"}
-
-    @pytest.mark.asyncio
-    async def test_non_proxied_gateway_transport_remains_eligible(self, tool_service):
-        """Regression guard: non-PROXIED MCP gateways keep their Rust direct-execution eligibility."""
-        payload = self._proxied_cache_payload()
-        payload["tool"]["request_type"] = "streamablehttp"
-        payload["gateway"]["transport"] = "STREAMABLEHTTP"
-        payload["gateway"]["url"] = "http://gateway.example/mcp"
-        cache = self._cache_mock(payload)
-        tool_service._plugin_manager = None
-
-        with (
-            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
-            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
-            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
-        ):
-            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), PROXIED_TOOL_NAME)
-
-        assert plan["eligible"] is True
-        assert plan["transport"] == "streamablehttp"

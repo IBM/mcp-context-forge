@@ -319,12 +319,8 @@ class TestFetchGatewayPromptResultReverseProxied:
         assert failed_call["error_details"]["error_message"] == "malformed upstream prompts/get result"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "transport, client_patch, stream_size",
-        [("SSE", "sse_client", 2), ("STREAMABLE_HTTP", "streamablehttp_client", 3)],
-        ids=["sse_gateway", "streamable_http_gateway"],
-    )
-    async def test_non_proxied_gateways_never_touch_session_manager(self, prompt_service, proxied_prompt, test_db, transport, client_patch, stream_size):
+    @pytest.mark.parametrize("transport", ["SSE", "STREAMABLE_HTTP"], ids=["sse_gateway", "streamable_http_gateway"])
+    async def test_non_proxied_gateways_never_touch_session_manager(self, prompt_service, proxied_prompt, test_db, transport):
         """Regression: SSE/streamable-HTTP gateways keep their existing dispatch, no proxy lookup."""
         proxied_prompt.gateway.transport = transport
         proxied_prompt.gateway.url = "http://fake-mcp:8080/mcp"
@@ -337,18 +333,14 @@ class TestFetchGatewayPromptResultReverseProxied:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.get_prompt = AsyncMock(return_value=remote_result)
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_client(*_args, **_kwargs):
-            """Yield a fake transport stream tuple of the right arity for the client under test."""
-            yield tuple(["read", "write", None][:stream_size])
+        client_mock = MagicMock()
+        client_mock.session = session_mock
+        proxy_cm = AsyncMock()
+        proxy_cm.__aenter__ = AsyncMock(return_value=client_mock)
+        proxy_cm.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"mcpgateway.services.prompt_service.{client_patch}", mock_client),
-            patch("mcpgateway.services.prompt_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.prompt_service.mcp_proxy_client", return_value=proxy_cm),
             patch("mcpgateway.services.reverse_proxy_dispatch.get_reverse_proxy_session_manager") as manager_factory,
         ):
             result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
