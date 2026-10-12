@@ -53,7 +53,7 @@ from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorator
 def rbac_bypass():
     """Bypass RBAC decorators for unit tests."""
     originals = patch_rbac_decorators()
-    yield
+    yield originals
     restore_rbac_decorators(originals)
 
 
@@ -2101,28 +2101,24 @@ async def test_handshake_legacy_mode_skips_discover_uses_initialize(handshake_re
 # ---------------------------------------------------------------------------
 
 
-def _make_handshake_app(session_factory, user_ctx):
+def _make_handshake_app(session_factory, user_ctx, rbac_originals):
     """Mount the real mcp_servers router on a throwaway FastAPI app.
 
     ``session_factory`` is called per-request inside the DB override so each
     TestClient thread gets a fresh, thread-safe session.
 
-    The ``mock_permission_service`` autouse fixture (conftest.py) has already
-    restored the real ``@require_permission`` decorator and replaced
-    ``PermissionService`` with a mock that grants all permissions, so
-    reloading the router here picks up the live decorator.
+    Restore the permission decorator saved by ``rbac_bypass`` when loading
+    the router. The shared permission-service fixture grants permissions.
     """
     import importlib
 
     from fastapi import FastAPI
-    from sqlalchemy.pool import StaticPool
     from mcpgateway.db import get_db
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
     import mcpgateway.routers.mcp_servers_router as router_mod
 
-    # Reload so the router module uses whichever require_permission is currently
-    # installed on rbac (the conftest autouse has already restored the real one).
-    importlib.reload(router_mod)
+    with patch("mcpgateway.middleware.rbac.require_permission", rbac_originals["require_permission"]):
+        importlib.reload(router_mod)
 
     test_app = FastAPI()
     test_app.include_router(router_mod.router)
@@ -2180,7 +2176,7 @@ def _make_thread_safe_db(visibility="team", owner_email="owner@example.com", url
     return session_factory, engine
 
 
-def test_handshake_http_candidate_only_succeeds(monkeypatch):
+def test_handshake_http_candidate_only_succeeds(monkeypatch, rbac_bypass):
     """POST /v1/mcp-servers/test-handshake with candidate_only returns 200 and uses only form credentials.
 
     Drives the request through the real FastAPI ASGI stack — FastAPI body
@@ -2212,7 +2208,7 @@ def test_handshake_http_candidate_only_succeeds(monkeypatch):
             "permissions": ["gateways.read"],
         }
 
-        test_app = _make_handshake_app(session_factory, user)
+        test_app = _make_handshake_app(session_factory, user, rbac_bypass)
         mock_client = _mock_resilient_client(_discover_success())
 
         with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
@@ -2241,7 +2237,7 @@ def test_handshake_http_candidate_only_succeeds(monkeypatch):
         engine.dispose()
 
 
-def test_handshake_http_candidate_only_denies_hidden_gateway(monkeypatch):
+def test_handshake_http_candidate_only_denies_hidden_gateway(monkeypatch, rbac_bypass):
     """POST /v1/mcp-servers/test-handshake denies a gateway invisible to the caller.
 
     When a team-A token requests a team-B private gateway via gateway_id the
@@ -2275,7 +2271,7 @@ def test_handshake_http_candidate_only_denies_hidden_gateway(monkeypatch):
             "permissions": ["gateways.read"],
         }
 
-        test_app = _make_handshake_app(session_factory, team_a_user)
+        test_app = _make_handshake_app(session_factory, team_a_user, rbac_bypass)
         mock_client = _mock_resilient_client()
 
         with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):

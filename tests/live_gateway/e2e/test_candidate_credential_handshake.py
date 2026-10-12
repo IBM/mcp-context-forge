@@ -20,7 +20,7 @@ Scenarios covered:
 Design notes
 ------------
 The ``isolated_gateway`` fixture (copied from test_rest_non_json_output_schema_e2e.py)
-starts a private uvicorn subprocess on a random free port backed by an in-memory
+starts a private uvicorn subprocess on a random free port backed by a temporary
 SQLite database.  This means:
 
 * No Docker / compose stack is required.
@@ -36,6 +36,7 @@ server/discover response so the gateway considers the handshake successful.
 from __future__ import annotations
 
 # Standard
+from collections.abc import Iterator
 import contextlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -60,6 +61,8 @@ from tests.helpers.auth import make_auth_headers, make_test_jwt
 pytestmark = pytest.mark.e2e
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_RecordedRequest = tuple[str, str, dict[str, str]]
+_GatewayFixture = tuple[httpx.Client, str, str, str]
 
 # ---------------------------------------------------------------------------
 # Minimal upstream MCP stub
@@ -94,7 +97,7 @@ class _DualStackThreadingHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def _make_recording_handler(expected_candidate: str) -> tuple[type, list]:
+def _make_recording_handler(expected_candidate: str) -> tuple[type[BaseHTTPRequestHandler], list[_RecordedRequest]]:
     """Return a fresh (handler_class, requests_list) pair for one upstream stub.
 
     Each call produces a *new* handler subclass with its own ``requests`` list so
@@ -102,7 +105,7 @@ def _make_recording_handler(expected_candidate: str) -> tuple[type, list]:
     The list is passed by reference: the caller holds it and reads it after the
     upstream shuts down.
     """
-    recorded: list = []
+    recorded: list[_RecordedRequest] = []
 
     class _Handler(BaseHTTPRequestHandler):
         """Serve a valid server/discover response and record every received request."""
@@ -138,7 +141,7 @@ def _make_recording_handler(expected_candidate: str) -> tuple[type, list]:
 # isolated_gateway fixture  (mirrors test_rest_non_json_output_schema_e2e.py)
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def isolated_gateway(tmp_path):
+def isolated_gateway(tmp_path: Path) -> Iterator[_GatewayFixture]:
     """Start a private, single-tenant gateway subprocess for this test module.
 
     Uses SQLite + a random port so no compose stack is required.
@@ -235,7 +238,7 @@ def isolated_gateway(tmp_path):
 # isolated_upstream  — ephemeral MCP stub server
 # ---------------------------------------------------------------------------
 @contextlib.contextmanager
-def _isolated_upstream(expected_candidate: str = "valid-candidate"):
+def _isolated_upstream(expected_candidate: str = "valid-candidate") -> Iterator[tuple[str, list[_RecordedRequest]]]:
     """Start an ephemeral ThreadingHTTPServer acting as an upstream MCP server.
 
     Each call creates a *fresh* handler class and requests list via
@@ -274,14 +277,14 @@ def _register_gateway(
     transport: str = "STREAMABLEHTTP",
     visibility: str = "public",
     team_id: str | None = None,
-    auth_headers_list: list[dict] | None = None,
+    auth_headers_list: list[dict[str, str]] | None = None,
 ) -> str:
     """Register a gateway and return its ``id``.
 
     Uses ``auth_headers`` (list of ``{"key": ..., "value": ...}`` dicts) for
     authheaders auth type, which is the correct format accepted by POST /gateways.
     """
-    payload: dict = {
+    payload: dict[str, Any] = {
         "name": name,
         "url": url,
         "transport": transport,
@@ -297,7 +300,7 @@ def _register_gateway(
     body = resp.json()
     # 200/201 sync path → id at top level; 202 async path → id nested under "gateway"
     gw_id = body.get("id") or (body.get("gateway") or {}).get("id")
-    assert gw_id, f"Could not extract gateway id from POST /gateways response: {body}"
+    assert isinstance(gw_id, str) and gw_id, f"Could not extract gateway id from POST /gateways response: {body}"
     return gw_id
 
 
@@ -306,7 +309,7 @@ def _delete_gateway(client: httpx.Client, gateway_id: str) -> None:
         client.delete(f"{_GATEWAYS_PATH}/{gateway_id}", timeout=10)
 
 
-def _post_handshake(client: httpx.Client, payload: dict, timeout: float = 30) -> httpx.Response:
+def _post_handshake(client: httpx.Client, payload: dict[str, Any], timeout: float = 30) -> httpx.Response:
     return client.post(_HANDSHAKE_PATH, json=payload, timeout=timeout)
 
 
@@ -320,7 +323,9 @@ def _request_json(client: httpx.Client, method: str, path: str, *, expected: tup
 def _create_team(client: httpx.Client, label: str) -> str:
     """Create a private team and return its ID."""
     team = _request_json(client, "POST", "/teams/", json={"name": f"{_GW_PREFIX}-{label}-{uuid.uuid4().hex[:8]}", "visibility": "private"})
-    return team["id"]
+    team_id = team["id"]
+    assert isinstance(team_id, str)
+    return team_id
 
 
 def _create_team_user(client: httpx.Client, signing_key: str, team_id: str) -> tuple[str, str]:
@@ -363,7 +368,7 @@ def _assert_success(response: httpx.Response) -> None:
     assert body["credentialSource"] == "form"
 
 
-def _assert_candidate_requests(recorded: list, expected_candidate: str) -> None:
+def _assert_candidate_requests(recorded: list[_RecordedRequest], expected_candidate: str) -> None:
     """Assert that all upstream requests contain only the expected candidate credential."""
     assert recorded, "Upstream was never contacted"
     for _method, _path, headers in recorded:
@@ -388,7 +393,7 @@ class TestCandidateCredentialHandshake:
       needing fast_time_server.
     """
 
-    def test_candidate_only_succeeds_and_reports_form_source(self, isolated_gateway) -> None:
+    def test_candidate_only_succeeds_and_reports_form_source(self, isolated_gateway: _GatewayFixture) -> None:
         """Candidate-only handshakes succeed only with the valid supplied credential."""
         client, _token, _base_url, _secret = isolated_gateway
 
@@ -417,7 +422,7 @@ class TestCandidateCredentialHandshake:
             finally:
                 _delete_gateway(client, gw_id)
 
-    def test_hidden_gateway_denied_no_upstream_probe(self, isolated_gateway) -> None:
+    def test_hidden_gateway_denied_no_upstream_probe(self, isolated_gateway: _GatewayFixture) -> None:
         """A permitted team-A caller cannot probe a team-B gateway by ID."""
         client, _token, _base_url, signing_key = isolated_gateway
 
@@ -453,7 +458,7 @@ class TestCandidateCredentialHandshake:
                     client.delete(f"/teams/{team_a_id}", timeout=10)
                     client.delete(f"/auth/email/admin/users/{user_email}", timeout=10)
 
-    def test_url_mismatched_gateway_denied(self, isolated_gateway) -> None:
+    def test_url_mismatched_gateway_denied(self, isolated_gateway: _GatewayFixture) -> None:
         """An allowed URL paired with a different gateway ID is denied before probing."""
         client, _token, _base_url, _secret = isolated_gateway
 
