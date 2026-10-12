@@ -308,6 +308,8 @@ class ReverseProxyRelay:
             message_count=session.message_count,
             bytes_transferred=session.bytes_transferred,
             server_info=dict(session.server_info),
+            protocol_era=session.protocol_era.value,
+            protocol_version=session.protocol_version,
         )
         await _redis_operation(self._redis.setex(self.session_key(connection_id), self._owner_ttl_seconds, entry.model_dump_json()))
         await _redis_operation(self._redis.sadd(self.session_index_key(), str(connection_id)))

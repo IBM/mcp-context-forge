@@ -31,11 +31,17 @@ from mcpgateway.services.reverse_proxy_discovery import (
     ReverseProxyDiscoveryService,
 )
 from mcpgateway.services.reverse_proxy_protocol import (
+    DISCOVER_METHOD,
+    MODERN_CLIENT_CAPABILITIES_META_KEY,
+    MODERN_CLIENT_INFO_META_KEY,
+    MODERN_PROTOCOL_META_KEY,
+    MODERN_PROTOCOL_VERSION,
     JsonRpcError,
     JsonRpcErrorResponse,
     JsonRpcNotification,
     JsonRpcRequest,
     JsonRpcSuccessResponse,
+    ProtocolEra,
     ResponseMessage,
 )
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId
@@ -53,10 +59,17 @@ class _RpcErrorReply:
 class _ScriptedSessionManager:
     """Fake session manager recording outgoing frames and replaying scripted replies."""
 
-    def __init__(self) -> None:
-        """Initialize an empty frame log and reply script."""
+    def __init__(self, *, handshake_era: bool = True) -> None:
+        """Initialize an empty frame log and reply script.
+
+        Args:
+            handshake_era: When True, auto-answer ``server/discover`` with a
+                -32601 error so scripted replies drive the handshake path.
+        """
         self.sent: list[JsonRpcRequest | JsonRpcNotification] = []
+        self.eras: list[tuple[ProtocolEra, str | None]] = []
         self._script: deque[object] = deque()
+        self._handshake_era = handshake_era
 
     def script_result(self, result: JsonValue) -> None:
         """Queue a success result for the next request."""
@@ -73,6 +86,8 @@ class _ScriptedSessionManager:
     async def send_request(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float) -> ResponseMessage:
         """Record the request and replay the next scripted reply."""
         self.sent.append(payload)
+        if self._handshake_era and payload.method == DISCOVER_METHOD:
+            return ResponseMessage(type="response", payload=JsonRpcErrorResponse(jsonrpc="2.0", id=payload.id, error=JsonRpcError(code=-32601, message="method not found")))
         reply = self._script.popleft()
         if isinstance(reply, BaseException):
             raise reply
@@ -83,6 +98,10 @@ class _ScriptedSessionManager:
     async def send_notification(self, connection_id: ConnectionId, payload: JsonRpcNotification, timeout_seconds: float) -> None:
         """Record the notification without producing a reply."""
         self.sent.append(payload)
+
+    async def record_protocol_era(self, connection_id: ConnectionId, era: ProtocolEra, version: str | None) -> None:
+        """Record the negotiated protocol era."""
+        self.eras.append((era, version))
 
     def methods(self) -> list[str]:
         """Return the recorded frame methods in send order."""
@@ -196,19 +215,32 @@ async def test_initialize_precedes_initialized_and_lists(discovery, test_db, pro
     fake.script_result({"tools": [{"name": "tool-a", "inputSchema": {"type": "object"}}]})
 
     # When
-    await _discover(discovery, test_db, fake, proxy_pair)
+    result = await _discover(discovery, test_db, fake, proxy_pair)
 
     # Then
+    assert result.protocol_era is ProtocolEra.HANDSHAKE
+    assert result.protocol_version == "2025-03-26"
     methods = fake.methods()
-    assert methods[0] == "initialize"
-    initialize = fake.sent[0]
+    assert methods[0] == DISCOVER_METHOD
+    probe = fake.sent[0]
+    assert isinstance(probe, JsonRpcRequest)
+    assert probe.params == {
+        "_meta": {
+            MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION,
+            MODERN_CLIENT_INFO_META_KEY: {"name": MCP_CLIENT_NAME, "version": __version__},
+            MODERN_CLIENT_CAPABILITIES_META_KEY: {},
+        }
+    }
+    assert methods[1] == "initialize"
+    initialize = fake.sent[1]
     assert isinstance(initialize, JsonRpcRequest)
     assert initialize.params == {"protocolVersion": MCP_CLIENT_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": MCP_CLIENT_NAME, "version": __version__}}
     initialized_at = methods.index("notifications/initialized")
-    assert initialized_at == 1
+    assert initialized_at == 2
     assert isinstance(fake.sent[initialized_at], JsonRpcNotification)
     list_positions = [index for index, method in enumerate(methods) if method.endswith("/list")]
     assert list_positions and all(index > initialized_at for index in list_positions)
+    assert fake.eras == [(ProtocolEra.HANDSHAKE, "2025-03-26")]
 
 
 @pytest.mark.asyncio
@@ -221,7 +253,7 @@ async def test_absent_capabilities_skip_all_list_calls(discovery, test_db, proxy
     result = await _discover(discovery, test_db, fake, proxy_pair)
 
     # Then
-    assert fake.methods() == ["initialize", "notifications/initialized"]
+    assert fake.methods() == [DISCOVER_METHOD, "initialize", "notifications/initialized"]
     assert result.tools_added == 0 and result.tools_removed == 0
     assert result.resources_added == 0 and result.prompts_added == 0
     assert result.validation_errors == ()
@@ -598,6 +630,65 @@ async def test_initialize_error_response_raises(discovery, test_db, proxy_pair):
     assert str(exc_info.value) == "reverse-proxy initialize failed: MCP error -32600"
     assert "unsupported protocol version" not in str(exc_info.value)
     assert test_db.query(DbTool).count() == 0
+
+
+def _discover_result(capabilities: dict) -> dict:
+    """Build a modern-era ``server/discover`` result."""
+    return {"supportedVersions": [MODERN_PROTOCOL_VERSION], "capabilities": capabilities, "serverInfo": {"name": "fake-modern-client", "version": "0.0.1"}}
+
+
+@pytest.mark.asyncio
+async def test_modern_era_discovers_capabilities_without_handshake(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager(handshake_era=False)
+    fake.script_result(_discover_result({"tools": {}}))
+    fake.script_result({"tools": [{"name": "tool-a", "inputSchema": {"type": "object"}}]})
+
+    # When
+    result = await _discover(discovery, test_db, fake, proxy_pair)
+
+    # Then
+    assert fake.methods() == [DISCOVER_METHOD, "tools/list"]
+    assert "initialize" not in fake.methods()
+    assert result.tools_added == 1
+    assert result.protocol_era is ProtocolEra.MODERN
+    assert result.protocol_version == MODERN_PROTOCOL_VERSION
+    assert fake.eras == [(ProtocolEra.MODERN, MODERN_PROTOCOL_VERSION)]
+    assert {row.original_name for row in test_db.query(DbTool)} == {"tool-a"}
+
+
+@pytest.mark.asyncio
+async def test_modern_era_result_missing_supported_version_raises(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager(handshake_era=False)
+    fake.script_result({"supportedVersions": ["1999-01-01"], "capabilities": {}})
+
+    # When / Then
+    with pytest.raises(ReverseProxyDiscoveryError, match="does not offer"):
+        await _discover(discovery, test_db, fake, proxy_pair)
+    assert test_db.query(DbTool).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_modern_era_probe_timeout_raises(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager(handshake_era=False)
+    fake.script_exception(TimeoutError("probe timed out"))
+
+    # When / Then
+    with pytest.raises(ReverseProxyDiscoveryError, match="server/discover timed out"):
+        await _discover(discovery, test_db, fake, proxy_pair)
+
+
+@pytest.mark.asyncio
+async def test_modern_era_probe_non_object_result_raises(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager(handshake_era=False)
+    fake.script_result(["not", "an", "object"])
+
+    # When / Then
+    with pytest.raises(ReverseProxyDiscoveryError, match="non-object result"):
+        await _discover(discovery, test_db, fake, proxy_pair)
 
 
 @pytest.mark.asyncio
