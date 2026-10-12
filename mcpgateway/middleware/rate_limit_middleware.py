@@ -78,7 +78,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     Limits checked in order: IP → User → Team
     Block if ANY dimension exceeds limit.
+
+    Lockout (a temporary block after repeated violations) is scoped to the
+    tier that was abused. Orchestrator probes, metrics, API docs and static
+    assets never participate in lockout, so they are not taken down by abuse
+    elsewhere, but they remain subject to their ordinary per-minute limit.
     """
+
+    # Paths that never participate in lockout, matched against the normalized
+    # path (root path, aliases and /v1 prefix stripped). Deliberately narrow:
+    # every other path, including LOW-tier fallback application routes such as
+    # /rpc, keeps the lockout protection.
+    LOCKOUT_EXEMPT_PATH_PATTERN = re.compile(r"^/(health|ready|live|metrics|version|docs|redoc|openapi\.json|static)(/|$)")
 
     def __init__(self, app):
         """Initialize rate limit middleware."""
@@ -245,13 +256,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         dimensions = self._get_client_dimensions(request)
 
         tier_name = self._get_tier_name_for_normalized(normalized_path, request.method)
+        lockout_applies = self._lockout_applies(normalized_path)
 
         # Check lockout first — a locked-out dimension blocks regardless of
         # whether the sliding window has cleared.
         locked_out_dims = []
-        for dimension in dimensions:
-            if await self._should_lockout(dimension, tier_name):
-                locked_out_dims.append(dimension)
+        if lockout_applies:
+            for dimension in dimensions:
+                if await self._should_lockout(dimension, tier_name):
+                    locked_out_dims.append(dimension)
 
         if locked_out_dims:
             for dim in locked_out_dims:
@@ -289,7 +302,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     tier_name=tier_name,
                     is_lockout=False,
                 )
-                await self._increment_violation(dim, tier_name)
+                if lockout_applies:
+                    await self._increment_violation(dim, tier_name)
 
             return self._create_rate_limit_response(
                 request=request,
@@ -383,30 +397,44 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             return True, limit - count - 1
 
-    async def _should_lockout(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
-        """Check if dimension should be locked out."""
+    def _lockout_applies(self, normalized_path: str) -> bool:
+        """Return True when lockout checks and counting apply to the path."""
+        return self.lockout_enabled and not self.LOCKOUT_EXEMPT_PATH_PATTERN.match(normalized_path)
+
+    @staticmethod
+    def _violation_key(dimension: str, tier_name: str) -> str:
+        """Build the violation counter key for a dimension within a tier.
+
+        The tier is part of the key so that violations on one tier (for
+        example CRITICAL auth endpoints) only lock that tier for the client,
+        rather than every path on the gateway.
+        """
+        return f"ratelimit:violations:{dimension}:{tier_name}"
+
+    async def _should_lockout(self, dimension: str, tier_name: str) -> bool:
+        """Check if dimension should be locked out for the given tier."""
         if not self.lockout_enabled:
             return False
 
-        violation_key = f"ratelimit:violations:{dimension}"
+        violation_key = self._violation_key(dimension, tier_name)
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(self.executor, self._should_lockout_sync, violation_key, tier_name, dimension)
+            return await loop.run_in_executor(self.executor, self._should_lockout_sync, violation_key)
         except Exception:
-            return self._should_lockout_memory(dimension, tier_name)
+            return self._should_lockout_memory(violation_key)
 
-    def _should_lockout_sync(self, violation_key: str, tier_name: str, dimension: str) -> bool:  # pylint: disable=unused-argument
+    def _should_lockout_sync(self, violation_key: str) -> bool:
         """Synchronous lockout check."""
         if not self.use_redis or not self.redis_client:
-            return self._should_lockout_memory(dimension, tier_name)
+            return self._should_lockout_memory(violation_key)
 
         try:
             count = self.redis_client.get(violation_key)
             return int(count or 0) >= self.lockout_threshold
         except Exception:
-            return self._should_lockout_memory(dimension, tier_name)
+            return self._should_lockout_memory(violation_key)
 
-    def _should_lockout_memory(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
+    def _should_lockout_memory(self, violation_key: str) -> bool:
         """In-memory lockout check."""
         if not hasattr(self, "_violation_counts"):
             self._violation_counts: Dict[str, int] = {}
@@ -414,24 +442,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._violation_expiry: Dict[str, float] = {}
         with self._store_lock:
             now = time.time()
-            expiry = self._violation_expiry.get(dimension, float("inf"))
+            expiry = self._violation_expiry.get(violation_key, float("inf"))
             if now > expiry:
-                self._violation_counts.pop(dimension, None)
-                self._violation_expiry.pop(dimension, None)
+                self._violation_counts.pop(violation_key, None)
+                self._violation_expiry.pop(violation_key, None)
                 return False
-            count = self._violation_counts.get(dimension, 0)
+            count = self._violation_counts.get(violation_key, 0)
             return count >= self.lockout_threshold
 
-    async def _increment_violation(self, dimension: str, tier_name: str) -> None:  # pylint: disable=unused-argument
-        """Increment violation counter for a dimension."""
-        violation_key = f"ratelimit:violations:{dimension}"
+    async def _increment_violation(self, dimension: str, tier_name: str) -> None:
+        """Increment violation counter for a dimension within a tier."""
+        violation_key = self._violation_key(dimension, tier_name)
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self.executor, self._increment_violation_sync, violation_key, dimension)
+            await loop.run_in_executor(self.executor, self._increment_violation_sync, violation_key)
         except Exception:
-            self._increment_violation_memory(dimension)
+            self._increment_violation_memory(violation_key)
 
-    def _increment_violation_sync(self, violation_key: str, dimension: str) -> None:
+    def _increment_violation_sync(self, violation_key: str) -> None:
         """Synchronous violation increment."""
         if self.use_redis and self.redis_client:
             try:
@@ -440,17 +468,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return
             except Exception as e:
                 logger.warning(
-                    "Redis violation increment failed for dimension %s, falling back to in-memory: %s",
-                    dimension,
+                    "Redis violation increment failed for %s, falling back to in-memory: %s",
+                    violation_key,
                     str(e),
                 )
-        self._increment_violation_memory(dimension)
+        self._increment_violation_memory(violation_key)
 
-    def _increment_violation_memory(self, dimension: str) -> None:
+    def _increment_violation_memory(self, violation_key: str) -> None:
         """In-memory violation increment."""
         with self._store_lock:
-            self._violation_counts[dimension] = self._violation_counts.get(dimension, 0) + 1
-            self._violation_expiry[dimension] = time.time() + self.lockout_duration_minutes * 60
+            self._violation_counts[violation_key] = self._violation_counts.get(violation_key, 0) + 1
+            self._violation_expiry[violation_key] = time.time() + self.lockout_duration_minutes * 60
 
     def _log_security_event(
         self,
@@ -517,8 +545,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=429,
                 content={
-                    "error": "Account locked",
-                    "message": f"Too many rate limit violations. Account locked for {self.lockout_duration_minutes} minutes. This may indicate suspicious activity on your account.",
+                    "error": "Rate limit lockout",
+                    "message": f"Too many rate limit violations. Requests to {tier_name} tier endpoints are blocked for {self.lockout_duration_minutes} minutes.",
                     "lockout_duration_minutes": self.lockout_duration_minutes,
                     "reset_in_seconds": self.lockout_duration_minutes * 60,
                 },
