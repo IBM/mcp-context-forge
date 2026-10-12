@@ -1001,12 +1001,14 @@ class ImportService:
             batch_id = str(uuid.uuid4())
 
             # Use bulk registration
+            user_context = await self._get_user_context(db, imported_by)
             result = await self.tool_service.register_tools_bulk(
                 db=db,
                 tools=tools_to_register,
                 created_by=imported_by,
                 created_via="import",
                 import_batch_id=batch_id,
+                team_id=user_context["team_id"] if user_context else None,
                 conflict_strategy=conflict_strategy.value,
             )
 

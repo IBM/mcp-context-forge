@@ -118,10 +118,12 @@ async def test_transfer_with_explicit_target_team_not_member(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_transfer_success_public_gateway(service, mock_db):
+@pytest.mark.parametrize("team_id", [None, "team-a"])
+async def test_transfer_success_public_gateway(service, mock_db, team_id):
+    """Ownership transfer audits the retained team through an independent session."""
     gateway = MagicMock()
     gateway.visibility = "public"
-    gateway.team_id = None
+    gateway.team_id = team_id
     gateway.owner_email = "old@example.com"
     gateway.id = "gw-1"
 
@@ -141,20 +143,19 @@ async def test_transfer_success_public_gateway(service, mock_db):
             "mcpgateway.services.gateway_service.get_for_update",
             return_value=gateway,
         ),
-        patch(
-            "mcpgateway.services.gateway_service.get_audit_trail_service"
-        ) as mock_audit_fn,
+        patch("mcpgateway.services.gateway_service.get_audit_trail_service") as mock_audit_fn,
         patch.object(service, "convert_gateway_to_read", return_value=expected_read),
     ):
         mock_audit_fn.return_value = MagicMock()
-        result = await service.transfer_gateway_ownership(
-            mock_db, "gw-1", "target@example.com", "actor@example.com"
-        )
+        result = await service.transfer_gateway_ownership(mock_db, "gw-1", "target@example.com", "actor@example.com")
 
     assert gateway.owner_email == "target@example.com"
     mock_db.commit.assert_called_once()
     mock_db.refresh.assert_called_once_with(gateway)
     assert result is expected_read
+    audit_kwargs = mock_audit_fn.return_value.log_action.call_args.kwargs
+    assert audit_kwargs["team_id"] == team_id
+    assert "db" not in audit_kwargs
 
 
 @pytest.mark.asyncio
@@ -185,9 +186,7 @@ async def test_transfer_updates_linked_entities_and_team(service, mock_db):
             "mcpgateway.services.gateway_service.get_for_update",
             return_value=gateway,
         ),
-        patch(
-            "mcpgateway.services.gateway_service.get_audit_trail_service"
-        ) as mock_audit_fn,
+        patch("mcpgateway.services.gateway_service.get_audit_trail_service") as mock_audit_fn,
         patch.object(service, "convert_gateway_to_read", return_value=MagicMock()),
     ):
         mock_audit_fn.return_value = MagicMock()
@@ -207,6 +206,9 @@ async def test_transfer_updates_linked_entities_and_team(service, mock_db):
     assert resource.team_id == "new-team"
     assert prompt.owner_email == "target@example.com"
     assert prompt.team_id == "new-team"
+    audit_kwargs = mock_audit_fn.return_value.log_action.call_args.kwargs
+    assert audit_kwargs["team_id"] == "new-team"
+    assert "db" not in audit_kwargs
 
 
 @pytest.mark.asyncio
@@ -242,6 +244,7 @@ async def test_transfer_team_gateway_with_explicit_target_team_checks_membership
 
     assert gateway.team_id == "new-team"
     assert mock_db.execute.call_count == 5
+
 
 @pytest.mark.asyncio
 async def test_transfer_private_gateway_to_team_coerces_visibility(service, mock_db):
