@@ -2091,7 +2091,7 @@ class TestPromptEndpoints:
         mock_get.assert_called_once_with(
             ANY,
             "test",
-            {},
+            None,
             user="test_user@example.com",  # Preserved for owner matching (PR #4877)
             server_id=None,
             token_teams=None,  # None = admin bypass
@@ -2127,7 +2127,7 @@ class TestPromptEndpoints:
 
         assert result == {"name": "test", "template": "Hello"}
         # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
-        mock_get.assert_called_once_with(mock_db, "test", {}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+        mock_get.assert_called_once_with(mock_db, "test", None, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.prompt_service.get_prompt")

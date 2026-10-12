@@ -28,6 +28,7 @@ from jinja2 import meta, select_autoescape, Template
 from jinja2.exceptions import SecurityError as JinjaSecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from mcp import ClientSession
+from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import GetPromptRequest, GetPromptRequestParams
 import orjson
@@ -472,7 +473,16 @@ class PromptService(BaseService):
                 description=getattr(remote_result, "description", None) or prompt.description,
             )
         except Exception as exc:
-            sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
+            # The SDK's task group wraps the failure; look at the root cause.
+            root_cause: BaseException = exc
+            if isinstance(exc, BaseExceptionGroup):
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                    root_cause = root_cause.exceptions[0]
+            # Either message may echo the gateway URL, so auth parameters are stripped from it.
+            sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params_decrypted)
+            if isinstance(root_cause, MCPError):
+                # The upstream answered a JSON-RPC error: relay its code and data with the sanitized message.
+                raise MCPError(code=root_cause.error.code, message=sanitized_error, data=root_cause.error.data) from exc
             raise PromptError(f"Failed to fetch prompt '{remote_name}' from gateway: {sanitized_error}") from exc
 
     @staticmethod
@@ -2086,7 +2096,8 @@ class PromptService(BaseService):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
                     result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data)
-                elif not arguments:
+                elif arguments is None:
+                    # No arguments at all means "show the template", as the REST view does.
                     result = PromptResult(
                         messages=[
                             Message(
@@ -2097,6 +2108,9 @@ class PromptService(BaseService):
                         description=prompt.description,
                     )
                 else:
+                    missing = sorted(set((prompt.argument_schema or {}).get("required") or []) - set(arguments))
+                    if missing:
+                        raise PromptValidationError(f"Missing required arguments: {', '.join(missing)}")
                     try:
                         prompt.validate_arguments(arguments)
                         rendered = self._render_template(prompt.template, arguments)

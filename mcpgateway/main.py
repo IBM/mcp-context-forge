@@ -7141,7 +7141,7 @@ async def get_prompt_no_args(
         return await prompt_service.get_prompt(
             db,
             prompt_id,
-            {},
+            None,
             user=auth_user_email,
             server_id=server_id,
             token_teams=auth_token_teams,

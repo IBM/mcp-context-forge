@@ -396,6 +396,40 @@ def tool_error_upstream() -> Generator[str, None, None]:
 
 
 
+@pytest.fixture
+def prompt_error_upstream() -> Generator[str, None, None]:
+    """Start an in-process upstream whose prompt answers a JSON-RPC error (issue #6618).
+
+    The gateway must reach this process: set MCP_PROMPT_ERROR_UPSTREAM_HOST=127.0.0.1
+    for a gateway running on the host.
+    """
+    host = os.getenv("MCP_PROMPT_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    app = MCPServer("prompt-error")
+
+    @app.prompt()
+    def strict() -> str:
+        """Answer a JSON-RPC -32602 error."""
+        raise McpError(code=-32602, message="Invalid params from the strict upstream")
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Prompt error upstream failed to start"
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+
 class TestConnectivity:
 
     async def test_ping(self, client: ClientSession) -> None:
@@ -792,6 +826,81 @@ class TestToolErrorTranslation:
             finally:
                 if server_id:
                     await http.delete(f"/servers/{server_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
+
+
+class TestPromptErrorTranslation:
+    """Every prompts/get failure through the gateway is a JSON-RPC -32602 with a message that says why (issue #6618)."""
+
+    @staticmethod
+    async def _expect_invalid_params(call: Callable[[], Any], message_part: str) -> None:
+        """Run ``call`` and require a -32602 whose message contains ``message_part``."""
+        with pytest.raises(BaseException) as exc_info:  # noqa: B017 - the leaf is asserted below
+            await call()
+        leaves = [exc for exc in _unwrap_exception_group(exc_info.value) if isinstance(exc, McpError)]
+        assert leaves, f"expected a JSON-RPC error, got {exc_info.value!r}"
+        assert leaves[0].error.code == -32602, leaves[0].error
+        assert message_part in leaves[0].error.message, leaves[0].error
+
+    async def _assert_prompt_errors(self, get_prompt: Callable[..., Any], prompts: dict[str, str]) -> None:
+        """Check the three failure shapes through ``get_prompt(name, arguments)``."""
+        await self._expect_invalid_params(lambda: get_prompt(prompts["strict"], {}), "Invalid params from the strict upstream")
+        await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {}), "Missing required arguments: name")
+        await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"other": "x"}), "Missing required arguments: name")
+        await self._expect_invalid_params(lambda: get_prompt(f"{prompts['local']}-missing", {}), "Unknown prompt:")
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_prompt_failures_answer_invalid_params(self, jwt_token: str, prompt_error_upstream: str, era: str) -> None:
+        """Legacy and modern callers see -32602 for an upstream JSON-RPC error, a missing required argument and an unknown prompt."""
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        name = f"prompterror{uuid.uuid4().hex[:8]}"
+        gateway_id = None
+        prompt_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": name, "url": prompt_error_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                deadline = time.monotonic() + 60
+                rows: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/prompts", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 1:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 1, f"Gateway did not discover the upstream prompt: {rows}; check MCP_PROMPT_ERROR_UPSTREAM_HOST"
+                response = await http.post(
+                    "/prompts",
+                    json={"prompt": {"name": f"{name}-local", "template": "Hello, {{ name }}!", "arguments": [{"name": "name", "description": "who to greet", "required": True}]}, "visibility": "public"},
+                )
+                assert response.status_code in (200, 201), response.text
+                prompt_id = response.json()["id"]
+                prompts = {"strict": rows[0]["name"], "local": response.json()["name"]}
+                response = await http.post("/servers", json={"server": {"name": name, "associated_prompts": [rows[0]["id"], prompt_id]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                if era == "legacy":
+                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            await self._assert_prompt_errors(session.get_prompt, prompts)
+                else:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                        await self._assert_prompt_errors(modern_client.get_prompt, prompts)
+                print(f"    -> {era}: upstream error, missing argument and unknown prompt all answer -32602")
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if prompt_id:
+                    await http.delete(f"/prompts/{prompt_id}")
                 if gateway_id:
                     await http.delete(f"/gateways/{gateway_id}")
 
