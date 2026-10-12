@@ -229,11 +229,14 @@ def test_log_data_access_requires_review(monkeypatch):
         resource_type="token",
         resource_id="tok-1",
         user_id="user-1",
+        team_id="team-a",
         data_classification=svc.DataClassification.CONFIDENTIAL.value,
     )
 
     assert captured["requires_review"] is True
     assert captured["action"] == "READ"
+    assert captured["team_id"] == "team-a"
+    assert captured["db"] is None
 
 
 def test_get_audit_trail_commits_and_returns(monkeypatch):
@@ -313,9 +316,12 @@ def test_log_audit_builds_context_from_description(monkeypatch):
         resource_id="tool-1",
         action="EXECUTE",
         description="ran tool",
+        team_id="team-a",
     )
 
     assert captured["context"]["description"] == "ran tool"
+    assert captured["team_id"] == "team-a"
+    assert captured["db"] is None
 
 
 def test_log_action_identity_context_exception_is_swallowed(monkeypatch):
