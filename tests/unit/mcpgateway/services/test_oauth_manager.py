@@ -2625,6 +2625,75 @@ class TestPrivateKeyJwtFlows:
             ("authorization_code", {"code": "authcode", "state": "state-1"}),
             ("authorization_code_pkce", {"code": "authcode", "code_verifier": "verifier-1"}),
             ("refresh_token", {"refresh_token": "refresh-1"}),
+            ("token_exchange", {"subject_token": "inbound.jwt"}),
+        ],
+    )
+    async def test_private_key_jwt_retry_sends_new_assertion(self, oauth_manager, private_key_credentials, flow, flow_kwargs):
+        """Send a newly signed assertion after an HTTP failure in each token flow."""
+        oauth_manager.max_retries = 2
+        public_pem = private_key_credentials.pop("_test_public_pem")
+        private_key_credentials["token_endpoint_auth_method"] = "  private_key_jwt  "
+        if flow in ("authorization_code_pkce", "refresh_token"):
+            private_key_credentials["resource"] = ["https://mcp.example.com/one", "https://mcp.example.com/two"]
+        forms = []
+
+        async def post_token_request(_url, *, data, **_kwargs):
+            forms.append(dict(data))
+            if len(forms) == 1:
+                raise httpx.ConnectError("Token endpoint unavailable")
+            return _token_exchange_success_response()
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = post_token_request
+        with (
+            patch("mcpgateway.services.oauth_manager.get_isolated_http_client", _isolated_client(mock_client)),
+            patch("mcpgateway.services.oauth_manager.asyncio.sleep", new_callable=AsyncMock) as backoff,
+        ):
+            if flow == "client_credentials":
+                result = await oauth_manager._client_credentials_flow(private_key_credentials)
+            elif flow == "password":
+                private_key_credentials["username"] = "u"
+                private_key_credentials["password"] = "p"  # pragma: allowlist secret
+                result = await oauth_manager._password_flow(private_key_credentials)
+            elif flow == "authorization_code":
+                result = await oauth_manager.exchange_code_for_token(private_key_credentials, **flow_kwargs)
+            elif flow == "authorization_code_pkce":
+                result = await oauth_manager._exchange_code_for_tokens(private_key_credentials, **flow_kwargs)
+            elif flow == "refresh_token":
+                result = await oauth_manager.refresh_token(credentials=private_key_credentials, **flow_kwargs)
+            else:
+                result = await oauth_manager.token_exchange(oauth_config=private_key_credentials, **flow_kwargs)
+
+        assert (result if isinstance(result, str) else result["access_token"]) == "exchanged-token"
+        assert mock_client.post.await_count == 2
+        backoff.assert_awaited_once_with(1)
+        decoded_assertions = []
+        for form in forms:
+            assert form["client_id"] == private_key_credentials["client_id"]
+            assert form["client_assertion_type"] == CLIENT_ASSERTION_TYPE_JWT_BEARER
+            decoded = jwt.decode(
+                form["client_assertion"],
+                public_pem,
+                algorithms=["RS256"],
+                audience=private_key_credentials["token_url"],
+                issuer=private_key_credentials["client_id"],
+                options={"require": ["iss", "sub", "aud", "iat", "exp", "jti"]},
+            )
+            assert decoded["sub"] == private_key_credentials["client_id"]
+            assert 0 < decoded["exp"] - decoded["iat"] <= MAX_CLIENT_ASSERTION_TTL_SECONDS
+            assert decoded["jti"]
+            decoded_assertions.append(decoded)
+        assert decoded_assertions[0]["jti"] != decoded_assertions[1]["jti"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "flow,flow_kwargs",
+        [
+            ("client_credentials", {}),
+            ("password", {}),
+            ("authorization_code", {"code": "authcode", "state": "state-1"}),
+            ("authorization_code_pkce", {"code": "authcode", "code_verifier": "verifier-1"}),
+            ("refresh_token", {"refresh_token": "refresh-1"}),
         ],
     )
     async def test_private_key_jwt_missing_key_fails_closed_in_every_flow(self, oauth_manager, flow, flow_kwargs):

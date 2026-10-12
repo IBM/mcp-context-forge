@@ -370,7 +370,7 @@ def private_key_jwt_gateway(admin_api: httpx.Client, stub_stack: dict[str, Any],
         deadline = time.monotonic() + _SYNC_DEADLINE
         tool_name = None
         while time.monotonic() < deadline:
-            tools_resp = admin_api.get("/tools")
+            tools_resp = admin_api.get(f"/tools?limit=0&gateway_id={gateway_id}")
             if tools_resp.status_code == 200:
                 tools = tools_resp.json()
                 matched = [tool for tool in tools if tool.get("name", "").endswith("-stub-echo")]
