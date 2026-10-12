@@ -1663,10 +1663,10 @@ async def _mcp_session(server_url: str, access_token: str | None = None) -> Asyn
                 await session.initialize()
                 yield session
     except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
-        status_error = error_hook.to_http_status_error(exc)
-        if status_error is None:
+        transport_error = error_hook.to_transport_error(exc)
+        if transport_error is None:
             raise
-        raise status_error from exc
+        raise transport_error from exc
 
 
 async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:

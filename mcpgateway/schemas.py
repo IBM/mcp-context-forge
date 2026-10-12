@@ -2143,6 +2143,7 @@ class ToolResult(BaseModelWithConfigDict):
     structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta", description="MCP result metadata, e.g. the upstream's JSON-RPC error code under io.contextforge/upstreamError")
 
 
 class ToolPreviewRequest(BaseModelWithConfigDict):

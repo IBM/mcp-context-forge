@@ -524,6 +524,44 @@ async def test_call_tool_session_affinity_forwarded_empty_dict_snake_case_fallba
 
 
 @pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_error_keeps_the_upstream_meta(monkeypatch):
+    """A worker-forwarded isError result keeps the upstream error code the owning worker put in _meta."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(
+        return_value={"result": {"content": [{"type": "text", "text": "MCP server error: Invalid params"}], "isError": True, "_meta": {"io.contextforge/upstreamError": {"code": -32602}}}}
+    )
+    mock_pool.register_session_mapping = AsyncMock()
+
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.meta == {"io.contextforge/upstreamError": {"code": -32602}}
+    finally:
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+
+@pytest.mark.asyncio
 async def test_call_tool_preserves_is_error_for_egress(monkeypatch):
     """Egress regression guard for ContextForge #4202 — local (non-pooled) branch.
 

@@ -63,7 +63,7 @@ async def _carries_jsonrpc_error(response: httpx2.Response) -> bool:
 class ErrorResponseHook:
     """
     Keeps the last POST response seen on an httpx2 client, because the
-    mcp 2.x transport drops the HTTP status when a handshake or call fails.
+    mcp 2.x transport drops what the wire said when it raises.
     Only POST carries JSON-RPC; the transport's GET stream and DELETE on close
     may get a tolerated 405, so their responses are ignored.
     """
@@ -72,6 +72,7 @@ class ErrorResponseHook:
         """Start with no response."""
         self.response: Optional[httpx2.Response] = None
         self.response_carried_jsonrpc_error: bool = False
+        self.response_body_unreadable: bool = False
 
     def install(self, http_client: httpx2.AsyncClient) -> "ErrorResponseHook":
         """Register the response hook on ``http_client`` and return self"""
@@ -79,40 +80,59 @@ class ErrorResponseHook:
         return self
 
     async def _get_error(self, response: httpx2.Response) -> None:
-        """Keep ``response`` if it answers a POST, whatever its status.
+        """Keep ``response`` if it answers a POST, and note what the SDK will make of its body.
 
-        An error status can mean two different things:
-
-        - the body is a JSON-RPC error (2026-era servers also set e.g. HTTP 400 on
-          one). The SDK reads it and raises it as it is; we must not touch it.
-        - the body is not JSON-RPC (e.g. a plain 401 from an auth layer). The SDK
-          cannot read it and raises a generic error; that is the case we translate.
+        The SDK reads a JSON body as the message it carries. It makes up a JSON-RPC error
+        of its own when the body does not parse, when the content type is neither JSON nor
+        SSE, or when an error status comes without a JSON-RPC error body. Those made-up
+        errors are the ones translated later; a real JSON-RPC error the upstream sent is
+        left untouched. An SSE body cannot be inspected here, so nothing is noted for it.
         """
-        if response.request.method != "POST":
+        if response.request.method != "POST" or response.status_code in (202, 204):
             return
         self.response = response
-        self.response_carried_jsonrpc_error = response.status_code >= 400 and await _carries_jsonrpc_error(response)
+        self.response_carried_jsonrpc_error = False
+        self.response_body_unreadable = False
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type.startswith("application/json"):
+            try:
+                message = jsonrpc_message_adapter.validate_json(await response.aread(), by_name=False)
+            except (httpx2.StreamError, ValidationError):
+                self.response_body_unreadable = True
+            else:
+                self.response_carried_jsonrpc_error = isinstance(message, JSONRPCError)
+        elif not content_type.startswith("text/event-stream"):
+            self.response_body_unreadable = True
 
-    def to_http_status_error(self, exc: BaseException) -> Optional[httpx2.HTTPStatusError]:
-        """Translate a failed handshake into an ``httpx2.HTTPStatusError``.
+    def to_transport_error(self, exc: BaseException) -> Optional[httpx2.HTTPError]:
+        """Translate an error the SDK made up into the transport failure it stands for.
 
-        Translates only when the error response carried no JSON-RPC error, i.e. the
-        SDK fell back to its generic stand-in; a real JSON-RPC error the upstream
-        sent (even at a 4xx status) is left untouched.
+        Returns ``httpx2.HTTPStatusError`` when the last POST was refused with an error
+        status and no JSON-RPC error body, ``httpx2.DecodingError`` when it answered 2xx
+        with a body the SDK could not read as JSON-RPC, and None otherwise, including
+        for a real JSON-RPC error the upstream sent (even at a 4xx status).
         """
         response = self.response
-        if response is None or response.status_code < 400:
+        if response is None:
             return None
         root: BaseException = exc
         while isinstance(root, BaseExceptionGroup) and root.exceptions:  # pylint: disable=no-member
             root = root.exceptions[0]  # pylint: disable=no-member
         if not isinstance(root, MCPError) or self.response_carried_jsonrpc_error:
             return None
-        return httpx2.HTTPStatusError(
-            f"{response.status_code} {response.reason_phrase} for url '{response.request.url}'",
-            request=response.request,
-            response=response,
-        )
+        if response.status_code >= 400:
+            return httpx2.HTTPStatusError(
+                f"{response.status_code} {response.reason_phrase} for url '{response.request.url}'",
+                request=response.request,
+                response=response,
+            )
+        if self.response_body_unreadable:
+            content_type = response.headers.get("content-type") or "none"
+            return httpx2.DecodingError(
+                f"Upstream answered {response.status_code} with a body that is not a JSON-RPC message (content-type: {content_type}) for url '{response.request.url}'",
+                request=response.request,
+            )
+        return None
 
 
 @asynccontextmanager
@@ -162,8 +182,8 @@ async def streamable_http_client(
             async with _sdk_streamable_http_client(url=url, http_client=http_client) as streams:
                 yield streams
         except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
-            # upstream error status surfaced as httpx2.HTTPStatusError
-            status_error = error_hook.to_http_status_error(exc)
-            if status_error is None:
+            # an error the SDK made up stands for a transport failure: surface that instead
+            transport_error = error_hook.to_transport_error(exc)
+            if transport_error is None:
                 raise
-            raise status_error from exc
+            raise transport_error from exc
