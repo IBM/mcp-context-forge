@@ -229,6 +229,16 @@ onboarding/membership roles before assigning explicit DB permissions. REST requi
 MCP initialization requires `servers.use`. A separate `tools/call` denial checks `tools.execute`
 without contacting the tool URL. Revocation tests remove the DB read and transport grants.
 
+The provider-mismatch case grants valid DB permissions and non-personal team membership.
+REST must return `401`, and the account's creation time and provider binding must remain unchanged.
+The MCP attempt checks the same saved account fields and records its authentication result separately.
+The `mcp_provider_mismatch_authentication` JUnit property reports either an authentication `401`
+or successful initialization and protected-tool discovery. An unexpected status or permission failure
+fails the test. The test does not require MCP provider-mismatch authentication denial.
+The observed backend accepts the MCP token after server issuer/audience verification and resolves
+the existing account by email. It leaves the saved provider binding unchanged.
+Changing that existing MCP authentication behavior is outside this issue's test-only scope.
+
 The external identity cache stores synthesized identities per token. Its configured TTL can delay
 refresh of cached identity/team information; this suite does not change that behavior. Role/team
 mutation cases reuse the same unexpired token after the fixed TTL. Active-user and RBAC checks

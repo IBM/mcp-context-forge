@@ -758,8 +758,8 @@ def test_deactivated_account_denies_cached_token(admin: httpx.Client, user_facto
     assert _rest_tools(user).status_code == 401
 
 
-def test_provider_mismatch_preserves_binding(admin: httpx.Client, user_factory: Callable[..., User]) -> None:
-    """A verified token from Keycloak cannot link an account bound to another issuer."""
+def test_provider_mismatch_preserves_binding(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources, record_property: Callable[[str, str], None]) -> None:
+    """REST denies mismatches; MCP attempts preserve the account's original provider binding."""
     provider_id = f"mismatch-{uuid4().hex[:12]}"
     _request(
         admin,
@@ -782,7 +782,18 @@ def test_provider_mismatch_preserves_binding(admin: httpx.Client, user_factory: 
     )
     try:
         user = user_factory(provider_id=provider_id)
+        _grant_access(admin, user, resources)
         assert _rest_tools(user).status_code == 401
+        _assert_existing_account(admin, user)
+        try:
+            tools = asyncio.run(_mcp_tools(user, resources))
+        except httpx2.HTTPStatusError as error:
+            assert error.response.status_code == 401, "Valid DB permissions must not produce an authorization denial"
+            outcome = "HTTP 401"
+        else:
+            assert resources.tool_name in tools, "An accepted MCP identity must have the explicitly granted discovery access"
+            outcome = "session initialized; protected tool visible"
+        record_property("mcp_provider_mismatch_authentication", outcome)
         _assert_existing_account(admin, user)
     finally:
         _request(admin, "DELETE", f"/v1/auth/sso/admin/providers/{provider_id}")
