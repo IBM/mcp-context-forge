@@ -6,12 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 MCP discovery and catalog reconciliation over reverse-proxy sessions.
 
 The reverse-proxy client is a maintained MCP server reached through its
-registration WebSocket. After catalog registration the gateway drives the
-legacy MCP lifecycle itself: ``initialize`` -> ``notifications/initialized``
--> capability-gated list calls -> catalog sync/reconcile -> virtual-server
-association -> commit. The caller then publishes cache invalidations and
-subscriber notification while the stable ID is still unmapped, and promotes
-routing last.
+registration WebSocket. After catalog registration the gateway negotiates the
+MCP protocol era with the downstream: ``server/discover`` first (sessionless
+2026-07-28 era), falling back to the ``initialize`` ->
+``notifications/initialized`` handshake when the probe is answered with a
+JSON-RPC error. Capability-gated list calls, catalog sync/reconcile,
+virtual-server association, and commit follow in either era. The caller then
+publishes cache invalidations and subscriber notification while the stable ID
+is still unmapped, and promotes routing last.
 """
 
 from dataclasses import dataclass
@@ -35,7 +37,19 @@ from mcpgateway.services.gateway_service import (
     _get_tool_lookup_cache,
 )
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta
-from mcpgateway.services.reverse_proxy_protocol import JsonObject, JsonRpcErrorResponse, JsonRpcNotification, JsonRpcRequest, REVERSE_PROXY_CREATED_VIA
+from mcpgateway.services.reverse_proxy_protocol import (
+    DISCOVER_METHOD,
+    MODERN_CLIENT_CAPABILITIES_META_KEY,
+    MODERN_CLIENT_INFO_META_KEY,
+    MODERN_PROTOCOL_META_KEY,
+    MODERN_PROTOCOL_VERSION,
+    JsonObject,
+    JsonRpcErrorResponse,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    ProtocolEra,
+    REVERSE_PROXY_CREATED_VIA,
+)
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError, ReverseProxySessionManager
 from mcpgateway.services.server_service import ServerService
 
@@ -81,6 +95,8 @@ class ReverseProxyDiscoveryResult:
     prompts_added: int
     prompts_removed: int
     validation_errors: tuple[str, ...]
+    protocol_era: ProtocolEra
+    protocol_version: str | None
 
 
 class ReverseProxyDiscoveryService:
@@ -143,8 +159,20 @@ class ReverseProxyDiscoveryService:
                 validation failure.
         """
         effective_timeout = timeout_seconds if timeout_seconds is not None else float(settings.tool_timeout)
-        capabilities = await self._initialize(session_manager, connection_id, effective_timeout)
-        await self._notify_initialized(session_manager, connection_id, effective_timeout)
+        modern_result = await self._probe_modern_era(session_manager, connection_id, effective_timeout)
+        if modern_result is not None:
+            capabilities = cast(dict[str, Any], modern_result["capabilities"])
+            protocol_era = ProtocolEra.MODERN
+            protocol_version: str | None = MODERN_PROTOCOL_VERSION
+            await session_manager.record_protocol_era(connection_id, protocol_era, protocol_version)
+        else:
+            init_result = await self._initialize(session_manager, connection_id, effective_timeout)
+            await self._notify_initialized(session_manager, connection_id, effective_timeout)
+            capabilities = cast(dict[str, Any], init_result["capabilities"])
+            negotiated_version = init_result.get("protocolVersion")
+            protocol_era = ProtocolEra.HANDSHAKE
+            protocol_version = negotiated_version if isinstance(negotiated_version, str) and negotiated_version else MCP_CLIENT_PROTOCOL_VERSION
+            await session_manager.record_protocol_era(connection_id, protocol_era, protocol_version)
 
         tool_dicts = await self._list_all(session_manager, connection_id, "tools/list", "tools", effective_timeout) if capabilities.get("tools") is not None else []
         resource_dicts: list[dict[str, Any]] = []
@@ -199,10 +227,64 @@ class ReverseProxyDiscoveryService:
             prompts_added=reconcile.prompts_added,
             prompts_removed=reconcile.prompts_removed,
             validation_errors=tuple(validation_errors),
+            protocol_era=protocol_era,
+            protocol_version=protocol_version,
         )
 
+    async def _probe_modern_era(self, session_manager: ReverseProxySessionManager, connection_id: ConnectionId, timeout_seconds: float) -> dict[str, Any] | None:
+        """Probe the downstream for the sessionless MCP era via ``server/discover``.
+
+        Args:
+            session_manager: Process-local reverse-proxy session registry.
+            connection_id: Live connection to probe.
+            timeout_seconds: Per-request timeout budget.
+
+        Returns:
+            The full ``server/discover`` result when the downstream offers
+            :data:`MODERN_PROTOCOL_VERSION`; ``None`` when it answered with a
+            JSON-RPC error, signalling the handshake-era fallback.
+
+        Raises:
+            ReverseProxyDiscoveryError: On transport loss, timeout, a non-object
+                result, or a discover result that does not offer the modern
+                version this gateway speaks.
+        """
+        request = JsonRpcRequest(
+            jsonrpc="2.0",
+            id=uuid.uuid4().hex,
+            method=DISCOVER_METHOD,
+            params={
+                "_meta": {
+                    MODERN_PROTOCOL_META_KEY: MODERN_PROTOCOL_VERSION,
+                    MODERN_CLIENT_INFO_META_KEY: {"name": MCP_CLIENT_NAME, "version": __version__},
+                    MODERN_CLIENT_CAPABILITIES_META_KEY: {},
+                }
+            },
+        )
+        try:
+            response = await session_manager.send_request(connection_id, request, timeout_seconds)
+        except TimeoutError as exc:
+            raise ReverseProxyDiscoveryError(f"reverse-proxy {DISCOVER_METHOD} timed out after {timeout_seconds}s") from exc
+        except (ConnectionClosedError, ConnectionNotFoundError) as exc:
+            raise ReverseProxyDiscoveryError(f"reverse-proxy connection lost during {DISCOVER_METHOD}: {exc}") from exc
+        payload = response.payload
+        if isinstance(payload, JsonRpcErrorResponse):
+            logger.info("Reverse-proxy downstream answered %s with MCP error %s; falling back to the initialize handshake", DISCOVER_METHOD, payload.error.code)
+            return None
+        result = payload.result
+        if not isinstance(result, dict):
+            raise ReverseProxyDiscoveryError(f"reverse-proxy {DISCOVER_METHOD} returned a non-object result")
+        supported = result.get("supportedVersions")
+        if not isinstance(supported, list) or MODERN_PROTOCOL_VERSION not in supported:
+            raise ReverseProxyDiscoveryError(f"reverse-proxy {DISCOVER_METHOD} result does not offer MCP {MODERN_PROTOCOL_VERSION}")
+        capabilities = result.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            raise ReverseProxyDiscoveryError(f"reverse-proxy {DISCOVER_METHOD} returned non-object capabilities")
+        logger.debug("Reverse-proxy downstream negotiated sessionless MCP %s", MODERN_PROTOCOL_VERSION)
+        return result
+
     async def _initialize(self, session_manager: ReverseProxySessionManager, connection_id: ConnectionId, timeout_seconds: float) -> dict[str, Any]:
-        """Perform the MCP handshake and return the negotiated capabilities."""
+        """Perform the MCP handshake and return the full initialize result."""
         result = await self._rpc_call(
             session_manager,
             connection_id,
@@ -214,7 +296,7 @@ class ReverseProxyDiscoveryService:
         if not isinstance(capabilities, dict):
             raise ReverseProxyDiscoveryError("reverse-proxy initialize returned non-object capabilities")
         logger.debug("Reverse-proxy negotiated protocol version %s", result.get("protocolVersion"))
-        return capabilities
+        return result
 
     async def _notify_initialized(self, session_manager: ReverseProxySessionManager, connection_id: ConnectionId, timeout_seconds: float) -> None:
         """Send notifications/initialized to complete the MCP handshake."""
