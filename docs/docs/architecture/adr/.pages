@@ -54,3 +54,4 @@ nav:
   - 54 Remove Granian HTTP Server: 054-remove-granian-http-server.md
   - 55 Scope Tool Lookup Cache Entries: 055-scope-tool-lookup-cache.md
   - 56 CSP Hardening — No eval, No Inline Handlers: 056-csp-hardening-no-eval-no-inline-handlers.md
+  - 57 Trust A2A Plugin Header Output: 057-trust-a2a-plugin-header-output.md
