@@ -9,6 +9,7 @@ defined in the models.py module.
 """
 
 # Standard
+from datetime import datetime, timezone
 import json
 import os
 
@@ -20,6 +21,7 @@ import pytest
 from mcpgateway.common.models import (
     ClientCapabilities,
     CreateMessageResult,
+    Gateway,
     ImageContent,
     Implementation,
     InitializeRequest,
@@ -593,3 +595,33 @@ class TestMCPTypes:
         assert minimal.auth_username is None
         assert minimal.auth_password is None
         assert minimal.auth_token is None
+
+
+class TestGatewayModel:
+    """Pin structural invariants of the Gateway schema model."""
+
+    def _minimal_gateway(self, **overrides):
+        """Return the minimal set of kwargs needed to construct a Gateway."""
+        defaults = dict(
+            id="gw-1",
+            name="test-gateway",
+            url="http://localhost:9000/mcp",
+            slug="test-gateway",
+            transport="sse",
+            capabilities=ServerCapabilities(),
+            passthrough_headers=None,
+            auth_value=None,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_last_seen_field_is_optional_with_none_default(self):
+        """Gateway.last_seen is Optional[datetime] and defaults to None."""
+        gw = Gateway(**self._minimal_gateway())
+        assert gw.last_seen is None
+
+    def test_last_seen_field_accepts_datetime_value(self):
+        """Gateway.last_seen round-trips a datetime value without loss."""
+        ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        gw = Gateway(**self._minimal_gateway(id="gw-2", name="test-gateway-2", url="http://localhost:9001/mcp", slug="test-gateway-2", last_seen=ts))
+        assert gw.last_seen == ts
