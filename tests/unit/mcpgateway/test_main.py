@@ -42,6 +42,7 @@ from starlette.websockets import WebSocketDisconnect
 
 # First-Party
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
@@ -2160,6 +2161,26 @@ class TestPromptEndpoints:
         mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    async def test_post_prompt_with_an_empty_body_asks_for_the_template(self, mock_get):
+        """POST /prompts/{id} with no arguments keeps returning the template: the service gets None, not an empty dict."""
+        # First-Party
+        from mcpgateway.main import get_prompt
+
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.plugin_context_table = None
+        mock_request.state.plugin_global_context = None
+        mock_request.headers.get.return_value = None
+        mock_db = MagicMock()
+        mock_get.return_value = {"name": "test", "template": "Hello {{name}}"}
+
+        result = await get_prompt(request=mock_request, prompt_id="test", args={}, db=mock_db, user={"email": "admin@example.com", "is_admin": True})
+
+        assert result == {"name": "test", "template": "Hello {{name}}"}
+        assert mock_get.call_args.args[2] is None
+
+    @pytest.mark.asyncio
     @patch("mcpgateway.main.resource_service.read_resource")
     async def test_read_resource_admin_bypass(self, mock_read):
         """Test admin bypass path in GET /resources/{id} endpoint (lines 5839-5840)."""
@@ -2396,6 +2417,26 @@ class TestPromptEndpoints:
         body = response.json()
         assert body["messages"][0]["content"]["text"] == "Rendered prompt"
         mock_get.assert_called_once()
+
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_post_prompt_upstream_error_answers_422_with_the_upstream_message(self, mock_get, test_client, auth_headers):
+        """POST /prompts/{id}: an upstream JSON-RPC error stays inside the REST contract (422 + message), whatever its code."""
+        mock_get.side_effect = PromptUpstreamError(-32001, "Custom upstream failure", {"hint": "retry later"})
+
+        response = test_client.post("/prompts/test_prompt", json={"name": "x"}, headers=auth_headers)
+
+        assert response.status_code == 422
+        assert response.json()["message"] == "Custom upstream failure"
+
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_get_prompt_upstream_error_answers_422_with_the_upstream_message(self, mock_get, test_client, auth_headers):
+        """GET /prompts/{id}: an upstream JSON-RPC error stays inside the REST contract (422 + message), whatever its code."""
+        mock_get.side_effect = PromptUpstreamError(-32001, "Custom upstream failure", {"hint": "retry later"})
+
+        response = test_client.get("/prompts/test_prompt", headers=auth_headers)
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Custom upstream failure"
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
@@ -3639,6 +3680,41 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32000
         assert "Prompt retrieval failed" in body["error"]["message"]
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_relays_an_upstream_error_with_its_own_code(self, mock_get, test_client, auth_headers):
+        """/rpc prompts/get: an upstream JSON-RPC error is relayed with the upstream's code, message and data."""
+        mock_get.side_effect = PromptUpstreamError(-32001, "Custom upstream failure", {"hint": "retry later"})
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "prompts/get", "params": {"name": "remote"}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        error = response.json()["error"]
+        assert error["code"] == -32001
+        assert error["message"] == "Custom upstream failure"
+        assert error["data"] == {"hint": "retry later"}
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_missing_argument_answers_invalid_params(self, mock_get, test_client, auth_headers):
+        """/rpc prompts/get: a missing required argument is -32602 with the message naming it."""
+        mock_get.side_effect = PromptValidationError("Missing required arguments: name")
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "prompts/get", "params": {"name": "greeting"}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        error = response.json()["error"]
+        assert error["code"] == -32602
+        assert error["message"] == "Missing required arguments: name"
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_without_arguments_asks_for_a_rendered_prompt(self, mock_get, test_client, auth_headers):
+        """/rpc prompts/get without an arguments field is a render request: the service gets an empty dict, so required arguments are checked."""
+        mock_get.return_value = {"messages": [], "description": None}
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "prompts/get", "params": {"name": "greeting"}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert mock_get.call_args.args[2] == {}
 
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_generic_exception(self, mock_get, test_client, auth_headers):

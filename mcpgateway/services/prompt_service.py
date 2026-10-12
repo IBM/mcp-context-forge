@@ -256,6 +256,61 @@ class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
 
 
+class PromptUpstreamError(PromptError):
+    """Raised when the upstream server answered a prompt request with a JSON-RPC error."""
+
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
+        """Keep the upstream's code and data so a JSON-RPC caller can relay them.
+
+        Args:
+            code: The upstream's JSON-RPC error code.
+            message: The upstream's message, already sanitized.
+            data: The upstream's error data, already sanitized.
+        """
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+
+def _sanitize_error_data(value: Any, auth_query_params: Optional[Dict[str, str]]) -> Any:
+    """Strip auth parameters from every URL inside an upstream error's ``data``, whatever its nesting.
+
+    Args:
+        value: The upstream's error data: a string, a dict, a list, or any scalar.
+        auth_query_params: The gateway's auth query parameters, so their values are redacted too.
+
+    Returns:
+        Any: The same shape with every string sanitized; other scalars unchanged.
+    """
+    if isinstance(value, str):
+        return sanitize_exception_message(value, auth_query_params)
+    if isinstance(value, dict):
+        return {key: _sanitize_error_data(item, auth_query_params) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_error_data(item, auth_query_params) for item in value]
+    return value
+
+
+def _upstream_root_cause(exc: BaseException) -> BaseException:
+    """Return the first MCPError inside a task-group wrapped failure, or its first leaf when there is none.
+
+    Args:
+        exc: The exception caught around an upstream call.
+
+    Returns:
+        BaseException: The exception that explains the failure.
+    """
+    leaves: List[BaseException] = []
+    pending: List[BaseException] = [exc]
+    while pending:
+        current = pending.pop(0)
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        else:
+            leaves.append(current)
+    return next((leaf for leaf in leaves if isinstance(leaf, MCPError)), leaves[0] if leaves else exc)
+
+
 class PromptArgumentsJSONError(PromptError):
     """Raised when prompt arguments JSON is invalid.
 
@@ -473,16 +528,12 @@ class PromptService(BaseService):
                 description=getattr(remote_result, "description", None) or prompt.description,
             )
         except Exception as exc:
-            # The SDK's task group wraps the failure; look at the root cause.
-            root_cause: BaseException = exc
-            if isinstance(exc, BaseExceptionGroup):
-                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
-                    root_cause = root_cause.exceptions[0]
+            # The SDK's task group wraps the failure; an upstream JSON-RPC error inside it wins over any other leaf.
+            root_cause = _upstream_root_cause(exc)
             # Either message may echo the gateway URL, so auth parameters are stripped from it.
             sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params_decrypted)
             if isinstance(root_cause, MCPError):
-                # The upstream answered a JSON-RPC error: relay its code and data with the sanitized message.
-                raise MCPError(code=root_cause.error.code, message=sanitized_error, data=root_cause.error.data) from exc
+                raise PromptUpstreamError(root_cause.error.code, sanitized_error, _sanitize_error_data(root_cause.error.data, auth_query_params_decrypted)) from exc
             raise PromptError(f"Failed to fetch prompt '{remote_name}' from gateway: {sanitized_error}") from exc
 
     @staticmethod
@@ -1923,7 +1974,8 @@ class PromptService(BaseService):
                 is prioritized per MCP spec, with ID fallback for backward
                 compatibility. Team-based access control is applied before the
                 lookup to ensure multi-tenancy security.
-            arguments: Optional arguments for rendering
+            arguments: None returns the template itself, placeholders unfilled (the REST view); any dict, empty
+                included, renders it, so missing required arguments raise PromptValidationError
             user: Optional user email for authorization checks
             tenant_id: Optional tenant identifier for plugin context
             server_id: Optional server ID for server scoping enforcement

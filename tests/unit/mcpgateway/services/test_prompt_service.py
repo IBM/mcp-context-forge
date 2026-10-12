@@ -30,7 +30,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError, _coerce_plugin_prompt_result
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError, _coerce_plugin_prompt_result
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -3944,22 +3944,9 @@ class TestFetchGatewayPromptRegistryPath:
         assert result.description == "from registry"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("wrapped", [pytest.param(False, id="bare"), pytest.param(True, id="in_task_group")])
-    @pytest.mark.parametrize(
-        "upstream_message, relayed_message",
-        [
-            pytest.param("Invalid params from the strict upstream", "Invalid params from the strict upstream", id="plain_message"),
-            pytest.param("Bad request to http://upstream.example.com/mcp?api_key=abc", "Bad request to http://upstream.example.com/mcp?api_key=REDACTED", id="url_with_auth_parameter"),
-        ],
-    )
-    async def test_fetch_gateway_prompt_relays_an_upstream_json_rpc_error(self, wrapped, upstream_message, relayed_message):
-        """An upstream JSON-RPC error, bare or inside the SDK's task-group wrapper, is relayed with its code and data; auth parameters in its message are stripped."""
-        # First-Party
-        from mcpgateway.services.prompt_service import PromptService
-
-        service = PromptService()
-        prompt = self._build_gateway_prompt()
-        upstream_error = MCPError(code=-32602, message=upstream_message, data={"argument": "name"})
+    @staticmethod
+    def _fetch_with_failure(service, prompt, failure):
+        """Run the upstream fetch with ``_get_prompt_with_meta`` raising ``failure``; return the raised exception."""
 
         class _FakeMCPProxyClient:
             async def __aenter__(self):
@@ -3968,17 +3955,83 @@ class TestFetchGatewayPromptRegistryPath:
             async def __aexit__(self, *_exc):
                 return False
 
-        with (
-            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
-            patch("mcpgateway.services.prompt_service.mcp_proxy_client", return_value=_FakeMCPProxyClient()),
-            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, side_effect=ExceptionGroup("task group", [upstream_error]) if wrapped else upstream_error),
-        ):
-            with pytest.raises(MCPError) as exc_info:
-                await service._fetch_gateway_prompt_result(prompt, {"name": "x"}, meta_data=None)
+        async def run():
+            with (
+                patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
+                patch("mcpgateway.services.prompt_service.mcp_proxy_client", return_value=_FakeMCPProxyClient()),
+                patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, side_effect=failure),
+            ):
+                with pytest.raises(PromptError) as exc_info:
+                    await service._fetch_gateway_prompt_result(prompt, {"name": "x"}, meta_data=None)
+            return exc_info.value
 
-        assert exc_info.value.error.code == -32602
-        assert exc_info.value.error.message == relayed_message
-        assert exc_info.value.error.data == {"argument": "name"}
+        return run()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "wrap",
+        [
+            pytest.param(lambda error: error, id="bare"),
+            pytest.param(lambda error: ExceptionGroup("task group", [error]), id="in_task_group"),
+            pytest.param(lambda error: ExceptionGroup("outer", [ExceptionGroup("inner", [error])]), id="nested_groups"),
+            pytest.param(lambda error: ExceptionGroup("task group", [RuntimeError("transport closed"), error]), id="not_the_first_leaf"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "upstream_message, relayed_message",
+        [
+            pytest.param("Invalid params from the strict upstream", "Invalid params from the strict upstream", id="plain_message"),
+            pytest.param("Bad request to http://upstream.example.com/mcp?api_key=abc", "Bad request to http://upstream.example.com/mcp?api_key=REDACTED", id="url_with_auth_parameter"),
+        ],
+    )
+    async def test_fetch_gateway_prompt_relays_an_upstream_json_rpc_error(self, wrap, upstream_message, relayed_message):
+        """An upstream JSON-RPC error, however the SDK's task groups wrap it, becomes PromptUpstreamError with its code and data; auth parameters in its message are stripped."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        upstream_error = MCPError(code=-32602, message=upstream_message, data={"argument": "name"})
+        raised = await self._fetch_with_failure(PromptService(), self._build_gateway_prompt(), wrap(upstream_error))
+
+        assert isinstance(raised, PromptUpstreamError)
+        assert raised.code == -32602
+        assert str(raised) == relayed_message
+        assert raised.data == {"argument": "name"}
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_sanitizes_urls_inside_the_upstream_error_data(self):
+        """Every string inside the upstream's error data, however nested, has auth parameters stripped; other values pass through."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        data = {
+            "debug": {"url": "http://upstream.example.com/mcp?api_key=abc", "attempt": 2},
+            "urls": ["http://upstream.example.com/a?api_key=abc", 7, None, {"nested": "http://upstream.example.com/b?api_key=abc"}],
+            "hint": "retry later",
+        }
+        raised = await self._fetch_with_failure(PromptService(), self._build_gateway_prompt(), MCPError(code=-32001, message="Custom upstream failure", data=data))
+
+        assert isinstance(raised, PromptUpstreamError)
+        assert raised.code == -32001
+        assert raised.data == {
+            "debug": {"url": "http://upstream.example.com/mcp?api_key=REDACTED", "attempt": 2},
+            "urls": ["http://upstream.example.com/a?api_key=REDACTED", 7, None, {"nested": "http://upstream.example.com/b?api_key=REDACTED"}],
+            "hint": "retry later",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "wrap",
+        [pytest.param(lambda error: error, id="bare"), pytest.param(lambda error: ExceptionGroup("task group", [error]), id="in_task_group")],
+    )
+    async def test_fetch_gateway_prompt_wraps_other_failures_with_a_redacted_message(self, wrap):
+        """A failure that is not a JSON-RPC error stays a fetch failure, reported from its root cause with auth parameters stripped."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        raised = await self._fetch_with_failure(PromptService(), self._build_gateway_prompt(), wrap(RuntimeError("connect failed for http://upstream.example.com/mcp?api_key=abc")))
+
+        assert type(raised) is PromptError
+        assert str(raised) == "Failed to fetch prompt 'gw-prompt' from gateway: connect failed for http://upstream.example.com/mcp?api_key=REDACTED"
 
     @pytest.mark.asyncio
     async def test_fetch_gateway_prompt_falls_back_when_registry_not_initialised(self):

@@ -50,7 +50,7 @@ from starlette.types import Scope
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
-from mcpgateway.services.prompt_service import PromptNotFoundError, PromptValidationError
+from mcpgateway.services.prompt_service import PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import (
@@ -19134,25 +19134,27 @@ class TestUnknownEntityErrors:
         assert exc_info.value.error.message == "Missing required arguments: name"
 
     @pytest.mark.asyncio
-    async def test_upstream_prompt_error_passes_through_unchanged(self, monkeypatch):
-        """An upstream JSON-RPC error relayed by the service reaches the SDK as the same MCPError."""
+    async def test_upstream_prompt_error_is_relayed_as_the_upstream_json_rpc_error(self, monkeypatch):
+        """PromptUpstreamError becomes an MCPError carrying the upstream's code, message and data."""
         self._fake_db(monkeypatch)
-        upstream_error = MCPError(code=-32602, message="Invalid params from the strict upstream")
-        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=upstream_error))
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptUpstreamError(-32602, "Invalid params from the strict upstream", {"argument": "name"})))
 
         with pytest.raises(MCPError) as exc_info:
             await get_prompt("remote_prompt", {"name": "x"})
-        assert exc_info.value is upstream_error
+        assert exc_info.value.error.code == -32602
+        assert exc_info.value.error.message == "Invalid params from the strict upstream"
+        assert exc_info.value.error.data == {"argument": "name"}
 
     @pytest.mark.asyncio
-    async def test_get_prompt_adapter_renders_when_the_client_sends_no_arguments(self, monkeypatch):
-        """Over MCP an omitted arguments field still asks for a rendered prompt, so the service gets an empty dict, not None."""
+    @pytest.mark.parametrize("sent, forwarded", [pytest.param(None, {}, id="omitted"), pytest.param({"name": "x"}, {"name": "x"}, id="given")])
+    async def test_get_prompt_adapter_always_asks_for_a_rendered_prompt(self, monkeypatch, sent, forwarded):
+        """Over MCP an omitted arguments field becomes an empty dict (a render request); given arguments are forwarded unchanged."""
         handler = AsyncMock(return_value=types.GetPromptResult(messages=[]))
         monkeypatch.setattr(tr, "get_prompt", handler)
 
-        await tr._adapt_get_prompt(object(), SimpleNamespace(name="greeting", arguments=None))
+        await tr._adapt_get_prompt(object(), SimpleNamespace(name="greeting", arguments=sent))
 
-        handler.assert_awaited_once_with("greeting", {})
+        handler.assert_awaited_once_with("greeting", forwarded)
 
     @pytest.mark.asyncio
     async def test_unknown_resource_raises_invalid_params(self, monkeypatch):

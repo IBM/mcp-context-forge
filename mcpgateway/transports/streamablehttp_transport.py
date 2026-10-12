@@ -94,7 +94,7 @@ from mcpgateway.services.metrics import (
 )
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptValidationError
+from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, set_upstream_cache_directive, upstream_read_cache_var
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
@@ -2833,6 +2833,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             except PromptValidationError as e:
                 logger.info("Prompt %s refused the arguments: %s", prompt_id, e)
                 raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
+            except PromptUpstreamError as e:
+                logger.info("Upstream answered prompt %s with JSON-RPC error %s", prompt_id, e.code)
+                raise MCPError(code=e.code, message=str(e), data=e.data) from e
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
                 return types.GetPromptResult(messages=[])

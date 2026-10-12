@@ -398,7 +398,7 @@ def tool_error_upstream() -> Generator[str, None, None]:
 
 @pytest.fixture
 def prompt_error_upstream() -> Generator[str, None, None]:
-    """Start an in-process upstream whose prompt answers a JSON-RPC error (issue #6618).
+    """Start an in-process upstream whose prompts answer JSON-RPC errors (issue #6618).
 
     The gateway must reach this process: set MCP_PROMPT_ERROR_UPSTREAM_HOST=127.0.0.1
     for a gateway running on the host.
@@ -410,6 +410,11 @@ def prompt_error_upstream() -> Generator[str, None, None]:
     def strict() -> str:
         """Answer a JSON-RPC -32602 error."""
         raise McpError(code=-32602, message="Invalid params from the strict upstream")
+
+    @app.prompt()
+    def custom() -> str:
+        """Answer a JSON-RPC error with a server-defined code and data."""
+        raise McpError(code=-32001, message="Custom upstream failure", data={"hint": "retry later"})
 
     listener = socket.socket()
     listener.bind(("0.0.0.0", 0))
@@ -832,33 +837,59 @@ class TestToolErrorTranslation:
 
 
 class TestPromptErrorTranslation:
-    """Every prompts/get failure through the gateway is a JSON-RPC -32602 with a message that says why (issue #6618)."""
+    """Every prompts/get failure through the gateway is a JSON-RPC error: -32602 when the gateway refuses the request, the upstream's own code when the upstream answered one (issue #6618)."""
 
     @staticmethod
-    async def _expect_invalid_params(call: Callable[[], Any], message_part: str) -> None:
-        """Run ``call`` and require a -32602 whose message contains ``message_part``."""
+    @asynccontextmanager
+    async def _prompt_getter(era: str, url: str, token: str) -> AsyncIterator[Callable[..., Any]]:
+        """Open a legacy or modern client on ``url`` and yield its ``get_prompt(name, arguments=None)``."""
+        http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+        if era == "legacy":
+            async with streamable_http_client(url, http_client=http_client) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session.get_prompt
+        else:
+            async with Client(streamable_http_client(url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                yield modern_client.get_prompt
+
+    @staticmethod
+    async def _json_rpc_error(call: Callable[[], Any]) -> Any:
+        """Run ``call`` and return the JSON-RPC error it raised."""
         with pytest.raises(BaseException) as exc_info:  # noqa: B017 - the leaf is asserted below
             await call()
         leaves = [exc for exc in _unwrap_exception_group(exc_info.value) if isinstance(exc, McpError)]
         assert leaves, f"expected a JSON-RPC error, got {exc_info.value!r}"
-        assert leaves[0].error.code == -32602, leaves[0].error
-        assert message_part in leaves[0].error.message, leaves[0].error
+        return leaves[0].error
+
+    async def _expect_invalid_params(self, call: Callable[[], Any], message_part: str) -> None:
+        """Require a -32602 whose message contains ``message_part``."""
+        error = await self._json_rpc_error(call)
+        assert error.code == -32602, error
+        assert message_part in error.message, error
 
     async def _assert_prompt_errors(self, get_prompt: Callable[..., Any], prompts: dict[str, str]) -> None:
-        """Check the three failure shapes through ``get_prompt(name, arguments)``."""
+        """Check the failure shapes an authorized caller sees through ``get_prompt(name, arguments)``."""
         await self._expect_invalid_params(lambda: get_prompt(prompts["strict"], {}), "Invalid params from the strict upstream")
+        custom = await self._json_rpc_error(lambda: get_prompt(prompts["custom"], {}))
+        assert (custom.code, custom.message, custom.data) == (-32001, "Custom upstream failure", {"hint": "retry later"}), custom
+        await self._expect_invalid_params(lambda: get_prompt(prompts["local"]), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {}), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"other": "x"}), "Missing required arguments: name")
         await self._expect_invalid_params(lambda: get_prompt(f"{prompts['local']}-missing", {}), "Unknown prompt:")
 
     @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
-    async def test_prompt_failures_answer_invalid_params(self, jwt_token: str, prompt_error_upstream: str, era: str) -> None:
-        """Legacy and modern callers see -32602 for an upstream JSON-RPC error, a missing required argument and an unknown prompt."""
-        headers = {"Authorization": f"Bearer {jwt_token}"}
+    async def test_prompt_failures_answer_invalid_params(self, prompt_error_upstream: str, era: str) -> None:
+        """Legacy and modern callers see -32602 for an upstream JSON-RPC error, a missing required argument and an unknown or invisible prompt; a scope-capped token keeps its permission error."""
+        # An un-narrowed admin token: the module fixture's token is public-only and may not create a private prompt.
+        admin_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
+        headers = {"Authorization": f"Bearer {admin_token}"}
         name = f"prompterror{uuid.uuid4().hex[:8]}"
+        outsider_email = f"{name}@example.com"
         gateway_id = None
         prompt_id = None
         server_id = None
+        outsider_created = False
         async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
             try:
                 response = await http.post("/gateways", json={"name": name, "url": prompt_error_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
@@ -870,40 +901,55 @@ class TestPromptErrorTranslation:
                     response = await http.get("/prompts", params={"gateway_id": gateway_id, "limit": 0})
                     assert response.status_code == 200, response.text
                     rows = response.json()
-                    if len(rows) == 1:
+                    if len(rows) == 2:
                         break
                     await asyncio.sleep(0.5)
-                assert len(rows) == 1, f"Gateway did not discover the upstream prompt: {rows}; check MCP_PROMPT_ERROR_UPSTREAM_HOST"
+                assert len(rows) == 2, f"Gateway did not discover both upstream prompts: {rows}; check MCP_PROMPT_ERROR_UPSTREAM_HOST"
+                upstream_prompts = {row["name"].rsplit(name, 1)[-1].lstrip("-_."): row for row in rows}
+                assert set(upstream_prompts) == {"strict", "custom"}, upstream_prompts
+                # The gateway-stored prompt is private to the admin, so another user must not be able to tell it exists.
                 response = await http.post(
                     "/prompts",
-                    json={"prompt": {"name": f"{name}-local", "template": "Hello, {{ name }}!", "arguments": [{"name": "name", "description": "who to greet", "required": True}]}, "visibility": "public"},
+                    json={"prompt": {"name": f"{name}-local", "template": "Hello, {{ name }}!", "arguments": [{"name": "name", "description": "who to greet", "required": True}]}, "visibility": "private"},
                 )
                 assert response.status_code in (200, 201), response.text
                 prompt_id = response.json()["id"]
-                prompts = {"strict": rows[0]["name"], "local": response.json()["name"]}
-                response = await http.post("/servers", json={"server": {"name": name, "associated_prompts": [rows[0]["id"], prompt_id]}, "visibility": "public"})
+                prompts = {"strict": upstream_prompts["strict"]["name"], "custom": upstream_prompts["custom"]["name"], "local": response.json()["name"]}
+                response = await http.post("/servers", json={"server": {"name": name, "associated_prompts": [row["id"] for row in rows] + [prompt_id]}, "visibility": "public"})
                 assert response.status_code in (200, 201), response.text
                 server_id = response.json()["id"]
                 scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+                response = await http.post(
+                    "/auth/email/admin/users",
+                    json={"email": outsider_email, "password": TEST_PASSWORD, "full_name": "Prompt Outsider", "is_active": True, "is_admin": False, "password_change_required": False},
+                )
+                assert response.status_code in (200, 201), response.text
+                outsider_created = True
 
-                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
-                if era == "legacy":
-                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
-                        async with ClientSession(read, write) as session:
-                            await session.initialize()
-                            await self._assert_prompt_errors(session.get_prompt, prompts)
-                else:
-                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
-                        await self._assert_prompt_errors(modern_client.get_prompt, prompts)
-                print(f"    -> {era}: upstream error, missing argument and unknown prompt all answer -32602")
+                async with self._prompt_getter(era, scoped_url, admin_token) as get_prompt:
+                    await self._assert_prompt_errors(get_prompt, prompts)
+
+                # A user who cannot see the private prompt gets the same answer as for a prompt that does not exist.
+                outsider_token = make_test_jwt(outsider_email, teams=[], secret=JWT_SECRET)
+                async with self._prompt_getter(era, scoped_url, outsider_token) as get_prompt:
+                    await self._expect_invalid_params(lambda: get_prompt(prompts["local"], {"name": "x"}), f"Unknown prompt: {prompts['local']}")
+
+                # A token whose scope excludes prompts.read is refused by the permission check, not by the prompt lookup.
+                scoped_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, scopes={"permissions": ["tools.read"]}, secret=JWT_SECRET)
+                async with self._prompt_getter(era, scoped_url, scoped_token) as get_prompt:
+                    error = await self._json_rpc_error(lambda: get_prompt(prompts["local"], {"name": "x"}))
+                    assert error.code != -32602, error
+                    assert "Unknown prompt" not in error.message and "Missing required" not in error.message, error
+                print(f"    -> {era}: gateway refusals answer -32602, upstream errors keep their codes; scope-capped token answers {error.code}")
             finally:
+                if outsider_created:
+                    await http.delete(f"/auth/email/admin/users/{outsider_email}")
                 if server_id:
                     await http.delete(f"/servers/{server_id}")
                 if prompt_id:
                     await http.delete(f"/prompts/{prompt_id}")
                 if gateway_id:
                     await http.delete(f"/gateways/{gateway_id}")
-
 
 
 # ---------------------------------------------------------------------------
