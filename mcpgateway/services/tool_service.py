@@ -4592,7 +4592,6 @@ class ToolService(BaseService):
             )
         return None
 
-
     def _get_dispatchable_hook_refs(self, plugin_manager: Optional[Any], hook_type: str, payload: Any, global_context: Any) -> List[Any]:
         """Return hook refs cpex's own live dispatch (``_group_by_mode``) would consider eligible.
 
@@ -4721,6 +4720,14 @@ class ToolService(BaseService):
         """
 
         async def accessible_tools(candidates: List[DbTool]) -> List[DbTool]:
+            """Filter candidates to those the caller may access.
+
+            Args:
+                candidates: Tools sharing the requested name.
+
+            Returns:
+                The subset of candidates passing the Layer-1/Layer-2 access check.
+            """
             accessible: List[DbTool] = []
             for candidate in candidates:
                 tool_dict = {
