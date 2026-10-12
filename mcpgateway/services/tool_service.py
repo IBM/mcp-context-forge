@@ -6252,12 +6252,16 @@ class ToolService(BaseService):
                     _client_cert_value = gateway_client_cert
                     _client_key_value = gateway_client_key
 
-                    if gateway_url is None:
+                    if gateway_url is None and not is_proxied_transport(gateway_transport):
                         raise ToolInvocationError("Outbound URL blocked by URL policy")
-                    try:
-                        pinned_target = await resolve_pinned_target(gateway_url, "Tool URL")
-                    except ValueError as pin_exc:
-                        raise ToolInvocationError("Outbound URL blocked by URL policy") from pin_exc
+                    # PROXIED gateways never dial gateway.url (a reverse-proxy:// placeholder):
+                    # dispatch rides the process-local relay session, so SSRF pinning does not apply.
+                    pinned_target = None
+                    if not is_proxied_transport(gateway_transport):
+                        try:
+                            pinned_target = await resolve_pinned_target(gateway_url, "Tool URL")
+                        except ValueError as pin_exc:
+                            raise ToolInvocationError("Outbound URL blocked by URL policy") from pin_exc
 
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,

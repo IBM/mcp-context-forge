@@ -9995,7 +9995,7 @@ class TestCheckHealthOfGateways:
         result = await gateway_service.check_health_of_gateways([proxied, normal])
 
         assert result is True
-        gateway_service._check_single_gateway_health.assert_awaited_once_with(normal, None)
+        gateway_service._check_single_gateway_health.assert_awaited_once_with(normal, None, cycle_started_at=None)
 
     @pytest.mark.asyncio
     async def test_forged_proxied_gateway_fails_health_closed(self, gateway_service):
