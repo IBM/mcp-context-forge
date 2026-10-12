@@ -240,7 +240,19 @@ def test_request_trace_policy(traced_gateway: Any) -> None:
     client, server_id, tool_name, snapshot, events, system_enabled, artifacts = traced_gateway
     trace_id = secrets.token_hex(16)
     _invoke(client, server_id, tool_name, trace_id, "01")
-    _wait(lambda: any(span["trace_id"] == trace_id and span["kind"] == 3 for span in _spans(snapshot)), "request HTTPX export")
+
+    def request_exported() -> bool:
+        """Wait for invocation spans and their exported parent spans."""
+        spans = [span for span in _spans(snapshot) if span["trace_id"] == trace_id]
+        span_ids = {span["span_id"] for span in spans}
+        return (
+            any(span["name"] == "tool.invoke" for span in spans)
+            and any(span["kind"] == 3 and span["name"] == "POST" for span in spans)
+            and {1, 2, 3}.issubset({span["kind"] for span in spans})
+            and all(span["parent_span_id"] in span_ids or span["parent_span_id"] == "0123456789abcdef" for span in spans)
+        )
+
+    _wait(request_exported, "request invocation trace export")
     request_spans = [span for span in _spans(snapshot) if span["trace_id"] == trace_id]
     for kind in (1, 2, 3):
         matching = [span for span in request_spans if span["kind"] == kind]

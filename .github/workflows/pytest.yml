@@ -135,6 +135,21 @@ jobs:
             --cov-branch \
             --cov-fail-under=90
 
+      - name: 📊 Append observability unit-test coverage
+        run: |
+          uv run --extra plugins --extra observability pytest \
+            tests/unit/mcpgateway/test_observability.py \
+            tests/unit/mcpgateway/test_observability_trace_policy.py \
+            tests/unit/mcpgateway/test_observability_imports.py \
+            --cov=mcpgateway \
+            --cov-config=.github/pytest-branch-coverage.coveragerc \
+            --cov-append \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term \
+            --cov-branch \
+            --cov-fail-under=90
+
       # -----------------------------------------------------------
       # 3.5  Diff-cover: enforce 90% coverage on changed lines (PRs only)
       #
