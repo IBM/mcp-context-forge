@@ -6304,6 +6304,11 @@ class A2AInvocationResponse(BaseModel):
     with a ``kind`` field and uses lowercase task states (``input-required``) with
     ``user``/``agent`` roles, while 1.0 discriminates by field presence and uses
     ``TASK_STATE_*`` states with ``ROLE_USER``/``ROLE_AGENT`` roles.
+
+    Extra agent fields remain on the wire; generated clients may not expose them,
+    so the named schema is a lower bound rather than an exhaustive field list.
+    Related JSON-RPC envelopes are :class:`RPCResponse` and
+    :class:`mcpgateway.common.models.JSONRPCResponse`.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -6321,6 +6326,9 @@ class A2AInvokeResponse(A2AInvocationResponse):
     (auth, RBAC, rate limiting, metrics) without reshaping it. When the gateway has
     nothing to forward, ``error`` carries a plain message string rather than a JSON-RPC
     error object and the remaining keys are absent.
+
+    Its fields deliberately match :class:`A2AJsonRpcResponse`, while the two class
+    names provide distinct OpenAPI components for the corresponding routes.
     """
 
 
@@ -6332,6 +6340,9 @@ class A2AJsonRpcResponse(A2AInvocationResponse):
     wrapped as ``{"jsonrpc": "2.0", "result": ...}``. ``id`` is only present when the
     request had one. The gateway's own JSON-RPC error replies are returned as explicit
     responses with a non-2xx status, so they bypass this model.
+
+    Its fields deliberately match :class:`A2AInvokeResponse`; the separate class
+    name provides a distinct OpenAPI component for this route.
     """
 
 
