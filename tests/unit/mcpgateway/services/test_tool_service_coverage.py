@@ -36,7 +36,7 @@ from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
 from mcpgateway.transports.context import request_headers_var
 
 from mcpgateway.services.tool_service import (
-    UPSTREAM_ERROR_CODE,
+    TOOL_ERROR_CODE,
     _canonicalize_schema,
     _get_registry_cache,
     _get_tool_lookup_cache,
@@ -11326,7 +11326,7 @@ class TestUpstreamErrorRelay:
 
         assert result.is_error is True
         assert result.content[0].text == "MCP server error: Unknown tool: routed"
-        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
 
     @pytest.mark.asyncio
     async def test_other_upstream_failures_keep_todays_result_without_meta(self, tool_service):
@@ -11335,7 +11335,7 @@ class TestUpstreamErrorRelay:
 
         assert result.is_error is True
         assert result.content[0].text == "MCP server error: connection dropped"
-        assert not (result.meta or {}).get(UPSTREAM_ERROR_CODE)
+        assert not (result.meta or {}).get(TOOL_ERROR_CODE)
 
     @pytest.mark.asyncio
     async def test_post_invoke_plugin_rewrites_the_text_and_the_code_survives(self, tool_service):
@@ -11361,4 +11361,4 @@ class TestUpstreamErrorRelay:
 
         assert result.is_error is True
         assert result.content[0].text == "Unknown tool: [REDACTED]"
-        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}

@@ -730,7 +730,7 @@ class TestToolCalls:
 
 
 class TestToolErrorTranslation:
-    """Every tool failure through the gateway is an isError result; an upstream JSON-RPC code rides in _meta (issue #6576)."""
+    """Every tool failure through the gateway is an isError result; its JSON-RPC error code rides in _meta (issue #6576)."""
 
     @staticmethod
     async def _assert_tool_errors(call: Callable[[str], Any], tools: dict[str, str]) -> None:
@@ -738,20 +738,20 @@ class TestToolErrorTranslation:
         strict = await call(tools["strict"])
         assert strict.is_error is True, f"strict upstream error was not an isError result: {strict}"
         assert "Invalid params from the strict upstream" in strict.content[0].text, strict.content
-        assert (strict.meta or {}).get("io.contextforge/upstreamError") == {"code": -32602}, f"upstream code not preserved: {strict.meta}"
+        assert (strict.meta or {}).get("io.contextforge/errorCode") == {"code": -32602}, f"error code not reported: {strict.meta}"
 
         boom = await call(tools["boom"])
         assert boom.is_error is True, f"execution failure was not an isError result: {boom}"
         # The SDK upstream hides the exception text; its own message passes through the gateway unchanged.
         assert boom.content[0].text == "Error executing tool boom", boom.content
-        assert not (boom.meta or {}).get("io.contextforge/upstreamError"), f"execution failure must carry no upstream code: {boom.meta}"
+        assert not (boom.meta or {}).get("io.contextforge/errorCode"), f"execution failure must carry no error code: {boom.meta}"
 
         unknown = await call(f"{tools['strict']}-missing")
         assert unknown.is_error is True, f"unknown tool was not an isError result: {unknown}"
         assert unknown.content[0].text.startswith("Unknown tool:"), unknown.content
 
     @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
-    async def test_tool_failures_answer_is_error_with_the_upstream_code(self, jwt_token: str, tool_error_upstream: str, era: str) -> None:
+    async def test_tool_failures_answer_is_error_with_the_error_code(self, jwt_token: str, tool_error_upstream: str, era: str) -> None:
         """Legacy and modern callers see the same isError shape for an upstream JSON-RPC error, an execution failure and an unknown tool."""
         headers = {"Authorization": f"Bearer {jwt_token}"}
         name = f"toolerror{uuid.uuid4().hex[:8]}"
@@ -788,7 +788,7 @@ class TestToolErrorTranslation:
                 else:
                     async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
                         await self._assert_tool_errors(lambda tool: modern_client.call_tool(tool, {}), tools)
-                print(f"    -> {era}: strict/boom/unknown all isError; upstream code preserved")
+                print(f"    -> {era}: strict/boom/unknown all isError; JSON-RPC error code reported")
             finally:
                 if server_id:
                     await http.delete(f"/servers/{server_id}")

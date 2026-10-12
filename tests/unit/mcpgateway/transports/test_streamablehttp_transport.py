@@ -524,8 +524,8 @@ async def test_call_tool_session_affinity_forwarded_empty_dict_snake_case_fallba
 
 
 @pytest.mark.asyncio
-async def test_call_tool_session_affinity_forwarded_error_keeps_the_upstream_meta(monkeypatch):
-    """A worker-forwarded isError result keeps the upstream error code the owning worker put in _meta."""
+async def test_call_tool_session_affinity_forwarded_error_keeps_the_result_meta(monkeypatch):
+    """A worker-forwarded isError result keeps the error code the owning worker put in _meta."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
 
@@ -536,7 +536,7 @@ async def test_call_tool_session_affinity_forwarded_error_keeps_the_upstream_met
 
     mock_pool = MagicMock()
     mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"result": {"content": [{"type": "text", "text": "MCP server error: Invalid params"}], "isError": True, "_meta": {"io.contextforge/upstreamError": {"code": -32602}}}}
+        return_value={"result": {"content": [{"type": "text", "text": "MCP server error: Invalid params"}], "isError": True, "_meta": {"io.contextforge/errorCode": {"code": -32602}}}}
     )
     mock_pool.register_session_mapping = AsyncMock()
 
@@ -555,7 +555,7 @@ async def test_call_tool_session_affinity_forwarded_error_keeps_the_upstream_met
             result = await call_tool("my_tool", {})
         assert isinstance(result, types.CallToolResult)
         assert result.is_error is True
-        assert result.meta == {"io.contextforge/upstreamError": {"code": -32602}}
+        assert result.meta == {"io.contextforge/errorCode": {"code": -32602}}
     finally:
         request_headers_var.reset(h_token)
         user_context_var.reset(u_token)
@@ -19070,14 +19070,14 @@ class TestUnknownEntityErrors:
         assert result.content[0].text == "Unknown tool: missing_tool"
 
     @pytest.mark.asyncio
-    async def test_upstream_error_code_in_meta_reaches_the_client(self, monkeypatch):
+    async def test_error_code_in_meta_reaches_the_client(self, monkeypatch):
         """The upstream error code the service preserved in the result's _meta is carried through the egress."""
         # First-Party
         from mcpgateway.common.models import TextContent, ToolResult
-        from mcpgateway.services.tool_service import UPSTREAM_ERROR_CODE
+        from mcpgateway.services.tool_service import TOOL_ERROR_CODE
 
         self._fake_db(monkeypatch)
-        relayed = ToolResult(content=[TextContent(type="text", text="Unknown tool: routed")], is_error=True, meta={UPSTREAM_ERROR_CODE: {"code": -32602}})
+        relayed = ToolResult(content=[TextContent(type="text", text="Unknown tool: routed")], is_error=True, meta={TOOL_ERROR_CODE: {"code": -32602}})
         monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=relayed))
 
         result = await call_tool("routed", {})
@@ -19085,7 +19085,7 @@ class TestUnknownEntityErrors:
         assert isinstance(result, types.CallToolResult)
         assert result.is_error is True
         assert result.content[0].text == "Unknown tool: routed"
-        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
 
     @pytest.mark.asyncio
     async def test_invocation_failure_returns_iserror_result(self, monkeypatch):

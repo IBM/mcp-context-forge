@@ -61,7 +61,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
     ToolTimeoutError,
     ToolValidationError,
-    UPSTREAM_ERROR_CODE,
+    TOOL_ERROR_CODE,
 )
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
@@ -9824,14 +9824,14 @@ class TestInvokeToolDirect:
             pytest.param(
                 ExceptionGroup("task group", [MCPError(code=-32602, message="Invalid params from the strict upstream")]),
                 "MCP server error: Invalid params from the strict upstream",
-                {UPSTREAM_ERROR_CODE: {"code": -32602}},
+                {TOOL_ERROR_CODE: {"code": -32602}},
                 id="upstream_json_rpc_error",
             ),
             pytest.param(RuntimeError("upstream exploded"), "MCP server error: upstream exploded", None, id="plain_failure"),
         ],
     )
-    async def test_invoke_tool_direct_failure_keeps_the_is_error_shape_and_upstream_code(self, tool_service, mock_direct_gateway, failure, expected_text, expected_meta):
-        """A failed direct-proxy call answers isError like the catalog path, with the upstream's JSON-RPC code preserved in _meta."""
+    async def test_invoke_tool_direct_failure_keeps_the_is_error_shape_and_error_code(self, tool_service, mock_direct_gateway, failure, expected_text, expected_meta):
+        """A failed direct-proxy call answers isError like the catalog path, with the JSON-RPC error code reported in _meta."""
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(side_effect=failure)
         session_mock.session.call_tool = session_mock.call_tool
@@ -10441,12 +10441,12 @@ class TestInvokeToolDirectProxyViaHeader:
         assert result.content[0].text == "direct proxy result"
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_direct_proxy_via_header_keeps_the_upstream_meta(self, tool_service, mock_direct_gateway, test_db):
-        """An isError result from the direct-proxy upstream keeps its _meta through the canonical coercion, so a relayed upstream code survives."""
+    async def test_invoke_tool_direct_proxy_via_header_keeps_the_result_meta(self, tool_service, mock_direct_gateway, test_db):
+        """An isError result from the direct-proxy upstream keeps its _meta through the canonical coercion, so a reported error code survives."""
         # Third-Party
         from mcp_types import CallToolResult as SdkCallToolResult
 
-        upstream_result = SdkCallToolResult(content=[{"type": "text", "text": "MCP server error: Invalid params"}], isError=True, _meta={UPSTREAM_ERROR_CODE: {"code": -32602}})
+        upstream_result = SdkCallToolResult(content=[{"type": "text", "text": "MCP server error: Invalid params"}], isError=True, _meta={TOOL_ERROR_CODE: {"code": -32602}})
         self._setup_db_for_header_lookup(test_db, mock_direct_gateway)
 
         session_mock = AsyncMock()
@@ -10479,17 +10479,17 @@ class TestInvokeToolDirectProxyViaHeader:
             result = await tool_service.invoke_tool(test_db, "my_remote_tool", {"arg": "value"}, request_headers={"x-context-forge-gateway-id": "gw-dp-1"}, user_email="user@example.com", token_teams=["team-1"])
 
         assert result.is_error is True
-        assert result.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
 
     def test_coerce_to_tool_result_keeps_meta(self, tool_service):
         """The canonical coercion carries an SDK result's _meta onto the gateway's ToolResult."""
         # Third-Party
         from mcp_types import CallToolResult as SdkCallToolResult
 
-        coerced = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}], isError=True, _meta={UPSTREAM_ERROR_CODE: {"code": -32602}}))
+        coerced = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}], isError=True, _meta={TOOL_ERROR_CODE: {"code": -32602}}))
 
         assert coerced.is_error is True
-        assert coerced.meta == {UPSTREAM_ERROR_CODE: {"code": -32602}}
+        assert coerced.meta == {TOOL_ERROR_CODE: {"code": -32602}}
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rejects_direct_proxy_header_with_server_scope(self, tool_service, test_db):

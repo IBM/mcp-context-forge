@@ -979,10 +979,11 @@ def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_o
     return {**target_obj, **{mapping_obj[k]: v for k, v in data_obj.items() if k in mapping_obj}}
 
 
-# Result ``_meta`` key under which the gateway preserves the JSON-RPC error code an
-# upstream MCP server answered a tool call with. The failure itself is still reported
-# as an ``isError`` result (one shape for every tool failure, in both protocol eras).
-UPSTREAM_ERROR_CODE = "io.contextforge/upstreamError"
+# Result ``_meta`` key under which the gateway reports the JSON-RPC error code of the
+# failure its upstream call raised: the code the upstream answered with, or the one the
+# SDK client made up for a transport fault (the result text says which). The failure
+# itself is still an ``isError`` result (one shape for every tool failure, in both eras).
+TOOL_ERROR_CODE = "io.contextforge/errorCode"
 
 
 class ToolError(Exception):
@@ -4033,7 +4034,7 @@ class ToolService(BaseService):
     def _make_mcp_tool_error(
         sanitized_message: str,
         structured_content: Optional[Dict[str, Any]] = None,
-        upstream_error_code: Optional[int] = None,
+        error_code: Optional[int] = None,
     ) -> "types.CallToolResult":
         """Build a CallToolResult with isError=True.
 
@@ -4041,9 +4042,9 @@ class ToolService(BaseService):
             sanitized_message: Pre-sanitized error text to include in the result.
             structured_content: Optional dict attached to the result (e.g. ``{"status_code": 429}``
                 for retry-plugin status matching).
-            upstream_error_code: JSON-RPC error code the upstream answered with, if the failure
-                was a JSON-RPC error. Preserved under ``UPSTREAM_ERROR_CODE`` in the result's
-                ``_meta`` so a client can tell an invalid request from a failed execution.
+            error_code: JSON-RPC error code of the failure the upstream call raised, if it was a
+                JSON-RPC error. Reported under ``TOOL_ERROR_CODE`` in the result's ``_meta``; the
+                text next to it says whether the upstream sent it or the SDK client made it up.
 
         Returns:
             A ``CallToolResult`` that conforms to the MCP protocol error shape.
@@ -4053,7 +4054,7 @@ class ToolService(BaseService):
             content=[types.TextContent(type="text", text=f"MCP server error: {sanitized_message}")],
             isError=True,
             structuredContent=structured_content,
-            _meta={UPSTREAM_ERROR_CODE: {"code": upstream_error_code}} if upstream_error_code is not None else None,
+            _meta={TOOL_ERROR_CODE: {"code": error_code}} if error_code is not None else None,
         )
 
     async def invoke_tool_direct(
@@ -4262,8 +4263,8 @@ class ToolService(BaseService):
             # Sanitize before returning — exception text may contain auth tokens embedded in
             # gateway URLs (CWE-209).  Matches the SSE/StreamableHTTP error paths.
             sanitized = sanitize_exception_message(str(root_cause), _gw_auth_query_params)
-            upstream_code = root_cause.code if isinstance(root_cause, MCPError) else None
-            return self._make_mcp_tool_error(sanitized, upstream_error_code=upstream_code)
+            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+            return self._make_mcp_tool_error(sanitized, error_code=error_code)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code
@@ -6483,9 +6484,9 @@ class ToolService(BaseService):
                             exc_structured: Optional[Dict[str, Any]] = None
                             if isinstance(root_cause, httpx.HTTPStatusError):
                                 exc_structured = {"status_code": root_cause.response.status_code}
-                            # A JSON-RPC error from the upstream keeps the same isError shape; its code is preserved in _meta.
-                            upstream_code = root_cause.code if isinstance(root_cause, MCPError) else None
-                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, upstream_error_code=upstream_code)
+                            # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
+                            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -6720,9 +6721,9 @@ class ToolService(BaseService):
                             exc_structured: Optional[Dict[str, Any]] = None
                             if isinstance(root_cause, httpx.HTTPStatusError):
                                 exc_structured = {"status_code": root_cause.response.status_code}
-                            # A JSON-RPC error from the upstream keeps the same isError shape; its code is preserved in _meta.
-                            upstream_code = root_cause.code if isinstance(root_cause, MCPError) else None
-                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, upstream_error_code=upstream_code)
+                            # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
+                            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
 
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
