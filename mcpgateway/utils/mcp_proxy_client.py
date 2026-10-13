@@ -124,8 +124,8 @@ async def mcp_proxy_client(
             async with Client(transport_acm, mode=resolved_mode) as client:
                 yield client
         except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
-            # upstream error status surfaced as httpx2.HTTPStatusError
-            status_error = error_hook.to_http_status_error(exc)
-            if status_error is None:
+            # an error the SDK made up stands for a transport failure: surface that instead
+            transport_error = error_hook.to_transport_error(exc)
+            if transport_error is None:
                 raise
-            raise status_error from exc
+            raise transport_error from exc

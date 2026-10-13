@@ -23,6 +23,7 @@ from cpex.framework import PluginManager
 from cpex.framework.hooks.tools import ToolHookType
 from cpex.framework.models import PluginResult
 import jsonschema
+from mcp.shared.exceptions import MCPError
 import orjson
 import pytest
 from sqlalchemy import create_engine
@@ -60,6 +61,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
     ToolTimeoutError,
     ToolValidationError,
+    TOOL_ERROR_CODE,
 )
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
@@ -9816,6 +9818,45 @@ class TestInvokeToolDirect:
         session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure, expected_text, expected_meta",
+        [
+            pytest.param(
+                ExceptionGroup("task group", [MCPError(code=-32602, message="Invalid params from the strict upstream")]),
+                "MCP server error: Invalid params from the strict upstream",
+                {TOOL_ERROR_CODE: {"code": -32602}},
+                id="upstream_json_rpc_error",
+            ),
+            pytest.param(RuntimeError("upstream exploded"), "MCP server error: upstream exploded", None, id="plain_failure"),
+        ],
+    )
+    async def test_invoke_tool_direct_failure_keeps_the_is_error_shape_and_error_code(self, tool_service, mock_direct_gateway, failure, expected_text, expected_meta):
+        """A failed direct-proxy call answers isError like the catalog path, with the JSON-RPC error code reported in _meta."""
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(side_effect=failure)
+        session_mock.session.call_tool = session_mock.call_tool
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(gateway_id="gw-direct-1", name="remote_tool", arguments={}, user_email="user@example.com", token_teams=["team-1"])
+
+        assert result.is_error is True
+        assert result.content[0].text == expected_text
+        assert result.meta == expected_meta
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):
         """Meta data should be forwarded to session.call_tool when provided."""
         expected_result = MagicMock()
@@ -10398,6 +10439,57 @@ class TestInvokeToolDirectProxyViaHeader:
 
         # The result should come from the direct proxy path (returned as-is)
         assert result.content[0].text == "direct proxy result"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_proxy_via_header_keeps_the_result_meta(self, tool_service, mock_direct_gateway, test_db):
+        """An isError result from the direct-proxy upstream keeps its _meta through the canonical coercion, so a reported error code survives."""
+        # Third-Party
+        from mcp_types import CallToolResult as SdkCallToolResult
+
+        upstream_result = SdkCallToolResult(content=[{"type": "text", "text": "MCP server error: Invalid params"}], isError=True, _meta={TOOL_ERROR_CODE: {"code": -32602}})
+        self._setup_db_for_header_lookup(test_db, mock_direct_gateway)
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=upstream_result)
+        session_mock.session.call_tool = session_mock.call_tool
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield session_mock
+
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.get_performance_tracker", return_value=MagicMock()),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.tool_timeout = 60
+            mock_settings.mcp_session_pool_enabled = False
+            mock_settings.default_passthrough_headers = []
+
+            result = await tool_service.invoke_tool(test_db, "my_remote_tool", {"arg": "value"}, request_headers={"x-context-forge-gateway-id": "gw-dp-1"}, user_email="user@example.com", token_teams=["team-1"])
+
+        assert result.is_error is True
+        assert result.meta == {TOOL_ERROR_CODE: {"code": -32602}}
+
+    def test_coerce_to_tool_result_keeps_meta(self, tool_service):
+        """The canonical coercion carries an SDK result's _meta onto the gateway's ToolResult."""
+        # Third-Party
+        from mcp_types import CallToolResult as SdkCallToolResult
+
+        coerced = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}], isError=True, _meta={TOOL_ERROR_CODE: {"code": -32602}}))
+
+        assert coerced.is_error is True
+        assert coerced.meta == {TOOL_ERROR_CODE: {"code": -32602}}
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rejects_direct_proxy_header_with_server_scope(self, tool_service, test_db):
