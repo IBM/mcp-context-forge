@@ -3137,6 +3137,30 @@
                     Leave blank to use standard discovery from authorization server
                   </p>
                 </div>
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                    for="server-oauth-resource"
+                    id="server-oauth-resource-label"
+                    >Resource (Audience)</label
+                  >
+                  <input
+                    type="text"
+                    name="oauth_resource"
+                    id="server-oauth-resource"
+                    aria-describedby="server-oauth-resource-label"
+                    placeholder="your-client-id or https://api.example.com"
+                    class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    x-tooltip="'💡Token audience (aud) this server accepts. Optional: when blank, the gateway learns it from the first verified token.'"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Token audience (aud) this server accepts. Leave blank to
+                    auto-learn it from the first verified token. Set it when your
+                    identity provider does not support RFC 8707 resource indicators
+                    and issues tokens for a different audience, such as its client
+                    ID. Multiple URIs can be separated with commas.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -11610,6 +11634,30 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       />
                       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Leave blank to use standard discovery from authorization server
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        for="edit-server-oauth-resource"
+                        id="edit-server-oauth-resource-label"
+                        >Resource (Audience)</label
+                      >
+                      <input
+                        type="text"
+                        name="oauth_resource"
+                        id="edit-server-oauth-resource"
+                        aria-describedby="edit-server-oauth-resource-label"
+                        placeholder="your-client-id or https://api.example.com"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        x-tooltip="'💡Token audience (aud) this server accepts. Optional: when blank, the gateway learns it from the first verified token.'"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Token audience (aud) this server accepts. Leave blank to
+                        auto-learn it from the first verified token. Set it when your
+                        identity provider does not support RFC 8707 resource indicators
+                        and issues tokens for a different audience, such as its client
+                        ID. Multiple URIs can be separated with commas.
                       </p>
                     </div>
                   </div>
