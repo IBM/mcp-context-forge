@@ -63,6 +63,7 @@ from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_403_FORBID
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
@@ -481,7 +482,7 @@ class ContextForgeMCPServer(Server[Any]):
         return capabilities
 
 
-mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
+mcp_app: Server[Any] = ContextForgeMCPServer(settings.app_name, version=__version__)
 
 # ============================================================================
 # MCP v1 → v2 migration notes
