@@ -39,27 +39,6 @@ from mcp_types import JSONRPCError, jsonrpc_message_adapter
 from pydantic import ValidationError
 
 
-async def _carries_jsonrpc_error(response: httpx2.Response) -> bool:
-    """Return True if the SDK will read ``response`` as a JSON-RPC error.
-
-    Mirrors the SDK's own rule for a non-2xx response: the content type must be
-    ``application/json`` and the body must be a valid JSON-RPC error envelope.
-    Anything else makes the SDK raise its generic stand-in instead.
-
-    Args:
-        response: The POST response as the httpx2 event hook sees it.
-
-    Returns:
-        bool: Whether the SDK surfaces the body's error as it is.
-    """
-    if not response.headers.get("content-type", "").lower().startswith("application/json"):
-        return False
-    try:
-        return isinstance(jsonrpc_message_adapter.validate_json(await response.aread(), by_name=False), JSONRPCError)
-    except (httpx2.StreamError, ValidationError):
-        return False
-
-
 class ErrorResponseHook:
     """
     Keeps the last POST response seen on an httpx2 client, because the
