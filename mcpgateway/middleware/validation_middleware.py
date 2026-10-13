@@ -18,8 +18,7 @@ unbuffered. A ``dispatch`` shim is retained for tests.
 Output sanitization was removed with the ASGI conversion: under
 BaseHTTPMiddleware ``call_next`` always returned ``_StreamingResponse`` (which
 carries no ``body`` attribute), so ``_sanitize_response`` could never run in
-production. ``settings.sanitize_output`` is retained for environment
-compatibility but has no effect.
+production.
 
 
 Examples:
