@@ -1052,6 +1052,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
         oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
+
+        # The outbound RFC 8693 request is built from "scopes" (a list; see
+        # ToolService._resolve_token_exchange_header and
+        # GatewayService._resolve_token_exchange_header), but "scope" (a
+        # space-delimited string) is the documented field name used by the
+        # duplicate-gateway-detection comparison above and by every example
+        # of this config. Without this normalization, a config that only
+        # sets "scope" silently sends no scope at all on every real
+        # exchange request (#7220) — derive whichever key is missing from
+        # the one that was actually supplied, without overriding an
+        # explicit value for either.
+        scope = oauth_config.get("scope")
+        scopes = oauth_config.get("scopes")
+        if isinstance(scope, str) and scope.strip() and not scopes:
+            oauth_config["scopes"] = scope.split()
+        elif isinstance(scopes, list) and scopes and not scope:
+            oauth_config["scope"] = " ".join(scopes)
+
         return oauth_config
 
     @staticmethod

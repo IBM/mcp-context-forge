@@ -11115,6 +11115,66 @@ class TestTokenExchangeWiring:
                 }
             )
 
+    def test_scope_derives_scopes_when_only_scope_given(self):
+        """#7220: a config supplying only "scope" must get "scopes" derived from it.
+
+        ToolService._resolve_token_exchange_header and
+        GatewayService._resolve_token_exchange_header both build the real
+        outbound RFC 8693 request from oauth_config["scopes"] (a list), not
+        oauth_config["scope"] (the documented, space-delimited string field).
+        Without this derivation, a config that only sets "scope" sends no
+        scope at all on every real exchange.
+        """
+        config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "https://d",
+            "scope": "exchange-keycloak-mcp offline_access",
+        }
+        result = GatewayService._validate_token_exchange_config(config)
+        assert result["scopes"] == ["exchange-keycloak-mcp", "offline_access"]
+        assert result["scope"] == "exchange-keycloak-mcp offline_access"  # untouched
+
+    def test_scopes_derives_scope_when_only_scopes_given(self):
+        """#7220: the reverse direction, "scopes" given, "scope" derived for symmetry."""
+        config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "https://d",
+            "scopes": ["exchange-keycloak-mcp", "offline_access"],
+        }
+        result = GatewayService._validate_token_exchange_config(config)
+        assert result["scope"] == "exchange-keycloak-mcp offline_access"
+        assert result["scopes"] == ["exchange-keycloak-mcp", "offline_access"]  # untouched
+
+    def test_scope_and_scopes_both_given_are_left_as_is(self):
+        """#7220: an explicit, deliberately different pair of values is never overridden."""
+        config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "https://d",
+            "scope": "a b",
+            "scopes": ["a", "b", "c"],  # deliberately not the same split as "scope"
+        }
+        result = GatewayService._validate_token_exchange_config(config)
+        assert result["scope"] == "a b"
+        assert result["scopes"] == ["a", "b", "c"]
+
+    def test_neither_scope_nor_scopes_given_stays_absent(self):
+        """#7220: no scope configured at all must not synthesize either key."""
+        config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "https://d",
+        }
+        result = GatewayService._validate_token_exchange_config(config)
+        assert "scope" not in result
+        assert "scopes" not in result
+
     def test_dedup_distinguishes_by_target_audience(self):
         """Two configs identical except target_audience must NOT be treated as duplicates."""
         keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope", "target_audience", "subject_token_source"]
