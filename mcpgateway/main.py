@@ -219,7 +219,7 @@ from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
+from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
@@ -7076,7 +7076,7 @@ async def get_prompt(
         result = await prompt_service.get_prompt(
             db,
             prompt_id,
-            args,
+            args or None,  # an empty body asks for the template, as the GET route does
             user=auth_user_email,
             server_id=server_id,
             token_teams=auth_token_teams,
@@ -7141,7 +7141,7 @@ async def get_prompt_no_args(
         return await prompt_service.get_prompt(
             db,
             prompt_id,
-            {},
+            None,
             user=auth_user_email,
             server_id=server_id,
             token_teams=auth_token_teams,
@@ -11541,8 +11541,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 # Prompt not found in the gateway
                 logger.error("Prompt not found: %s", name)
                 raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name}) from e
+            except PromptValidationError as e:
+                # The caller's arguments are wrong, e.g. a required one is missing
+                raise JSONRPCError(-32602, str(e), {"name": name}) from e
+            except PromptUpstreamError as e:
+                # The upstream answered a JSON-RPC error: relay it with its own code and data
+                raise JSONRPCError(e.code, str(e), e.data) from e
             except PromptError as e:
-                # Generic prompt error (e.g., validation failure)
+                # Generic prompt error
                 logger.error("RPC error: %s", str(e))
                 raise JSONRPCError(-32000, f"Prompt retrieval failed: {e}", {"name": name}) from e
             # Release transaction after prompts/get completes
