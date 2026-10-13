@@ -4390,6 +4390,7 @@ class TestToolService:
                 "name": "cached-gw",
                 "url": "http://example.com/gateway",
                 "auth_type": "basic",
+                "requires_user_credentials": False,
                 "passthrough_headers": [],
             },
         }
@@ -4453,6 +4454,7 @@ class TestToolService:
                 "name": "cached-gw-ah",
                 "url": "http://example.com/gateway",
                 "auth_type": "authheaders",
+                "requires_user_credentials": False,
                 "passthrough_headers": [],
             },
         }

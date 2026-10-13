@@ -2051,6 +2051,7 @@ class TestToolServiceIdentityPropagationCoverage:
                     "name": "Gateway",
                     "url": "https://gateway.example.com/mcp",
                     "auth_type": None,
+                    "requires_user_credentials": False,
                     "auth_value": None,
                     "auth_query_params": None,
                     "oauth_config": None,
