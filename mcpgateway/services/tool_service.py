@@ -6094,7 +6094,9 @@ class ToolService(BaseService):
                                     SecurityValidator.sanitize_log_message(gateway_name),
                                     SecurityValidator.sanitize_log_message(str(vault_err)),
                                 )
-                                raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+                                raise ToolInvocationError(
+                                    f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation."
+                                ) from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
                         # Strip invisible Unicode format characters left over in a credential
                         # stored before this validation existed, so tool invocation self-heals
