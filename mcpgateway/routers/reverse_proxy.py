@@ -254,6 +254,8 @@ def _session_payload(session: ReverseProxySession) -> dict[str, JsonValue]:
         "message_count": session.message_count,
         "bytes_transferred": session.bytes_transferred,
         "user": session.owner_email,
+        "protocol_era": session.protocol_era.value,
+        "protocol_version": session.protocol_version,
     }
 
 
@@ -267,6 +269,8 @@ def _relay_session_payload(session: RelaySessionEntry) -> dict[str, JsonValue]:
         "message_count": session.message_count,
         "bytes_transferred": session.bytes_transferred,
         "user": session.owner_email,
+        "protocol_era": session.protocol_era,
+        "protocol_version": session.protocol_version,
     }
 
 

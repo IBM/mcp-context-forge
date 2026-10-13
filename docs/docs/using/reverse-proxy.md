@@ -239,6 +239,8 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
      https://gateway.example.com/reverse-proxy/sessions/{session_id}
 ```
 
+Each session entry reports `protocol_era` and `protocol_version`. `handshake` means the downstream speaks the session-based MCP lifecycle (`initialize` → `notifications/initialized`). `modern` means the downstream answered `server/discover` and speaks the sessionless MCP 2026-07-28 profile. The gateway negotiates the era at registration and falls back to the handshake era automatically.
+
 ### 3. Virtual Server Registration
 
 Reverse-proxied servers appear in the gateway's server catalog automatically. Access them like any other MCP server.

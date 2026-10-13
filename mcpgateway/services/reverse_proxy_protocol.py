@@ -9,7 +9,7 @@ PROXIED transport-kind and provenance predicates shared by the catalog services.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Final, Literal, Mapping, TypeAlias
+from typing import Annotated, Any, Final, Literal, Mapping, TypeAlias, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, JsonValue, StrictInt, StrictStr, StringConstraints, TypeAdapter
 from pydantic_core import PydanticCustomError
@@ -30,6 +30,23 @@ JsonRpcMethod: TypeAlias = Annotated[StrictStr, StringConstraints(min_length=1)]
 PROXIED_TRANSPORT: Final = "PROXIED"
 REVERSE_PROXY_CREATED_VIA: Final = "reverse_proxy"
 
+# MCP 2026-07-28 (sessionless) era markers. A downstream that answers
+# ``server/discover`` speaks the modern era; every modern request carries the
+# negotiated version in ``params._meta`` so the client adapter can mint the
+# spec-required HTTP headers.
+MODERN_PROTOCOL_VERSION: Final = "2026-07-28"
+MODERN_PROTOCOL_META_KEY: Final = "io.modelcontextprotocol/protocolVersion"
+MODERN_CLIENT_INFO_META_KEY: Final = "io.modelcontextprotocol/clientInfo"
+MODERN_CLIENT_CAPABILITIES_META_KEY: Final = "io.modelcontextprotocol/clientCapabilities"
+DISCOVER_METHOD: Final = "server/discover"
+
+
+class ProtocolEra(StrEnum):
+    """MCP protocol era negotiated with one downstream connection."""
+
+    HANDSHAKE = "handshake"
+    MODERN = "modern"
+
 
 def is_proxied_transport(transport: Any) -> bool:
     """Return whether a transport value names the internal PROXIED kind.
@@ -48,6 +65,42 @@ def is_internal_proxied_gateway(gateway: Any) -> bool:
     transport string on an update payload) must never confer PROXIED authority.
     """
     return is_proxied_transport(getattr(gateway, "transport", None)) and getattr(gateway, "created_via", None) == REVERSE_PROXY_CREATED_VIA
+
+
+_PayloadT = TypeVar("_PayloadT", bound="_JsonRpcCall")
+
+
+def with_modern_protocol_meta(payload: "_PayloadT", version: str | None) -> "_PayloadT":
+    """Return the payload with the modern-era protocol version in ``params._meta``.
+
+    Modern-era (2026-07-28) servers expect the negotiated version on every
+    request; the client adapter mirrors it into the ``MCP-Protocol-Version``
+    header. Handshake-era payloads pass through untouched at the call site.
+    Array params and non-object ``_meta`` members cannot carry the key and
+    pass through unchanged (no gateway call site produces either).
+
+    Args:
+        payload: Outbound JSON-RPC request or notification.
+        version: Negotiated modern-era version; ``None`` returns the payload unchanged.
+
+    Returns:
+        The original payload, or an updated copy with the version meta merged.
+    """
+    if not version:
+        return payload
+    params = payload.params
+    if params is not None and not isinstance(params, dict):
+        return payload
+    merged: dict[str, JsonValue] = dict(params or {})
+    existing_meta = merged.get("_meta")
+    if existing_meta is not None and not isinstance(existing_meta, dict):
+        return payload
+    meta: dict[str, JsonValue] = dict(existing_meta) if isinstance(existing_meta, dict) else {}
+    if meta.get(MODERN_PROTOCOL_META_KEY) == version:
+        return payload
+    meta[MODERN_PROTOCOL_META_KEY] = version
+    merged["_meta"] = meta
+    return payload.model_copy(update={"params": merged})
 
 
 class _WireModel(BaseModel):
