@@ -2633,10 +2633,8 @@ class TestOAuthAccessHelpers:
         assert ownership_check.call_args.args[1] == []
 
     @pytest.mark.asyncio
-    async def test_enforce_gateway_access_team_visibility_cache_hit_member_allowed(self, mock_db):
-        """Team-visible gateway allows access when the requester is a team member
-        and the cached JWT payload provides a valid team-scoped ``token_teams``.
-        """
+    async def test_enforce_gateway_access_team_visibility_scoped_token_member_allowed(self, mock_db):
+        """Allow a team-scoped token when the membership lookup confirms access."""
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
         request = Mock(spec=Request)
@@ -2647,23 +2645,15 @@ class TestOAuthAccessHelpers:
 
         gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return True
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         with patch(
             "mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership",
             return_value=ResourceOwnershipResult.ALLOWED,
-        ):
+        ) as ownership_check:
             with patch(
-                "mcpgateway.services.email_auth_service.EmailAuthService",
-                return_value=_AuthService(),
-            ):
-                # Should not raise — member has access.
+                "mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team",
+                new_callable=AsyncMock,
+                return_value="member",
+            ) as mock_role:
                 await _enforce_gateway_access(
                     "gateway123",
                     gateway,
@@ -2671,6 +2661,9 @@ class TestOAuthAccessHelpers:
                     mock_db,
                     request=request,
                 )
+
+        ownership_check.assert_called_once_with("/gateways/gateway123", ["team-1"], db=mock_db, _user_email="user@example.com", preloaded_gateway=gateway)
+        mock_role.assert_awaited_once_with("user@example.com", "team-1")
 
 
 class TestRecoverTokenTeamsFromJwt:

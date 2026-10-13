@@ -39,7 +39,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
+from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, OAUTH_SENSITIVE_KEYS, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
@@ -144,19 +144,30 @@ def _validate_oauth_token_endpoint_auth(v: Dict[str, Any]) -> None:
         ValueError: If the method, algorithm, key ID, or signing key is invalid.
     """
     raw_method = v.get("token_endpoint_auth_method")
-    if raw_method is not None and raw_method not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
-        raise ValueError(f"oauth_config.token_endpoint_auth_method '{raw_method}' is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
+    # Normalize before the membership test, not after. Empty and whitespace-only
+    # values are legacy spellings of the POST default (RFC 6749 Section 2.3.1);
+    # comparing the raw string rejected them with a 422 while the runtime
+    # happily defaulted them, so a previously working config broke the moment a
+    # client resubmitted it. normalize_token_endpoint_auth_method() is the one
+    # policy point the schema, the dispatch, and the retry refresh all read.
+    method = normalize_token_endpoint_auth_method(raw_method)
+    if method is None:
+        raise ValueError("oauth_config.token_endpoint_auth_method must be a string")
+    if method not in SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+        raise ValueError(f"oauth_config.token_endpoint_auth_method is not supported. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))}")
 
     raw_alg = v.get("token_endpoint_auth_signing_alg")
-    if raw_alg is not None and raw_alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
-        raise ValueError(f"oauth_config.token_endpoint_auth_signing_alg '{raw_alg}' is not allowed. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS))}")
+    if raw_alg is not None:
+        if not isinstance(raw_alg, str):
+            raise ValueError("oauth_config.token_endpoint_auth_signing_alg must be a string")
+        if raw_alg not in SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS:
+            raise ValueError(f"oauth_config.token_endpoint_auth_signing_alg is not allowed. Supported values: {', '.join(sorted(SUPPORTED_TOKEN_ENDPOINT_SIGNING_ALGS))}")
 
     raw_kid = v.get("private_key_jwt_kid")
     if raw_kid is not None and raw_kid != "":
         if not isinstance(raw_kid, str) or not raw_kid.strip():
             raise ValueError("oauth_config.private_key_jwt_kid must be a non-empty string when provided")
 
-    method = raw_method or "client_secret_post"
     if method == "private_key_jwt":
         private_key = v.get("private_key")
         if not isinstance(private_key, str) or not private_key.strip():
@@ -2132,6 +2143,7 @@ class ToolResult(BaseModelWithConfigDict):
     structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta", description="MCP result metadata, e.g. the JSON-RPC error code of a failed call under io.contextforge/errorCode")
 
 
 class ToolPreviewRequest(BaseModelWithConfigDict):
@@ -5122,8 +5134,18 @@ class GatewayHandshakeRequest(BaseModelWithConfigDict):
     base_url: AnyHttpUrl = Field(..., description="Base URL of the MCP server to test")
     path: Optional[str] = Field(None, description="Optional path appended to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
-    gateway_id: Optional[str] = Field(None, description="Exact registered gateway to use for transport and connection settings")
-    credential_mode: Literal["stored_with_override", "candidate_only"] = Field("stored_with_override", description="Whether the handshake may use stored gateway credentials")
+    gateway_id: Optional[str] = Field(
+        None,
+        description=("Exact registered gateway to use for transport, TLS, and stored-credential settings; combined with credential_mode to control whether stored credentials are applied"),
+    )
+    credential_mode: Literal["stored_with_override", "candidate_only"] = Field(
+        "stored_with_override",
+        description=(
+            "Credential handling mode. "
+            "'stored_with_override' applies stored gateway credentials; form headers take precedence. "
+            "'candidate_only' suppresses all stored credentials so only the supplied headers are tested."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_candidate_only_gateway(self) -> "GatewayHandshakeRequest":

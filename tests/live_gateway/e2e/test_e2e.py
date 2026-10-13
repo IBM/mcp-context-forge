@@ -356,6 +356,46 @@ async def test_resource_namespacing_federation_and_scoped_reads(jwt_token, resou
                 await http.delete(f"/gateways/{gateway_id}")
 
 
+@pytest.fixture
+def tool_error_upstream() -> Generator[str, None, None]:
+    """Start an in-process upstream whose tools fail the two ways a gateway must relay (issue #6576).
+
+    ``strict`` answers a formal JSON-RPC error, as a spec-strict server does for bad input;
+    ``boom`` fails during execution. The gateway must reach this process: set
+    MCP_TOOL_ERROR_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_TOOL_ERROR_UPSTREAM_HOST", "host.docker.internal")
+    app = MCPServer("tool-error")
+
+    @app.tool()
+    def strict() -> str:
+        """Answer a JSON-RPC -32602 error."""
+        raise McpError(code=-32602, message="Invalid params from the strict upstream")
+
+    @app.tool()
+    def boom() -> str:
+        """Fail while running."""
+        raise RuntimeError("upstream exploded")
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Tool error upstream failed to start"
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+
 class TestConnectivity:
 
     async def test_ping(self, client: ClientSession) -> None:
@@ -413,6 +453,76 @@ class TestConnectivity:
 
         assert received == [], f"modern client received log notifications: {received}"
         print(f"    -> Modern capabilities: {sorted(raw_result['capabilities'])}")
+
+    @skip_no_modern_inbound
+    async def test_modern_cacheable_results_carry_ttl_and_private_scope(self, jwt_token: str) -> None:
+        """2026-era discover, lists and reads carry ttlMs and cacheScope=private; the legacy wire carries neither (issue #6627)."""
+        rest_headers = {"authorization": f"Bearer {jwt_token}", "content-type": "application/json"}
+        uid = uuid.uuid4().hex[:8]
+        resource_uri = f"test://cache-e2e-{uid}"
+        resource_id = None
+        server_id = None
+        with httpx.Client(timeout=_CLIENT_TIMEOUT) as http:
+            try:
+                # A resource served from the gateway's own store and a virtual server bound to it make the read deterministic.
+                resource_resp = http.post(
+                    f"{BASE_URL}/resources",
+                    headers=rest_headers,
+                    json={"resource": {"name": f"cache-e2e-{uid}", "uri": resource_uri, "mimeType": "text/plain", "content": "cached hello"}, "visibility": "public"},
+                )
+                assert resource_resp.status_code in (200, 201), f"Failed to create resource: {resource_resp.text}"
+                resource_id = resource_resp.json()["id"]
+                server_resp = http.post(
+                    f"{BASE_URL}/servers",
+                    headers=rest_headers,
+                    json={"server": {"name": f"cache-e2e-{uid}", "description": "cache directive E2E server", "associated_resources": [resource_id]}, "visibility": "public"},
+                )
+                assert server_resp.status_code in (200, 201), f"Failed to create server: {server_resp.text}"
+                server_id = server_resp.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers={"Authorization": f"Bearer {jwt_token}"}, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                    discover = await modern_client.session.send_discover("2026-07-28")
+                    assert discover.get("cacheScope") == "private", f"discover cacheScope: {discover}"
+                    # Catalog results are good for the refresh interval, which is at least the 60s minimum.
+                    assert isinstance(discover.get("ttlMs"), int) and discover["ttlMs"] >= 60_000, f"discover ttlMs: {discover}"
+
+                    for name, listing in (
+                        ("tools", await modern_client.list_tools()),
+                        ("prompts", await modern_client.list_prompts()),
+                        ("resources", await modern_client.list_resources()),
+                        ("resources/templates", await modern_client.list_resource_templates()),
+                    ):
+                        assert listing.cache_scope == "private", f"{name}/list cacheScope: {listing.cache_scope}"
+                        assert listing.ttl_ms >= 60_000, f"{name}/list ttlMs: {listing.ttl_ms}"
+
+                    read = await modern_client.read_resource(resource_uri)
+                    assert [getattr(content, "text", None) for content in read.contents] == ["cached hello"], f"resources/read contents: {read.contents}"
+                    assert read.cache_scope == "private", f"resources/read cacheScope: {read.cache_scope}"
+                    assert read.ttl_ms == 0, f"resources/read ttlMs for gateway-stored content: {read.ttl_ms}"
+
+                # The same catalog on a legacy wire carries no cache fields: the SDK strips 2026-era keys for handshake-era clients.
+                legacy_headers = {**rest_headers, "accept": "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26"}
+                init_resp = http.post(scoped_url, headers=legacy_headers, json=build_initialize(1))
+                assert init_resp.status_code == 200, f"legacy initialize failed: {init_resp.text}"
+                if session_id := init_resp.headers.get("mcp-session-id"):
+                    legacy_headers["mcp-session-id"] = session_id
+                list_resp = http.post(scoped_url, headers=legacy_headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+                assert list_resp.status_code == 200, f"legacy tools/list failed: {list_resp.text}"
+                if list_resp.headers.get("content-type", "").startswith("text/event-stream"):
+                    legacy_payload = json.loads([line for line in list_resp.text.splitlines() if line.startswith("data:")][-1][5:])
+                else:
+                    legacy_payload = list_resp.json()
+                legacy_result = legacy_payload.get("result", {})
+                assert "tools" in legacy_result, f"legacy tools/list returned no result: {legacy_payload}"
+                assert "ttlMs" not in legacy_result and "cacheScope" not in legacy_result, f"legacy tools/list leaked cache fields: {legacy_result}"
+            finally:
+                if server_id:
+                    http.delete(f"{BASE_URL}/servers/{server_id}", headers=rest_headers)
+                if resource_id:
+                    http.delete(f"{BASE_URL}/resources/{resource_id}", headers=rest_headers)
+        print(f"    -> discover ttlMs={discover['ttlMs']} cacheScope={discover['cacheScope']}; read ttlMs={read.ttl_ms}; legacy keys={sorted(legacy_result)}")
 
     async def test_multiple_calls_in_one_session(self, client: ClientSession) -> None:
         """A single session supports interleaved tools/resources/prompts calls."""
@@ -617,6 +727,74 @@ class TestToolCalls:
             return
         assert result.is_error is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
+
+
+class TestToolErrorTranslation:
+    """Every tool failure through the gateway is an isError result; its JSON-RPC error code rides in _meta (issue #6576)."""
+
+    @staticmethod
+    async def _assert_tool_errors(call: Callable[[str], Any], tools: dict[str, str]) -> None:
+        """Check the three failure shapes through ``call(tool_name)``."""
+        strict = await call(tools["strict"])
+        assert strict.is_error is True, f"strict upstream error was not an isError result: {strict}"
+        assert "Invalid params from the strict upstream" in strict.content[0].text, strict.content
+        assert (strict.meta or {}).get("io.contextforge/errorCode") == {"code": -32602}, f"error code not reported: {strict.meta}"
+
+        boom = await call(tools["boom"])
+        assert boom.is_error is True, f"execution failure was not an isError result: {boom}"
+        # The SDK upstream hides the exception text; its own message passes through the gateway unchanged.
+        assert boom.content[0].text == "Error executing tool boom", boom.content
+        assert not (boom.meta or {}).get("io.contextforge/errorCode"), f"execution failure must carry no error code: {boom.meta}"
+
+        unknown = await call(f"{tools['strict']}-missing")
+        assert unknown.is_error is True, f"unknown tool was not an isError result: {unknown}"
+        assert unknown.content[0].text.startswith("Unknown tool:"), unknown.content
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_tool_failures_answer_is_error_with_the_error_code(self, jwt_token: str, tool_error_upstream: str, era: str) -> None:
+        """Legacy and modern callers see the same isError shape for an upstream JSON-RPC error, an execution failure and an unknown tool."""
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        name = f"toolerror{uuid.uuid4().hex[:8]}"
+        gateway_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post("/gateways", json={"name": name, "url": tool_error_upstream, "transport": "STREAMABLEHTTP", "visibility": "public"})
+                assert response.status_code in (200, 201, 202), response.text
+                gateway_id = response.json()["id"]
+                deadline = time.monotonic() + 60
+                rows: list[dict[str, Any]] = []
+                while time.monotonic() < deadline:
+                    response = await http.get("/tools", params={"gateway_id": gateway_id, "limit": 0})
+                    assert response.status_code == 200, response.text
+                    rows = response.json()
+                    if len(rows) == 2:
+                        break
+                    await asyncio.sleep(0.5)
+                assert len(rows) == 2, f"Gateway did not discover both upstream tools: {rows}; check MCP_TOOL_ERROR_UPSTREAM_HOST"
+                tools = {row["name"].rsplit(name, 1)[-1].lstrip("-_."): row["name"] for row in rows}
+                assert set(tools) == {"strict", "boom"}, tools
+                response = await http.post("/servers", json={"server": {"name": name, "associated_tools": [row["id"] for row in rows]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                if era == "legacy":
+                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            await self._assert_tool_errors(lambda tool: session.call_tool(tool, {}), tools)
+                else:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                        await self._assert_tool_errors(lambda tool: modern_client.call_tool(tool, {}), tools)
+                print(f"    -> {era}: strict/boom/unknown all isError; JSON-RPC error code reported")
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if gateway_id:
+                    await http.delete(f"/gateways/{gateway_id}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -1485,10 +1663,10 @@ async def _mcp_session(server_url: str, access_token: str | None = None) -> Asyn
                 await session.initialize()
                 yield session
     except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
-        status_error = error_hook.to_http_status_error(exc)
-        if status_error is None:
+        transport_error = error_hook.to_transport_error(exc)
+        if transport_error is None:
             raise
-        raise status_error from exc
+        raise transport_error from exc
 
 
 async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
