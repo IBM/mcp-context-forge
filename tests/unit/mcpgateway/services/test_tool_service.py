@@ -4933,6 +4933,8 @@ class TestToolService:
 
     async def test_subscribe_events(self, tool_service):
         """Test event subscription mechanism."""
+        tool_service._event_service.redis_url = None
+
         # Create an event to publish
         test_event = {"type": "test_event", "data": {"id": 1}}
 
