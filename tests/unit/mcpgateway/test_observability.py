@@ -1062,3 +1062,151 @@ class TestRequestMiddlewareTraceEnvelope:
         assert f"{request_span.context.trace_id:032x}" == incoming_trace_id
         assert f"{request_span.parent.span_id:016x}" == incoming_span_id
         assert request_span.status.status_code is StatusCode.ERROR
+
+    @pytest.mark.asyncio
+    async def test_middleware_fallback_attaches_parent_injects_baggage_and_detaches(self):
+        """The context-kwarg fallback attaches the inbound parent, injects baggage, and detaches it.
+
+        Patches the module-level OTEL globals so the assertions hold without the
+        ``observability`` extra (SDK absent), matching the main pytest CI job.
+        """
+        scope = self._make_scope([(b"traceparent", b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")])
+        ran = {}
+
+        async def app(_scope, _receive, _send):
+            ran["value"] = True
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        class ContextRejectingTracer:
+            """Emulates InstanaTracer < 3.12: rejects the ``context`` kwarg."""
+
+            def start_as_current_span(self, _name, **kwargs):
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                return nullcontext(MagicMock())
+
+        mock_trace = MagicMock()
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+        mock_context = MagicMock()
+        token = object()
+        mock_context.attach.return_value = token
+        mock_baggage = MagicMock()
+        mock_baggage.get_all.return_value = {"tenant": "acme"}
+
+        with (
+            patch("mcpgateway.observability._TRACER", ContextRejectingTracer()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=self._fake_inject),
+            patch("mcpgateway.observability.otel_context", mock_context),
+            patch("mcpgateway.observability.otel_baggage", mock_baggage),
+            patch("mcpgateway.observability._baggage_span_attributes", return_value={"baggage.tenant": "acme"}),
+            patch("mcpgateway.observability.Status", MagicMock()),
+            patch("mcpgateway.observability.StatusCode", MagicMock()),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        assert ran["value"] is True
+        mock_context.attach.assert_called_once()
+        mock_context.detach.assert_called_once_with(token)
+
+    @pytest.mark.asyncio
+    async def test_middleware_fallback_swallows_attach_and_baggage_failures_and_marks_span_error(self):
+        """Attach and baggage failures are logged, and an app failure marks the span as an error."""
+        scope = self._make_scope()
+
+        async def app(_scope, _receive, _send):
+            raise RuntimeError("app boom")
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        class ContextRejectingTracer:
+            """Emulates InstanaTracer < 3.12: rejects the ``context`` kwarg."""
+
+            def start_as_current_span(self, _name, **kwargs):
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                return nullcontext(MagicMock())
+
+        mock_trace = MagicMock()
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+        mock_context = MagicMock()
+        mock_context.attach.side_effect = RuntimeError("attach boom")
+        mock_baggage = MagicMock()
+        mock_baggage.get_all.return_value = {"tenant": "acme"}
+
+        with (
+            patch("mcpgateway.observability._TRACER", ContextRejectingTracer()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=self._fake_inject),
+            patch("mcpgateway.observability.otel_context", mock_context),
+            patch("mcpgateway.observability.otel_baggage", mock_baggage),
+            patch("mcpgateway.observability._baggage_span_attributes", side_effect=RuntimeError("baggage boom")),
+            patch("mcpgateway.observability.Status", MagicMock()),
+            patch("mcpgateway.observability.StatusCode", MagicMock()),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            with pytest.raises(RuntimeError, match="app boom"):
+                await middleware(scope, receive, send)
+
+        mock_context.detach.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_middleware_fallback_detach_failure_is_nonfatal(self):
+        """A detach failure is logged and the request still completes."""
+        scope = self._make_scope()
+        ran = {}
+
+        async def app(_scope, _receive, _send):
+            ran["value"] = True
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        class ContextRejectingTracer:
+            """Emulates InstanaTracer < 3.12: rejects the ``context`` kwarg."""
+
+            def start_as_current_span(self, _name, **kwargs):
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                return nullcontext(MagicMock())
+
+        mock_trace = MagicMock()
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+        mock_context = MagicMock()
+        token = object()
+        mock_context.attach.return_value = token
+        mock_context.detach.side_effect = RuntimeError("detach boom")
+
+        with (
+            patch("mcpgateway.observability._TRACER", ContextRejectingTracer()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=self._fake_inject),
+            patch("mcpgateway.observability.otel_context", mock_context),
+            patch("mcpgateway.observability.otel_baggage", None),
+            patch("mcpgateway.observability.Status", MagicMock()),
+            patch("mcpgateway.observability.StatusCode", MagicMock()),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        assert ran["value"] is True
+        mock_context.detach.assert_called_once_with(token)
