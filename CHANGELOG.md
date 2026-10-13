@@ -45,6 +45,12 @@ Release 1.1.0 delivers **modern MCP protocol negotiation on by default**, **fede
 - **Per-user MCP server rate limiting** ([#7191](https://github.com/IBM/mcp-context-forge/pull/7191)) - Adopted per-user rate limiting for MCP servers.
 - **Metrics timeseries counts** ([#7138](https://github.com/IBM/mcp-context-forge/pull/7138)) - The observability metrics timeseries returns success and error counts.
 
+### Removed
+
+- **`SANITIZE_OUTPUT` environment variable** ([#6166](https://github.com/IBM/mcp-context-forge/pull/6166)) - The setting was inert: no code path consumed it. The gateway now ignores the variable. Remove it from deployment manifests; the Helm chart value `mcpContextForge.config.SANITIZE_OUTPUT` no longer exists.
+
+### Security
+
 #### **Security & Auth**
 
 - **`private_key_jwt` token endpoint client authentication** ([#6991](https://github.com/IBM/mcp-context-forge/pull/6991)) - OAuth token requests can authenticate with RFC 7523 `private_key_jwt`.

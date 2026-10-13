@@ -24,9 +24,6 @@ VALIDATION_MIDDLEWARE_ENABLED=true
 # Strict mode - reject on violations (default: true)
 VALIDATION_STRICT=true
 
-# Sanitize output responses (default: true)
-SANITIZE_OUTPUT=true
-
 # Allowed root paths for resource access (JSON array or comma-separated)
 ALLOWED_ROOTS='["/srv/data", "/var/app"]'
 
@@ -65,7 +62,6 @@ VALIDATION_STRICT=true  # Block violations
 ```bash
 EXPERIMENTAL_VALIDATE_IO=true
 VALIDATION_STRICT=true
-SANITIZE_OUTPUT=true
 ```
 
 ## Validation Rules
@@ -335,7 +331,6 @@ Keep the deprecated global validation middleware disabled unless an existing dep
 EXPERIMENTAL_VALIDATE_IO=true
 VALIDATION_MIDDLEWARE_ENABLED=false
 VALIDATION_STRICT=true
-SANITIZE_OUTPUT=true
 ```
 
 ### 2. Configure Allowed Roots
