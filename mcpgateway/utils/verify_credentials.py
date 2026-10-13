@@ -75,6 +75,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import SSOProvider
+from mcpgateway.services.http_client_service import get_default_verify
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
@@ -1788,14 +1789,17 @@ class _NoRedirectPyJWKClient(jwt.PyJWKClient):
     redirects transparently, bypassing the same-origin check enforced on the
     jwks_uri before this client is constructed.  Overriding with httpx
     (follow_redirects=False) closes the SSRF redirect bypass across the full
-    fetch chain.
+    fetch chain. TLS verification follows get_default_verify(), so
+    SKIP_SSL_VERIFY applies.
     """
 
     def fetch_data(self) -> Any:
         """Fetch JWKS data without following redirects."""
         try:
-            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout, verify=get_default_verify()) as _client:
                 resp = _client.get(self.uri, headers=self.headers)
+                if resp.is_redirect:
+                    raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "redirect status {resp.status_code}"')
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
