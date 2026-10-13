@@ -11,7 +11,6 @@ import asyncio
 import base64
 from copy import deepcopy
 import datetime
-import importlib
 import json
 import logging
 import os
@@ -332,18 +331,19 @@ def _make_request(path: str = "/", headers: dict | None = None) -> Request:
 
 
 def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
-    """Import-time app setup should register the OTEL request middleware when enabled."""
+    """Middleware registration should register the OTEL request middleware when enabled."""
+    # Third-Party
+    from fastapi import FastAPI
+
     # First-Party
     import mcpgateway.main as main_module
 
-    with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True):
-        reloaded = importlib.reload(main_module)
+    bare_app = FastAPI()
+    with patch("mcpgateway.main.otel_tracing_enabled", return_value=True):
+        main_module._register_middleware(bare_app)  # pylint: disable=protected-access
 
-    try:
-        middleware_classes = [middleware.cls for middleware in reloaded.app.user_middleware]
-        assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
-    finally:
-        importlib.reload(reloaded)
+    middleware_classes = [middleware.cls for middleware in bare_app.user_middleware]
+    assert main_module.OpenTelemetryRequestMiddleware in middleware_classes
 
 
 def test_get_csp_nonce_from_request_with_none():

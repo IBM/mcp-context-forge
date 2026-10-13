@@ -13,17 +13,14 @@ error handlers, and startup logic.
 import asyncio
 import base64
 import builtins
-import importlib.util
 import json
 import logging
-from pathlib import Path
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
 # Third-Party
-from fastapi import HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi import Response as FastAPIResponse
 from fastapi.testclient import TestClient
 import orjson
@@ -151,126 +148,117 @@ def _trusted_internal_mcp_headers(auth_context: dict[str, object], **extra_heade
     return headers
 
 
-def _import_fresh_main_module(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    overrides: dict[str, object] | None = None,
-    env: dict[str, str] | None = None,
-    force_import_error: set[str] | None = None,
-):
-    """Import mcpgateway/main.py under a unique module name for module-level branch coverage."""
+def _force_import_errors(monkeypatch: pytest.MonkeyPatch, module_names: set[str]) -> None:
+    """Patch ``builtins.__import__`` to raise ImportError for the given module names.
 
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        module_names: Fully qualified module names whose import should fail.
+    """
+    original_import = builtins.__import__
+
+    def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: ANN001, ANN202
+        if name in module_names:
+            raise ImportError(f"Forced ImportError for {name}")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _guarded_import)
+
+
+def _assemble_test_router(monkeypatch: pytest.MonkeyPatch, **overrides: object) -> APIRouter:
+    """Run ``_assemble_routers`` with stub sub-routers under the given settings overrides.
+
+    Exercises the router mount gates directly instead of re-executing
+    ``mcpgateway/main.py`` under a patched environment.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        **overrides: Settings attributes to patch for the assembly.
+
+    Returns:
+        The assembled APIRouter.
+    """
     # First-Party
-    from mcpgateway.config import settings as settings_mod
+    from mcpgateway.api.v1 import _assemble_routers  # pylint: disable=protected-access
 
-    if overrides:
-        for key, value in overrides.items():
-            monkeypatch.setattr(settings_mod, key, value, raising=False)
+    for key, value in overrides.items():
+        monkeypatch.setattr(settings, key, value, raising=False)
 
-    if env:
-        for key, value in env.items():
-            monkeypatch.setenv(key, value)
-
-    # Use in-memory session registry to avoid dependence on SQLALCHEMY_AVAILABLE
-    # module-level state which can be polluted by other tests that reload session_registry.
-    # Don't override cache_type when the caller explicitly passed it in overrides.
-    if not (overrides and "cache_type" in overrides):
-        monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
-
-    # Use fresh in-memory database for each test to avoid conflicts
-    monkeypatch.setattr(settings_mod, "database_url", "sqlite:///:memory:", raising=False)
-
-    # Avoid import-time side effects (DB/Redis readiness + bootstrap).
-    monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", lambda *_a, **_k: None)
-
-    async def _noop_async(*_a, **_k):  # noqa: ANN001, D401 - internal test helper
-        return None
-
-    monkeypatch.setattr("mcpgateway.bootstrap_db.main", _noop_async)
-    monkeypatch.setattr("mcpgateway.utils.redis_isready.wait_for_redis_ready", lambda *_a, **_k: None)
-
-    # Keep module-level router/middleware wiring lightweight.
-    monkeypatch.setattr("mcpgateway.middleware.db_query_logging.setup_query_logging", lambda *_a, **_k: None, raising=False)
-    monkeypatch.setattr("mcpgateway.services.metrics.setup_metrics", lambda *_a, **_k: None, raising=False)
-
-    class _PluginService:
-        def set_plugin_manager(self, _pm):  # noqa: ANN001
-            return None
-
-    monkeypatch.setattr("mcpgateway.services.plugin_service.get_plugin_service", _PluginService, raising=False)
-
-    class _DummyPluginManager:
-        def __init__(self, *_a, **_k):  # noqa: ANN001
-            self.plugin_count = 0
-
-        async def initialize(self):  # noqa: D401 - trivial
-            return None
-
-        async def shutdown(self):  # noqa: D401 - trivial
-            return None
-
-        def has_hooks_for(self, server_id):
-            return False
-
-    monkeypatch.setattr("cpex.framework.TenantPluginManager", _DummyPluginManager)
-
-    # Force selected module imports to fail to cover defensive ImportError paths.
-    if force_import_error:
-        original_import = builtins.__import__
-
-        def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: ANN001
-            if name in force_import_error:
-                raise ImportError(f"Forced ImportError for {name}")
-            return original_import(name, globals, locals, fromlist, level)
-
-        monkeypatch.setattr(builtins, "__import__", _guarded_import)
-
-    module_name = f"mcpgateway._main_test_{uuid.uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(module_name, Path("mcpgateway/main.py"))
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    # Make module importable during exec_module and ensure it is cleaned up after the test.
-    monkeypatch.setitem(sys.modules, module_name, module)
-    spec.loader.exec_module(module)
-    return module
+    assembled = APIRouter()
+    _assemble_routers(
+        assembled,
+        settings,
+        protocol_router=APIRouter(),
+        tool_router=APIRouter(),
+        resource_router=APIRouter(),
+        prompt_router=APIRouter(),
+        gateway_router=APIRouter(),
+        root_router=APIRouter(),
+        server_router=APIRouter(),
+        metrics_router=APIRouter(),
+        tag_router=APIRouter(),
+        export_import_router=APIRouter(),
+        a2a_router=APIRouter(),
+    )
+    return assembled
 
 
 class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
-    def test_import_logs_csrf_disabled_when_setting_is_false(self, monkeypatch, caplog):
-        """Import-time CSRF middleware setup should log the disabled branch when CSRF is off."""
+    def test_register_auth_context_middleware_logs_csrf_disabled(self, monkeypatch, caplog):
+        """CSRF middleware registration should log the disabled branch when CSRF is off."""
         caplog.set_level("INFO")
 
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "csrf_enabled": False,
-            },
-        )
+        # First-Party
+        from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
+
+        monkeypatch.setattr(settings, "csrf_enabled", False)
+        register_auth_context_middleware(FastAPI())
 
         assert any("CSRF protection middleware disabled" in rec.message for rec in caplog.records)
 
-    def test_import_includes_siem_router_with_admin_csrf_dependency(self, monkeypatch):
+    def test_optional_routers_include_siem_router_with_admin_csrf_dependency(self, monkeypatch):
         """When SIEM export and admin API are enabled, the SIEM router is mounted with admin CSRF enforcement."""
+        # Standard
+        from types import ModuleType
+
         include_calls = []
-        from fastapi.applications import FastAPI
 
         original_include_router = FastAPI.include_router
 
-        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001
+        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001, ANN202
             include_calls.append((router, kwargs.get("dependencies")))
             return original_include_router(self, router, *args, **kwargs)
 
         monkeypatch.setattr(FastAPI, "include_router", _capture_include_router)
 
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "mcpgateway_admin_api_enabled": True,
-                "siem_export_enabled": True,
-            },
-        )
+        # Stub the admin and SIEM modules so the wiring runs without importing heavy modules.
+        # Import the real admin module first: monkeypatch.setitem then restores it on teardown
+        # instead of dropping the sys.modules entry and forcing a later re-import under
+        # patched settings (admin.py binds a2a_service at import time).
+        # First-Party
+        import mcpgateway.admin  # noqa: F401 pylint: disable=unused-import
+
+        admin_mod = ModuleType("mcpgateway.admin")
+
+        def enforce_admin_csrf():  # noqa: ANN202 - stub matching the real dependency's name
+            return None
+
+        admin_mod.enforce_admin_csrf = enforce_admin_csrf
+        monkeypatch.setitem(sys.modules, "mcpgateway.admin", admin_mod)
+
+        siem_mod = ModuleType("mcpgateway.routers.siem")
+        siem_mod.router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.siem", siem_mod)
+
+        monkeypatch.setattr(settings, "mcpgateway_admin_api_enabled", True)
+        monkeypatch.setattr(settings, "siem_export_enabled", True)
+
+        # First-Party
+        import mcpgateway.main as main_module
+
+        main_module._include_optional_routers(FastAPI())  # pylint: disable=protected-access
 
         assert any(deps and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps) for _, deps in include_calls)
 
@@ -11822,12 +11810,12 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 422
 
     async def test_module_level_router_registration_branches(self, monkeypatch):
-        """Import main.py under unique name to cover module-level wiring branches."""
+        """Exercise module-level wiring branches directly against a bare app."""
         # Standard
         from types import ModuleType
 
-        # Third-Party
-        from fastapi import APIRouter
+        # First-Party
+        import mcpgateway.main as main_module
 
         # Provide lightweight router modules to avoid importing heavy optional dependencies.
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
@@ -11835,15 +11823,18 @@ class TestRemainingCoverageGaps:
         sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
 
         # Force ImportError branches for optional routers.
-        force_error = {
-            "mcpgateway.routers.oauth_router",
-            "mcpgateway.routers.reverse_proxy",
-            "mcpgateway.routers.llmchat_router",
-            "mcpgateway.routers.llm_admin_router",
-            "mcpgateway.routers.llm_config_router",
-            "mcpgateway.routers.llm_proxy_router",
-            "mcpgateway.routers.toolops_router",
-        }
+        _force_import_errors(
+            monkeypatch,
+            {
+                "mcpgateway.routers.oauth_router",
+                "mcpgateway.routers.reverse_proxy",
+                "mcpgateway.routers.llmchat_router",
+                "mcpgateway.routers.llm_admin_router",
+                "mcpgateway.routers.llm_config_router",
+                "mcpgateway.routers.llm_proxy_router",
+                "mcpgateway.routers.toolops_router",
+            },
+        )
 
         overrides = {
             "environment": "production",
@@ -11865,18 +11856,35 @@ class TestRemainingCoverageGaps:
             "llmchat_enabled": True,
             "toolops_enabled": True,
         }
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
 
-        # Ensure REDIS_AVAILABLE reflects actual install state; prior tests that
-        # reload session_registry with redis.asyncio=None pollute this flag in-place.
-        monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+        # Keep wiring side effects lightweight.
+        monkeypatch.setattr("mcpgateway.middleware.db_query_logging.setup_query_logging", lambda *_a, **_k: None, raising=False)
+        monkeypatch.setattr(main_module, "wait_for_redis_ready", lambda *_a, **_k: None)
 
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, env={"PLUGINS_ENABLED": "true"}, force_import_error=force_error)
+        bare_app = FastAPI()
 
-        # Allow the import-time bootstrap_db create_task (running-loop branch) to complete.
-        await asyncio.sleep(0)
+        # Middleware wiring branches: production CORS warning, compression and
+        # validation disabled, email-auth-off path, security logging on,
+        # observability on, db query log on.
+        main_module._register_middleware(bare_app)  # pylint: disable=protected-access
 
-        # root_info exists only when UI is disabled (no version/admin status exposed).
-        info = await mod.root_info()
+        # Redis startup readiness branch.
+        main_module._wait_for_redis_at_startup()  # pylint: disable=protected-access
+
+        # Router assembly branches: a2a/tool-cancellation/admin off; llmchat,
+        # toolops and reverse-proxy import guards.
+        _assemble_test_router(monkeypatch)
+
+        # Optional router branches: oauth/llm-proxy import guards, vault and
+        # log-search skipped paths.
+        main_module._include_optional_routers(bare_app)  # pylint: disable=protected-access
+
+        # UI disabled: root route serves API info without version/admin status.
+        main_module._register_ui_routes(bare_app)  # pylint: disable=protected-access
+        root_route = next(route for route in bare_app.routes if getattr(route, "path", "") == "/" and "GET" in getattr(route, "methods", set()))
+        info = await root_route.endpoint()
         assert "name" in info
         assert "version" not in info
         assert "admin_api_enabled" not in info
@@ -12523,41 +12531,35 @@ class TestRemainingCoverageGaps:
                 pass
 
     async def test_module_level_structured_logging_and_static_mount_errors(self, monkeypatch):
-        # Standard
-        from types import ModuleType
+        # First-Party
+        import mcpgateway.main as main_module
 
-        # Third-Party
-        from fastapi import APIRouter
+        # Force ImportError branches for log search and cancellation routers.
+        _force_import_errors(monkeypatch, {"mcpgateway.routers.log_search", "mcpgateway.routers.cancellation_router"})
 
-        # Keep router imports light.
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
-        sys.modules["mcpgateway.routers.observability"].router = APIRouter()
-        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
+        monkeypatch.setattr(settings, "structured_logging_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "static_dir", "/tmp/definitely-missing-static-dir", raising=False)
 
-        overrides = {
-            "structured_logging_enabled": True,
-            "mcpgateway_tool_cancellation_enabled": True,
-            "mcpgateway_ui_enabled": True,
-            "static_dir": "/tmp/definitely-missing-static-dir",
-        }
-        force_error = {
-            "mcpgateway.routers.log_search",
-            "mcpgateway.routers.cancellation_router",
-        }
+        bare_app = FastAPI()
 
-        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
-        await asyncio.sleep(0)
+        # Log search router import guard fires on a real import attempt.
+        main_module._include_optional_routers(bare_app)  # pylint: disable=protected-access
 
-        # Cover favicon redirect logic (only registered when UI is enabled).
-        resp = await mod.favicon_redirect()
+        # Cancellation router import guard.
+        _assemble_test_router(monkeypatch)
+
+        # Static mount failure branch and favicon route registration (UI enabled).
+        main_module._register_ui_routes(bare_app)  # pylint: disable=protected-access
+
+        favicon_route = next(route for route in bare_app.routes if getattr(route, "path", "") == "/favicon.ico")
+        resp = await favicon_route.endpoint()
         assert resp.status_code == 301
 
-    async def test_module_level_llm_and_toolops_router_success_paths(self, monkeypatch):
+    def test_module_level_llm_and_toolops_router_success_paths(self, monkeypatch):
         # Standard
         from types import ModuleType
-
-        # Third-Party
-        from fastapi import APIRouter
 
         # Stub router modules so include_router executes without importing heavy deps.
         llmchat_mod = ModuleType("mcpgateway.routers.llmchat_router")
@@ -12581,18 +12583,38 @@ class TestRemainingCoverageGaps:
         toolops_mod.toolops_router = APIRouter()
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.toolops_router", toolops_mod)
 
-        overrides = {
-            "llmchat_enabled": True,
-            "toolops_enabled": True,
-        }
-        _ = _import_fresh_main_module(monkeypatch, overrides=overrides)
+        # Stub the admin module so the llm_admin mount skips the heavy admin import.
+        # Import the real admin module first: monkeypatch.setitem then restores it on teardown
+        # instead of dropping the sys.modules entry and forcing a later re-import under
+        # patched settings (admin.py binds a2a_service at import time).
+        # First-Party
+        import mcpgateway.admin  # noqa: F401 pylint: disable=unused-import
 
-    async def test_module_level_email_auth_and_sso_success(self, monkeypatch):
+        admin_mod = ModuleType("mcpgateway.admin")
+
+        def enforce_admin_csrf():  # noqa: ANN202 - stub matching the real dependency's name
+            return None
+
+        admin_mod.enforce_admin_csrf = enforce_admin_csrf
+        monkeypatch.setitem(sys.modules, "mcpgateway.admin", admin_mod)
+
+        # First-Party
+        import mcpgateway.main as main_module
+
+        assembled = _assemble_test_router(monkeypatch, llmchat_enabled=True, toolops_enabled=True)
+
+        assert any(getattr(route, "original_router", None) is llmchat_mod.llmchat_router for route in assembled.routes)
+        assert any(getattr(route, "original_router", None) is llm_config_mod.llm_config_router for route in assembled.routes)
+        assert any(getattr(route, "original_router", None) is llm_admin_mod.llm_admin_router for route in assembled.routes)
+        assert any(getattr(route, "original_router", None) is toolops_mod.toolops_router for route in assembled.routes)
+
+        bare_app = FastAPI()
+        main_module._include_optional_routers(bare_app)  # pylint: disable=protected-access
+        assert any(getattr(route, "original_router", None) is llm_proxy_mod.llm_proxy_router for route in bare_app.routes)
+
+    def test_module_level_email_auth_and_sso_success(self, monkeypatch):
         # Standard
         from types import ModuleType
-
-        # Third-Party
-        from fastapi import APIRouter
 
         auth_mod = ModuleType("mcpgateway.routers.auth")
         auth_mod.auth_router = APIRouter()
@@ -12606,15 +12628,15 @@ class TestRemainingCoverageGaps:
         sso_mod.sso_router = APIRouter()
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.sso", sso_mod)
 
-        overrides = {"email_auth_enabled": True, "sso_enabled": True}
-        _ = _import_fresh_main_module(monkeypatch, overrides=overrides)
+        assembled = _assemble_test_router(monkeypatch, email_auth_enabled=True, sso_enabled=True)
 
-    async def test_module_level_email_auth_and_sso_import_error(self, monkeypatch):
+        assert any(getattr(route, "original_router", None) is auth_mod.auth_router for route in assembled.routes)
+        assert any(getattr(route, "original_router", None) is email_auth_mod.email_auth_router for route in assembled.routes)
+        assert any(getattr(route, "original_router", None) is sso_mod.sso_router for route in assembled.routes)
+
+    def test_module_level_email_auth_and_sso_import_error(self, monkeypatch, caplog):
         # Standard
         from types import ModuleType
-
-        # Third-Party
-        from fastapi import APIRouter
 
         auth_mod = ModuleType("mcpgateway.routers.auth")
         auth_mod.auth_router = APIRouter()
@@ -12624,65 +12646,79 @@ class TestRemainingCoverageGaps:
         email_auth_mod.email_auth_router = APIRouter()
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.email_auth", email_auth_mod)
 
-        sso_mod = ModuleType("mcpgateway.routers.sso")
-        sso_mod.sso_router = APIRouter()
-        monkeypatch.setitem(sys.modules, "mcpgateway.routers.sso", sso_mod)
-
-        overrides = {"email_auth_enabled": True, "sso_enabled": True}
         # Force ImportError for SSO router to hit error logging branch.
-        _ = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error={"mcpgateway.routers.sso"})
+        _force_import_errors(monkeypatch, {"mcpgateway.routers.sso"})
 
-    async def test_module_level_auth_and_team_token_rbac_import_errors(self, monkeypatch):
-        overrides = {"email_auth_enabled": True}
-        force_error = {
-            "mcpgateway.routers.auth",
-            "mcpgateway.routers.teams",
-            "mcpgateway.routers.tokens",
-            "mcpgateway.routers.rbac",
-        }
-        _ = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
+        assembled = _assemble_test_router(monkeypatch, email_auth_enabled=True, sso_enabled=True)
 
-    async def test_module_level_reverse_proxy_router_success(self, monkeypatch):
+        assert any(getattr(route, "original_router", None) is auth_mod.auth_router for route in assembled.routes)
+        assert any(getattr(route, "original_router", None) is email_auth_mod.email_auth_router for route in assembled.routes)
+        assert "SSO router not available" in caplog.text
+
+    def test_module_level_auth_and_team_token_rbac_import_errors(self, monkeypatch, caplog):
+        _force_import_errors(
+            monkeypatch,
+            {
+                "mcpgateway.routers.auth",
+                "mcpgateway.routers.teams",
+                "mcpgateway.routers.tokens",
+                "mcpgateway.routers.rbac",
+            },
+        )
+
+        _assemble_test_router(monkeypatch, email_auth_enabled=True)
+
+        for message in ("Authentication routers not available", "Team management router not available", "JWT Token Catalog router not available", "RBAC router not available"):
+            assert message in caplog.text
+
+    def test_module_level_reverse_proxy_router_success(self, monkeypatch):
         # Standard
         from types import ModuleType
-
-        # Third-Party
-        from fastapi import APIRouter
 
         reverse_proxy_mod = ModuleType("mcpgateway.routers.reverse_proxy")
         reverse_proxy_mod.router = APIRouter()
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.reverse_proxy", reverse_proxy_mod)
 
-        _ = _import_fresh_main_module(monkeypatch, overrides={"mcpgateway_reverse_proxy_enabled": True})
+        assembled = _assemble_test_router(monkeypatch, mcpgateway_reverse_proxy_enabled=True)
 
-    async def test_module_level_reverse_proxy_router_import_error(self, monkeypatch):
-        _ = _import_fresh_main_module(
-            monkeypatch,
-            overrides={"mcpgateway_reverse_proxy_enabled": True},
-            force_import_error={"mcpgateway.routers.reverse_proxy"},
-        )
+        assert any(getattr(route, "original_router", None) is reverse_proxy_mod.router for route in assembled.routes)
+
+    def test_module_level_reverse_proxy_router_import_error(self, monkeypatch, caplog):
+        caplog.set_level(logging.DEBUG)
+
+        _force_import_errors(monkeypatch, {"mcpgateway.routers.reverse_proxy"})
+        _assemble_test_router(monkeypatch, mcpgateway_reverse_proxy_enabled=True)
+
+        assert "Reverse proxy router not available" in caplog.text
 
     async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
         # First-Party
+        import mcpgateway.main as main_module
         import mcpgateway.plugins as plugin_module
 
         # Reset plugin state before test
         plugin_module.enable_plugins(False)
         plugin_module.reset_plugin_manager_factory()
 
-        _import_fresh_main_module(
-            monkeypatch,
-            env={
-                "PLUGINS_ENABLED": "false",
-                "PLUGINS_SERVER_PORT": "abc",
-            },
-        )
+        # Invalid plugin configuration must not matter while the subsystem is off.
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+
+        # Third-Party
+        from cpex.framework.settings import settings as plugin_settings
+
+        # settings.plugins resolves to the cpex wrapper; enabled is a class property.
+        monkeypatch.setattr(type(plugin_settings), "enabled", property(lambda _self: False))
+
+        main_module._enable_plugin_subsystem_if_configured()  # pylint: disable=protected-access
+
         # settings.enabled is False → get_plugin_manager() short-circuits to None
         result = await plugin_module.get_plugin_manager()
         assert result is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
+        import mcpgateway.main as main_module
         import mcpgateway.plugins as plugin_module
 
         class _DummyFactory:
@@ -12699,7 +12735,14 @@ class TestRemainingCoverageGaps:
         # Create the factory instance
         plugin_module._plugin_manager_factory = _DummyFactory()
 
-        _import_fresh_main_module(monkeypatch)
+        # Third-Party
+        from cpex.framework.settings import settings as plugin_settings
+
+        # settings.plugins resolves to the cpex wrapper; enabled is a class property.
+        monkeypatch.setattr(type(plugin_settings), "enabled", property(lambda _self: True))
+
+        main_module._enable_plugin_subsystem_if_configured()  # pylint: disable=protected-access
+
         # settings.enabled is True → get_plugin_manager() returns a manager
         result = await plugin_module.get_plugin_manager()
         assert result is not None
@@ -13214,19 +13257,23 @@ class TestRpcScopedPermissions:
 
 
 class TestRedisStartupPath:
-    """Cover main.py module-level redis readiness check (lines 255/257)."""
+    """Cover the redis readiness check in ``_wait_for_redis_at_startup``."""
 
     def test_wait_for_redis_called_on_startup_when_redis_configured(self, monkeypatch):
-        """main.py executes the redis startup path (lines 255/257) when cache_type is redis."""
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "cache_type": "redis",
-                "redis_url": "redis://localhost:6379/0",
-                "redis_ssl": False,
-            },
-        )
-        # If we reach here the module loaded — lines 255/257 were executed.
+        """_wait_for_redis_at_startup calls wait_for_redis_ready when cache_type is redis."""
+        # First-Party
+        import mcpgateway.main as main_module
+
+        calls = []
+        monkeypatch.setattr(main_module, "wait_for_redis_ready", lambda **kwargs: calls.append(kwargs))
+        monkeypatch.setattr(settings, "cache_type", "redis", raising=False)
+        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0", raising=False)
+        monkeypatch.setattr(settings, "redis_ssl", False, raising=False)
+
+        main_module._wait_for_redis_at_startup()  # pylint: disable=protected-access
+
+        assert len(calls) == 1
+        assert calls[0]["redis_url"] == "redis://localhost:6379/0"
 
 
 @pytest.fixture
