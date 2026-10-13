@@ -397,28 +397,6 @@ class TestInternalTrustedMcpTransportBridge:
         assert auth_context["is_authenticated"] is True
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("exists, failure, expected_status", [(True, False, None), (False, False, 404), (True, True, 503)])
-    async def test_internal_mcp_authentication_validates_server(self, monkeypatch, exists, failure, expected_status):
-        """Authenticate before checking virtual server existence."""
-        # Standard
-        from contextlib import asynccontextmanager
-
-        @asynccontextmanager
-        async def database():
-            """Yield the isolated server validation session."""
-            yield MagicMock()
-
-        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", False)
-        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", AsyncMock(return_value=True))
-        monkeypatch.setattr("mcpgateway.main.get_plugin_manager", AsyncMock(return_value=None))
-        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", database)
-        check = AsyncMock(return_value=exists, side_effect=RuntimeError("database unavailable") if failure else None)
-        monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", check)
-        response, _ = await _run_internal_mcp_authentication(method="POST", path="/servers/server-a/mcp", query_string="", headers={}, client_ip="127.0.0.1")
-        assert (response.status_code if response is not None else None) == expected_status
-        check.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_run_internal_mcp_authentication_runs_pre_request_hooks(self, monkeypatch):
         """HTTP_PRE_REQUEST plugin hooks should transform headers before auth runs."""
         # Third-Party

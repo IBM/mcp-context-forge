@@ -61,8 +61,6 @@ async def _admit(client, reservation, *, ttl=30):
         1,
         snapshots.snapshot_key(),
         reservation,
-        settings.mcp_proxy_list_max_snapshot_bytes,
-        settings.mcp_proxy_list_max_total_bytes,
         settings.mcp_proxy_list_max_collectors,
         settings.mcp_proxy_list_max_snapshots,
         ttl,
@@ -76,19 +74,19 @@ async def test_concurrent_workers_obey_admission_limits(snapshot_store):
     assert sum(admitted) == 2
     state = orjson.loads(await snapshot_store.hget(snapshots.snapshot_key(), "leases"))
     assert len(state) == 2
-    assert sum(lease[1] for lease in state.values()) == settings.mcp_proxy_list_max_total_bytes
+    assert sum(lease[1] for lease in state.values()) == 0
     assert await snapshot_store.dbsize() >= 2
 
 
 @pytest.mark.asyncio
 async def test_retained_bytes_and_snapshot_count_reject_new_collection(snapshot_store, monkeypatch):
     """Reject new collection when retained snapshots consume admission capacity."""
-    monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 4096)
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
     async with snapshots.reserve_collection(snapshot_store) as snapshot:
         await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"[]", b"[]"])
-    with pytest.raises(JSONRPCError, match="capacity"):
-        async with snapshots.reserve_collection(snapshot_store):
-            pytest.fail("Retained bytes must prevent a full-size reservation")
+    with pytest.raises(JSONRPCError, match="reservation"):
+        async with snapshots.reserve_collection(snapshot_store) as another:
+            await snapshots.publish_snapshot(snapshot_store, another, "scope", [b"[]", b"[]"])
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 8192)
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
     with pytest.raises(JSONRPCError, match="capacity"):
@@ -148,16 +146,16 @@ async def test_eviction_removes_snapshots_and_accounting_together(snapshot_store
 
 @pytest.mark.asyncio
 async def test_memory_headroom_rejects_without_eviction(snapshot_store, monkeypatch):
-    """Reject reservations near Redis maxmemory while preserving unrelated keys."""
+    """Reject publication near Redis maxmemory while preserving unrelated keys."""
     info = await snapshot_store.info("memory")
     maximum = info["maxmemory"]
     assert maximum > 0, "Configure a finite maxmemory on the isolated test Redis"
     before = (await snapshot_store.info("stats"))["evicted_keys"]
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshot_bytes", maximum)
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", maximum * 2)
-    with pytest.raises(JSONRPCError, match="capacity"):
-        async with snapshots.reserve_collection(snapshot_store):
-            pytest.fail("Headroom must reject this reservation")
+    with pytest.raises(JSONRPCError, match="reservation"):
+        async with snapshots.reserve_collection(snapshot_store) as snapshot:
+            await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"x" * (maximum // 2)])
     assert (await snapshot_store.info("stats"))["evicted_keys"] == before
 
 
@@ -168,3 +166,27 @@ async def test_oversized_publication_releases_reservation(snapshot_store):
         async with snapshots.reserve_collection(snapshot_store) as snapshot:
             await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"x" * 4096])
     assert await snapshot_store.hkeys(snapshots.snapshot_key()) == [b"leases"]
+
+
+@pytest.mark.asyncio
+async def test_denied_info_allows_bounded_snapshots(snapshot_store, monkeypatch):
+    """Serve bounded snapshots when Redis ACL denies memory information."""
+    # Third-Party
+    from redis.exceptions import NoPermissionError
+
+    username = f"catalog-acl-{uuid.uuid4().hex}"
+    await snapshot_store.acl_setuser(username, enabled=True, nopass=True, commands=["+@all", "-info"], keys=[f"{settings.cache_prefix}*"])
+    restricted = Redis.from_url(os.environ["MCP_CATALOG_TEST_REDIS_URL"], username=username)
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
+    try:
+        with pytest.raises(NoPermissionError):
+            await restricted.info("memory")
+        async with snapshots.reserve_collection(restricted) as snapshot:
+            await snapshots.publish_snapshot(restricted, snapshot, "scope", [b"[]", b"[]"])
+        with pytest.raises(JSONRPCError, match="reservation"):
+            async with snapshots.reserve_collection(restricted) as another:
+                await snapshots.publish_snapshot(restricted, another, "scope", [b"[]", b"[]"])
+        assert (await snapshots.read_snapshot(restricted, snapshot, 1))[1] == b"[]"
+    finally:
+        await restricted.aclose()
+        await snapshot_store.acl_deluser(username)

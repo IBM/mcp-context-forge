@@ -119,7 +119,7 @@ def _detach_envelope_trace_context(token: Any) -> None:
         from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
 
         otel_context.detach(token)
-    except Exception:  # pylint: disable=broad-exception-caught  # nosec B110 - Trace cleanup must not interrupt request processing.
+    except Exception:  # pylint: disable=broad-exception-caught
         pass
 
 
@@ -1076,8 +1076,7 @@ class SessionAffinity:
             request: The forwarded envelope.
             response_channel: Per-request reply channel for the rpc_forward result.
         """
-        if self._forward_semaphore is None:
-            raise SessionAffinityNotInitializedError("Forward listener has not started")
+        assert self._forward_semaphore is not None  # set in start_rpc_listener
         async with self._forward_semaphore:
             if forward_type == "rpc_forward":
                 response = await self._execute_forwarded_request(request)

@@ -48,15 +48,16 @@ _CATALOGS: dict[str, tuple[type[Tool] | type[Resource] | type[Prompt], type[Tool
 }
 
 
-def _serialize(method: str, row: Any) -> dict[str, Any] | None:
-    """Convert one database row into its MCP wire representation.
+def _serialize(method: str, row: Any, *, model_items: bool = False) -> Any:
+    """Convert one database row into its MCP descriptor.
 
     Args:
         method: MCP list method.
         row: Catalog database row.
+        model_items: Return SDK models for transport adapters.
 
     Returns:
-        Wire representation, or None for a model-hidden tool.
+        SDK model or wire representation, or None for a model-hidden tool.
     """
     # Import after transport initialization to reuse its canonical MCP serializers.
     # First-Party
@@ -72,12 +73,15 @@ def _serialize(method: str, row: Any) -> dict[str, Any] | None:
         schema = row.argument_schema or {}
         item = types.Prompt(
             name=row.name,
+            title=row.title,
             description=row.description,
             arguments=[types.PromptArgument(name=name, description=prop.get("description") or "", required=name in schema.get("required", [])) for name, prop in schema.get("properties", {}).items()],
         )
     else:
         item = types.ResourceTemplate(uri_template=row.uri_template, name=row.name, title=row.title, description=row.description, mime_type=row.mime_type)
-    return item.model_dump(by_alias=True, exclude_none=True, mode="json") if item is not None else None
+    if model_items or item is None:
+        return item
+    return item.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
 async def collect_proxy_catalog(client: Any, method: str, meta: Any) -> list[Any]:
@@ -125,7 +129,7 @@ async def collect_proxy_catalog(client: Any, method: str, meta: Any) -> list[Any
     raise JSONRPCError(-32000, "Upstream MCP catalog exceeds the pagination page limit")
 
 
-async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, headers: dict[str, str], meta: Any) -> dict[str, Any]:
+async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, headers: dict[str, str], meta: Any, *, model_items: bool = False) -> dict[str, Any]:
     """Serve an immutable, authorization-bound Redis proxy snapshot.
 
     Args:
@@ -135,6 +139,7 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
         scope: Effective visibility fingerprint.
         headers: Incoming request headers.
         meta: Original request metadata.
+        model_items: Return SDK models for newly collected items.
 
     Returns:
         Bounded MCP list result.
@@ -182,17 +187,17 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
         async with reserve_collection(redis) as snapshot:
             async with asyncio.timeout(settings.mcpgateway_direct_proxy_timeout):
                 upstream_items = await proxy(gateway, headers, {}, meta, paginate=True)
-            items = [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]
             size = settings.mcp_list_page_size
-            if len(items) <= size:
-                return {key: items}
+            if len(upstream_items) <= size:
+                return {key: upstream_items if model_items else [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]}
             if redis is None:
                 raise JSONRPCError(-32000, "Multi-page MCP proxy catalogs require Redis")
             expires = int(time.time()) + settings.mcp_list_cursor_ttl_seconds
             next_cursor = encode_cursor(scope, expires, {"snapshot": snapshot, "page": 1})
+            items = [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]
             pages = [orjson.dumps(items[start : start + size]) for start in range(0, len(items), size)]
             await publish_snapshot(redis, snapshot, scope, pages)
-            return {key: items[:size], "nextCursor": next_cursor}
+            return {key: upstream_items[:size] if model_items else items[:size], "nextCursor": next_cursor}
     except JSONRPCError:
         raise
     except Exception as exc:
@@ -222,6 +227,7 @@ async def list_catalog_page(
     token_teams: list[str] | None,
     request_headers: dict[str, str] | None = None,
     meta: Any = None,
+    model_items: bool = False,
 ) -> dict[str, Any]:
     """List one MCP catalog page after the caller enforces method authorization.
 
@@ -234,6 +240,7 @@ async def list_catalog_page(
         token_teams: Canonical Layer-1 visibility scope.
         request_headers: Incoming request headers.
         meta: Original request metadata for direct proxy.
+        model_items: Preserve SDK models for transport adapters.
 
     Returns:
         MCP result with items and an optional nextCursor.
@@ -254,7 +261,7 @@ async def list_catalog_page(
                     raise JSONRPCError(-32003, "Direct proxy is disabled")
                 if not await check_gateway_access(db, gateway, user_email, token_teams):
                     raise JSONRPCError(-32003, "Access denied to direct-proxy gateway")
-                result: dict[str, Any] = await _proxy_page(gateway, method, cursor, scope, headers, meta)
+                result: dict[str, Any] = await _proxy_page(gateway, method, cursor, scope, headers, meta, model_items=model_items)
                 set_span_attribute(span, "mcp.catalog.count", len(result[result_key]))
                 set_span_attribute(span, "mcp.catalog.has_more", "nextCursor" in result)
                 return result
@@ -275,7 +282,7 @@ async def list_catalog_page(
             query = query.where(Resource.uri_template.isnot(None) if method == "resources/templates/list" else Resource.uri_template.is_(None))
         query = await service._apply_access_control(query, db, user_email, token_teams)  # pylint: disable=protected-access
         size = settings.mcp_list_page_size
-        items: list[tuple[str, dict[str, Any]]] = []
+        items: list[tuple[str, Any]] = []
         while len(items) <= size:
             batch_query = query.where(model.id > after) if after is not None else query
             rows: Sequence[Tool | Resource | Prompt] = db.execute(batch_query.order_by(model.id.asc()).limit(size + 1)).scalars().all()
@@ -283,7 +290,7 @@ async def list_catalog_page(
                 break
             for row in rows:
                 after = row.id
-                item = _serialize(method, row)
+                item = _serialize(method, row, model_items=model_items)
                 if item is not None:
                     items.append((row.id, item))
                 if len(items) > size:

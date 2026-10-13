@@ -1496,8 +1496,8 @@ REST and Admin pagination settings remain separate.
 | `MCP_LIST_PAGE_SIZE` | `100` | Items per MCP page, from 1 to 1000 |
 | `MCP_LIST_CURSOR_TTL_SECONDS` | `900` | Fixed traversal lifetime in seconds |
 | `MCP_PROXY_LIST_MAX_SNAPSHOT_BYTES` | `67108864` | Maximum charged snapshot bytes, including page overhead |
-| `MCP_PROXY_LIST_MAX_TOTAL_BYTES` | `134217728` | Maximum aggregate reserved and retained snapshot bytes |
-| `MCP_PROXY_LIST_MAX_COLLECTORS` | `2` | Concurrent collectors across Redis workers; per worker without Redis |
+| `MCP_PROXY_LIST_MAX_TOTAL_BYTES` | `134217728` | Maximum aggregate retained snapshot bytes |
+| `MCP_PROXY_LIST_MAX_COLLECTORS` | `32` | Concurrent collectors across Redis workers; per worker without Redis |
 | `MCP_PROXY_LIST_MAX_SNAPSHOTS` | `64` | Maximum retained snapshots and active reservations |
 
 Database catalogs use stable ID ordering and check current visibility on every page.
@@ -1510,18 +1510,25 @@ Direct proxy collects upstream pages within one session and stores immutable sna
 Multi-page proxy catalogs require `CACHE_TYPE=redis` and a reachable `REDIS_URL`.
 Single-page proxy catalogs do not require Redis.
 Snapshots expire with the traversal and bind the gateway configuration and upstream authorization headers.
+Any gateway update invalidates existing proxy cursors, including description, tags, and state updates.
+Restart the traversal after a gateway update.
 Repeated upstream cursors, duplicate identifiers, timeouts, and collection limits return errors without partial catalogs.
 
-Snapshot admission reserves the maximum snapshot size before contacting the upstream server.
+Snapshot admission reserves a collector slot before contacting the upstream server.
+Collector slots do not reserve snapshot bytes. Publication atomically enforces the aggregate retained-byte limit.
 Publication charges serialized pages, the manifest, and 512 bytes of overhead per page and manifest.
 Reservations and pages share one Redis hash, so eviction removes their accounting together.
 Expired snapshots are reclaimed on the next snapshot operation or when the hash expires.
-Admission also requires Redis memory headroom below 80% of `maxmemory`, with twice the reservation size available.
-Publication checks memory headroom again. Redis ACLs must permit `EVAL` and `INFO memory` for these checks.
+When `INFO memory` is available, admission checks usage below 80% of `maxmemory`.
+Publication also checks headroom for twice the charged snapshot bytes.
+Redis ACLs must permit `EVAL`. Denied `INFO memory` skips headroom checks; snapshot byte and count limits remain enforced.
+Use a dedicated Redis instance or configure sufficient headroom when `INFO memory` is unavailable.
 Quota exhaustion returns a generic protocol error before upstream collection.
 Single-page requests release their reservation without retaining a snapshot.
 Without Redis, collection concurrency is bounded per worker and multi-page catalogs return an error.
 Keep snapshot limits below the memory available after session and cache usage.
+Collector memory is bounded separately by collector count and the per-catalog byte limit.
+Tune the collector count for worker memory and upstream capacity.
 These limits cannot reserve Redis memory against unrelated applications writing to the same instance.
 
 Clients must follow `nextCursor`; clients that make one list call receive only the first page.

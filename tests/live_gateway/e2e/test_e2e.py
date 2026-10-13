@@ -5104,7 +5104,7 @@ async def test_downstream_catalog_pagination(jwt_token: str, method: str, result
                 if endpoint == "tools":
                     payload = {"tool": {"name": name, "url": "https://example.com/pagination", "request_type": "GET", "visibility": "public", "inputSchema": {"type": "object", "properties": {}}}}
                 elif endpoint == "prompts":
-                    payload = {"prompt": {"name": name, "template": "Pagination fixture"}, "visibility": "public"}
+                    payload = {"prompt": {"name": name, "title": f"Title {name}", "template": "Pagination fixture"}, "visibility": "public"}
                 else:
                     resource = {"name": name, "uri": f"test://{prefix}/{index}", "content": "Pagination fixture"}
                     if method == "resources/templates/list":
@@ -5136,6 +5136,10 @@ async def test_downstream_catalog_pagination(jwt_token: str, method: str, result
                             for item in items:
                                 if item.name.startswith(prefix):
                                     assert item.size == len("Pagination fixture")
+                        if method == "prompts/list":
+                            for item in items:
+                                if item.name.startswith(prefix):
+                                    assert item.title == f"Title {item.name}"
                         found.extend(item.name for item in items if item.name.startswith(prefix))
                         pages += 1
                         next_cursor = page.next_cursor
@@ -5229,6 +5233,8 @@ async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, resu
                     assert len(getattr(page, result_key)) == page_size
                     assert page.next_cursor is not None
                     found = [item.name for item in getattr(page, result_key)]
+                    concurrent_pages = await asyncio.gather(*(list_method() for _ in range(3)))
+                    assert all(len(getattr(result, result_key)) == page_size and result.next_cursor for result in concurrent_pages)
                     upstream_calls = list(received)
                     assert len(upstream_calls) >= (count + 1) // 2
                     changed = True

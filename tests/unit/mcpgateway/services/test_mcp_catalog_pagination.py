@@ -8,7 +8,7 @@ Verify complete MCP catalog traversal and authorization-bound continuation.
 
 # Standard
 import base64
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -36,7 +36,7 @@ def snapshot_redis(monkeypatch):
     """Supply fake Redis with deterministic memory information for Lua admission."""
     # FakeRedis does not implement INFO; integration tests use real memory information.
     for name in ("_ADMIT", "_PUBLISH"):
-        script = getattr(snapshots, name).replace("redis.call('INFO', 'memory')", "'\\r\\nused_memory:0\\r\\nmaxmemory:0\\r\\n'")
+        script = getattr(snapshots, name).replace("redis.pcall('INFO', 'memory')", "'\\r\\nused_memory:0\\r\\nmaxmemory:0\\r\\n'")
         monkeypatch.setattr(snapshots, name, script)
     return FakeRedis()
 
@@ -548,7 +548,9 @@ async def test_registered_adapter_session_header_parity(catalog_db, monkeypatch,
 @pytest.mark.asyncio
 async def test_proxy_admission_precedes_collection(catalog_db, monkeypatch, snapshot_redis):
     """Reject exhausted snapshot capacity before an upstream catalog request."""
-    monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1)
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
+    async with snapshots.reserve_collection(snapshot_redis) as snapshot:
+        await snapshots.publish_snapshot(snapshot_redis, snapshot, "scope", [b"[]", b"[]"])
     monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
     monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
     proxy = AsyncMock()
@@ -587,3 +589,96 @@ async def test_proxy_storage_diagnostics_are_sanitized(catalog_db, monkeypatch, 
         await catalog._proxy_page(gateway, "tools/list", None, "scope", {}, None)
     assert '"category":"ConnectionError"' in caplog.text
     assert "sensitive-redis-url" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_scoped", [False, True])
+async def test_prompt_title_survives_catalog_and_adapter(catalog_db, monkeypatch, server_scoped):
+    """Preserve stored prompt titles through registered MCP adapters."""
+    row = _row("prompts/list", 0, title="Prompt title")
+    catalog_db.add(row)
+    server_id = None
+    if server_scoped:
+        server = Server(id="title-server", name="Prompt titles", prompts=[row])
+        catalog_db.add(server)
+        server_id = server.id
+    catalog_db.commit()
+
+    @asynccontextmanager
+    async def database():
+        """Supply the isolated database to the registered adapter."""
+        yield catalog_db
+
+    monkeypatch.setattr(transport, "get_db", database)
+    monkeypatch.setattr(transport, "_get_request_context_or_default", AsyncMock(return_value=(server_id, {}, {"email": "user@example.com", "teams": [], "is_authenticated": True})))
+    result = await transport._adapt_list_prompts(None, types.PaginatedRequestParams())
+    assert result.prompts[0].title == "Prompt title"
+
+
+@pytest.mark.asyncio
+async def test_retained_snapshot_does_not_reserve_collector_bytes(monkeypatch, snapshot_redis):
+    """Admit many collectors while retaining a small snapshot with default limits."""
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_collectors", 32)
+    async with snapshots.reserve_collection(snapshot_redis) as retained:
+        await snapshots.publish_snapshot(snapshot_redis, retained, "scope", [b"[]", b"[]"])
+    try:
+        async with AsyncExitStack() as stack:
+            for _ in range(32):
+                await stack.enter_async_context(snapshots.reserve_collection(snapshot_redis))
+            with pytest.raises(JSONRPCError, match="capacity"):
+                async with snapshots.reserve_collection(snapshot_redis):
+                    pytest.fail("Collector limit must reject excess work")
+            manifest, page = await snapshots.read_snapshot(snapshot_redis, retained, 1)
+            assert manifest is not None and page == b"[]"
+    finally:
+        await snapshot_redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_publication_enforces_aggregate_bytes(monkeypatch, snapshot_redis):
+    """Reject excessive retained bytes without altering existing snapshots or unrelated keys."""
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
+    await snapshot_redis.set("unrelated-session", "preserved")
+    async with snapshots.reserve_collection(snapshot_redis) as retained:
+        await snapshots.publish_snapshot(snapshot_redis, retained, "scope", [b"[]", b"[]"])
+    with pytest.raises(JSONRPCError, match="reservation"):
+        async with snapshots.reserve_collection(snapshot_redis) as rejected:
+            await snapshots.publish_snapshot(snapshot_redis, rejected, "scope", [b"[]", b"[]"])
+    assert await snapshot_redis.get("unrelated-session") == b"preserved"
+    assert (await snapshots.read_snapshot(snapshot_redis, retained, 1))[1] == b"[]"
+    assert (await snapshots.read_snapshot(snapshot_redis, rejected, 1)) == (None, None)
+    await snapshot_redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_denied_info_keeps_snapshot_quotas(monkeypatch):
+    """Continue without INFO permission while enforcing retained-byte limits."""
+    for name in ("_ADMIT", "_PUBLISH"):
+        monkeypatch.setattr(snapshots, name, getattr(snapshots, name).replace("redis.pcall('INFO', 'memory')", "{err='NOPERM'}"))
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
+    redis = FakeRedis()
+    try:
+        async with snapshots.reserve_collection(redis) as snapshot:
+            await snapshots.publish_snapshot(redis, snapshot, "scope", [b"[]", b"[]"])
+        with pytest.raises(JSONRPCError, match="reservation"):
+            async with snapshots.reserve_collection(redis) as another:
+                await snapshots.publish_snapshot(redis, another, "scope", [b"[]", b"[]"])
+        assert (await snapshots.read_snapshot(redis, snapshot, 1))[1] == b"[]"
+    finally:
+        await redis.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,key,model", METHODS)
+async def test_catalog_sdk_models_match_wire_pages(catalog_db, method, key, model):
+    """Preserve equivalent descriptors without dumping models for transport adapters."""
+    catalog_db.add_all(_row(method, index) for index in range(7))
+    catalog_db.commit()
+    args = {"user_email": "user@example.com", "token_teams": []}
+    wire = await catalog.list_catalog_page(catalog_db, method, **args)
+    sdk = await catalog.list_catalog_page(catalog_db, method, model_items=True, **args)
+    assert all(hasattr(item, "model_dump") for item in sdk[key])
+    assert [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in sdk[key]] == wire[key]
+    assert sdk["nextCursor"]
+    next_page = await catalog.list_catalog_page(catalog_db, method, cursor=sdk["nextCursor"], model_items=True, **args)
+    assert [item.name for item in next_page[key]] == [f"item-{index:03d}" for index in range(3, 6)]

@@ -44,7 +44,8 @@ local function save()
     redis.call('EXPIREAT', key, deadline)
 end
 local function headroom(required)
-    local info = redis.call('INFO', 'memory')
+    local info = redis.pcall('INFO', 'memory')
+    if type(info) ~= 'string' then return true end
     local used = tonumber(string.match(info, '\r\nused_memory:(%d+)'))
     local maximum = tonumber(string.match(info, '\r\nmaxmemory:(%d+)'))
     return used and maximum and (maximum == 0 or used + required * 2 + 65536 < maximum * 0.8)
@@ -53,14 +54,12 @@ end
 _ADMIT = (
     _STATE
     + """
-local reserved = tonumber(ARGV[2])
-if bytes + reserved > tonumber(ARGV[3]) or collectors >= tonumber(ARGV[4])
-    or count >= tonumber(ARGV[5]) or not headroom(reserved) then
+if collectors >= tonumber(ARGV[2]) or count >= tonumber(ARGV[3]) or not headroom(0) then
     save()
     return 0
 end
-deadline = math.max(deadline, now + tonumber(ARGV[6]))
-leases[ARGV[1]] = {now + tonumber(ARGV[6]), reserved, -1}
+deadline = math.max(deadline, now + tonumber(ARGV[4]))
+leases[ARGV[1]] = {now + tonumber(ARGV[4]), 0, -1}
 save()
 return 1
 """
@@ -70,16 +69,16 @@ _PUBLISH = (
     + """
 local id, charge = ARGV[1], tonumber(ARGV[2])
 local lease = leases[id]
-if not lease or lease[3] ~= -1 or charge > lease[2] or not headroom(charge) then
+if not lease or lease[3] ~= -1 or bytes - lease[2] + charge > tonumber(ARGV[5]) or not headroom(charge) then
     save()
     return 0
 end
 local ttl = tonumber(ARGV[3])
-for page = 5, #ARGV do
-    redis.call('HSET', key, id .. ':' .. (page - 5), ARGV[page])
+for page = 6, #ARGV do
+    redis.call('HSET', key, id .. ':' .. (page - 6), ARGV[page])
 end
 redis.call('HSET', key, id .. ':manifest', ARGV[4])
-leases[id] = {now + ttl, charge, #ARGV - 4}
+leases[id] = {now + ttl, charge, #ARGV - 5}
 deadline = math.max(deadline, now + ttl)
 save()
 return 1
@@ -137,8 +136,6 @@ async def reserve_collection(redis: Any) -> AsyncIterator[str]:
                 1,
                 snapshot_key(),
                 reservation,
-                settings.mcp_proxy_list_max_snapshot_bytes,
-                settings.mcp_proxy_list_max_total_bytes,
                 settings.mcp_proxy_list_max_collectors,
                 settings.mcp_proxy_list_max_snapshots,
                 math.ceil(settings.mcpgateway_direct_proxy_timeout) + 30,
@@ -168,7 +165,7 @@ async def publish_snapshot(redis: Any, snapshot: str, scope: str, pages: list[by
     charge = sum(len(page) + 512 for page in pages) + len(manifest) + 512
     if len(pages) > 10000 or charge > settings.mcp_proxy_list_max_snapshot_bytes:
         raise JSONRPCError(-32000, "Direct-proxy MCP catalog exceeds the snapshot byte limit")
-    published = await redis.eval(_PUBLISH, 1, snapshot_key(), snapshot, charge, settings.mcp_list_cursor_ttl_seconds, manifest, *pages)
+    published = await redis.eval(_PUBLISH, 1, snapshot_key(), snapshot, charge, settings.mcp_list_cursor_ttl_seconds, manifest, settings.mcp_proxy_list_max_total_bytes, *pages)
     if not published:
         raise JSONRPCError(-32000, "MCP proxy catalog snapshot reservation is unavailable")
 

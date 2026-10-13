@@ -230,8 +230,6 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
-    _REJECT as _MCP_SERVER_REJECT,
-    _SERVER_ID_RE,
     _validate_streamable_session_access,
     get_streamable_http_auth_context,
     MCPOriginHostGate,
@@ -712,9 +710,6 @@ async def _run_internal_mcp_authentication(
         """
         auth_ok = await streamable_http_auth(scope, _receive, _send)
         if auth_ok:
-            validated = await SessionManagerWrapper._validate_server_id(_SERVER_ID_RE.search(path), path, scope, _receive, _send)  # pylint: disable=protected-access
-            if validated is _MCP_SERVER_REJECT:
-                return _captured_response()
             return ORJSONResponse(status_code=200, content={"authenticated": True})
         return _captured_response()
 
