@@ -3280,8 +3280,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     logger.info("Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
 
-                if gateway_update.requires_user_credentials is not None:
-                    gateway.requires_user_credentials = gateway_update.requires_user_credentials
+                requires_user_credentials = getattr(gateway_update, "requires_user_credentials", None)
+                if requires_user_credentials is not None:
+                    gateway.requires_user_credentials = requires_user_credentials
 
                 # Update team assignment if provided, validating ownership
                 if gateway_update.team_id is not None:
