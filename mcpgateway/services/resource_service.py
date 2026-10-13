@@ -47,7 +47,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalErro
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
-from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent, TextResourceContents
+from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
