@@ -20123,22 +20123,22 @@ class TestListCacheDirectives:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "adapter, handler, payload, result_type",
+        "adapter, result_key, payload, result_type",
         [
-            ("_adapt_list_tools", "list_tools", [types.Tool(name="t", inputSchema={"type": "object"})], types.ListToolsResult),
-            ("_adapt_list_prompts", "list_prompts", [types.Prompt(name="p")], types.ListPromptsResult),
-            ("_adapt_list_resources", "list_resources", [types.Resource(name="r", uri="test://r")], types.ListResourcesResult),
-            ("_adapt_list_resource_templates", "list_resource_templates", [], types.ListResourceTemplatesResult),
+            ("_adapt_list_tools", "tools", [types.Tool(name="t", inputSchema={"type": "object"})], types.ListToolsResult),
+            ("_adapt_list_prompts", "prompts", [types.Prompt(name="p")], types.ListPromptsResult),
+            ("_adapt_list_resources", "resources", [types.Resource(name="r", uri="test://r")], types.ListResourcesResult),
+            ("_adapt_list_resource_templates", "resourceTemplates", [], types.ListResourceTemplatesResult),
         ],
     )
-    async def test_list_adapter_sets_ttl_and_private_scope(self, monkeypatch, adapter, handler, payload, result_type):
+    async def test_list_adapter_sets_ttl_and_private_scope(self, monkeypatch, adapter, result_key, payload, result_type):
         """Each list result carries the catalog TTL for the request's server scope and cacheScope=private."""
 
-        async def fake_handler():
-            return payload
+        async def fake_handler(_method, _params):
+            return {result_key: payload, "nextCursor": "continuation"}
 
         ttl = AsyncMock(return_value=123_000)
-        monkeypatch.setattr(tr, handler, fake_handler)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_handler)
         monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
         token = tr._request_server_id_var.set("srv-1")
         try:
@@ -20149,6 +20149,7 @@ class TestListCacheDirectives:
         assert isinstance(result, result_type)
         assert result.ttl_ms == 123_000
         assert result.cache_scope == "private"
+        assert result.next_cursor == "continuation"
         ttl.assert_awaited_once_with("srv-1")
 
     @pytest.mark.asyncio
@@ -20180,9 +20181,9 @@ class TestListCacheDirectives:
     async def test_list_adapter_sizes_ttl_from_the_resolved_scope_through_the_real_helper(self, monkeypatch):
         """No prepopulated scope and no mocked TTL: the handler resolves the request, the real helper queries the upstreams' intervals."""
 
-        async def fake_list_tools():
+        async def fake_list_tools(_method, _params):
             await tr._get_request_context_or_default()  # what the real handler does first
-            return []
+            return {"tools": []}
 
         mock_db = MagicMock()
         mock_db.execute.return_value.scalars.return_value.all.return_value = [900]
@@ -20191,7 +20192,7 @@ class TestListCacheDirectives:
         async def fake_get_db():
             yield mock_db
 
-        monkeypatch.setattr(tr, "list_tools", fake_list_tools)
+        monkeypatch.setattr(tr, "_list_catalog_page", fake_list_tools)
         monkeypatch.setattr(tr, "_resolve_request_context", AsyncMock(return_value=("srv-1", {}, {})))
         monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
         with patch("mcpgateway.transports.streamablehttp_transport.settings", SimpleNamespace(health_check_interval=60, gateway_auto_refresh_interval=300)):
@@ -20207,11 +20208,11 @@ class TestListCacheDirectives:
         # Third-Party
         from fastapi import HTTPException
 
-        async def refusing_list_tools():
+        async def refusing_list_tools(_method, _params):
             raise HTTPException(status_code=401, detail="Not authenticated")
 
         ttl = AsyncMock(return_value=300_000)
-        monkeypatch.setattr(tr, "list_tools", refusing_list_tools)
+        monkeypatch.setattr(tr, "_list_catalog_page", refusing_list_tools)
         monkeypatch.setattr(tr, "_catalog_ttl_ms", ttl)
 
         with pytest.raises(HTTPException):
@@ -20390,5 +20391,3 @@ class TestCatalogTtl:
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings), caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
             assert await tr._catalog_ttl_ms("srv-1") == 0
         assert any("Could not derive the catalog TTL" in r.getMessage() for r in caplog.records)
-
-
