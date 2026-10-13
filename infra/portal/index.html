@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>ContextForge Portal</title>
+<style>
+:root{
+  --bg:oklch(0.145 0 0); --panel:oklch(0.205 0 0); --panel-hover:oklch(0.269 0 0); --border:oklch(1 0 0 / 10%);
+  --text:oklch(0.985 0 0); --muted:oklch(0.708 0 0); --accent:#70f9ff; --selection:#f97316;
+  --ok:#10b981; --off:oklch(0.708 0 0); --radius:0.625rem;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;
+  font:15px/1.5 "Inter Variable",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+header{padding:1.8rem 2rem 1.4rem;border-bottom:1px solid var(--border);
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:.75rem}
+h1{font-size:1.4rem;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:.6rem}
+h1 .accent{color:var(--accent);font-family:var(--mono);font-weight:500}
+.brand-mark{width:28px;height:auto;flex:none;color:var(--text)}
+.subtitle{color:var(--muted);font-size:.9rem}
+#summary{margin-left:auto;font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+main{flex:1;width:100%;max-width:1200px;margin:0 auto;padding:2rem}
+.group{margin-bottom:2.4rem}
+.group h2{font-family:var(--mono);font-size:.72rem;font-weight:500;text-transform:uppercase;
+  letter-spacing:.14em;color:var(--muted);margin-bottom:.9rem;display:flex;align-items:center;gap:.7rem}
+.group h2::after{content:"";flex:1;height:1px;background:var(--border)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:.9rem}
+.card{display:block;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:1rem 1.1rem;text-decoration:none;color:inherit;
+  transition:border-color .15s ease,background .15s ease,transform .15s ease}
+.card:hover,.card:focus-visible{background:var(--panel-hover);border-color:var(--selection);
+  transform:translateY(-1px);outline:none}
+.card:focus-visible{box-shadow:0 0 0 2px var(--selection)}
+.card-top{display:flex;align-items:center;gap:.55rem;margin-bottom:.3rem}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--off);transition:background .3s ease}
+.dot.probing{background:var(--accent);animation:pulse 1.1s ease-in-out infinite}
+.dot.online{background:var(--ok);box-shadow:0 0 6px rgba(16,185,129,.55)}
+.dot.offline{background:var(--off)}
+@keyframes pulse{50%{opacity:.3}}
+.name{font-weight:600;font-size:.95rem}
+.vhost{font-family:var(--mono);font-size:.78rem;color:var(--accent);word-break:break-all}
+.purpose{color:var(--muted);font-size:.82rem;margin-top:.3rem}
+.creds{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:.55rem;opacity:.7}
+.api-list{list-style:none;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.api-list li{display:flex;flex-wrap:wrap;align-items:baseline;gap:.3rem .7rem;padding:.55rem .95rem}
+.api-list li+li{border-top:1px solid var(--border)}
+.api-list .name{min-width:9.5ch;flex:none;font-size:.88rem}
+.api-list code{font-family:var(--mono);font-size:.8rem;color:var(--accent);word-break:break-all}
+.api-list .purpose{margin:0 0 0 auto;font-size:.8rem}
+.api-list .icon{width:16px;height:16px;flex:none;align-self:center;color:var(--muted);display:inline-flex}
+.api-list .icon svg{width:100%;height:100%}
+.artifacts{width:100%;max-width:1200px;margin:0 auto;padding:0 2rem 1.6rem;color:var(--muted);font-size:.8rem}
+.artifacts a{display:inline-flex;align-items:center;gap:.4rem;color:var(--muted);text-decoration:none;border-radius:4px}
+.artifacts a:hover,.artifacts a:focus-visible{color:var(--accent);outline:none}
+.artifacts a:focus-visible{box-shadow:0 0 0 2px var(--selection)}
+.artifacts .flame{width:11px;height:11px;flex:none;color:var(--selection)}
+.artifacts code{font-family:var(--mono);font-size:.76rem;color:var(--accent)}
+.artifacts .hint{opacity:.7}
+footer{border-top:1px solid var(--border);padding:1.2rem 2rem;color:var(--muted);font-size:.82rem}
+footer p+p{margin-top:.35rem}
+footer code{font-family:var(--mono);font-size:.78rem;color:var(--text);
+  background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:.1em .45em}
+@media(max-width:640px){header{padding:1.3rem 1.2rem 1.1rem}main{padding:1.2rem}
+  .api-list .purpose{margin-left:0;flex-basis:100%}}
+@media(prefers-reduced-motion:reduce){
+  .card{transition:none}.card:hover,.card:focus-visible{transform:none}.dot.probing{animation:none}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><svg class="brand-mark" width="22" height="20" viewBox="0 0 22 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M21.1051 11.4484C21.1051 11.897 20.7553 12.2705 20.3102 12.3263C18.5709 12.5444 14.5591 13.3139 14.2694 15.7874C14.2471 15.9774 14.2683 16.1699 14.299 16.3587C14.404 17.0032 14.9605 17.4765 15.6132 17.4765H16.1845C16.6521 17.4765 17.0312 17.8556 17.0312 18.3232V19.1532C17.0312 19.6208 16.6521 19.9999 16.1845 19.9999H14.3549C13.8873 19.9999 13.5217 19.611 13.3735 19.1676C13.0253 18.1259 12.0415 17.375 10.8822 17.375C9.72296 17.375 8.73914 18.1258 8.39096 19.1676C8.24273 19.611 7.87713 19.9999 7.40954 19.9999H5.30343C4.83584 19.9999 4.45677 19.6208 4.45677 19.1532V18.3232C4.45677 17.8556 4.83584 17.4765 5.30343 17.4765H5.43621C6.31698 17.4765 7.03103 16.7622 7.03105 15.8811V15.8063C7.03105 15.3718 6.76507 14.981 6.36326 14.8159C2.86248 13.3776 0.726134 12.1946 0.155063 10.723C-0.0141032 10.287 0.379068 9.89551 0.846669 9.89551H20.2584C20.726 9.89551 21.1051 10.2746 21.1051 10.7422V11.4484Z" fill="currentColor"/><path fill-rule="evenodd" clip-rule="evenodd" d="M11.0964 0C11.564 0 11.9431 0.379083 11.9431 0.84668V2.61523C11.9431 2.91902 12.1323 3.19118 12.4167 3.29785C12.6904 3.40031 12.9985 3.32897 13.1999 3.11719L14.5222 1.72656C14.8429 1.38921 15.3761 1.37475 15.7155 1.69336L16.3737 2.31055C16.7141 2.63034 16.7311 3.16592 16.4118 3.50684L15.0134 4.99902C14.8352 5.18935 14.7944 5.47084 14.9108 5.7041C15.026 5.93446 15.2716 6.07019 15.528 6.0459L17.8356 5.82812C18.3325 5.78118 18.7614 6.17183 18.7614 6.6709V7.28125C18.7614 7.74868 18.3831 8.12767 17.9157 8.12793H3.33955C2.83387 8.12793 2.44038 7.68789 2.49775 7.18555L2.56514 6.59863C2.61773 6.14243 3.0247 5.81151 3.48213 5.85254L5.66377 6.04883C5.91977 6.07168 6.16405 5.93499 6.279 5.70508C6.39578 5.47124 6.35504 5.18894 6.17646 4.99805L4.80439 3.53223C4.49015 3.19631 4.50124 2.67053 4.82979 2.34863L5.47432 1.71875C5.81189 1.3882 6.35482 1.39784 6.68037 1.74023L7.98994 3.11719C8.19146 3.32913 8.50029 3.40054 8.77412 3.29785C9.05853 3.19117 9.24678 2.919 9.24678 2.61523V0.84668C9.24678 0.379106 9.62589 3.78034e-05 10.0935 0H11.0964Z" fill="#FF4540"/></svg>ContextForge <span class="accent">Portal</span></h1>
+  <p class="subtitle">Testing &amp; Monitoring stack</p>
+  <span id="summary" role="status" aria-live="polite"></span>
+</header>
+<main id="groups"></main>
+<p class="artifacts"><a href="/profiles/"><svg class="flame" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M8 16c3.314 0 6-2 6-5.5 0-1.5-.5-4-2.5-6 .25 1.5-1.25 2-1.25 2C11 4 9 .5 6 0c.357 2 .5 4-2 6-1.25 1-2 2.729-2 4.5C2 14 4.686 16 8 16z"/></svg> CPU profiles <code>/profiles/</code></a><span class="hint"> — <code>make profile-gateway</code> records new ones</span></p>
+<footer>
+  <p>Services reflect the active compose profiles — offline entries aren't running.</p>
+</footer>
+<script>
+// UI services get click-through cards, grouped as below.
+const SERVICES = [
+  { name:"Grafana",         vhost:"grafana",        purpose:"Dashboards + trace viewer (TraceQL)", group:"Observability", creds:"admin / changeme" },
+  { name:"Prometheus",      vhost:"prometheus",     purpose:"Metrics",                             group:"Observability" },
+  { name:"cAdvisor",        vhost:"cadvisor",       purpose:"Container metrics",                   group:"Observability" },
+  { name:"pgAdmin",         vhost:"pgadmin",        purpose:"Postgres admin UI",                   group:"Admin tools",    creds:"admin@example.com / changeme" },
+  { name:"Redis Commander", vhost:"rediscommander", purpose:"Redis key browser",                   group:"Admin tools",    creds:"admin / changeme" },
+  { name:"Locust",          vhost:"locust",         purpose:"Load testing (master Web UI)",        group:"Testing" },
+  { name:"MCP Inspector",   vhost:"inspector",      purpose:"Interactive MCP client",              group:"Testing" },
+  { name:"Keycloak",        vhost:"keycloak",       purpose:"SSO / OAuth 2.1 provider",            group:"Testing",        creds:"admin / changeme" },
+];
+// API-only services: no human-facing UI, listed as plain rows (no click-through).
+const APIS = [
+  { name:"Loki",      vhost:"loki",     purpose:"Log aggregation (LogQL API)" },
+  { name:"Tempo",     vhost:"tempo",    purpose:"OTLP trace backend API" },
+  { name:"OWASP ZAP", vhost:"zap",      purpose:"DAST security scanner API" },
+  { name:"fasttest",  vhost:"fasttest", purpose:"MCP benchmark target",                icon:"mcp" },
+  { name:"fasttime",  vhost:"fasttime", purpose:"MCP fast time server",                icon:"mcp" },
+  { name:"slowtime",  vhost:"slowtime", purpose:"Resilience testing (slow responses)", icon:"mcp" },
+  { name:"A2A Echo",  vhost:"a2aecho",  purpose:"A2A echo agent",                      icon:"agent" },
+];
+
+// Inline brand iconography (currentColor SVGs); referenced by API rows via the icon field.
+const ICONS = {
+  mcp: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M11.6459 1.88441C10.9187 1.15725 9.73976 1.15723 9.01255 1.88443L1.99025 8.90672C1.74785 9.14911 1.35485 9.14911 1.11246 8.90672C0.870065 8.66432 0.870066 8.27133 1.11246 8.02893L8.13477 1.00664C9.34673 -0.205318 11.3117 -0.205352 12.5236 1.00662C13.2415 1.72448 13.5342 2.70652 13.4017 3.63979C14.335 3.50727 15.317 3.79993 16.0349 4.51777L16.0714 4.55434L16.0715 4.55445C17.2834 5.76643 17.2834 7.73136 16.0714 8.94329L9.7204 15.2944C9.63962 15.3751 9.6396 15.5061 9.72038 15.5869L11.0245 16.8911C11.2669 17.1335 11.2669 17.5265 11.0245 17.7689C10.7821 18.0112 10.3891 18.0112 10.1467 17.7688L8.84262 16.4647C8.27705 15.8991 8.27702 14.9821 8.8426 14.4166L15.1936 8.0655C15.9208 7.33833 15.9209 6.15933 15.1936 5.43215L15.1571 5.39558L15.157 5.39548C14.4304 4.66902 13.2529 4.66843 12.5256 5.39368L7.29355 10.6257L7.29074 10.6285L7.2204 10.6989C6.978 10.9413 6.585 10.9413 6.34261 10.6989C6.10021 10.4565 6.10021 10.0635 6.34261 9.82109L11.6475 4.51615C12.3731 3.78884 12.3725 2.61104 11.6459 1.88441Z" fill="currentColor"/><path d="M10.7681 3.64C11.0105 3.3976 11.0105 3.00461 10.7681 2.76221C10.5257 2.51982 10.1327 2.51981 9.89035 2.76221L4.69675 7.95579C3.48478 9.16774 3.48483 11.1328 4.69676 12.3448C5.90873 13.5567 7.87373 13.5566 9.0857 12.3447L14.2793 7.15114C14.5217 6.90875 14.5217 6.51575 14.2793 6.27336C14.0369 6.03096 13.6439 6.03096 13.4015 6.27336L8.20791 11.467C7.48073 12.1941 6.30173 12.1941 5.57455 11.467C4.84735 10.7397 4.84738 9.56072 5.57454 8.83358L10.7681 3.64Z" fill="currentColor"/></svg>`,
+  agent: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M11.5 9.84375V11.5312M6.5 9.84375V11.5312M9 4.78125V2.25M9 4.78125C4.85786 4.78125 1.5 7.61445 1.5 11.1094C1.5 14.6043 4.85786 15.75 9 15.75C13.1421 15.75 16.5 14.6043 16.5 11.1094C16.5 7.61445 13.1421 4.78125 9 4.78125Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+};
+const ALL = [...SERVICES, ...APIS];
+
+// Port-agnostic: works regardless of the host port the portal is mapped to.
+const urlFor = vhost => `${location.protocol}//${vhost}.${'localhost'}:${location.port}`;
+
+const dots = new Map();
+const groupsEl = document.getElementById("groups");
+
+function makeDot() {
+  const dot = document.createElement("span");
+  dot.className = "dot probing";
+  dot.setAttribute("aria-hidden", "true");
+  return dot;
+}
+
+function makeName(text) {
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = text;
+  return name;
+}
+
+for (const group of [...new Set(SERVICES.map(s => s.group))]) {
+  const section = document.createElement("section");
+  section.className = "group";
+  const heading = document.createElement("h2");
+  heading.textContent = group;
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  for (const svc of SERVICES.filter(s => s.group === group)) {
+    const card = document.createElement("a");
+    card.className = "card";
+    card.href = urlFor(svc.vhost);
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    card.setAttribute("aria-label", `${svc.name} — ${svc.vhost}.localhost — ${svc.purpose}`);
+    const top = document.createElement("div");
+    top.className = "card-top";
+    const dot = makeDot();
+    top.append(dot, makeName(svc.name));
+    const vhost = document.createElement("div");
+    vhost.className = "vhost";
+    vhost.textContent = `${svc.vhost}.localhost`;
+    const purpose = document.createElement("p");
+    purpose.className = "purpose";
+    purpose.textContent = svc.purpose;
+    card.append(top, vhost, purpose);
+    if (svc.creds) {
+      const creds = document.createElement("p");
+      creds.className = "creds";
+      creds.textContent = `auth: ${svc.creds}`;
+      card.appendChild(creds);
+    }
+    grid.appendChild(card);
+    dots.set(svc.vhost, dot);
+  }
+  section.append(heading, grid);
+  groupsEl.appendChild(section);
+}
+
+// API endpoints section: dot + icon + name + URL + purpose per row, deliberately not links.
+const apiSection = document.createElement("section");
+apiSection.className = "group";
+const apiHeading = document.createElement("h2");
+apiHeading.textContent = "API endpoints";
+const apiList = document.createElement("ul");
+apiList.className = "api-list";
+for (const svc of APIS) {
+  const li = document.createElement("li");
+  const dot = makeDot();
+  const icon = document.createElement("span");
+  icon.className = "icon";
+  icon.setAttribute("aria-hidden", "true");
+  if (svc.icon) icon.innerHTML = ICONS[svc.icon];
+  const url = document.createElement("code");
+  url.textContent = urlFor(svc.vhost);
+  const purpose = document.createElement("span");
+  purpose.className = "purpose";
+  purpose.textContent = svc.purpose;
+  li.append(dot, icon, makeName(svc.name), url, purpose);
+  apiList.appendChild(li);
+  dots.set(svc.vhost, dot);
+}
+apiSection.append(apiHeading, apiList);
+groupsEl.appendChild(apiSection);
+
+const summaryEl = document.getElementById("summary");
+
+async function probe(svc) {
+  const dot = dots.get(svc.vhost);
+  dot.className = "dot probing";
+  try {
+    // no-cors resolves on opaque responses, rejects on connection refused.
+    await fetch(urlFor(svc.vhost), { mode:"no-cors", cache:"no-store" });
+    dot.className = "dot online";
+    return true;
+  } catch {
+    dot.className = "dot offline";
+    return false;
+  }
+}
+
+async function probeAll() {
+  const results = await Promise.all(ALL.map(probe));
+  const online = results.filter(Boolean).length;
+  summaryEl.textContent = `${online}/${ALL.length} online`;
+}
+
+probeAll();
+setInterval(probeAll, 30000);
+</script>
+</body>
+</html>
