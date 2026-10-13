@@ -783,6 +783,7 @@ class TestUpdateGatewayPollSchedule:
         gateway_update.transport = None
         gateway_update.tags = None
         gateway_update.passthrough_headers = None
+        gateway_update.requires_user_credentials = None
         gateway_update.auth_type = None
         gateway_update.auth_username = None
         gateway_update.auth_password = None
