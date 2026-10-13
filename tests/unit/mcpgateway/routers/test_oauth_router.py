@@ -4589,8 +4589,10 @@ class TestOAuthRouterPopupMode:
                     assert 'Fetch Tools from MCP Server' in body
                     assert 'Return to Admin Panel' in body
 
-                    # Verify NO postMessage script (should use inline fetch script instead)
-                    assert 'window.opener.postMessage' not in body
+                    # Verify inline fetch script is used, and postMessage is only sent after tools are fetched
+                    assert '/oauth/fetch-tools/test-gateway' in body
+                    assert "status: 'tools_fetched'" in body
+                    assert body.index('/oauth/fetch-tools/') < body.index('window.opener.postMessage')
 
     @pytest.mark.asyncio
     async def test_oauth_callback_without_popup_state_provider_error_returns_html(self, mock_db):
