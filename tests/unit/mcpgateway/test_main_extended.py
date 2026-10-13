@@ -11809,32 +11809,40 @@ class TestRemainingCoverageGaps:
             await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 422
 
-    async def test_module_level_router_registration_branches(self, monkeypatch):
-        """Exercise module-level wiring branches directly against a bare app."""
+    @pytest.mark.parametrize("variant", ["features_off", "features_on", "degraded_vault_and_baggage"])
+    async def test_module_level_router_registration_branches(self, monkeypatch, tmp_path, variant):
+        """Exercise module-level wiring branches directly against a bare app.
+
+        Runs the same wiring under three settings matrices: features off,
+        optional features on, and degraded optional dependencies. The matrix
+        covers both outcomes of each mount gate without re-executing the module.
+        """
         # Standard
         from types import ModuleType
 
         # First-Party
         import mcpgateway.main as main_module
 
+        # Import the real admin module before settings overrides: _assemble_routers
+        # imports it for the llm_admin dependency, and a fresh import under a
+        # patched a2a flag would bind admin.a2a_service to None.
+        # First-Party
+        import mcpgateway.admin  # noqa: F401 pylint: disable=unused-import
+
         # Provide lightweight router modules to avoid importing heavy optional dependencies.
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
         sys.modules["mcpgateway.routers.observability"].router = APIRouter()
         sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
 
-        # Force ImportError branches for optional routers.
-        _force_import_errors(
-            monkeypatch,
-            {
-                "mcpgateway.routers.oauth_router",
-                "mcpgateway.routers.reverse_proxy",
-                "mcpgateway.routers.llmchat_router",
-                "mcpgateway.routers.llm_admin_router",
-                "mcpgateway.routers.llm_config_router",
-                "mcpgateway.routers.llm_proxy_router",
-                "mcpgateway.routers.toolops_router",
-            },
-        )
+        optional_router_guards = {
+            "mcpgateway.routers.oauth_router",
+            "mcpgateway.routers.reverse_proxy",
+            "mcpgateway.routers.llmchat_router",
+            "mcpgateway.routers.llm_admin_router",
+            "mcpgateway.routers.llm_config_router",
+            "mcpgateway.routers.llm_proxy_router",
+            "mcpgateway.routers.toolops_router",
+        }
 
         overrides = {
             "environment": "production",
@@ -11855,7 +11863,40 @@ class TestRemainingCoverageGaps:
             "mcpgateway_ui_enabled": False,
             "llmchat_enabled": True,
             "toolops_enabled": True,
+            "token_usage_logging_enabled": False,
         }
+
+        if variant == "features_on":
+            # Hit the a2a-bindings and mcp-servers ImportError handlers plus the
+            # vault-backend, validation, token-usage, baggage and static-mount
+            # success branches.
+            optional_router_guards = {
+                "mcpgateway.routers.a2a_agent_plugin_bindings",
+                "mcpgateway.routers.mcp_servers_router",
+            }
+            overrides.update(
+                {
+                    "validation_middleware_enabled": True,
+                    "token_usage_logging_enabled": True,
+                    "otel_baggage_enabled": True,
+                    "oauth_token_backend": "vault",
+                    "structured_logging_enabled": True,
+                    "mcpgateway_ui_enabled": True,
+                    "llmchat_enabled": False,
+                    "toolops_enabled": False,
+                    "static_dir": tmp_path,
+                }
+            )
+            monkeypatch.setattr(main_module, "otel_tracing_enabled", lambda: True)
+        elif variant == "degraded_vault_and_baggage":
+            # Vault backend with the router missing; baggage on with tracing off.
+            optional_router_guards.add("mcpgateway.routers.vault_router")
+            overrides.update({"oauth_token_backend": "vault", "otel_baggage_enabled": True})
+            monkeypatch.setattr(main_module, "otel_tracing_enabled", lambda: False)
+
+        # Force ImportError branches for the guarded optional routers.
+        _force_import_errors(monkeypatch, optional_router_guards)
+
         for key, value in overrides.items():
             monkeypatch.setattr(settings, key, value, raising=False)
 
@@ -11881,13 +11922,18 @@ class TestRemainingCoverageGaps:
         # log-search skipped paths.
         main_module._include_optional_routers(bare_app)  # pylint: disable=protected-access
 
-        # UI disabled: root route serves API info without version/admin status.
         main_module._register_ui_routes(bare_app)  # pylint: disable=protected-access
-        root_route = next(route for route in bare_app.routes if getattr(route, "path", "") == "/" and "GET" in getattr(route, "methods", set()))
-        info = await root_route.endpoint()
-        assert "name" in info
-        assert "version" not in info
-        assert "admin_api_enabled" not in info
+
+        if variant == "features_on":
+            # UI enabled with a real static dir: the static mount succeeds.
+            assert any(getattr(route, "path", "") == "/static" for route in bare_app.routes)
+        else:
+            # UI disabled: root route serves API info without version/admin status.
+            root_route = next(route for route in bare_app.routes if getattr(route, "path", "") == "/" and "GET" in getattr(route, "methods", set()))
+            info = await root_route.endpoint()
+            assert "name" in info
+            assert "version" not in info
+            assert "admin_api_enabled" not in info
 
     def test_jsonpath_modifier_defaults_when_jsonpath_missing(self):
         # jsonpath_modifier(None/""/0) should fall back to default "$[*]".
