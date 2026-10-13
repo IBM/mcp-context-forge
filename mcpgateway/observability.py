@@ -24,6 +24,7 @@ OTEL_AVAILABLE = False
 otel_baggage: Any = None  # pylint: disable=invalid-name
 try:
     # Third-Party
+    from opentelemetry import context as otel_context
     from opentelemetry import trace
     from opentelemetry.propagate import extract as otel_extract
     from opentelemetry.propagate import inject as otel_inject
@@ -42,6 +43,8 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     # OpenTelemetry not installed - set to None for graceful degradation
+    otel_baggage = None
+    otel_context = None
     trace = None
     otel_extract = None
     otel_inject = None
@@ -1131,6 +1134,7 @@ class OpenTelemetryRequestMiddleware:
                             span.set_status(Status(StatusCode.OK))
             await send(message)
 
+        parent_context_token = None
         try:
             span_context_manager = _TRACER.start_as_current_span(span_name, **start_span_kwargs)
         except TypeError as exc:
@@ -1142,62 +1146,79 @@ class OpenTelemetryRequestMiddleware:
             rejected_context = "context" in start_span_kwargs and "unexpected keyword argument" in error_message and ("'context'" in error_message or '"context"' in error_message)
             if not rejected_context:
                 raise
+            # Attach the extracted inbound parent to the current context before
+            # starting the span, so the fallback span still nests under the inbound
+            # trace and active spans match raw-header forwarding. Detach the parent
+            # when the span lifetime ends.
             compatible_kwargs = {key: value for key, value in start_span_kwargs.items() if key != "context"}
+            if parent_context is not None and otel_context is not None:
+                try:
+                    parent_context_token = otel_context.attach(parent_context)
+                except Exception as attach_exc:  # pylint: disable=broad-exception-caught
+                    logger.debug("Failed to attach inbound parent context: %s", attach_exc)
+                    parent_context_token = None
             span_context_manager = _TRACER.start_as_current_span(span_name, **compatible_kwargs)
             logger.debug(
-                "Tracer %r rejected `context` kwarg; started span %r without explicit parent context",
+                "Tracer %r rejected `context` kwarg; started span %r with attached parent context",
                 type(_TRACER).__name__,
                 span_name,
             )
 
-        with span_context_manager as span:
-            # No valid inbound envelope: publish this new root span's context into
-            # the ASGI headers so downstream raw-header copies (session-task handoff,
-            # affinity envelopes, trusted-internal dispatch) carry the trace and
-            # internal spans nest under it instead of rooting detached traces.
-            if not has_remote_parent and otel_inject is not None:
-                try:
-                    envelope_carrier: Dict[str, str] = {}
-                    otel_inject(carrier=envelope_carrier)
-                    envelope_traceparent = envelope_carrier.get("traceparent")
-                    if envelope_traceparent:
-                        new_scope_headers = list(scope.get("headers", []) or [])
-                        new_scope_headers.append((b"traceparent", envelope_traceparent.encode("latin-1")))
-                        envelope_tracestate = envelope_carrier.get("tracestate")
-                        if envelope_tracestate:
-                            new_scope_headers.append((b"tracestate", envelope_tracestate.encode("latin-1")))
-                        scope["headers"] = new_scope_headers
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.debug("Failed to publish trace envelope into ASGI scope: %s", exc)
-            if span is not None:
-                for key, value in span_attributes.items():
-                    if value is not None:
-                        set_span_attribute(span, key, value)
-
-                # Inject baggage as span attributes so request-root spans retain
-                # the same trace context dimensions carried on child spans.
-                try:
-                    if OTEL_AVAILABLE and otel_baggage:
-                        baggage_dict = otel_baggage.get_all()
-                        if baggage_dict:
-                            baggage_attrs = _baggage_span_attributes(baggage_dict)
-                            for key, value in baggage_attrs.items():
-                                set_span_attribute(span, key, value)
-                            logger.debug("Injected %d baggage entries into request span", len(baggage_attrs))
-                except Exception as exc:
-                    logger.debug("Failed to inject baggage into request span: %s", exc)
-
-            try:
-                await self.app(scope, receive, _send_with_span_status)
-                if span is not None and "status" not in status_code_holder and OTEL_AVAILABLE and Status and StatusCode:
-                    span.set_status(Status(StatusCode.OK))
-            except Exception as exc:
+        try:
+            with span_context_manager as span:
+                # No valid inbound envelope: publish this new root span's context into
+                # the ASGI headers so downstream raw-header copies (session-task handoff,
+                # affinity envelopes, trusted-internal dispatch) carry the trace and
+                # internal spans nest under it instead of rooting detached traces.
+                if not has_remote_parent and otel_inject is not None:
+                    try:
+                        envelope_carrier: Dict[str, str] = {}
+                        otel_inject(carrier=envelope_carrier)
+                        envelope_traceparent = envelope_carrier.get("traceparent")
+                        if envelope_traceparent:
+                            new_scope_headers = list(scope.get("headers", []) or [])
+                            new_scope_headers.append((b"traceparent", envelope_traceparent.encode("latin-1")))
+                            envelope_tracestate = envelope_carrier.get("tracestate")
+                            if envelope_tracestate:
+                                new_scope_headers.append((b"tracestate", envelope_tracestate.encode("latin-1")))
+                            scope["headers"] = new_scope_headers
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        logger.debug("Failed to publish trace envelope into ASGI scope: %s", exc)
                 if span is not None:
-                    error_message = _sanitize_span_exception_message(exc)
-                    set_span_error(span, exc, record_exception=True)
-                    if OTEL_AVAILABLE and Status and StatusCode:
-                        span.set_status(Status(StatusCode.ERROR, error_message))
-                raise
+                    for key, value in span_attributes.items():
+                        if value is not None:
+                            set_span_attribute(span, key, value)
+
+                    # Inject baggage as span attributes so request-root spans retain
+                    # the same trace context dimensions carried on child spans.
+                    try:
+                        if OTEL_AVAILABLE and otel_baggage:
+                            baggage_dict = otel_baggage.get_all()
+                            if baggage_dict:
+                                baggage_attrs = _baggage_span_attributes(baggage_dict)
+                                for key, value in baggage_attrs.items():
+                                    set_span_attribute(span, key, value)
+                                logger.debug("Injected %d baggage entries into request span", len(baggage_attrs))
+                    except Exception as exc:
+                        logger.debug("Failed to inject baggage into request span: %s", exc)
+
+                try:
+                    await self.app(scope, receive, _send_with_span_status)
+                    if span is not None and "status" not in status_code_holder and OTEL_AVAILABLE and Status and StatusCode:
+                        span.set_status(Status(StatusCode.OK))
+                except Exception as exc:
+                    if span is not None:
+                        error_message = _sanitize_span_exception_message(exc)
+                        set_span_error(span, exc, record_exception=True)
+                        if OTEL_AVAILABLE and Status and StatusCode:
+                            span.set_status(Status(StatusCode.ERROR, error_message))
+                    raise
+        finally:
+            if parent_context_token is not None and otel_context is not None:
+                try:
+                    otel_context.detach(parent_context_token)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.debug("Failed to detach inbound parent context: %s", exc)
 
 
 def init_telemetry() -> Optional[Any]:

@@ -930,3 +930,135 @@ class TestRequestMiddlewareTraceEnvelope:
                 await middleware(scope, receive, send)
 
         assert tracer.attempts == [["context", "kind"]]
+
+    @pytest.mark.asyncio
+    async def test_fallback_preserves_inbound_parent_with_context_rejecting_tracer(self, monkeypatch):
+        """The context-kwarg fallback must nest the request span under the inbound trace.
+
+        A tracer that rejects the ``context`` keyword (e.g. Instana < 3.12) resolves its
+        parent from the current context. The middleware attaches the extracted inbound
+        parent for the span lifetime, so the active span and the forwarded ``traceparent``
+        stay in the same trace and the outer context is restored afterwards.
+        """
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+        # Third-Party
+        from opentelemetry import context as otel_context_api
+        from opentelemetry import trace as otel_trace_api
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        inner_tracer = provider.get_tracer("instana-compat-parent-test")
+
+        class ContextRejectingTracer:
+            """Emulates InstanaTracer < 3.12: rejects the ``context`` kwarg."""
+
+            def __init__(self, inner):
+                self.inner = inner
+                self.attempts = []
+
+            def start_as_current_span(self, name, **kwargs):
+                self.attempts.append(sorted(kwargs))
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                return self.inner.start_as_current_span(name, **kwargs)
+
+        tracer = ContextRejectingTracer(inner_tracer)
+        monkeypatch.setattr(observability, "_TRACER", tracer)
+
+        active_trace_id = {}
+        completed = {}
+
+        async def app(_scope, _receive, send):
+            active_span = otel_trace_api.get_current_span()
+            active_trace_id["value"] = f"{active_span.get_span_context().trace_id:032x}"
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            completed["value"] = True
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        incoming_trace_id = "0af7651916cd43dd8448eb211c80319c"  # pragma: allowlist secret
+        incoming_span_id = "b7ad6b7169203331"  # pragma: allowlist secret
+        incoming_traceparent = f"00-{incoming_trace_id}-{incoming_span_id}-01"
+        scope = self._make_scope([(b"traceparent", incoming_traceparent.encode())])
+        middleware = OpenTelemetryRequestMiddleware(app)
+
+        context_before = otel_context_api.get_current()
+        await middleware(scope, receive, send)
+        context_after = otel_context_api.get_current()
+
+        # The tracer first rejects `context`, then retries without it.
+        assert ["context", "kind"] in tracer.attempts
+        assert ["kind"] in tracer.attempts
+        # The request completed and the outer context was restored after detach.
+        assert completed.get("value") is True
+        assert context_after is context_before
+        # The request span nested under the inbound trace instead of rooting a new one.
+        (request_span,) = exporter.get_finished_spans()
+        assert f"{request_span.context.trace_id:032x}" == incoming_trace_id
+        assert f"{request_span.parent.span_id:016x}" == incoming_span_id
+        # The active span during request handling shares the forwarded trace.
+        assert active_trace_id["value"] == incoming_trace_id
+        assert dict(scope["headers"])[b"traceparent"].decode() == incoming_traceparent
+
+    @pytest.mark.asyncio
+    async def test_fallback_restores_context_when_app_raises_with_context_rejecting_tracer(self, monkeypatch):
+        """The fallback detaches the attached parent even when the wrapped app fails."""
+        trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+        export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+        memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+        # Third-Party
+        from opentelemetry import context as otel_context_api
+        from opentelemetry.trace import StatusCode
+
+        exporter = memory_export_sdk.InMemorySpanExporter()
+        provider = trace_sdk.TracerProvider()
+        provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+        inner_tracer = provider.get_tracer("instana-compat-failure-test")
+
+        class ContextRejectingTracer:
+            """Emulates InstanaTracer < 3.12: rejects the ``context`` kwarg."""
+
+            def __init__(self, inner):
+                self.inner = inner
+
+            def start_as_current_span(self, name, **kwargs):
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                return self.inner.start_as_current_span(name, **kwargs)
+
+        monkeypatch.setattr(observability, "_TRACER", ContextRejectingTracer(inner_tracer))
+
+        async def app(_scope, _receive, _send):
+            raise RuntimeError("app failure")
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        incoming_trace_id = "0af7651916cd43dd8448eb211c80319c"  # pragma: allowlist secret
+        incoming_span_id = "b7ad6b7169203331"  # pragma: allowlist secret
+        scope = self._make_scope([(b"traceparent", f"00-{incoming_trace_id}-{incoming_span_id}-01".encode())])
+        middleware = OpenTelemetryRequestMiddleware(app)
+
+        context_before = otel_context_api.get_current()
+        with pytest.raises(RuntimeError, match="app failure"):
+            await middleware(scope, receive, send)
+        context_after = otel_context_api.get_current()
+
+        # Detach runs in `finally`, so the outer context survives the app failure.
+        assert context_after is context_before
+        # The failed request span still belongs to the inbound trace.
+        (request_span,) = exporter.get_finished_spans()
+        assert f"{request_span.context.trace_id:032x}" == incoming_trace_id
+        assert f"{request_span.parent.span_id:016x}" == incoming_span_id
+        assert request_span.status.status_code is StatusCode.ERROR
