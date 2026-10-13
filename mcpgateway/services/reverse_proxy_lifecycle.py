@@ -96,6 +96,10 @@ async def _persist_unreachable_best_effort(session_manager: ReverseProxySessionM
         from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
         authority_guard = None
+        if settings.mcpgateway_reverse_proxy_distributed_enabled:
+            from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+            authority_guard = (await get_reverse_proxy_relay()).unreachable_write_guard
         catalog = ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service)
         await catalog.mark_reverse_proxy_gateways_unreachable(
             session_manager,
@@ -158,6 +162,13 @@ async def run_proxied_connection(connection_io: ConnectionIO, context: ReversePr
     from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
     session_manager = await get_reverse_proxy_session_manager()
+    relay = None
+    release_owners = None
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay, release_reverse_proxy_owners_best_effort  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        release_owners = release_reverse_proxy_owners_best_effort
     connection = await session_manager.connect(connection_io, LocalSessionId(uuid.uuid4().hex), owner_email=context.owner_email)
     connection_id = connection.connection_id
 
@@ -182,6 +193,8 @@ async def run_proxied_connection(connection_io: ConnectionIO, context: ReversePr
             acknowledged.
             """
             nonlocal registration_state
+            registration_claimed = False
+            ownership_promoted = False
             stable_id: StableGatewayId | None = None
             quiesced: ConnectionId | None = None
             quiesced_started = False
@@ -192,12 +205,18 @@ async def run_proxied_connection(connection_io: ConnectionIO, context: ReversePr
             async def compensate() -> None:
                 """Leave persisted and routing state fail-closed after registration failure.
 
-                Local restore, demotion, and retirement are guaranteed, and the
-                registration-error response is never skipped. A pre-commit
-                failure that restored no predecessor re-evaluates reachability
-                through the guarded persistence path. Restoration of the
-                quiesced predecessor is verified against the live mapping.
+                Local restore, demotion, and retirement are guaranteed; every
+                Redis cleanup is independently best-effort so a relay outage can
+                never strand routing state or skip the registration-error
+                response. A pre-commit failure that restored no predecessor
+                re-evaluates reachability through the guarded persistence path
+                once this registrant's lease is released, so an eviction denied
+                by that lease is not permanently dropped. Restoration of the
+                quiesced predecessor is verified against the live mapping; when
+                it cannot be confirmed, the predecessor's stale owner generation
+                is compare-released fenced before that re-evaluation.
                 """
+                nonlocal registration_claimed
                 if stable_id is None:
                     return
                 try:
@@ -213,32 +232,83 @@ async def run_proxied_connection(connection_io: ConnectionIO, context: ReversePr
                         exc_info=True,
                     )
                 persist_unreachable = False
-                if not committed and quiesced_started and quiesced is not None:
-                    await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
-                    if session_manager.resolve_connection_id(stable_id) != quiesced:
-                        # The quiesced predecessor is already gone, so restoration was a
-                        # silent no-op: only a verified restore keeps the gateway reachable.
-                        persist_unreachable = True
-                elif not committed:
-                    # No predecessor was restored (quiesce never ran or found no local
-                    # mapping): re-evaluate reachability.
-                    if quiesced_started:
+                stale_predecessor: ConnectionId | None = None
+                try:
+                    if not committed and quiesced_started and quiesced is not None:
                         await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
-                    persist_unreachable = True
-                else:
-                    await session_manager.restore_stable_id(stable_id, None, connection_id)
-                    if quiesced is not None and quiesced != connection_id:
-                        await session_manager.retire_connection(quiesced)
+                        if session_manager.resolve_connection_id(stable_id) != quiesced:
+                            # The quiesced predecessor is already gone, so restoration was a
+                            # silent no-op: only a verified restore keeps the gateway reachable.
+                            stale_predecessor = quiesced
+                            persist_unreachable = True
+                    elif not committed:
+                        # No predecessor was restored (quiesce never ran or found no local
+                        # mapping): re-evaluate reachability once the lease release below lands.
+                        if quiesced_started:
+                            await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                        persist_unreachable = True
+                    else:
+                        await session_manager.restore_stable_id(stable_id, None, connection_id)
+                        if quiesced is not None and quiesced != connection_id:
+                            await session_manager.retire_connection(quiesced)
+                finally:
+                    if relay is not None:
+                        if stale_predecessor is not None:
+                            if release_owners is None:
+                                LOGGER.error(
+                                    "Reverse proxy owner release is unavailable during registration compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                )
+                            else:
+                                # Fenced compare-delete: a newer owner generation never matches.
+                                await release_owners(relay, (ReverseProxyEviction(stable_id, stale_predecessor),))
+                        if ownership_promoted:
+                            if release_owners is None:
+                                LOGGER.error(
+                                    "Reverse proxy owner release is unavailable during registration compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                )
+                            else:
+                                await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
+                            try:
+                                await relay.remove_session(connection_id)
+                            except Exception:  # pylint: disable=broad-exception-caught  # best-effort directory cleanup
+                                LOGGER.warning(
+                                    "Reverse proxy session directory cleanup failed during registration compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                    exc_info=True,
+                                )
+                        if registration_claimed:
+                            try:
+                                await relay.release_registration(stable_id, connection_id)
+                            except Exception:  # pylint: disable=broad-exception-caught  # the lease still expires by TTL
+                                LOGGER.warning(
+                                    "Reverse proxy registration lease release failed during compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                    exc_info=True,
+                                )
+                            else:
+                                registration_claimed = False
 
                 if persist_unreachable:
+                    # Runs only after the finally's lease release: a registration
+                    # lease still held by this registrant would deny the synthetic
+                    # eviction's guard, re-dropping the denied old-worker write.
                     await _persist_unreachable_best_effort(session_manager, (ReverseProxyEviction(stable_id, connection_id),))
 
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=context.owner_email, team_id=context.team_id)
                 stable_id = StableGatewayId(stable_proxy_id(registration_context, server))
+                if relay is not None:
+                    registration_claimed = await relay.claim_registration(stable_id, connection_id)
+                    if not registration_claimed:
+                        raise RuntimeError("reverse-proxy stable gateway registration is already in progress")
+                await session_manager.record_server_info(connection_id, server.model_dump(exclude_none=True))
                 catalog = ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service)
                 discovery = ReverseProxyDiscoveryService(gateway_service=gateway_service, server_service=server_service)
                 async with anyio.create_task_group() as lease_tasks:
+                    if relay is not None:
+                        lease_tasks.start_soon(relay.maintain_registration, stable_id, connection_id)
                     entry = await catalog.register(db, registration_context, server, commit=False)
                     if entry.stable_id != stable_id:
                         raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog returned an unexpected stable ID")
@@ -259,23 +329,38 @@ async def run_proxied_connection(connection_io: ConnectionIO, context: ReversePr
                             commit=False,
                             mark_reachable=False,
                         )
+                        if relay is not None and not await relay.heartbeat_registration(stable_id, connection_id):
+                            raise RuntimeError("reverse-proxy registration authority was lost")
                         db.commit()
                         committed = True
+                        if relay is not None:
+                            ownership_promoted = await relay.promote_registration(stable_id, connection_id)
+                            if not ownership_promoted:
+                                raise RuntimeError("reverse-proxy registration authority was lost")
                         await session_manager.promote_stable_id(stable_id, connection_id)
                         db_gateway.reachable = True
                         db_gateway.last_seen = datetime.now(tz=timezone.utc)
+                        if relay is not None and not await relay.heartbeat_registration(stable_id, connection_id):
+                            raise RuntimeError("reverse-proxy registration authority was lost")
                         db.commit()
                         reachable_committed = True
+                        if relay is not None:
+                            await relay.publish_session(stable_id, connection_id)
                         await catalog.publish_post_commit_effects(db, registration_context, server, entry)
                         await discovery.publish_post_commit_effects(db_gateway, db_server)
                     registration_state = "registered"
                     LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
                     await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
+                    if relay is not None:
+                        await relay.release_registration(stable_id, connection_id)
+                        registration_claimed = False
                     lease_tasks.cancel_scope.cancel()
                 # Retire the quiesced predecessor only after the replacement is
                 # acknowledged, so its client reconnects cleanly.
                 if quiesced is not None and quiesced != connection_id:
                     await session_manager.retire_connection(quiesced)
+                    if relay is not None:
+                        await relay.remove_session(quiesced)
             except anyio.get_cancelled_exc_class():
                 # Task-group cancellation (disconnect, unregister, duplicate
                 # register) still compensates under a shield, then re-raises.
@@ -355,5 +440,16 @@ async def run_proxied_connection(connection_io: ConnectionIO, context: ReversePr
         # Shield typed disconnect so cancellation cannot skip authoritative cleanup.
         with anyio.CancelScope(shield=True):
             disconnected_stable_ids = await session_manager.disconnect(connection_id)
-            await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
+            try:
+                if relay is not None:
+                    if release_owners is None:
+                        LOGGER.error("Reverse-proxy owner release is unavailable during session teardown", extra={"connection_id": str(connection_id)})
+                    else:
+                        await release_owners(relay, disconnected_stable_ids)
+                    try:
+                        await relay.remove_session(connection_id)
+                    except Exception:  # pylint: disable=broad-exception-caught  # best-effort directory cleanup
+                        LOGGER.warning("Reverse-proxy session directory cleanup failed during session teardown", extra={"connection_id": str(connection_id)}, exc_info=True)
+            finally:
+                await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
