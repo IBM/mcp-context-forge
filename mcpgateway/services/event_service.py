@@ -263,7 +263,7 @@ class EventService:
                 # Fallthrough to queue mode if import fails
 
         # Local Queue (Redis not available or import failed)
-        if fallback_to_local or not self._redis_client:
+        if fallback_to_local or not (self.redis_url and REDIS_AVAILABLE):
             queue: asyncio.Queue = asyncio.Queue()
             self._event_subscribers.append(queue)
             try:

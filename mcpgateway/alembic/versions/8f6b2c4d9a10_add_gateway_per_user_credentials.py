@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Add gateway per-user credential policy.
+"""Location: ./mcpgateway/alembic/versions/8f6b2c4d9a10_add_gateway_per_user_credentials.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Add gateway per-user credential policy.
 
 Revision ID: 8f6b2c4d9a10
 Revises: c7e91a2b4d60
