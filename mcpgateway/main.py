@@ -3450,7 +3450,7 @@ else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
 
 # Snapshot once: the gate and v1 router must not diverge after runtime settings changes.
-SSO_USER_PROVISIONING_REGISTERED = bool(settings.mcpgateway_admin_api_enabled and settings.sso_user_provisioning_api_enabled and settings.sso_enabled)
+SSO_USER_PROVISIONING_REGISTERED = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled)
 app.add_middleware(SSOUserProvisioningGateMiddleware, enabled=SSO_USER_PROVISIONING_REGISTERED)
 
 # Client disconnect middleware — MUST be outermost (added last, runs first).

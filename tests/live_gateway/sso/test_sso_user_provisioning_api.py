@@ -89,7 +89,7 @@ def created_users(admin_client):
 
 
 def test_disabled_post_before_auth_or_parsing(provisioning_enabled):
-    """Default/disabled configuration hides POST independently of credentials and body."""
+    """Disabling the admin API or SSO hides POST independently of credentials and body."""
     if provisioning_enabled:
         pytest.skip("This case requires a disabled provisioning configuration")
     for headers in ({}, {"Authorization": "Bearer invalid"}, {"Cookie": "jwt_token=invalid"}):
