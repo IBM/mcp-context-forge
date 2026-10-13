@@ -1064,7 +1064,6 @@ async def oauth_callback(
         # OAuthManager.complete_authorization_code_flow and
         # token_validation_service._validate_audience for the full trust model.
         if app_user_email and result.get("success"):
-            # First-Party
             from mcpgateway.services.oauth_manager import parse_expires_in  # pylint: disable=import-outside-toplevel
 
             token_response = result.get("token_response", {})
