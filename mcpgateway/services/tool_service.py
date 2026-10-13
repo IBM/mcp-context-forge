@@ -51,6 +51,7 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
+from mcp.shared.exceptions import MCPError
 from mcp.shared.inbound import x_mcp_header_map
 import mcp_types as types
 import orjson
@@ -976,6 +977,13 @@ def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_o
             structured_logger.log(level="DEBUG", message=f"apply_mapping_into_target: unmapped keys excluded: {sorted(dropped)}", component="tool_service")
 
     return {**target_obj, **{mapping_obj[k]: v for k, v in data_obj.items() if k in mapping_obj}}
+
+
+# Result ``_meta`` key under which the gateway reports the JSON-RPC error code of the
+# failure its upstream call raised: the code the upstream answered with, or the one the
+# SDK client made up for a transport fault (the result text says which). The failure
+# itself is still an ``isError`` result (one shape for every tool failure, in both eras).
+TOOL_ERROR_CODE = "io.contextforge/errorCode"
 
 
 class ToolError(Exception):
@@ -4026,6 +4034,7 @@ class ToolService(BaseService):
     def _make_mcp_tool_error(
         sanitized_message: str,
         structured_content: Optional[Dict[str, Any]] = None,
+        error_code: Optional[int] = None,
     ) -> "types.CallToolResult":
         """Build a CallToolResult with isError=True.
 
@@ -4033,6 +4042,9 @@ class ToolService(BaseService):
             sanitized_message: Pre-sanitized error text to include in the result.
             structured_content: Optional dict attached to the result (e.g. ``{"status_code": 429}``
                 for retry-plugin status matching).
+            error_code: JSON-RPC error code of the failure the upstream call raised, if it was a
+                JSON-RPC error. Reported under ``TOOL_ERROR_CODE`` in the result's ``_meta``; the
+                text next to it says whether the upstream sent it or the SDK client made it up.
 
         Returns:
             A ``CallToolResult`` that conforms to the MCP protocol error shape.
@@ -4042,6 +4054,7 @@ class ToolService(BaseService):
             content=[types.TextContent(type="text", text=f"MCP server error: {sanitized_message}")],
             isError=True,
             structuredContent=structured_content,
+            _meta={TOOL_ERROR_CODE: {"code": error_code}} if error_code is not None else None,
         )
 
     async def invoke_tool_direct(
@@ -4242,10 +4255,16 @@ class ToolService(BaseService):
                     return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
+            # The SDK's task group wraps the failure; report the root cause, as the catalog path does.
+            root_cause: BaseException = e
+            if isinstance(e, BaseExceptionGroup):
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                    root_cause = root_cause.exceptions[0]
             # Sanitize before returning — exception text may contain auth tokens embedded in
             # gateway URLs (CWE-209).  Matches the SSE/StreamableHTTP error paths.
-            sanitized = sanitize_exception_message(str(e), _gw_auth_query_params)
-            return self._make_mcp_tool_error(sanitized)
+            sanitized = sanitize_exception_message(str(root_cause), _gw_auth_query_params)
+            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+            return self._make_mcp_tool_error(sanitized, error_code=error_code)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code
@@ -6465,7 +6484,9 @@ class ToolService(BaseService):
                             exc_structured: Optional[Dict[str, Any]] = None
                             if isinstance(root_cause, httpx.HTTPStatusError):
                                 exc_structured = {"status_code": root_cause.response.status_code}
-                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
+                            # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
+                            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -6700,7 +6721,9 @@ class ToolService(BaseService):
                             exc_structured: Optional[Dict[str, Any]] = None
                             if isinstance(root_cause, httpx.HTTPStatusError):
                                 exc_structured = {"status_code": root_cause.response.status_code}
-                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured)
+                            # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
+                            error_code = root_cause.code if isinstance(root_cause, MCPError) else None
+                            return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
 
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
@@ -6999,8 +7022,10 @@ class ToolService(BaseService):
                                 # plugins provide only the content without structured content fields.
                                 structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
                                 is_error = modified_result.get("isError") if "isError" in modified_result else modified_result.get("is_error", tool_result.is_error)
+                                # Keep the result's _meta (e.g. the preserved upstream error code) unless the plugin set its own.
+                                meta = modified_result.get("_meta") if "_meta" in modified_result else modified_result.get("meta", getattr(tool_result, "meta", None))
 
-                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error)
+                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error, meta=meta)
                             else:
                                 # If result is not in expected format, convert it to text content
                                 try:
