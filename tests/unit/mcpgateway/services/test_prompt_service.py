@@ -21,6 +21,7 @@ from typing import Any, List, Optional, TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+from mcp.shared.exceptions import MCPError
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -29,7 +30,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError, _coerce_plugin_prompt_result
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError, _coerce_plugin_prompt_result
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -475,7 +476,7 @@ class TestPromptService:
         meta_data = {"trace_id": "123"}
 
         # Just verify it doesn't crash and returns result
-        result = await prompt_service.get_prompt(test_db, "1", {}, _meta_data=meta_data)
+        result = await prompt_service.get_prompt(test_db, "1", None, _meta_data=meta_data)
         assert result.messages[0].content.text == "Hello!"
 
     @pytest.mark.asyncio
@@ -552,7 +553,7 @@ class TestPromptService:
         prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        result = await prompt_service.get_prompt(test_db, "gateway__greeting", {})
+        result = await prompt_service.get_prompt(test_db, "gateway__greeting", None)
         assert result.messages[0].content.text == "Hello!"
 
     @pytest.mark.asyncio
@@ -567,7 +568,7 @@ class TestPromptService:
         prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        result = await prompt_service.get_prompt(test_db, "compare_timezones", {})
+        result = await prompt_service.get_prompt(test_db, "compare_timezones", None)
         assert result.messages[0].content.text == "Hello!"
 
     @pytest.mark.asyncio
@@ -579,7 +580,7 @@ class TestPromptService:
         # Single execute call - _find_prompt_by_name_or_id uses OR query (name OR id)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        result = await prompt_service.get_prompt(test_db, "123", {})
+        result = await prompt_service.get_prompt(test_db, "123", None)
         assert result.messages[0].content.text == "Hello!"
 
     @pytest.mark.asyncio
@@ -597,7 +598,7 @@ class TestPromptService:
         second_result = _make_execute_result(scalar=db_prompt)
         test_db.execute = Mock(side_effect=[first_result, second_result])
 
-        result = await prompt_service.get_prompt(test_db, "collision_id", {})
+        result = await prompt_service.get_prompt(test_db, "collision_id", None)
         assert result.messages[0].content.text == "By name!"
 
     @pytest.mark.asyncio
@@ -619,7 +620,7 @@ class TestPromptService:
         test_db.execute = Mock(side_effect=[or_result, name_result])
 
         with pytest.raises(PromptError, match="ambiguous"):
-            await prompt_service.get_prompt(test_db, "code_review", {})
+            await prompt_service.get_prompt(test_db, "code_review", None)
 
     @pytest.mark.asyncio
     async def test_get_prompt_multi_team_same_name(self, prompt_service, test_db):
@@ -654,7 +655,7 @@ class TestPromptService:
             # User from Team B requests "code_review"
             test_db.execute = Mock(return_value=_make_execute_result(scalar=team_b_prompt))
 
-            result = await prompt_service.get_prompt(test_db, "code_review", {}, user="member-b@test.com", token_teams=["team-b"])
+            result = await prompt_service.get_prompt(test_db, "code_review", None, user="member-b@test.com", token_teams=["team-b"])
 
             # Should get Team B's template, not Team A's
             assert result.messages[0].content.text == "Team B template"
@@ -679,6 +680,25 @@ class TestPromptService:
         with pytest.raises(PromptNotFoundError) as exc_info:
             await prompt_service.get_prompt(test_db, "1")
         assert "inactive" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("arguments", [pytest.param({}, id="none_sent"), pytest.param({"other": "x"}, id="some_sent")], ids=str)
+    async def test_get_prompt_missing_required_argument_names_it(self, prompt_service, test_db, arguments):
+        """Rendering without a required argument fails with a message naming the argument."""
+        db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        with pytest.raises(PromptValidationError, match="Missing required arguments: name"):
+            await prompt_service.get_prompt(test_db, "1", arguments)
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_without_arguments_returns_the_template(self, prompt_service, test_db):
+        """No argument dict at all asks for the template itself, placeholders unfilled, as the REST view does."""
+        db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
+            mock_get_buf.record_prompt_metric = Mock()
+            result = await prompt_service.get_prompt(test_db, "1", None)
+        assert result.messages[0].content.text == "Hello, {{ name }}!"
 
     @pytest.mark.asyncio
     async def test_get_prompt_render_error(self, prompt_service, test_db):
@@ -713,7 +733,7 @@ class TestPromptService:
         ):
             mock_trace.get.return_value = "trace-1"
             mock_get_buf.record_prompt_metric = Mock()
-            result = await prompt_service.get_prompt(test_db, "1", {})
+            result = await prompt_service.get_prompt(test_db, "1", None)
 
         assert result.messages[0].content.text == "Hello!"
 
@@ -775,7 +795,7 @@ class TestPromptService:
             patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_metrics_buffer,
         ):
             mock_metrics_buffer.record_prompt_metric = Mock()
-            result = await prompt_service.get_prompt(test_db, "1", {})
+            result = await prompt_service.get_prompt(test_db, "1", None)
 
         assert result.messages[0].content.text == "Hello!"
         span.set_attribute.assert_any_call("langfuse.observation.prompt.name", "greeting_prompt")
@@ -806,7 +826,7 @@ class TestPromptService:
         ):
             mock_trace.get.return_value = "trace-1"
             mock_get_buf.record_prompt_metric = Mock()
-            result = await prompt_service.get_prompt(test_db, "1", {})
+            result = await prompt_service.get_prompt(test_db, "1", None)
 
         assert result.messages[0].content.text == "Hello!"
 
@@ -828,7 +848,7 @@ class TestPromptService:
             with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
                 mock_get_buf.record_prompt_metric = Mock()
                 with pytest.raises(PromptNotFoundError, match="Prompt not found"):
-                    await prompt_service.get_prompt(test_db, "1", {})
+                    await prompt_service.get_prompt(test_db, "1", None)
 
     @pytest.mark.asyncio
     async def test_get_prompt_server_scoping_not_attached_raises_not_found(self, prompt_service, test_db):
@@ -855,7 +875,7 @@ class TestPromptService:
         server_match_result.first.return_value = ("ok",)
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
 
-        result = await prompt_service.get_prompt(test_db, "shared_prompt", {}, server_id="server-1")
+        result = await prompt_service.get_prompt(test_db, "shared_prompt", None, server_id="server-1")
         assert result.messages[0].content.text == "Server 1 version"
 
     @pytest.mark.asyncio
@@ -870,7 +890,7 @@ class TestPromptService:
             ]
         )
         with pytest.raises(PromptNotFoundError, match="inactive"):
-            await prompt_service.get_prompt(test_db, "disabled_prompt", {}, server_id="server-1")
+            await prompt_service.get_prompt(test_db, "disabled_prompt", None, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_get_prompt_render_error_sets_span_attributes(self, prompt_service, test_db):
@@ -3922,6 +3942,96 @@ class TestFetchGatewayPromptRegistryPath:
 
         fake_registry.acquire.assert_called_once()
         assert result.description == "from registry"
+
+    @pytest.mark.asyncio
+    @staticmethod
+    def _fetch_with_failure(service, prompt, failure):
+        """Run the upstream fetch with ``_get_prompt_with_meta`` raising ``failure``; return the raised exception."""
+
+        class _FakeMCPProxyClient:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        async def run():
+            with (
+                patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
+                patch("mcpgateway.services.prompt_service.mcp_proxy_client", return_value=_FakeMCPProxyClient()),
+                patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, side_effect=failure),
+            ):
+                with pytest.raises(PromptError) as exc_info:
+                    await service._fetch_gateway_prompt_result(prompt, {"name": "x"}, meta_data=None)
+            return exc_info.value
+
+        return run()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "wrap",
+        [
+            pytest.param(lambda error: error, id="bare"),
+            pytest.param(lambda error: ExceptionGroup("task group", [error]), id="in_task_group"),
+            pytest.param(lambda error: ExceptionGroup("outer", [ExceptionGroup("inner", [error])]), id="nested_groups"),
+            pytest.param(lambda error: ExceptionGroup("task group", [RuntimeError("transport closed"), error]), id="not_the_first_leaf"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "upstream_message, relayed_message",
+        [
+            pytest.param("Invalid params from the strict upstream", "Invalid params from the strict upstream", id="plain_message"),
+            pytest.param("Bad request to http://upstream.example.com/mcp?api_key=abc", "Bad request to http://upstream.example.com/mcp?api_key=REDACTED", id="url_with_auth_parameter"),
+        ],
+    )
+    async def test_fetch_gateway_prompt_relays_an_upstream_json_rpc_error(self, wrap, upstream_message, relayed_message):
+        """An upstream JSON-RPC error, however the SDK's task groups wrap it, becomes PromptUpstreamError with its code and data; auth parameters in its message are stripped."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        upstream_error = MCPError(code=-32602, message=upstream_message, data={"argument": "name"})
+        raised = await self._fetch_with_failure(PromptService(), self._build_gateway_prompt(), wrap(upstream_error))
+
+        assert isinstance(raised, PromptUpstreamError)
+        assert raised.code == -32602
+        assert str(raised) == relayed_message
+        assert raised.data == {"argument": "name"}
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_sanitizes_urls_inside_the_upstream_error_data(self):
+        """Every string inside the upstream's error data, however nested, has auth parameters stripped; other values pass through."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        data = {
+            "debug": {"url": "http://upstream.example.com/mcp?api_key=abc", "attempt": 2},
+            "urls": ["http://upstream.example.com/a?api_key=abc", 7, None, {"nested": "http://upstream.example.com/b?api_key=abc"}],
+            "hint": "retry later",
+        }
+        raised = await self._fetch_with_failure(PromptService(), self._build_gateway_prompt(), MCPError(code=-32001, message="Custom upstream failure", data=data))
+
+        assert isinstance(raised, PromptUpstreamError)
+        assert raised.code == -32001
+        assert raised.data == {
+            "debug": {"url": "http://upstream.example.com/mcp?api_key=REDACTED", "attempt": 2},
+            "urls": ["http://upstream.example.com/a?api_key=REDACTED", 7, None, {"nested": "http://upstream.example.com/b?api_key=REDACTED"}],
+            "hint": "retry later",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "wrap",
+        [pytest.param(lambda error: error, id="bare"), pytest.param(lambda error: ExceptionGroup("task group", [error]), id="in_task_group")],
+    )
+    async def test_fetch_gateway_prompt_wraps_other_failures_with_a_redacted_message(self, wrap):
+        """A failure that is not a JSON-RPC error stays a fetch failure, reported from its root cause with auth parameters stripped."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        raised = await self._fetch_with_failure(PromptService(), self._build_gateway_prompt(), wrap(RuntimeError("connect failed for http://upstream.example.com/mcp?api_key=abc")))
+
+        assert type(raised) is PromptError
+        assert str(raised) == "Failed to fetch prompt 'gw-prompt' from gateway: connect failed for http://upstream.example.com/mcp?api_key=REDACTED"
 
     @pytest.mark.asyncio
     async def test_fetch_gateway_prompt_falls_back_when_registry_not_initialised(self):
