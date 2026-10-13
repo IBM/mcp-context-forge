@@ -1151,9 +1151,6 @@
             "RETRY_MAX_DELAY": {
               "type": "string"
             },
-            "SANITIZE_OUTPUT": {
-              "type": "string"
-            },
             "SECURE_COOKIES": {
               "type": "string",
               "description": "Force secure cookie flags",
