@@ -4535,7 +4535,13 @@ class TestOAuthRouterPopupMode:
 
     @pytest.mark.asyncio
     async def test_oauth_callback_without_popup_state_returns_html_page(self, mock_db):
-        """Test oauth_callback returns full HTML page when state does not start with 'popup.'"""
+        """Test oauth_callback returns full HTML page when state does not start with 'popup.'
+
+        Structural assertions verify that:
+        - postMessage with status 'success' is emitted only inside the ``if (response.ok)`` branch.
+        - The ``else`` branch throws an error, not a success message.
+        - Changing ``if (response.ok)`` to ``if (!response.ok)`` breaks every assertion below.
+        """
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Mock gateway
@@ -4546,7 +4552,7 @@ class TestOAuthRouterPopupMode:
         mock_gateway.oauth_config = {
             "client_id": "test-client",
             "authorization_url": "https://oauth.example.com/authorize",
-            "token_url": "https://oauth.example.com/token"
+            "token_url": "https://oauth.example.com/token",
         }
         mock_gateway.ca_certificate = None
         mock_gateway.client_cert = None
@@ -4554,45 +4560,82 @@ class TestOAuthRouterPopupMode:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        # Mock OAuth manager
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
-            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
-                "user_id": "user@example.com",
-                "expires_at": "2026-12-31T23:59:59Z",
-                "state_data": {"app_user_email": "user@example.com", "team_id": None},
-            })
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
+                return_value={
+                    "user_id": "user@example.com",
+                    "expires_at": "2026-12-31T23:59:59Z",
+                    "state_data": {"app_user_email": "user@example.com", "team_id": None},
+                }
+            )
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
             with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
                 with patch("mcpgateway.routers.oauth_router._persist_learned_audience", new_callable=AsyncMock):
-                    # Mock request with CSP nonce
                     mock_request = Mock()
                     mock_request.state = Mock()
                     mock_request.state.csp_nonce = "test-nonce-legacy"
 
-                    # Execute with non-popup state
                     result = await oauth_callback(
                         code="auth-code-123",
                         state="regular-state-abc123",
                         request=mock_request,
-                        db=mock_db
+                        db=mock_db,
                     )
 
-                    # Assert HTMLResponse with legacy admin UI
-                    assert isinstance(result, HTMLResponse)
-                    body = result.body.decode()
+        # --- Basic page assertions ---
+        assert isinstance(result, HTMLResponse)
+        body = result.body.decode()
+        assert "OAuth Authorization Successful" in body
+        assert "Fetch Tools from MCP Server" in body
+        assert "Return to Admin Panel" in body
+        assert "/oauth/fetch-tools/test-gateway" in body
 
-                    # Verify legacy admin UI elements are present
-                    assert 'OAuth Authorization Successful' in body
-                    assert 'Fetch Tools from MCP Server' in body
-                    assert 'Return to Admin Panel' in body
+        # --- Structural JS assertions (break when `if (response.ok)` → `if (!response.ok)`) ---
 
-                    # Verify inline fetch script is used, and postMessage is only sent after tools are fetched
-                    assert '/oauth/fetch-tools/test-gateway' in body
-                    assert "status: 'tools_fetched'" in body
-                    assert body.index('/oauth/fetch-tools/') < body.index('window.opener.postMessage')
+        # 1. The success branch opens with `if (response.ok)`.
+        #    Swapping to `if (!response.ok)` would put success text in the wrong branch.
+        ok_branch_open = "if (response.ok)"
+        assert ok_branch_open in body, "Expected `if (response.ok)` guard in the HTML script"
+
+        ok_open_pos = body.index(ok_branch_open)
+
+        # 2. postMessage with status 'success' must be INSIDE the `if (response.ok)` block,
+        #    i.e. it appears AFTER `if (response.ok)`.
+        post_message_pos = body.index("window.opener.postMessage")
+        assert ok_open_pos < post_message_pos, (
+            "postMessage must appear after `if (response.ok)`. "
+            "If the guard were `if (!response.ok)` this ordering would be reversed."
+        )
+
+        # 3. The `} else {` clause that throws an error must come AFTER the postMessage call,
+        #    confirming that `status: 'success'` and postMessage are in the truthy branch.
+        else_pos = body.index("} else {")
+        assert post_message_pos < else_pos, (
+            "`} else {` must appear after the postMessage call. "
+            "Swapping the condition would move `throw new Error` before `postMessage`."
+        )
+
+        # 4. The `else` branch must contain a `throw new Error`, not a success message.
+        else_block = body[else_pos:]
+        assert "throw new Error" in else_block, "else branch must throw an error, not emit a success"
+        assert "status: 'success'" not in else_block, (
+            "status: 'success' must not appear in the else branch. "
+            "If the guard were inverted, success would land here."
+        )
+
+        # 5. The fetch URL must appear BEFORE the postMessage (tool fetch triggers the message).
+        fetch_url_pos = body.index("/oauth/fetch-tools/")
+        assert fetch_url_pos < post_message_pos, "fetch-tools URL must precede the postMessage call"
+
+        # 6. The opener guard (`window.opener && !window.opener.closed`) must appear between
+        #    `if (response.ok)` and the postMessage — it wraps the notification.
+        opener_guard_pos = body.index("window.opener && !window.opener.closed")
+        assert ok_open_pos < opener_guard_pos < post_message_pos, (
+            "opener guard must appear inside the `if (response.ok)` block, before postMessage"
+        )
 
     @pytest.mark.asyncio
     async def test_oauth_callback_without_popup_state_provider_error_returns_html(self, mock_db):
