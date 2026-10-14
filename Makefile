@@ -1795,6 +1795,7 @@ testing-up:                                ## Start testing stack (Locust + Fast
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	LOG_BOUNDARY_ENABLED=$${LOG_BOUNDARY_ENABLED:-false} \
 	$(COMPOSE_CMD_MONITOR) $(TESTING_COMPOSE_PROFILES) up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"

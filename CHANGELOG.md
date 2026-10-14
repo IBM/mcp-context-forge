@@ -32,6 +32,10 @@
 - **`mcp-servers/` directory removed** - The unsupported sample/test MCP servers, the Go/Python scaffolding templates, and the `mcp-url-to-markdown-tests` workflow leave the repository. The six Python servers now live in [IBM/contextforge-examples](https://github.com/IBM/contextforge-examples) under `mcp-servers/python/`; the scaffolding templates are deleted without migration. The performance compose generator and benchmark docs now use the published `ghcr.io/ibm/cfex-mcp-fast-time-server` and `ghcr.io/ibm/cfex-mcp-benchmark-server` images. The `/v1/mcp-servers` REST API is unchanged: it remains the product-language alias for the gateways API.
 
 
+### Removed
+
+- **`SANITIZE_OUTPUT` environment variable** ([#6166](https://github.com/IBM/mcp-context-forge/pull/6166)) - The setting was inert: no code path consumed it. The gateway now ignores the variable. Remove it from deployment manifests; the Helm chart value `mcpContextForge.config.SANITIZE_OUTPUT` no longer exists.
+
 ### Security
 
 - **MCP Origin/Host enforcement** ([#6875](https://github.com/IBM/mcp-context-forge/pull/6875)) - Implements MCP 2025-11-25 §transport-security: a present-but-unlisted `Origin` header on `/mcp` is now rejected with HTTP 403. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins to enable enforcement (default: empty, backward-compatible). An optional companion setting `MCP_ALLOWED_HOSTS` enforces exact `host:port` matching on the `Host` header. Enforcement runs at the public `/mcp` mount via `MCPOriginHostGate`, covering all ingress modes (Python, rust-internal, rust-public). The `/_internal/mcp/transport` bridge (trusted Rust sidecar traffic) is intentionally exempt.
