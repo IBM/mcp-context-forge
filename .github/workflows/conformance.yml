@@ -45,7 +45,7 @@ jobs:
             type=gha,scope=cf-integration-conformance
           cache-to: type=gha,mode=max,scope=cf-integration-conformance
 
-      - name: Install cf-integration 0.4.0 binary
+      - name: Install cf-integration 0.5.1 binary
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -60,7 +60,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/cf-integration" --version
 
-      - name: Run legacy-to-legacy conformance
+      - name: Run the MCP conformance matrix
         env:
           CF_COMPOSE_BUILD: "false"
           CF_CONTROLPLANE_IMAGE: mcpgateway/mcpgateway:conformance
