@@ -2151,7 +2151,7 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
 
     Companion to :class:`ToolInvocation`, minus the ``name`` field (the tool
     name is a path parameter on the preview route, not part of the body).
-    See #5629, #6743.
+    See #5629.
 
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
@@ -2169,16 +2169,6 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
         >>> # a client that always serializes the field shouldn't 422 for doing so (#5629).
         >>> ToolPreviewRequest(arguments=None).arguments
         {}
-        >>> # Server-scoped preview
-        >>> req = ToolPreviewRequest(server_id="550e8400-e29b-41d4-a716-446655440000")
-        >>> req.server_id
-        '550e8400-e29b-41d4-a716-446655440000'
-        >>> # Empty or whitespace-only server_id is rejected
-        >>> try:
-        ...     ToolPreviewRequest(server_id="")
-        ... except ValueError as e:
-        ...     "cannot be empty" in str(e)
-        True
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
