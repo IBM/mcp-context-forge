@@ -12923,86 +12923,110 @@ app.include_router(server_well_known_router, prefix="/v1/virtual-servers")
 # prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
 app.include_router(openapi_schema_router)
 
-# OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
-try:
-    # First-Party
-    from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(oauth_router)
-    logger.info("OAuth router included")
-except ImportError:
-    logger.debug("OAuth router not available")
-
-# Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
-if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
-    try:
-        # First-Party
-        from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
-
-        app.include_router(vault_router)
-        logger.info(
-            "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
-            settings.vault_addr,
-        )
-    except ImportError as e:
-        logger.error("Vault OAuth router not available: %s", e)
-else:
-    logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
-
-# A2A agent plugin bindings router
-try:
-    # First-Party
-    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(a2a_agent_plugin_bindings_router)
-    logger.info("A2A agent plugin bindings router included")
-except ImportError as e:
-    logger.error(f"A2A agent plugin bindings router not available: {e}")
-
-# MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
-try:
-    # First-Party
-    from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(mcp_servers_router)
-    logger.info("MCP servers router included")
-except ImportError as e:
-    logger.error(f"MCP servers router not available: {e}")
-
-# Include log search router if structured logging is enabled
-if getattr(settings, "structured_logging_enabled", True):
-    try:
-        # First-Party
-        from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
-
-        app.include_router(log_search_router)
-        logger.info("Log search router included - structured logging enabled")
-    except ImportError as e:
-        logger.warning(f"Failed to import log search router: {e}")
-else:
-    logger.info("Log search router not included - structured logging disabled")
-
-# Include SIEM admin router for destination management and health endpoints
-if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
-    try:
-        # First-Party
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
-        from mcpgateway.routers.siem import router as siem_router
-
-        app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
-        logger.info("SIEM router included")
-    except ImportError as e:  # pragma: no cover - optional import guard
-        logger.warning(f"SIEM router not available: {e}")
-else:
-    logger.info("SIEM router not included - admin API or SIEM export disabled")
-
 # NOTE: observability_router and metrics_maintenance_router are mounted via
 # _assemble_routers() → build_v1_router / build_legacy_router above.
 # Direct app.include_router() calls were removed to prevent double-registration
 # and to ensure DeprecationHeadersMiddleware covers their legacy (unversioned) paths.
 
-# LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
-# cannot be nested inside the v1_router prefix
+
+def _include_optional_routers(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name
+    """Mount unversioned optional routers on *app*.
+
+    Covers OAuth, Vault OAuth, A2A agent plugin bindings, MCP servers REST,
+    log search, SIEM admin, and the LLM proxy. Each mount is guarded by its
+    feature flag and/or import guard so missing optional dependencies degrade
+    to a log line. Extracted from module level so flag- and import-dependent
+    mounting can be tested against a bare FastAPI app without re-importing
+    this module.
+
+    Args:
+        app: The FastAPI application to mount routers on.
+    """
+    # OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
+    try:
+        # First-Party
+        from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(oauth_router)
+        logger.info("OAuth router included")
+    except ImportError:
+        logger.debug("OAuth router not available")
+
+    # Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
+    if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
+        try:
+            # First-Party
+            from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(vault_router)
+            logger.info(
+                "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+                settings.vault_addr,
+            )
+        except ImportError as e:
+            logger.error("Vault OAuth router not available: %s", e)
+    else:
+        logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
+
+    # A2A agent plugin bindings router
+    try:
+        # First-Party
+        from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(a2a_agent_plugin_bindings_router)
+        logger.info("A2A agent plugin bindings router included")
+    except ImportError as e:
+        logger.error(f"A2A agent plugin bindings router not available: {e}")
+
+    # MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
+    try:
+        # First-Party
+        from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(mcp_servers_router)
+        logger.info("MCP servers router included")
+    except ImportError as e:
+        logger.error(f"MCP servers router not available: {e}")
+
+    # Include log search router if structured logging is enabled
+    if getattr(settings, "structured_logging_enabled", True):
+        try:
+            # First-Party
+            from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(log_search_router)
+            logger.info("Log search router included - structured logging enabled")
+        except ImportError as e:
+            logger.warning(f"Failed to import log search router: {e}")
+    else:
+        logger.info("Log search router not included - structured logging disabled")
+
+    # Include SIEM admin router for destination management and health endpoints
+    if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
+        try:
+            # First-Party
+            from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
+            from mcpgateway.routers.siem import router as siem_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
+            logger.info("SIEM router included")
+        except ImportError as e:  # pragma: no cover - optional import guard
+            logger.warning(f"SIEM router not available: {e}")
+    else:
+        logger.info("SIEM router not included - admin API or SIEM export disabled")
+
+    # LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
+    # cannot be nested inside the v1_router prefix
+    if settings.llmchat_enabled:
+        try:
+            # First-Party
+            from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
+
+            _warn_llm_prefix_collision(settings.llm_api_prefix)
+            app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
+            logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
+        except ImportError as e:
+            logger.debug(f"LLM proxy router not available: {e}")
 
 
 def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> None:
@@ -13015,16 +13039,7 @@ def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> 
         )
 
 
-if settings.llmchat_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
-
-        _warn_llm_prefix_collision(settings.llm_api_prefix)
-        app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
-    except ImportError as e:
-        logger.debug(f"LLM proxy router not available: {e}")
+_include_optional_routers(app)
 
 # Feature flags for admin UI (logged for visibility; admin router is inside v1_router)
 UI_ENABLED = settings.mcpgateway_ui_enabled
