@@ -15,6 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+def server_keys(server, pattern):
+    """List keys on a fakeredis server via a throwaway client."""
+    import fakeredis
+
+    return fakeredis.FakeRedis(server=server).keys(pattern)
+
+
 def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a real loopback internal request for trust-gate exemption tests."""
     from starlette.requests import Request
@@ -299,7 +306,7 @@ class TestRateLimitMiddlewareTiers:
         """Test lockout not triggered below threshold."""
         middleware._violation_counts = {"test:ip:192.168.1.100": 3}
 
-        result = middleware._should_lockout_memory("test:ip:192.168.1.100", "CRITICAL")
+        result = middleware._should_lockout_memory("test:ip:192.168.1.100")
 
         assert result is False
 
@@ -307,7 +314,7 @@ class TestRateLimitMiddlewareTiers:
         """Test lockout triggered at threshold."""
         middleware._violation_counts = {"test:ip:192.168.1.100": 5}
 
-        result = middleware._should_lockout_memory("test:ip:192.168.1.100", "CRITICAL")
+        result = middleware._should_lockout_memory("test:ip:192.168.1.100")
 
         assert result is True
 
@@ -317,7 +324,7 @@ class TestRateLimitMiddlewareTiers:
         middleware._violation_counts = {dim: 5}
         middleware._violation_expiry = {dim: time.time() - 1}
 
-        result = middleware._should_lockout_memory(dim, "LOW")
+        result = middleware._should_lockout_memory(dim)
 
         assert result is False
         assert dim not in middleware._violation_counts
@@ -326,8 +333,9 @@ class TestRateLimitMiddlewareTiers:
     @pytest.mark.asyncio
     async def test_should_lockout_async_executor_exception_falls_back(self, middleware):
         """Test async lockout check falls back to memory on executor failure."""
-        middleware._violation_counts = {"ip:192.168.1.100": 5}
-        middleware._violation_expiry = {"ip:192.168.1.100": float("inf")}
+        key = "ratelimit:violations:ip:192.168.1.100:CRITICAL"
+        middleware._violation_counts = {key: 5}
+        middleware._violation_expiry = {key: float("inf")}
 
         with patch("asyncio.get_running_loop") as mock_loop:
             mock_loop.return_value.run_in_executor = AsyncMock(side_effect=Exception("executor boom"))
@@ -341,7 +349,7 @@ class TestRateLimitMiddlewareTiers:
         middleware.redis_client = MagicMock()
         middleware.redis_client.get.return_value = "2"
 
-        result = middleware._should_lockout_sync("ratelimit:violations:ip:192.168.1.100", "CRITICAL", "ip:192.168.1.100")
+        result = middleware._should_lockout_sync("ratelimit:violations:ip:192.168.1.100:CRITICAL")
 
         assert result is False
 
@@ -398,23 +406,29 @@ class TestRateLimitMiddlewareTiers:
         assert response.headers.get("X-RateLimit-Limit") == "500"
         assert response.headers.get("X-RateLimit-Remaining") == "0"
 
-    @pytest.mark.asyncio
-    async def test_lockout_response(self, middleware, mock_request):
-        """Test lockout response when threshold exceeded."""
-        mock_request.url.path = "/health"
+    @staticmethod
+    def _anonymous(mock_request, path):
+        """Point the mock request at a path with no user or team context."""
+        mock_request.url.path = path
         mock_request.state = MagicMock()
         mock_request.state.user_email = None
         mock_request.state.user = None
         mock_request.state.team_id = None
-        if not hasattr(middleware, "_violation_counts"):
-            middleware._violation_counts = {}
-        middleware._violation_counts["ip:192.168.1.100"] = 5
-        now = time.time()
-        key = "ratelimit:ip:192.168.1.100:LOW"
-        if not hasattr(middleware, "_memory_store"):
-            middleware._memory_store = {}
-        for i in range(550):
-            middleware._memory_store.setdefault(key, []).append(now - i * 0.1)
+        return mock_request
+
+    @staticmethod
+    def _lock_ip_on_tier(middleware, ip, tier_name, threshold=5):
+        """Seed the in-memory violation store so the IP is locked on one tier."""
+        key = middleware._violation_key(f"ip:{ip}", tier_name)
+        middleware._violation_counts = {key: threshold}
+        middleware._violation_expiry = {key: float("inf")}
+        return key
+
+    @pytest.mark.asyncio
+    async def test_lockout_response(self, middleware, mock_request):
+        """Test lockout response when threshold exceeded."""
+        self._anonymous(mock_request, "/auth/email/login")
+        self._lock_ip_on_tier(middleware, "192.168.1.100", "CRITICAL")
 
         async def mock_call_next(req):
             return MagicMock(headers={})
@@ -422,19 +436,227 @@ class TestRateLimitMiddlewareTiers:
         response = await middleware.dispatch(mock_request, mock_call_next)
 
         assert response.status_code == 429
-        assert "Account locked" in response.body.decode()
+        body = response.body.decode()
+        assert "Rate limit lockout" in body
+        assert "CRITICAL" in body
+        assert "account" not in body.lower()
         assert response.headers.get("X-Lockout-Remaining") is not None
+
+    @pytest.mark.asyncio
+    async def test_lockout_is_scoped_to_abused_tier(self, middleware, mock_request):
+        """A CRITICAL-tier lockout must not block other tiers from the same IP."""
+        self._lock_ip_on_tier(middleware, "192.168.1.100", "CRITICAL")
+        call_next = AsyncMock(return_value=MagicMock(headers={}))
+
+        for path in ("/health", "/v1/version", "/static/app.js", "/tools", "/tokens"):
+            self._anonymous(mock_request, path)
+            response = await middleware.dispatch(mock_request, call_next)
+            assert response.status_code != 429, f"{path} was blocked by a CRITICAL lockout"
+
+        assert call_next.await_count == 5
+
+        self._anonymous(mock_request, "/auth/email/login")
+        response = await middleware.dispatch(mock_request, call_next)
+        assert response.status_code == 429
+        assert call_next.await_count == 5
+
+    @pytest.mark.asyncio
+    async def test_probe_paths_never_lock_out(self, middleware, mock_request):
+        """Probe, docs and static paths are exempt from lockout checks and violation counting."""
+        self._anonymous(mock_request, "/health")
+        # Even a seeded LOW lockout is ignored for an exempt path.
+        self._lock_ip_on_tier(middleware, "192.168.1.100", "LOW")
+        call_next = AsyncMock(return_value=MagicMock(headers={}))
+
+        response = await middleware.dispatch(mock_request, call_next)
+        assert response.status_code != 429
+        call_next.assert_awaited_once()
+
+        # Tripping the LOW sliding window on /health returns 429 but records no violation.
+        now = time.time()
+        middleware._memory_store = {"ratelimit:ip:192.168.1.100:LOW": [now - i * 0.01 for i in range(500)]}
+        middleware._violation_counts = {}
+        middleware._violation_expiry = {}
+
+        response = await middleware.dispatch(mock_request, call_next)
+        assert response.status_code == 429
+        assert "Rate limit exceeded" in response.body.decode()
+        assert middleware._violation_counts == {}
+
+    @pytest.mark.asyncio
+    async def test_low_fallback_application_route_still_locks_out(self, middleware, mock_request):
+        """Unmatched application routes fall back to LOW but keep lockout protection."""
+        self._anonymous(mock_request, "/rpc")
+        mock_request.method = "POST"
+        middleware._violation_counts = {}
+        middleware._violation_expiry = {}
+        call_next = AsyncMock(return_value=MagicMock(headers={}))
+        key = middleware._violation_key("ip:192.168.1.100", "LOW")
+
+        # Fill the LOW sliding window, then drive violations through dispatch.
+        now = time.time()
+        middleware._memory_store = {"ratelimit:ip:192.168.1.100:LOW": [now - i * 0.01 for i in range(500)]}
+        for expected in range(1, middleware.lockout_threshold + 1):
+            response = await middleware.dispatch(mock_request, call_next)
+            assert response.status_code == 429
+            assert "Rate limit exceeded" in response.body.decode()
+            assert middleware._violation_counts[key] == expected
+
+        # Clear the window: the lockout alone must keep /rpc blocked.
+        middleware._memory_store = {}
+        response = await middleware.dispatch(mock_request, call_next)
+        assert response.status_code == 429
+        assert "Rate limit lockout" in response.body.decode()
+        call_next.assert_not_awaited()
+
+        # ... while /health from the same IP is still served.
+        self._anonymous(mock_request, "/health")
+        mock_request.method = "GET"
+        response = await middleware.dispatch(mock_request, call_next)
+        assert response.status_code != 429
+        call_next.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_request_driven_lockout_memory(self, middleware, mock_request):
+        """Violations generated through dispatch lock the abused tier, isolate others, and expire."""
+        clock = {"now": 1_700_000_000.0}
+        call_next = AsyncMock(return_value=MagicMock(headers={}))
+        middleware._memory_store = {}
+        middleware._violation_counts = {}
+        middleware._violation_expiry = {}
+        limit = middleware.endpoint_tiers["CRITICAL"]["limit"]
+        key = middleware._violation_key("ip:192.168.1.100", "CRITICAL")
+
+        async def login():
+            self._anonymous(mock_request, "/auth/email/login")
+            mock_request.method = "POST"
+            return await middleware.dispatch(mock_request, call_next)
+
+        async def get(path):
+            self._anonymous(mock_request, path)
+            mock_request.method = "GET"
+            return await middleware.dispatch(mock_request, call_next)
+
+        with patch("mcpgateway.middleware.rate_limit_middleware.time.time", side_effect=lambda: clock["now"]):
+            for _ in range(limit):
+                assert (await login()).status_code != 429
+            served = call_next.await_count
+
+            for expected in range(1, middleware.lockout_threshold + 1):
+                response = await login()
+                assert response.status_code == 429
+                assert "Rate limit exceeded" in response.body.decode()
+                assert middleware._violation_counts[key] == expected
+
+            # Window cleared, lockout still holds on the abused tier only.
+            clock["now"] += 61
+            response = await login()
+            assert response.status_code == 429
+            assert "Rate limit lockout" in response.body.decode()
+            assert call_next.await_count == served
+
+            for path in ("/health", "/ready", "/metrics", "/static/app.js", "/v1/version", "/tools", "/tokens", "/rpc"):
+                response = await get(path)
+                assert response.status_code != 429, f"{path} blocked by CRITICAL lockout"
+            assert call_next.await_count == served + 8
+
+            # Lockout expires after the configured duration.
+            clock["now"] += middleware.lockout_duration_minutes * 60 + 1
+            response = await login()
+            assert response.status_code != 429
+            assert key not in middleware._violation_counts
+
+    @pytest.mark.asyncio
+    async def test_request_driven_lockout_shared_redis(self, mock_app, mock_request):
+        """Tier-specific violation counters are shared across instances through Redis."""
+        import fakeredis
+
+        from mcpgateway.middleware.rate_limit_middleware import _SLIDING_WINDOW_LUA, RateLimitMiddleware
+
+        server = fakeredis.FakeServer()
+
+        def build():
+            with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
+                mock_settings.rate_limiting_enabled = True
+                mock_settings.rate_limiting_redis_enabled = False
+                mock_settings.trust_proxy_auth = False
+                mock_settings.rate_limit_critical_rpm = 3
+                mock_settings.rate_limit_critical_burst = 0
+                mock_settings.rate_limit_high_rpm = 30
+                mock_settings.rate_limit_high_burst = 0
+                mock_settings.rate_limit_medium_rpm = 100
+                mock_settings.rate_limit_medium_burst = 20
+                mock_settings.rate_limit_low_rpm = 500
+                mock_settings.rate_limit_low_burst = 100
+                mock_settings.rate_limit_lockout_enabled = True
+                mock_settings.rate_limit_lockout_threshold = 2
+                mock_settings.rate_limit_lockout_duration_minutes = 15
+                mock_settings.session_refresh_rate_limit = 10
+                mock_settings.app_root_path = ""
+                instance = RateLimitMiddleware(mock_app)
+            client = fakeredis.FakeRedis(server=server)
+            instance.use_redis = True
+            instance.redis_client = client
+            instance._sliding_window_script = client.register_script(_SLIDING_WINDOW_LUA)
+            return instance
+
+        first, second = build(), build()
+        call_next = AsyncMock(return_value=MagicMock(headers={}))
+        key = first._violation_key("ip:192.168.1.100", "CRITICAL")
+
+        async def login(instance):
+            self._anonymous(mock_request, "/auth/email/login")
+            mock_request.method = "POST"
+            return await instance.dispatch(mock_request, call_next)
+
+        async def get(instance, path):
+            self._anonymous(mock_request, path)
+            mock_request.method = "GET"
+            return await instance.dispatch(mock_request, call_next)
+
+        for _ in range(3):
+            assert (await login(first)).status_code != 429
+        for expected in range(1, 3):
+            response = await login(first)
+            assert response.status_code == 429
+            assert "Rate limit exceeded" in response.body.decode()
+            assert int(first.redis_client.get(key)) == expected
+        assert 0 < first.redis_client.ttl(key) <= 15 * 60
+
+        # The second instance sees the lockout for the abused tier only.
+        response = await login(second)
+        assert response.status_code == 429
+        assert "Rate limit lockout" in response.body.decode()
+        for path in ("/health", "/tools", "/rpc"):
+            response = await get(second, path)
+            assert response.status_code != 429, f"{path} blocked across instances"
+
+        # Nothing was written to any memory fallback store.
+        assert first._violation_counts == {} and second._violation_counts == {}
+        assert {k.decode() for k in server_keys(server, "ratelimit:violations:*")} == {key}
+
+    def test_violation_key_includes_tier(self, middleware):
+        """Violation counters are keyed per dimension and tier."""
+        assert middleware._violation_key("ip:192.168.1.100", "CRITICAL") == "ratelimit:violations:ip:192.168.1.100:CRITICAL"
+        assert middleware._violation_key("ip:192.168.1.100", "CRITICAL") != middleware._violation_key("ip:192.168.1.100", "MEDIUM")
+
+    def test_lockout_applies_by_path(self, middleware):
+        """Lockout is skipped only for probe/docs/static paths, and never applies when disabled."""
+        for path in ("/health", "/health/security", "/ready", "/live", "/metrics", "/version", "/docs", "/redoc", "/openapi.json", "/static/app.js"):
+            assert middleware._lockout_applies(path) is False, path
+        for path in ("/rpc", "/a2a/agent/jsonrpc", "/healthcheck", "/auth/email/login", "/tools", "/tokens", "/"):
+            assert middleware._lockout_applies(path) is True, path
+        middleware.lockout_enabled = False
+        try:
+            assert middleware._lockout_applies("/auth/email/login") is False
+        finally:
+            middleware.lockout_enabled = True
 
     @pytest.mark.asyncio
     async def test_lockout_does_not_increment_violations(self, middleware, mock_request):
         """Test lockout responses do not increment violation counters."""
-        mock_request.url.path = "/health"
-        mock_request.state = MagicMock()
-        mock_request.state.user_email = None
-        mock_request.state.user = None
-        mock_request.state.team_id = None
-        middleware._violation_counts = {"ip:192.168.1.100": 5}
-        middleware._violation_expiry = {"ip:192.168.1.100": float("inf")}
+        self._anonymous(mock_request, "/auth/email/login")
+        self._lock_ip_on_tier(middleware, "192.168.1.100", "CRITICAL")
 
         original_increment = middleware._increment_violation
         middleware._increment_violation = AsyncMock()
@@ -647,7 +869,7 @@ class TestRateLimitMiddlewareTiers:
 
     def test_lockout_sync_uses_memory_when_no_redis(self, middleware):
         """Test lockout sync uses memory fallback."""
-        result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
+        result = middleware._should_lockout_sync("test:dimension")
         assert result is False
 
     def test_lockout_sync_redis_below_threshold(self, middleware):
@@ -656,7 +878,7 @@ class TestRateLimitMiddlewareTiers:
         middleware.redis_client = MagicMock()
         middleware.redis_client.get.return_value = "2"
 
-        result = middleware._should_lockout_sync("ratelimit:violations:test:dimension", "CRITICAL", "test:dimension")
+        result = middleware._should_lockout_sync("ratelimit:violations:test:dimension:CRITICAL")
 
         assert result is False
 
@@ -666,7 +888,7 @@ class TestRateLimitMiddlewareTiers:
             middleware._violation_counts = {}
         middleware._violation_counts["test:dimension"] = 5
 
-        result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
+        result = middleware._should_lockout_sync("test:dimension")
 
         assert result is True
 
@@ -675,10 +897,11 @@ class TestRateLimitMiddlewareTiers:
         middleware.use_redis = True
         middleware.redis_client = MagicMock()
 
-        middleware._increment_violation_sync("ratelimit:violations:test:dimension", "test:dimension")
+        key = "ratelimit:violations:test:dimension:CRITICAL"
+        middleware._increment_violation_sync(key)
 
-        middleware.redis_client.incr.assert_called_once_with("ratelimit:violations:test:dimension")
-        middleware.redis_client.expire.assert_called_once_with("ratelimit:violations:test:dimension", middleware.lockout_duration_minutes * 60)
+        middleware.redis_client.incr.assert_called_once_with(key)
+        middleware.redis_client.expire.assert_called_once_with(key, middleware.lockout_duration_minutes * 60)
 
     def test_endpoint_tiers_all_critical(self, middleware):
         """Test all critical tier patterns defined."""
@@ -803,7 +1026,7 @@ class TestRateLimitMiddlewareTiers:
         if hasattr(middleware, "_violation_counts"):
             del middleware._violation_counts
 
-        result = middleware._should_lockout_memory("new:dimension", "CRITICAL")
+        result = middleware._should_lockout_memory("new:dimension")
 
         assert result is False
         assert hasattr(middleware, "_violation_counts")
@@ -872,8 +1095,8 @@ class TestRateLimitMiddlewareTiers:
 
     def test_violation_key_format(self, middleware):
         """Test violation key format."""
-        key = "ratelimit:violations:ip:192.168.1.100"
-        assert "violations" in key
+        key = middleware._violation_key("ip:192.168.1.100", "HIGH")
+        assert key == "ratelimit:violations:ip:192.168.1.100:HIGH"
 
     @pytest.mark.asyncio
     async def test_async_should_lockout(self, middleware):
@@ -1047,7 +1270,7 @@ class TestRateLimitMiddlewareTiers:
             mock_client.get.side_effect = Exception("Redis error")
             middleware.redis_client = mock_client
 
-            result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
+            result = middleware._should_lockout_sync("test:dimension")
 
             assert isinstance(result, bool)
         finally:
@@ -1256,7 +1479,7 @@ class TestRateLimitMiddlewareTiers:
         if hasattr(middleware, "_violation_counts"):
             del middleware._violation_counts
 
-        result = middleware._should_lockout_memory("unknown:dimension", "CRITICAL")
+        result = middleware._should_lockout_memory("unknown:dimension")
 
         assert result is False
 
@@ -1420,13 +1643,14 @@ class TestRateLimitMiddlewareTiers:
         mock_executor.submit.side_effect = RuntimeError("Executor error")
         middleware.executor = mock_executor
 
+        key = "ratelimit:violations:test:dim:CRITICAL"
         if not hasattr(middleware, "_violation_counts"):
             middleware._violation_counts = {}
-        middleware._violation_counts.pop("test:dim", None)
+        middleware._violation_counts.pop(key, None)
 
         try:
             await middleware._increment_violation("test:dim", "CRITICAL")
-            assert middleware._violation_counts.get("test:dim") == 1
+            assert middleware._violation_counts.get(key) == 1
         finally:
             middleware.executor = original_executor
 
@@ -1445,10 +1669,10 @@ class TestRateLimitMiddlewareTiers:
 
             if not hasattr(middleware, "_violation_counts"):
                 middleware._violation_counts = {}
-            middleware._violation_counts.pop("test:dim", None)
+            middleware._violation_counts.pop("test:key", None)
 
-            middleware._increment_violation_sync("test:key", "test:dim")
-            assert middleware._violation_counts.get("test:dim") == 1
+            middleware._increment_violation_sync("test:key")
+            assert middleware._violation_counts.get("test:key") == 1
         finally:
             middleware.use_redis = original_use_redis
             middleware.redis_client = original_client
@@ -1462,7 +1686,7 @@ class TestRateLimitMiddlewareTiers:
         if not hasattr(middleware, "_violation_counts"):
             middleware._violation_counts = {}
 
-        result = middleware._should_lockout_memory("test:dim", "CRITICAL")
+        result = middleware._should_lockout_memory("test:dim")
 
         assert result is False
         assert hasattr(middleware, "_violation_expiry")

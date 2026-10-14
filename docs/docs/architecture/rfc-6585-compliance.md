@@ -73,12 +73,16 @@ RATE_LIMIT_LOCKOUT_DURATION_MINUTES=15
 
 ### Lockout Response
 
-After exceeding the violation threshold:
+After exceeding the violation threshold on a tier, further requests from that
+client to the same tier are blocked for the lockout duration. The lockout is
+scoped to the tier that was abused (for example CRITICAL auth endpoints).
+Health, readiness, metrics, API docs and static asset paths are never locked
+out, but they remain subject to their ordinary per-minute limit.
 
 ```json
 {
-  "error": "Account locked",
-  "message": "Too many rate limit violations. Account locked for 15 minutes. This may indicate suspicious activity on your account.",
+  "error": "Rate limit lockout",
+  "message": "Too many rate limit violations. Requests to CRITICAL tier endpoints are blocked for 15 minutes.",
   "lockout_duration_minutes": 15,
   "reset_in_seconds": 900
 }
