@@ -12664,25 +12664,32 @@ class TestRemainingCoverageGaps:
 
     async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
         # First-Party
+        import mcpgateway.main as main_module
         import mcpgateway.plugins as plugin_module
 
         # Reset plugin state before test
         plugin_module.enable_plugins(False)
         plugin_module.reset_plugin_manager_factory()
 
-        _import_fresh_main_module(
-            monkeypatch,
-            env={
-                "PLUGINS_ENABLED": "false",
-                "PLUGINS_SERVER_PORT": "abc",
-            },
-        )
+        # Invalid plugin configuration must not matter while the subsystem is off.
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+
+        # Third-Party
+        from cpex.framework.settings import settings as plugin_settings
+
+        # settings.plugins resolves to the cpex wrapper; enabled is a class property.
+        monkeypatch.setattr(type(plugin_settings), "enabled", property(lambda _self: False))
+
+        main_module._enable_plugin_subsystem_if_configured()  # pylint: disable=protected-access
+
         # settings.enabled is False → get_plugin_manager() short-circuits to None
         result = await plugin_module.get_plugin_manager()
         assert result is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
+        import mcpgateway.main as main_module
         import mcpgateway.plugins as plugin_module
 
         class _DummyFactory:
@@ -12699,7 +12706,14 @@ class TestRemainingCoverageGaps:
         # Create the factory instance
         plugin_module._plugin_manager_factory = _DummyFactory()
 
-        _import_fresh_main_module(monkeypatch)
+        # Third-Party
+        from cpex.framework.settings import settings as plugin_settings
+
+        # settings.plugins resolves to the cpex wrapper; enabled is a class property.
+        monkeypatch.setattr(type(plugin_settings), "enabled", property(lambda _self: True))
+
+        main_module._enable_plugin_subsystem_if_configured()  # pylint: disable=protected-access
+
         # settings.enabled is True → get_plugin_manager() returns a manager
         result = await plugin_module.get_plugin_manager()
         assert result is not None
