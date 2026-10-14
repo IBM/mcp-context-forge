@@ -251,28 +251,102 @@ class TestConditionalPaths:
 
         assert any("CSRF protection middleware disabled" in rec.message for rec in caplog.records)
 
-    def test_import_includes_siem_router_with_admin_csrf_dependency(self, monkeypatch):
+    def test_optional_routers_include_siem_router_with_admin_csrf_dependency(self, monkeypatch):
         """When SIEM export and admin API are enabled, the SIEM router is mounted with admin CSRF enforcement."""
+        # Standard
+        from types import ModuleType
+
+        # Third-Party
+        from fastapi import APIRouter, FastAPI
+
         include_calls = []
-        from fastapi.applications import FastAPI
 
         original_include_router = FastAPI.include_router
 
-        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001
+        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001, ANN202
             include_calls.append((router, kwargs.get("dependencies")))
             return original_include_router(self, router, *args, **kwargs)
 
         monkeypatch.setattr(FastAPI, "include_router", _capture_include_router)
 
-        _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "mcpgateway_admin_api_enabled": True,
-                "siem_export_enabled": True,
-            },
-        )
+        # Stub the admin and SIEM modules so the wiring runs without importing heavy modules.
+        # Import the real admin module first: monkeypatch.setitem then restores it on teardown
+        # instead of dropping the sys.modules entry and forcing a later re-import under
+        # patched settings (admin.py binds a2a_service at import time).
+        # First-Party
+        import mcpgateway.admin  # noqa: F401 pylint: disable=unused-import
+
+        admin_mod = ModuleType("mcpgateway.admin")
+
+        def enforce_admin_csrf():  # noqa: ANN202 - stub matching the real dependency's name
+            return None
+
+        admin_mod.enforce_admin_csrf = enforce_admin_csrf
+        monkeypatch.setitem(sys.modules, "mcpgateway.admin", admin_mod)
+
+        siem_mod = ModuleType("mcpgateway.routers.siem")
+        siem_mod.router = APIRouter()
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.siem", siem_mod)
+
+        monkeypatch.setattr(settings, "mcpgateway_admin_api_enabled", True)
+        monkeypatch.setattr(settings, "siem_export_enabled", True)
+
+        # First-Party
+        import mcpgateway.main as main_module
+
+        main_module._include_optional_routers(FastAPI())  # pylint: disable=protected-access
 
         assert any(deps and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps) for _, deps in include_calls)
+
+    @pytest.mark.parametrize("variant", ["features_off", "features_on", "degraded_vault"])
+    def test_optional_router_mount_gates(self, monkeypatch, caplog, variant):
+        """Exercise the optional-router mount gates against a bare app.
+
+        Runs ``_include_optional_routers`` under three settings matrices. The
+        matrix covers both outcomes of each mount gate without re-executing the
+        module.
+        """
+        # Third-Party
+        from fastapi import FastAPI
+
+        # First-Party
+        import mcpgateway.main as main_module
+        from mcpgateway.routers.log_search import router as log_search_router
+        from mcpgateway.routers.vault_router import vault_router
+
+        guarded = {"mcpgateway.routers.a2a_agent_plugin_bindings", "mcpgateway.routers.mcp_servers_router"}
+        overrides = {"structured_logging_enabled": False}
+
+        if variant == "features_on":
+            overrides.update({"oauth_token_backend": "vault", "structured_logging_enabled": True})
+        elif variant == "degraded_vault":
+            guarded.add("mcpgateway.routers.vault_router")
+            overrides["oauth_token_backend"] = "vault"
+
+        for name in guarded:
+            # A None entry makes ``from <name> import router`` raise ImportError.
+            monkeypatch.setitem(sys.modules, name, None)
+        for key, value in overrides.items():
+            monkeypatch.setattr(settings, key, value, raising=False)
+
+        bare_app = FastAPI()
+        main_module._include_optional_routers(bare_app)  # pylint: disable=protected-access
+
+        def _mounted(router):
+            # include_router is lazy: a bare app holds _IncludedRouter wrappers, not materialized paths.
+            return any(getattr(route, "original_router", None) is router for route in bare_app.routes)
+
+
+        if variant == "features_on":
+            assert _mounted(vault_router)
+            assert _mounted(log_search_router)
+        else:
+            assert not _mounted(vault_router)
+            assert not _mounted(log_search_router)
+
+        # Guarded imports degrade to an error log; both routers stay unmounted.
+        assert "A2A agent plugin bindings router not available" in caplog.text
+        assert "MCP servers router not available" in caplog.text
 
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
