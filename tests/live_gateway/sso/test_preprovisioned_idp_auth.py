@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Validate API-provisioned SSO users through bearer and PKCE authentication.
 
 Run serially against externally started gateways and HTTPS Keycloak. The
-disabled-gateway case needs a second gateway sharing the first gateway's DB.
+admin-API-disabled case needs a second gateway sharing the first gateway's DB.
 See tests/live_gateway/README.md for startup configuration and teardown rules.
 """
 
@@ -193,7 +193,7 @@ def admin_fixture(idp: IdP) -> Iterator[httpx.Client]:
     token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
     with httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {token}"}, timeout=30) as client:
         schema = _object(_request(client, "GET", "/openapi.json"))
-        assert PROVISION_PATH in schema["paths"], "Start the primary gateway with SSO_USER_PROVISIONING_API_ENABLED=true"
+        assert PROVISION_PATH in schema["paths"], "Start the primary gateway with MCPGATEWAY_ADMIN_API_ENABLED=true and SSO_ENABLED=true"
         provider = _object(_request(client, "GET", f"/v1/auth/sso/admin/providers/{idp.provider_id}"))
         assert provider["issuer"].rstrip("/") == idp.issuer
         yield client
@@ -633,7 +633,7 @@ async def _mcp_session(user: User, resources: Resources, *, base_url: str = BASE
                     await session.initialize()
                     yield session
         except Exception as error:
-            status_error = error_hook.to_http_status_error(error)
+            status_error = error_hook.to_transport_error(error)
             if status_error is not None:
                 raise status_error from error
             raise
@@ -813,11 +813,11 @@ def test_provider_mismatch_preserves_binding(admin: httpx.Client, user_factory: 
         _request(admin, "DELETE", f"/v1/auth/sso/admin/providers/{provider_id}")
 
 
-def test_existing_user_authenticates_with_provisioning_disabled(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources) -> None:
-    """A second gateway hides provisioning but authenticates the same API-created account."""
+def test_existing_user_authenticates_with_admin_api_disabled(admin: httpx.Client, user_factory: Callable[..., User], resources: Resources) -> None:
+    """A second gateway disables its admin API but authenticates the same API-created account."""
     disabled_url = os.getenv("SSO_PROVISIONING_DISABLED_BASE_URL", "").rstrip("/")
     if not disabled_url:
-        pytest.skip("Provide SSO_PROVISIONING_DISABLED_BASE_URL for a second gateway sharing the primary database and IdP configuration")
+        pytest.skip("Provide SSO_PROVISIONING_DISABLED_BASE_URL for a second gateway with its admin API disabled and the same database and IdP configuration")
     user = user_factory()
     _grant_access(admin, user, resources)
     _assert_access(user, resources)

@@ -505,24 +505,25 @@ SSO_GENERIC_ISSUER=https://authentik.company.com/application/o/mcp-gateway/
 ## Provisioning SSO users through the API
 
 Administrators can pre-provision passwordless users with `POST /v1/admin/users/sso`.
-Enable all three startup flags:
+Enable the admin API and SSO:
 
 ```bash
 MCPGATEWAY_ADMIN_API_ENABLED=true
 SSO_ENABLED=true
-SSO_USER_PROVISIONING_API_ENABLED=true
 ```
 
-`SSO_USER_PROVISIONING_API_ENABLED` defaults to `false`. Restart the gateway after changing any of
-these flags: route registration and the disabled-route gate use the startup configuration.
-When any flag is disabled, provisioning POSTs return `404` with `{"detail":"Not Found"}` before
-authentication or body validation. This early response bypasses inner middleware, so its headers
+Restart the gateway after changing either setting: route registration and the disabled-route gate
+use the startup configuration. When either setting is disabled, provisioning POSTs return `404`
+with `{"detail":"Not Found"}` before authentication or body validation.
+This early response bypasses inner middleware, so its headers
 can differ from an ordinary routed `404`. Other methods retain their existing behavior.
 There is no unversioned provisioning POST alias.
 
-The provisioning flag leaves local auth, Admin UI creation, browser SSO/JIT, and existing external
-IdP authentication unchanged. An already-created SSO user can authenticate when
-`SSO_USER_PROVISIONING_API_ENABLED=false`, provided the existing authentication configuration permits it.
+The dedicated `SSO_USER_PROVISIONING_API_ENABLED` flag has been removed. Setting it to `false`
+no longer disables provisioning when the admin API and SSO are enabled.
+Local auth, Admin UI creation, browser SSO/JIT, and existing external IdP authentication retain
+their existing behavior. An already-created SSO user can authenticate when the admin API is
+disabled, provided the existing authentication configuration permits it.
 
 The caller needs `admin.user_management`. API-token permission restrictions apply independently
 of the caller's admin status; empty token permissions inherit RBAC permissions at runtime.

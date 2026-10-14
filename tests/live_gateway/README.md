@@ -175,16 +175,16 @@ Set the same cache/auth settings in the pytest environment. Configure the gatewa
 to the bootstrapped `keycloak` provider. A local HTTPS IdP can require a test-only localhost egress
 allowance; retain normal HTTPS certificate verification.
 
-For flag-disabled coverage, start a second gateway with the same database, JWT secret, encryption
-secret, SSO settings, and trusted certificate. Set only its `SSO_USER_PROVISIONING_API_ENABLED=false`
+For admin-API-disabled coverage, start a second gateway with the same database, JWT secret, encryption
+secret, SSO settings, and trusted certificate. Set only its `MCPGATEWAY_ADMIN_API_ENABLED=false`
 and give it a separate port. Tests create users through the primary gateway, then verify `404` for
 provisioning POSTs and successful REST/MCP authentication through the second gateway.
 Neither gateway starts or restarts from inside pytest. Start each in a separate terminal with the
 exported settings and the same isolated `DATABASE_URL`:
 
 ```bash
-SSO_USER_PROVISIONING_API_ENABLED=true uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8080
-SSO_USER_PROVISIONING_API_ENABLED=false uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8081
+MCPGATEWAY_ADMIN_API_ENABLED=true uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8080
+MCPGATEWAY_ADMIN_API_ENABLED=false uv run uvicorn mcpgateway.main:app --host 127.0.0.1 --port 8081
 ```
 
 Use Compose overrides to pass these settings when using containers. Host exports alone do not
@@ -257,7 +257,7 @@ gateways to exercise every acceptance criterion.
 restarts the stack. It needs no browser or running IdP. Enabled tests create a temporary
 provider through the SSO provider API and clean up their provider and users.
 
-Start the default stack with `SSO_USER_PROVISIONING_API_ENABLED=false`, then run:
+Start the gateway with `MCPGATEWAY_ADMIN_API_ENABLED=false` or `SSO_ENABLED=false`, then run:
 
 ```bash
 SSO_PROVISIONING_TEST_MODE=disabled uv run pytest \
@@ -270,11 +270,10 @@ For enabled coverage, start or recreate the gateway with:
 MCPGATEWAY_ADMIN_API_ENABLED=true
 EMAIL_AUTH_ENABLED=true
 SSO_ENABLED=true
-SSO_USER_PROVISIONING_API_ENABLED=true
 ```
 
-The main Compose gateway passes the provisioning flag through its environment. Recreate the
-gateway after changing flags; exporting them only in the test process does not enable routes.
+Recreate the gateway after changing the admin API or SSO settings; exporting them only in the
+test process does not enable routes.
 Use the running stack's `JWT_SECRET_KEY`, `PLATFORM_ADMIN_EMAIL`, and `MCP_CLI_BASE_URL` for tests:
 
 ```bash
