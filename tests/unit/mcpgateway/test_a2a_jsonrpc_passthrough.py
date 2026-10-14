@@ -1172,44 +1172,81 @@ class TestJSONRPCPassthroughFeatureFlags:
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    def test_a2a_endpoints_return_404_when_feature_disabled(self, mock_auth):
+    def test_a2a_endpoints_return_404_when_feature_disabled(self, monkeypatch):
         """Test that A2A endpoints return 404 when MCPGATEWAY_A2A_ENABLED is disabled.
 
         Security requirement per AGENTS.md: "Security-sensitive changes must include deny-path
         regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled)."
 
-        This test verifies that when A2A is disabled, the router is not mounted and all
-        /a2a/* endpoints return 404 Not Found.
+        Exercises the mount gate in ``_assemble_routers`` directly instead of reloading
+        ``mcpgateway.main``: when the flag is off the A2A router is never included,
+        so /a2a/* resolves to 404.
         """
-        from unittest.mock import patch
+        # Third-Party
+        from fastapi import APIRouter, FastAPI
+
+        # First-Party
+        from mcpgateway.api.v1 import _assemble_routers  # pylint: disable=protected-access
         from mcpgateway.config import settings
 
-        # Temporarily disable A2A feature flag and reload app
-        with patch.object(settings, "mcpgateway_a2a_enabled", False):
-            # Import and rebuild the app with A2A disabled
-            # Note: This recreates the app instance with A2A router not mounted
-            import importlib
-            import mcpgateway.main
-            importlib.reload(mcpgateway.main)
-            from mcpgateway.main import app as reloaded_app
+        a2a_sentinel = APIRouter()
 
-            client = TestClient(reloaded_app)
-            response = client.post(
-                "/a2a/test-agent/jsonrpc",
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "SendMessage",
-                    "params": {},
-                    "id": 1,
-                },
-                headers={"Authorization": "Bearer test-token"},
+        @a2a_sentinel.post("/a2a/{agent_name}/jsonrpc")
+        async def _sentinel():
+            return {}
+
+        def _assemble_with_a2a_flag(enabled: bool) -> APIRouter:
+            monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", enabled)
+            assembled = APIRouter()
+            _assemble_routers(
+                assembled,
+                settings,
+                protocol_router=APIRouter(),
+                tool_router=APIRouter(),
+                resource_router=APIRouter(),
+                prompt_router=APIRouter(),
+                gateway_router=APIRouter(),
+                root_router=APIRouter(),
+                server_router=APIRouter(),
+                metrics_router=APIRouter(),
+                tag_router=APIRouter(),
+                export_import_router=APIRouter(),
+                a2a_router=a2a_sentinel,
             )
+            return assembled
 
-            # Should return 404 (route not mounted)
-            assert response.status_code == status.HTTP_404_NOT_FOUND
+        # Control case: with the flag on, the A2A router is mounted and resolves.
+        enabled_router = _assemble_with_a2a_flag(True)
+        assert any(getattr(route, "original_router", None) is a2a_sentinel for route in enabled_router.routes)
 
-        # Reload app again to restore A2A-enabled state for other tests
-        importlib.reload(mcpgateway.main)
+        enabled_app = FastAPI()
+        enabled_app.include_router(enabled_router)
+        enabled_response = TestClient(enabled_app).post(
+            "/a2a/test-agent/jsonrpc",
+            json={"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1},
+        )
+        assert enabled_response.status_code == status.HTTP_200_OK
+
+        # Disabled case: the router is not mounted, so /a2a/* returns 404.
+        disabled_router = _assemble_with_a2a_flag(False)
+        assert all(getattr(route, "original_router", None) is not a2a_sentinel for route in disabled_router.routes)
+
+        bare_app = FastAPI()
+        bare_app.include_router(disabled_router)
+        client = TestClient(bare_app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        # Should return 404 (route not mounted)
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestJSONRPCPassthroughEdgeCases:
