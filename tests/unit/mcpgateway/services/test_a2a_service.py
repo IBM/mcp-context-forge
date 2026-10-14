@@ -3014,7 +3014,6 @@ class TestInvokeAgentEdgeCases:
         [
             ("basic", {"httpAuthSecurityScheme": {"scheme": "basic"}}),
             ("bearer", {"httpAuthSecurityScheme": {"scheme": "bearer"}}),
-            ("authheaders", {"apiKeySecurityScheme": {"location": "header"}}),
         ],
     )
     def test_build_security_scheme_http_and_api_key_types(self, auth_type, expected_scheme):
@@ -3028,6 +3027,54 @@ class TestInvokeAgentEdgeCases:
         scheme_name = f"{auth_type}Auth"
         assert schemes == {scheme_name: expected_scheme}
         assert requirements == [{"schemes": {scheme_name: {}}}]
+
+    def test_build_security_scheme_authheaders_omitted_without_name(self):
+        """authheaders has no non-secret header name, so no schema-invalid apiKey scheme is emitted."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        assert _build_security_scheme(self._make_card_agent(auth_type="authheaders")) == (None, None)
+
+    def test_build_security_scheme_query_param_without_names_omitted(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        assert _build_security_scheme(self._make_card_agent(auth_type="query_param", auth_query_params={})) == (None, None)
+
+    def test_build_security_scheme_oauth_reads_stored_scopes_list(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "scopes": ["read", "write"]})
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes["oauthAuth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {"read": "read", "write": "write"}
+
+    def test_build_security_scheme_oauth_always_emits_scopes_map(self):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        agent = self._make_card_agent(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "token_url": "https://auth.example.com/token"})
+
+        schemes, _requirements = _build_security_scheme(agent)
+
+        assert schemes["oauthAuth"]["oauth2SecurityScheme"]["flows"]["clientCredentials"]["scopes"] == {}
+
+    @pytest.mark.parametrize(
+        "oauth_config",
+        [
+            {"grant_type": "client_credentials"},
+            {"grant_type": "authorization_code", "token_url": "https://auth.example.com/token"},
+            {"grant_type": "password", "token_url": "https://auth.example.com/token"},
+            {},
+        ],
+    )
+    def test_build_security_scheme_oauth_missing_required_fields_omitted(self, oauth_config):
+        # First-Party
+        from mcpgateway.services.a2a_service import _build_security_scheme
+
+        assert _build_security_scheme(self._make_card_agent(auth_type="oauth", oauth_config=oauth_config)) == (None, None)
 
     def test_build_security_scheme_query_param_surfaces_param_name_only(self):
         """The param name (a dict key) is safe to surface; the encrypted value never is (#7027)."""
