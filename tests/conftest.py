@@ -707,3 +707,25 @@ def clear_jwt_cache_between_tests():
         clear_jwt_caches()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def clear_correlation_id_between_tests():
+    """Clear the correlation-ID contextvar before and after each test.
+
+    ``set_correlation_id()`` writes a module-level ContextVar. The correlation
+    middleware and ``get_or_generate_correlation_id()`` (used by audit logging)
+    set it on paths that never reset it, and contextvar writes made inside
+    ``asyncio.run`` persist in the worker's root context. Under pytest-xdist,
+    whichever test runs next on that worker then inherits a stray request ID;
+    assertions on exact error text (``error_formatter._with_reference`` appends
+    ``(reference: <id>)``) fail nondeterministically. Clear around every test
+    so no test inherits another test's correlation ID.
+    """
+    from mcpgateway.utils.correlation_id import clear_correlation_id
+
+    clear_correlation_id()
+
+    yield
+
+    clear_correlation_id()
