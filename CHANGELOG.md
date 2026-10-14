@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A2A 1.0 agent card shape** ([#7027](https://github.com/IBM/mcp-context-forge/issues/7027), [#7209](https://github.com/IBM/mcp-context-forge/pull/7209)) - Agent cards now follow the A2A 1.0 `AgentCard` schema, including `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. Cards never expose credential values. Agents with `authheaders` auth, `query_param` auth without a stored parameter name, or an incomplete OAuth configuration now omit the security scheme, because 1.0 requires a name or flow URLs that the stored configuration cannot supply. OAuth schemes read the stored `scopes` list and always emit the scope map.
+
 ## [1.1.0] - 2026-10-19 - Modern MCP Protocol, New Redesigned Web UI, Federated Completions, and Catalog Pagination
 
 ### Overview

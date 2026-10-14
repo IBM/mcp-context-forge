@@ -407,10 +407,25 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
         raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
-_SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "client_id", "authorization_url", "token_url", "scope")
+_SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "client_id", "authorization_url", "token_url", "scopes", "scope")
 
 
-def _oauth2_security_scheme(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
+def _oauth_scope_names(safe: Dict[str, Any]) -> List[str]:
+    """Return scope names from stored ``scopes`` (list or string) or legacy ``scope`` (string).
+
+    Args:
+        safe: Allowlisted OAuth configuration fields.
+
+    Returns:
+        The scope names, empty when none are configured.
+    """
+    raw = safe.get("scopes") or safe.get("scope") or []
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").split()
+    return [str(scope).strip() for scope in raw if str(scope).strip()]
+
+
+def _oauth2_security_scheme(oauth_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Build an ``oauth2SecurityScheme`` dict from non-secret OAuth config fields.
 
     Reads only the allowlisted keys a client needs to start a flow (the same
@@ -421,23 +436,22 @@ def _oauth2_security_scheme(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
         oauth_config: The agent's stored OAuth configuration dict.
 
     Returns:
-        A dict shaped as A2A 1.0's ``SecurityScheme.oauth2SecurityScheme``.
+        A dict shaped as A2A 1.0's ``SecurityScheme.oauth2SecurityScheme``, or
+        ``None`` when the grant type is unsupported or a URL the flow requires is missing.
     """
     safe = {key: oauth_config[key] for key in _SAFE_OAUTH_CONFIG_KEYS if oauth_config.get(key)}
-    scopes = {scope: scope for scope in str(safe.get("scope", "")).split()}
+    scopes = {scope: scope for scope in _oauth_scope_names(safe)}
+    token_url = safe.get("token_url")
+    if not token_url:
+        return None
 
-    flow: Dict[str, Any] = {}
-    if safe.get("token_url"):
-        flow["tokenUrl"] = safe["token_url"]
-    if scopes:
-        flow["scopes"] = scopes
-
-    if safe.get("grant_type") == "client_credentials":
-        flows = {"clientCredentials": flow}
+    grant_type = safe.get("grant_type")
+    if grant_type == "client_credentials":
+        flows: Dict[str, Any] = {"clientCredentials": {"tokenUrl": token_url, "scopes": scopes}}
+    elif grant_type == "authorization_code" and safe.get("authorization_url"):
+        flows = {"authorizationCode": {"authorizationUrl": safe["authorization_url"], "tokenUrl": token_url, "scopes": scopes}}
     else:
-        if safe.get("authorization_url"):
-            flow["authorizationUrl"] = safe["authorization_url"]
-        flows = {"authorizationCode": flow}
+        return None
 
     return {"oauth2SecurityScheme": {"flows": flows}}
 
@@ -445,36 +459,38 @@ def _oauth2_security_scheme(oauth_config: Dict[str, Any]) -> Dict[str, Any]:
 def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """Derive ``securitySchemes``/``securityRequirements`` from an agent's auth config.
 
-    Only ever reads the auth *configuration* (type, header/query param names,
+    Only ever reads the auth *configuration* (type, query param names,
     non-secret OAuth fields) — never ``auth_value`` or any decrypted credential,
     matching the acceptance criterion that this must not disclose credential values.
+    Returns no scheme when a schema-required field cannot be surfaced.
 
     Args:
         agent: The agent to derive a security scheme for.
 
     Returns:
         A ``(securitySchemes, securityRequirements)`` pair, or ``(None, None)``
-        when the agent has no auth configured or its auth type is unrecognized.
+        when the agent has no auth configured, its auth type is unrecognized,
+        or the scheme cannot be expressed schema-validly.
     """
     auth_type = (agent.auth_type or "").lower()
+    scheme: Optional[Dict[str, Any]]
     if auth_type == "basic":
-        scheme: Dict[str, Any] = {"httpAuthSecurityScheme": {"scheme": "basic"}}
+        scheme = {"httpAuthSecurityScheme": {"scheme": "basic"}}
     elif auth_type == "bearer":
         scheme = {"httpAuthSecurityScheme": {"scheme": "bearer"}}
-    elif auth_type == "authheaders":
-        # The header name is stored inside the encrypted auth_value blob and
-        # cannot be surfaced without decryption. Emit the scheme shape without a name.
-        scheme = {"apiKeySecurityScheme": {"location": "header"}}
     elif auth_type == "query_param":
-        # auth_query_params stores {"param_name": "<encrypted value>"}: the
-        # dict key is the plaintext param name, safe to surface on its own.
-        # A2A 1.0 models one security scheme per auth method, so only the
-        # first param name is surfaced when an agent configures more than one.
+        # auth_query_params stores {"param_name": "<encrypted value>"}: the dict
+        # key is the plaintext param name. Only the first name is surfaced.
         param_names = list((agent.auth_query_params or {}).keys())
-        scheme = {"apiKeySecurityScheme": {"location": "query", "name": param_names[0]}} if param_names else {"apiKeySecurityScheme": {"location": "query"}}
+        scheme = {"apiKeySecurityScheme": {"location": "query", "name": param_names[0]}} if param_names else None
     elif auth_type == "oauth":
         scheme = _oauth2_security_scheme(agent.oauth_config or {})
     else:
+        # authheaders keeps its header name inside the encrypted auth_value blob,
+        # so the required API-key ``name`` cannot be surfaced without decryption.
+        scheme = None
+
+    if scheme is None:
         return None, None
 
     scheme_name = f"{auth_type}Auth"
