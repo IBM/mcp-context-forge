@@ -2151,11 +2151,14 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
 
     Companion to :class:`ToolInvocation`, minus the ``name`` field (the tool
     name is a path parameter on the preview route, not part of the body).
-    See #5629.
+    See #5629, #6743.
 
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
                                    Not executed against the tool; see :class:`ToolPreviewResponse`.
+        server_id (Optional[str]): Optional virtual server ID for server-scoped tool resolution.
+                                   When provided, only tools attached to this server are considered.
+                                   Missing or null preserves global preview behavior.
 
     Examples:
         >>> ToolPreviewRequest().arguments
@@ -2166,9 +2169,20 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
         >>> # a client that always serializes the field shouldn't 422 for doing so (#5629).
         >>> ToolPreviewRequest(arguments=None).arguments
         {}
+        >>> # Server-scoped preview
+        >>> req = ToolPreviewRequest(server_id="550e8400-e29b-41d4-a716-446655440000")
+        >>> req.server_id
+        '550e8400-e29b-41d4-a716-446655440000'
+        >>> # Empty or whitespace-only server_id is rejected
+        >>> try:
+        ...     ToolPreviewRequest(server_id="")
+        ... except ValueError as e:
+        ...     "cannot be empty" in str(e)
+        True
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+    server_id: Optional[str] = Field(None, description="Optional virtual server ID for server-scoped tool resolution")
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -2182,6 +2196,26 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
             Dict[str, Any]: ``value`` unchanged, or ``{}`` when ``value`` is ``None``.
         """
         return {} if value is None else value
+
+    @field_validator("server_id")
+    @classmethod
+    def validate_server_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate server_id is not empty or whitespace-only.
+
+        Args:
+            v: The server_id value to validate.
+
+        Returns:
+            The validated server_id (stripped) or None.
+
+        Raises:
+            ValueError: If server_id is empty or whitespace-only string.
+        """
+        if v is not None and isinstance(v, str):
+            if not v.strip():
+                raise ValueError("server_id cannot be empty or whitespace-only")
+            return v.strip()
+        return v
 
 
 class ToolPreviewTarget(BaseModelWithConfigDict):
