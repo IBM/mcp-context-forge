@@ -41,12 +41,12 @@ from tests.helpers.router_helpers import collect_routes
 
 PATH = "/v1/admin/users/sso"
 PAYLOAD = {"email": "new@example.com", "auth_provider": "azure-ad"}
-FLAGS = list(product([False, True], repeat=3))
+FLAGS = list(product([False, True], repeat=2))
 
 
-def _settings(flags: tuple[bool, bool, bool]) -> SimpleNamespace:
-    """Build a settings object containing the three route-registration flags."""
-    return SimpleNamespace(mcpgateway_admin_api_enabled=flags[0], sso_user_provisioning_api_enabled=flags[1], sso_enabled=flags[2])
+def _settings(flags: tuple[bool, bool]) -> SimpleNamespace:
+    """Build a settings object containing the admin API and SSO settings."""
+    return SimpleNamespace(mcpgateway_admin_api_enabled=flags[0], sso_enabled=flags[1])
 
 
 def _routers() -> dict[str, Any]:
@@ -97,7 +97,7 @@ def harness(monkeypatch):
         """Record authentication dependency execution."""
         return authentication()
 
-    def build(flags=(True, True, True), *, root_path="", admin_auth=False):
+    def build(flags=(True, True), *, root_path="", admin_auth=False):
         """Assemble one startup snapshot without unrelated application routers."""
         config = _settings(flags)
         registered = all(flags)
@@ -116,7 +116,7 @@ def harness(monkeypatch):
 
 
 @pytest.mark.parametrize("flags", FLAGS)
-def test_three_flags_control_registration_and_disabled_post(harness, flags, monkeypatch):
+def test_admin_api_and_sso_control_registration_and_disabled_post(harness, flags, monkeypatch):
     """Only all-enabled registers; disabled POSTs perform no authentication work."""
     verifier = AsyncMock(side_effect=AssertionError("token usage must not verify disabled POSTs"))
     monkeypatch.setattr("mcpgateway.middleware.token_usage_middleware.verify_jwt_token_cached", verifier)
@@ -126,7 +126,6 @@ def test_three_flags_control_registration_and_disabled_post(harness, flags, monk
     # Mutating runtime flags must not change the registered routes or gate.
     config.mcpgateway_admin_api_enabled = not config.mcpgateway_admin_api_enabled
     config.sso_enabled = not config.sso_enabled
-    config.sso_user_provisioning_api_enabled = not config.sso_user_provisioning_api_enabled
     assert {path for path, *_ in collect_routes(app)} == paths
     if all(flags):
         assert client.post(PATH, json=PAYLOAD).status_code != 404
@@ -144,7 +143,7 @@ def test_three_flags_control_registration_and_disabled_post(harness, flags, monk
 @pytest.mark.parametrize("path", [PATH, PATH + "/", "/proxy" + PATH, "/proxy" + PATH + "/"])
 def test_disabled_gate_normalizes_root_path(harness, path):
     """Both ASGI root-path representations hide disabled provisioning."""
-    client, _, _ = harness.build((False, True, True), root_path="/proxy")
+    client, _, _ = harness.build((False, True), root_path="/proxy")
     assert client.post(path, content=b"{").json() == {"detail": "Not Found"}
     harness.authentication.assert_not_called()
 
@@ -152,7 +151,7 @@ def test_disabled_gate_normalizes_root_path(harness, path):
 @pytest.mark.parametrize("enabled", [False, True])
 def test_gate_preserves_delete_and_unrelated_post(harness, enabled):
     """The gate leaves pre-existing methods and neighboring paths untouched."""
-    client, app, _ = harness.build((enabled, True, True))
+    client, app, _ = harness.build((enabled, True))
 
     @app.delete(PATH)
     def existing_delete():
@@ -381,7 +380,7 @@ def test_openapi_request_schema(harness):
 @pytest.mark.parametrize("enabled", [False, True])
 def test_existing_user_creation_routes_unchanged(harness, monkeypatch, enabled):
     """Existing JSON and UI creation still use local passwords under both flag states."""
-    client, app, _ = harness.build((True, enabled, True))
+    client, app, _ = harness.build((True, enabled))
     app.include_router(email_auth_router, prefix="/v1/auth/email")
     app.include_router(admin_router, prefix="/v1")
     legacy_service = MagicMock()

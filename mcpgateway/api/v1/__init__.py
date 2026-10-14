@@ -339,7 +339,7 @@ def build_v1_router(
 
     Args:
         settings: Application settings instance.
-        sso_user_provisioning_enabled: Startup registration decision shared with the pre-auth gate. Defaults to the three provisioning flags.
+        sso_user_provisioning_enabled: Startup registration decision shared with the pre-auth gate. Defaults to the admin API and SSO settings.
         protocol_router: Inline protocol router from main.py.
         tool_router: Inline tools router from main.py.
         resource_router: Inline resources router from main.py.
@@ -390,7 +390,7 @@ def build_v1_router(
     logger.info("Plugin discovery router included - v1 only")
 
     if sso_user_provisioning_enabled is None:
-        sso_user_provisioning_enabled = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled and getattr(settings, "sso_user_provisioning_api_enabled", False))
+        sso_user_provisioning_enabled = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled)
     if sso_user_provisioning_enabled:
         # Keep provisioning v1-only and independent of the browser SSO/JIT routers.
         # First-Party
