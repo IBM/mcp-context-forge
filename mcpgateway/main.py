@@ -135,8 +135,6 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
-    A2AInvokeResponse,
-    A2AJsonRpcResponse,
     A2APushNotificationConfigCreate,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
@@ -3253,214 +3251,235 @@ class MCPPathRewriteMiddleware:
         return new_path
 
 
-# Configure CORS with environment-aware origins
-cors_origins = list(settings.allowed_origins) if settings.allowed_origins else []
+def _register_middleware(app: FastAPI) -> tuple[Optional[Any], bool, list]:  # pylint: disable=redefined-outer-name
+    """Register the HTTP middleware stack on *app* in load-bearing order.
 
-# Ensure we never use wildcard in production
-if settings.environment == "production" and not cors_origins:
-    logger.warning("No CORS origins configured for production environment. CORS will be disabled.")
-    cors_origins = []
+    Starlette executes user middleware in reverse registration order, so the
+    registration sequence below is the reverse of the desired execution order.
+    Extracted from module level so feature-flagged registration can be tested
+    against a bare FastAPI app without re-importing this module.
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["Content-Length", "X-Request-ID", "X-Password-Change-Required"],
-    max_age=600,  # Cache preflight requests for 10 minutes
-)
+    Args:
+        app: The FastAPI application to register middleware on.
 
-# Add response compression middleware (Brotli, Zstd, GZip)
-# Automatically negotiates compression algorithm based on client Accept-Encoding header
-# Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
-# Only compress responses larger than minimum_size to avoid overhead
-# NOTE: When json_response_enabled=False (SSE mode), /mcp paths are excluded from
-# compression to prevent buffering/breaking of streaming responses. See middleware/compression.py.
-if settings.compression_enabled:
+    Returns:
+        The observability service (``None`` when observability is disabled),
+        the SSO user-provisioning registration flag, and the resolved CORS
+        origins, bound at module level to ``_service`` (read by ``lifespan()``),
+        ``SSO_USER_PROVISIONING_REGISTERED``, and ``cors_origins``.
+    """
+    # Configure CORS with environment-aware origins
+    resolved_origins = list(settings.allowed_origins) if settings.allowed_origins else []
+
+    # Ensure we never use wildcard in production
+    if settings.environment == "production" and not resolved_origins:
+        logger.warning("No CORS origins configured for production environment. CORS will be disabled.")
+        resolved_origins = []
+
     app.add_middleware(
-        SSEAwareCompressMiddleware,
-        minimum_size=settings.compression_minimum_size,
-        gzip_level=settings.compression_gzip_level,
-        brotli_quality=settings.compression_brotli_quality,
-        zstd_level=settings.compression_zstd_level,
-    )
-    logger.info(
-        f"🗜️  Response compression enabled (SSE-aware): minimum_size={settings.compression_minimum_size}B, "
-        f"gzip_level={settings.compression_gzip_level}, "
-        f"brotli_quality={settings.compression_brotli_quality}, "
-        f"zstd_level={settings.compression_zstd_level}"
-    )
-else:
-    logger.info("🚫 Response compression disabled")
-
-# Add security headers middleware
-app.add_middleware(SecurityHeadersMiddleware)
-
-# Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
-if settings.header_size_validation_enabled:
-    app.add_middleware(HeaderSizeMiddleware)
-    logger.info(
-        f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
+        CORSMiddleware,
+        allow_origins=resolved_origins,
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=["Content-Length", "X-Request-ID", "X-Password-Change-Required"],
+        max_age=600,  # Cache preflight requests for 10 minutes
     )
 
-# Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
-if settings.rate_limiting_enabled:
-    app.add_middleware(RateLimitMiddleware)
-    logger.info(
-        f"🚦 RFC 6585 rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
-        f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
-        f"HIGH={settings.rate_limit_high_rpm}, "
-        f"MEDIUM={settings.rate_limit_medium_rpm}, "
-        f"LOW={settings.rate_limit_low_rpm}]"
+    # Add response compression middleware (Brotli, Zstd, GZip)
+    # Automatically negotiates compression algorithm based on client Accept-Encoding header
+    # Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
+    # Only compress responses larger than minimum_size to avoid overhead
+    # NOTE: When json_response_enabled=False (SSE mode), /mcp paths are excluded from
+    # compression to prevent buffering/breaking of streaming responses. See middleware/compression.py.
+    if settings.compression_enabled:
+        app.add_middleware(
+            SSEAwareCompressMiddleware,
+            minimum_size=settings.compression_minimum_size,
+            gzip_level=settings.compression_gzip_level,
+            brotli_quality=settings.compression_brotli_quality,
+            zstd_level=settings.compression_zstd_level,
+        )
+        logger.info(
+            f"🗜️  Response compression enabled (SSE-aware): minimum_size={settings.compression_minimum_size}B, "
+            f"gzip_level={settings.compression_gzip_level}, "
+            f"brotli_quality={settings.compression_brotli_quality}, "
+            f"zstd_level={settings.compression_zstd_level}"
+        )
+    else:
+        logger.info("🚫 Response compression disabled")
+
+    # Add security headers middleware
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
+    if settings.header_size_validation_enabled:
+        app.add_middleware(HeaderSizeMiddleware)
+        logger.info(
+            f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
+        )
+
+    # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
+    if settings.rate_limiting_enabled:
+        app.add_middleware(RateLimitMiddleware)
+        logger.info(
+            f"🚦 RFC 6585 rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
+            f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
+            f"HIGH={settings.rate_limit_high_rpm}, "
+            f"MEDIUM={settings.rate_limit_medium_rpm}, "
+            f"LOW={settings.rate_limit_low_rpm}]"
+        )
+
+    # Add validation middleware if explicitly enabled
+    if settings.validation_middleware_enabled:
+        app.add_middleware(ValidationMiddleware)
+        logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
+    else:
+        logger.info("🔒 Input validation and output sanitization middleware disabled")
+
+    # Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
+    app.add_middleware(MCPProtocolVersionMiddleware)
+
+    # Add token scoping middleware (only when email auth is enabled)
+    if settings.email_auth_enabled:
+        app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
+        # Add streamable HTTP middleware for /mcp routes with token scoping
+        app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
+    else:
+        # Add streamable HTTP middleware for /mcp routes
+        app.add_middleware(MCPPathRewriteMiddleware)
+
+    # Add HTTP authentication hook middleware for plugins (before auth dependencies)
+    # Middleware will get the global plugin manager at request time if factory exists
+    app.add_middleware(HttpAuthMiddleware)
+
+    # Add request logging middleware FIRST (always enabled for gateway boundary logging)
+    # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
+    # Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
+    # Detailed payload logging only runs if log_detailed_requests=True
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        enable_gateway_logging=True,
+        log_detailed_requests=settings.log_requests,
+        log_level=settings.log_level,
+        max_body_size=settings.log_detailed_max_body_size,
+        log_resolve_user_identity=settings.log_resolve_user_identity,
+        log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
+        log_detailed_sample_rate=settings.log_detailed_sample_rate,
     )
 
-# Add validation middleware if explicitly enabled
-if settings.validation_middleware_enabled:
-    app.add_middleware(ValidationMiddleware)
-    logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
-else:
-    logger.info("🔒 Input validation and output sanitization middleware disabled")
+    # Add custom DocsAuthMiddleware
+    app.add_middleware(DocsAuthMiddleware)
 
-# Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
-app.add_middleware(MCPProtocolVersionMiddleware)
+    # Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
+    # This ensures all /admin/* routes (except login/logout) require admin status
+    app.add_middleware(AdminAuthMiddleware)
 
-# Add token scoping middleware (only when email auth is enabled)
-if settings.email_auth_enabled:
-    app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
-    # Add streamable HTTP middleware for /mcp routes with token scoping
-    app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
-else:
-    # Add streamable HTTP middleware for /mcp routes
-    app.add_middleware(MCPPathRewriteMiddleware)
+    # Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
+    # Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
+    # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
+    # This ensures request.base_url reflects the proxy's public host, fixing the
+    # OAuth redirect_uri hint and other URL construction throughout the admin UI.
+    # Registered alongside ProxyHeadersMiddleware with the same trust model.
+    #
+    # Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
+    # ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
+    # already being corrected when deriving the default port for scope["server"].
+    app.add_middleware(ForwardedHostMiddleware)
 
-# Add HTTP authentication hook middleware for plugins (before auth dependencies)
-# Middleware will get the global plugin manager at request time if factory exists
-app.add_middleware(HttpAuthMiddleware)
+    # Trust all proxies (or lock down with a list of host patterns)
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Add request logging middleware FIRST (always enabled for gateway boundary logging)
-# IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
-# Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
-# Detailed payload logging only runs if log_detailed_requests=True
-app.add_middleware(
-    RequestLoggingMiddleware,
-    enable_gateway_logging=True,
-    log_detailed_requests=settings.log_requests,
-    log_level=settings.log_level,
-    max_body_size=settings.log_detailed_max_body_size,
-    log_resolve_user_identity=settings.log_resolve_user_identity,
-    log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
-    log_detailed_sample_rate=settings.log_detailed_sample_rate,
-)
+    # Add correlation ID middleware if enabled
+    # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
+    if settings.correlation_id_enabled:
+        app.add_middleware(CorrelationIDMiddleware)
+        logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add custom DocsAuthMiddleware
-app.add_middleware(DocsAuthMiddleware)
+    register_auth_context_middleware(app)
 
-# Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
-# This ensures all /admin/* routes (except login/logout) require admin status
-app.add_middleware(AdminAuthMiddleware)
+    # Add token usage logging middleware
+    # This tracks API token usage for analytics and security monitoring
+    # Note: Runs after AuthContextMiddleware so request.state.auth_method is available
+    if settings.token_usage_logging_enabled:
+        # First-Party
+        from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # pylint: disable=import-outside-toplevel
 
-# Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
-# Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
-# but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
-# This ensures request.base_url reflects the proxy's public host, fixing the
-# OAuth redirect_uri hint and other URL construction throughout the admin UI.
-# Registered alongside ProxyHeadersMiddleware with the same trust model.
-#
-# Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
-# ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
-# already being corrected when deriving the default port for scope["server"].
-app.add_middleware(ForwardedHostMiddleware)
+        app.add_middleware(TokenUsageMiddleware)
+        logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
+    else:
+        logger.info("📊 Token usage logging middleware disabled")
 
-# Trust all proxies (or lock down with a list of host patterns)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    # Add observability middleware if enabled
+    # Note: Middleware runs in REVERSE order (last added runs first)
+    # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
+    # Execution order will be: AuthContext -> Observability -> Request Handler
+    # Wire observability adapter into the plugin manager when observability is enabled
+    # The returned service is bound to the module-level `_service` global read by
+    # lifespan(); it is None when this branch doesn't run.
+    observability_service: Optional[Any] = None
+    if settings.observability_enabled:
+        # First-Party
+        from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel
 
-# Add correlation ID middleware if enabled
-# Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
-if settings.correlation_id_enabled:
-    app.add_middleware(CorrelationIDMiddleware)
-    logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
+        observability_service = ObservabilityService()
+        app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
+        # Plugin observability adapter will be set in lifespan after plugin_manager is initialized
+        logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
+    else:
+        logger.info("🔍 Observability middleware disabled")
 
+    if otel_tracing_enabled():
+        app.add_middleware(OpenTelemetryRequestMiddleware)
+        logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
+    else:
+        logger.info("🧵 OTEL request tracing middleware disabled")
 
-register_auth_context_middleware(app)
+    # Add OTEL baggage middleware after request tracing middleware so it executes first
+    # and attaches baggage before the request-root span is created.
+    if settings.otel_baggage_enabled and otel_tracing_enabled():
+        # First-Party
+        from mcpgateway.middleware.baggage_middleware import BaggageMiddleware  # pylint: disable=import-outside-toplevel
 
-# Add token usage logging middleware
-# This tracks API token usage for analytics and security monitoring
-# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
-if settings.token_usage_logging_enabled:
-    # First-Party
-    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
+        app.add_middleware(BaggageMiddleware)
+        logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
+    elif settings.otel_baggage_enabled and not otel_tracing_enabled():
+        logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
+    else:
+        logger.debug("🧳 OTEL baggage middleware disabled")
 
-    app.add_middleware(TokenUsageMiddleware)
-    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
-else:
-    logger.info("📊 Token usage logging middleware disabled")
+    # Database query logging middleware (for N+1 detection)
+    if settings.db_query_log_enabled:
+        # First-Party
+        from mcpgateway.db import engine  # pylint: disable=import-outside-toplevel
+        from mcpgateway.middleware.db_query_logging import setup_query_logging  # pylint: disable=import-outside-toplevel
 
-# Add observability middleware if enabled
-# Note: Middleware runs in REVERSE order (last added runs first)
-# If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
-# Execution order will be: AuthContext -> Observability -> Request Handler
-# Wire observability adapter into the plugin manager when observability is enabled
-# _service is a module-level global read later in lifespan(); it must always be bound
-# (even when this branch doesn't run at import time) so tests that flip
-# observability_enabled to True after import and then invoke lifespan() don't hit a
-# NameError on the module global.
-_service = None  # pylint: disable=invalid-name
-if settings.observability_enabled:
-    # First-Party
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
-    from mcpgateway.services.observability_service import ObservabilityService
+        setup_query_logging(app, engine)
+        logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
+    else:
+        logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
 
-    _service = ObservabilityService()
-    app.add_middleware(ObservabilityMiddleware, enabled=True, service=_service)
-    # Plugin observability adapter will be set in lifespan after plugin_manager is initialized
-    logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
-else:
-    logger.info("🔍 Observability middleware disabled")
+    # Snapshot once: the gate and v1 router must not diverge after runtime settings changes.
+    sso_user_provisioning_registered = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled)
+    app.add_middleware(SSOUserProvisioningGateMiddleware, enabled=sso_user_provisioning_registered)
 
-if otel_tracing_enabled():
-    app.add_middleware(OpenTelemetryRequestMiddleware)
-    logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
-else:
-    logger.info("🧵 OTEL request tracing middleware disabled")
+    # Client disconnect middleware — MUST be outermost (added last, runs first).
+    # Cancels in-flight request handlers when the client (nginx) closes the connection,
+    # preventing CLOSE_WAIT accumulation and associated memory leaks.
+    if settings.client_disconnect_middleware_enabled:
+        app.add_middleware(ClientDisconnectMiddleware)
+        logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
+    else:
+        logger.debug("Client disconnect middleware disabled (enable with CLIENT_DISCONNECT_MIDDLEWARE_ENABLED=true)")
 
-# Add OTEL baggage middleware after request tracing middleware so it executes first
-# and attaches baggage before the request-root span is created.
-if settings.otel_baggage_enabled and otel_tracing_enabled():
-    # First-Party
-    from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
-
-    app.add_middleware(BaggageMiddleware)
-    logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
-elif settings.otel_baggage_enabled and not otel_tracing_enabled():
-    logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
-else:
-    logger.debug("🧳 OTEL baggage middleware disabled")
+    return observability_service, sso_user_provisioning_registered, resolved_origins
 
 
-# Database query logging middleware (for N+1 detection)
-if settings.db_query_log_enabled:
-    # First-Party
-    from mcpgateway.db import engine
-    from mcpgateway.middleware.db_query_logging import setup_query_logging
-
-    setup_query_logging(app, engine)
-    logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
-else:
-    logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
-
-# Snapshot once: the gate and v1 router must not diverge after runtime settings changes.
-SSO_USER_PROVISIONING_REGISTERED = bool(settings.mcpgateway_admin_api_enabled and settings.sso_enabled)
-app.add_middleware(SSOUserProvisioningGateMiddleware, enabled=SSO_USER_PROVISIONING_REGISTERED)
-
-# Client disconnect middleware — MUST be outermost (added last, runs first).
-# Cancels in-flight request handlers when the client (nginx) closes the connection,
-# preventing CLOSE_WAIT accumulation and associated memory leaks.
-if settings.client_disconnect_middleware_enabled:
-    app.add_middleware(ClientDisconnectMiddleware)
-    logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
-else:
-    logger.debug("Client disconnect middleware disabled (enable with CLIENT_DISCONNECT_MIDDLEWARE_ENABLED=true)")
+# Bind the globals consumed elsewhere: _service is read by lifespan();
+# SSO_USER_PROVISIONING_REGISTERED is shared with the v1 router build so the
+# pre-auth gate and router never diverge after runtime settings changes.
+_service, SSO_USER_PROVISIONING_REGISTERED, cors_origins = _register_middleware(app)  # pylint: disable=invalid-name
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)
@@ -5316,9 +5335,7 @@ def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = N
     return body_session_id if isinstance(body_session_id, str) and body_session_id else None
 
 
-# response_model_exclude_unset keeps the passthrough contract: only the keys the agent
-# actually returned are serialized, instead of the whole envelope with nulls filled in.
-@a2a_router.post("/{agent_name}/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
+@a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
     agent_name: str,
@@ -5366,7 +5383,7 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@a2a_router.post("/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
+@a2a_router.post("/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_by_id(
     request: Request,
@@ -5419,7 +5436,7 @@ async def invoke_a2a_agent_by_id(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@a2a_router.post("/{agent_name}/jsonrpc", response_model=A2AJsonRpcResponse, response_model_exclude_unset=True)
+@a2a_router.post("/{agent_name}/jsonrpc", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_jsonrpc(
     agent_name: str,
