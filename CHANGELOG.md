@@ -40,6 +40,8 @@
 
 ### Fixed
 
+- **A2A 1.0 agent card shape** ([#7027](https://github.com/IBM/mcp-context-forge/issues/7027), [#7209](https://github.com/IBM/mcp-context-forge/pull/7209)) - Agent cards now follow the A2A 1.0 `AgentCard` schema, including `supportedInterfaces`, `securitySchemes`, and `securityRequirements`. Cards never expose credential values. Agents with `authheaders` auth, `query_param` auth without a stored parameter name, or an incomplete OAuth configuration now omit the security scheme, because 1.0 requires a name or flow URLs that the stored configuration cannot supply. OAuth schemes read the stored `scopes` list and always emit the scope map.
+
 - **A2A plugin header trust** - A2A pre-invoke plugins can supply credentials and custom headers without the agent caller-header allowlist. Plugin output now overrides configured agent authentication, and an empty `Authorization` value suppresses all fallback authorization. The gateway retains inbound caller filtering, sanitizes plugin input, resolves output case-insensitively, and strips `X-Vault-Tokens` before egress.
 
 - **Frontend email routes** - Invitation and password emails include the React `/app` mount prefix. `UI_BASE_URL` accepts a deployment base or a full frontend root ending in `/app`. Full roots produce a startup warning and have only the final mount segment removed during normalization. For a deployment prefix `/contextforge/app`, set the full root `https://ui.example.com/contextforge/app/app` to preserve both segments in emailed links. The invitation frontend route remains tracked by #6776.
