@@ -152,6 +152,30 @@ async def test_streamable_server_discover_omits_logging_key_for_modern_protocol(
     assert "logging" not in raw_result["capabilities"]
 
 
+def test_streamable_server_app_info():
+    """Verify that mcp_app is constructed with settings.app_name and __version__."""
+    from mcpgateway import __version__
+    from mcpgateway.config import settings
+
+    assert tr.mcp_app.name == settings.app_name
+    assert tr.mcp_app.version == __version__
+
+
+async def test_streamable_server_stamps_server_info_on_modern_requests():
+    """Verify that modern requests receive stamped serverInfo in result._meta."""
+    from mcpgateway import __version__
+    from mcpgateway.config import settings
+
+    async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
+        res = await modern_client.list_tools()
+        meta = getattr(res, "meta", None)
+        assert meta is not None
+        assert "io.modelcontextprotocol/serverInfo" in meta
+        server_info = meta["io.modelcontextprotocol/serverInfo"]
+        assert server_info["name"] == settings.app_name
+        assert server_info["version"] == __version__
+
+
 # ---------------------------------------------------------------------------
 # InMemoryEventStore tests
 # ---------------------------------------------------------------------------
