@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class TokenExchangeCache:
-    """Stores exchanged tokens keyed by gateway+user+audience with TTL.
+    """Stores exchanged tokens keyed by gateway, user, audience, and subject JWT.
 
     Uses Redis when ``redis_url`` is provided and reachable; otherwise an
     in-process bounded LRU dict.
@@ -76,8 +76,8 @@ class TokenExchangeCache:
                 self._redis = None
 
     @staticmethod
-    def _key(gateway_id: str, user_email: str, audience: str) -> str:
-        """Build the namespaced cache key for a gateway/user/audience tuple.
+    def _key(gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> str:
+        """Build a namespaced key for a gateway/user/audience/credential tuple.
 
         Each component is hashed independently (rather than joined with a bare
         ``:``) before being combined, so no attacker-controlled value (e.g. a
@@ -90,13 +90,16 @@ class TokenExchangeCache:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
 
         Returns:
             A namespaced cache key string.
         """
-        parts = (gateway_id or "", user_email or "", audience or "")
+        if not subject_token:
+            raise ValueError("Token exchange cache requires a subject token")
+        parts = (gateway_id or "", user_email or "", audience or "", subject_token)
         hashed = ":".join(hashlib.sha256(part.encode("utf-8")).hexdigest() for part in parts)
-        return f"token_exchange:{hashed}"
+        return f"token_exchange:v2:{hashed}"
 
     def _redis_live(self) -> bool:
         """Return True if Redis should be used (configured and breaker not open). L5.
@@ -147,7 +150,7 @@ class TokenExchangeCache:
         effective_skew = min(self._skew, max(0, expires_in // 2))
         return max(int(expires_in) - effective_skew, 1)
 
-    def lock(self, gateway_id: str, user_email: str, audience: str) -> "asyncio.Lock":
+    def lock(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> "asyncio.Lock":
         """Return the single-flight lock for this key, creating it on first use.
 
         The lock registry is bounded (G7): an unbounded dict of locks is the same
@@ -159,11 +162,12 @@ class TokenExchangeCache:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
 
         Returns:
             The ``asyncio.Lock`` instance associated with this key.
         """
-        key = self._key(gateway_id, user_email, audience)
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -179,18 +183,19 @@ class TokenExchangeCache:
                     break
         return lock
 
-    async def get(self, gateway_id: str, user_email: str, audience: str) -> Optional[str]:
+    async def get(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> Optional[str]:
         """Return a cached token if present and still inside its serve window.
 
         Args:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
 
         Returns:
             The cached token string, or ``None`` on a miss, expiry, or malformed entry.
         """
-        key = self._key(gateway_id, user_email, audience)
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -216,17 +221,18 @@ class TokenExchangeCache:
             return None
         return token
 
-    async def set(self, gateway_id: str, user_email: str, audience: str, token: str, expires_in: int) -> None:
+    async def set(self, gateway_id: str, user_email: str, audience: str, token: str, expires_in: int, *, subject_token: str) -> None:
         """Cache an exchanged token. Hard TTL is ``expires_in``; serve window clamps skew.
 
         Args:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
             token: The exchanged access token to cache.
             expires_in: Token lifetime in seconds as returned by the token endpoint.
         """
-        key = self._key(gateway_id, user_email, audience)
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         serve_window = self._serve_window(expires_in)
         serve_until = time.time() + serve_window
         if self._redis_live():
@@ -243,15 +249,16 @@ class TokenExchangeCache:
         while len(self._mem) > self._max_entries:
             self._mem.popitem(last=False)
 
-    async def invalidate(self, gateway_id: str, user_email: str, audience: str) -> None:
+    async def invalidate(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> None:
         """Remove a cached token, e.g. after an upstream 401.
 
         Args:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
         """
-        key = self._key(gateway_id, user_email, audience)
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token)
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -261,18 +268,19 @@ class TokenExchangeCache:
                 self._note_redis_failure("delete", e)  # L5
         self._mem.pop(key, None)
 
-    async def is_failed(self, gateway_id: str, user_email: str, audience: str) -> bool:
+    async def is_failed(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> bool:
         """Return True if a recent exchange failure is within its negative-cache TTL (P4).
 
         Args:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
 
         Returns:
             True if a failure was recorded recently and the negative-cache TTL has not lapsed.
         """
-        key = self._key(gateway_id, user_email, audience) + ":neg"
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token) + ":neg"
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -289,7 +297,7 @@ class TokenExchangeCache:
             return False
         return True
 
-    async def set_failure(self, gateway_id: str, user_email: str, audience: str, ttl: int = 10) -> None:
+    async def set_failure(self, gateway_id: str, user_email: str, audience: str, ttl: int = 10, *, subject_token: str) -> None:
         """Record a short-lived exchange failure to short-circuit a retry storm (P4).
 
         Args:
@@ -297,8 +305,9 @@ class TokenExchangeCache:
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             ttl: Seconds the failure should be remembered.
+            subject_token: Inbound JWT used as the RFC 8693 subject token.
         """
-        key = self._key(gateway_id, user_email, audience) + ":neg"
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token) + ":neg"
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:

@@ -1,0 +1,6 @@
+services:
+  gateway:
+    environment:
+      CACHE_TYPE: memory
+      REDIS_URL: ""
+      GUNICORN_WORKERS: "1"

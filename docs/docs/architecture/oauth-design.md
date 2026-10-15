@@ -263,12 +263,16 @@ RFC 8693 §2.2.1 requires the AS to return a `token_type` field. `OAuthManager.t
 
 ### Caching
 
-Exchanged tokens are cached (`TokenExchangeCache`, Redis-backed with an in-memory fallback) under a key derived from the gateway, user, and `target_audience`. Cache behavior:
+Exchanged tokens are cached (`TokenExchangeCache`, Redis-backed with an in-memory fallback) under an identity derived from the gateway, authenticated user, `target_audience`, and a SHA-256 digest of the exact subject JWT. The JWT itself is not part of the cache key. Repeated use of the same JWT can reuse its cached exchange; a different JWT receives a separate Authorization Server decision, even when it belongs to the same user. This binds cache entries to the credential that was exchanged.
 
 - **TTL**: Taken from the Authorization Server's `expires_in` response field.
-- **Single-flight**: Concurrent requests for the same cache key share one in-flight exchange instead of issuing duplicate calls to the AS.
-- **Negative caching**: A failed exchange is cached briefly so repeated failures don't hammer the AS; callers see a "token exchange unavailable" degraded-mode error until the cooldown expires.
-- **401 invalidation**: For REST-integration tool calls, if the downstream server rejects the exchanged token with `401`, the cache entry is evicted and exactly **one** re-exchange is attempted before failing. (MCP-protocol tool calls over SSE/streamable HTTP do not expose a retryable HTTP status and are out of scope for this retry.)
+- **Single-flight**: Concurrent requests with the same cache identity share one in-flight exchange. Different subject JWTs use separate locks and exchanges.
+- **Negative caching**: A failed exchange is cached briefly under the same credential-specific identity, so it does not affect another JWT for that user. Callers see a "token exchange unavailable" degraded-mode error until the cooldown expires.
+- **401 invalidation**: For REST-integration tool calls, if the downstream server rejects the exchanged token with `401`, only the matching credential-specific entry is evicted and exactly **one** re-exchange is attempted before failing. (MCP-protocol tool calls over SSE/streamable HTTP do not expose a retryable HTTP status and are out of scope for this retry.)
+
+The cache key format changed with this behavior. New workers do not read entries written with the previous key format. During a mixed-version rollout, old workers can continue using the previous cache identity, so deploy the update to every Python gateway worker and stop or drain old workers before considering the rollout complete. Old-format Redis entries expire through their existing TTLs; do not flush shared Redis data for this rollout. Rolling back to older code restores the previous cache behavior and allows it to read old-format entries.
+
+Credential-specific entries can increase Authorization Server requests when a user's JWT changes and increase cache cardinality. The existing bounded-memory eviction and Redis TTLs continue to apply. Per-process single-flight remains local to each process; it does not provide distributed locking across workers.
 
 ### Shared-Issuer Trust Requirement
 
