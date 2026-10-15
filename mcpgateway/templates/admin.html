@@ -2660,6 +2660,22 @@
               </div>
               <div>
                 <label
+                  for="server-instructions"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Instructions</label
+                >
+                <textarea
+                  name="instructions"
+                  id="server-instructions"
+                  rows="3"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Text that MCP clients receive when they connect to this server. Leave empty to use the default behavior.
+                </p>
+              </div>
+              <div>
+                <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Icon URL</label
                 >
@@ -11142,6 +11158,22 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-server-description"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       ></textarea>
+                    </div>
+                    <div>
+                      <label
+                        for="edit-server-instructions"
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Instructions</label
+                      >
+                      <textarea
+                        name="instructions"
+                        id="edit-server-instructions"
+                        rows="3"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      ></textarea>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Text that MCP clients receive when they connect to this server. Leave empty to use the default behavior.
+                      </p>
                     </div>
                     <div>
                       <label
