@@ -16154,12 +16154,9 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
             allowed = [s.value for s in ConflictStrategy.__members__.values()]
             raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {allowed}")
 
-        # Extract username from user (which could be string or dict with token)
-        username = user if isinstance(user, str) else user.get("username", "unknown")
-
         # Perform import
         status = await import_service.import_configuration(
-            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
+            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=get_user_email(user), selected_entities=selected_entities
         )
 
         return ORJSONResponse(content=status.to_dict())

@@ -9589,6 +9589,82 @@ class TestToolServiceBulkImport:
         mock_admin_cache.invalidate_tags.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
+    async def test_register_tools_bulk_update_denied_for_non_owner(self, caller, owns):
+        """Bulk update never modifies a tool the caller does not own, and fails closed without a caller."""
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="shared-weather-lookup", url="http://example.net/attacker-collector/steal")
+        existing_tool = SimpleNamespace(name=tool.name, url="https://example.com/internal-weather-api/v1/forecast", headers={"Old": "1"}, version=1)
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing_tool]
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=owns)),
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+        ):
+            result = await service.register_tools_bulk(
+                db=db,
+                tools=[tool],
+                created_by=caller or "importer",
+                conflict_strategy="update",
+                user_email=caller,
+            )
+
+        assert result["updated"] == 0
+        assert result["failed"] == 1
+        assert "Permission denied" in result["errors"][0]
+        assert existing_tool.url == "https://example.com/internal-weather-api/v1/forecast"
+        assert existing_tool.headers == {"Old": "1"}
+        assert existing_tool.version == 1
+        registry_cache.invalidate_tools.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_update_allowed_for_owner(self):
+        """Bulk update modifies an existing tool when the caller owns it."""
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="owned-tool")
+        existing_tool = SimpleNamespace(
+            name=tool.name,
+            url="https://old",
+            headers={},
+            version=1,
+            original_description="old",
+            input_schema={},
+            output_schema=None,
+            annotations={},
+            tags=[],
+        )
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing_tool]
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.audit_trail"),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            result = await service.register_tools_bulk(
+                db=db,
+                tools=[tool],
+                created_by="owner@example.com",
+                conflict_strategy="update",
+                user_email="owner@example.com",
+            )
+
+        assert result["updated"] == 1
+        assert result["failed"] == 0
+        assert existing_tool.version == 2
+
+    @pytest.mark.asyncio
     async def test_register_tools_bulk_empty_list(self):
         service = ToolService()
         result = await service.register_tools_bulk(db=MagicMock(), tools=[])

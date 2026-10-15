@@ -2588,6 +2588,7 @@ class ToolService(BaseService):
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2611,6 +2612,9 @@ class ToolService(BaseService):
             owner_email: Email of the user who owns these tools
             visibility: Tool visibility level (private, team, public)
             conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+            user_email: Email of the authenticated caller. The "update" strategy modifies
+                an existing tool only when this caller owns it. Without it, no existing
+                tool is modified.
 
         Returns:
             Dict with statistics:
@@ -2645,6 +2649,9 @@ class ToolService(BaseService):
 
         for chunk_start in range(0, len(tools), chunk_size):
             chunk = tools[chunk_start : chunk_start + chunk_size]
+            unowned_names: frozenset = frozenset()
+            if conflict_strategy == "update":
+                unowned_names = await self._find_unowned_tool_names(db, chunk, visibility, team_id, owner_email, created_by, user_email)
             chunk_stats = self._process_tool_chunk(
                 db,
                 chunk=chunk,
@@ -2658,6 +2665,7 @@ class ToolService(BaseService):
                 created_user_agent=created_user_agent,
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
+                unowned_names=unowned_names,
             )
 
             # Aggregate stats
@@ -2689,6 +2697,61 @@ class ToolService(BaseService):
 
         return stats
 
+    @staticmethod
+    def _existing_tools_query(tool_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
+        """Build the conflict lookup for bulk registration within the requested scope.
+
+        Args:
+            tool_names: Tool names to look up.
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+
+        Returns:
+            Select statement matching existing tools by name within the scope.
+        """
+        if visibility.lower() == "public":
+            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
+        if visibility.lower() == "team" and team_id:
+            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
+        # Private tools - check by owner
+        return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
+
+    async def _find_unowned_tool_names(
+        self,
+        db: Session,
+        chunk: List[ToolCreate],
+        visibility: str,
+        team_id: Optional[str],
+        owner_email: Optional[str],
+        created_by: Optional[str],
+        user_email: Optional[str],
+    ) -> frozenset:
+        """Return names of existing tools in the chunk that the caller may not modify.
+
+        Args:
+            db: The SQLAlchemy database session.
+            chunk: List of ToolCreate objects to process.
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+            user_email: Email of the authenticated caller. When empty, every existing tool is unowned.
+
+        Returns:
+            Frozen set of tool names the caller must not modify.
+        """
+        existing_tools = db.execute(self._existing_tools_query([tool.name for tool in chunk], visibility, team_id, owner_email, created_by)).scalars().all()
+        if not user_email:
+            return frozenset(tool.name for tool in existing_tools)
+
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        permission_service = PermissionService(db)
+        return frozenset([tool.name for tool in existing_tools if not await permission_service.check_resource_ownership(user_email, tool)])
+
     def _process_tool_chunk(
         self,
         db: Session,
@@ -2703,6 +2766,7 @@ class ToolService(BaseService):
         created_user_agent: Optional[str],
         import_batch_id: Optional[str],
         federation_source: Optional[str],
+        unowned_names: frozenset = frozenset(),
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2719,6 +2783,7 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
+            unowned_names: Names of existing tools the caller may not modify.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2729,14 +2794,7 @@ class ToolService(BaseService):
             # Batch check for existing tools to detect conflicts
             tool_names = [tool.name for tool in chunk]
 
-            if visibility.lower() == "public":
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
-            elif visibility.lower() == "team" and team_id:
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
-            else:
-                # Private tools - check by owner
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
-
+            existing_tools_query = self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)
             existing_tools = db.execute(existing_tools_query).scalars().all()
             existing_tools_map = {tool.name: tool for tool in existing_tools}
 
@@ -2757,6 +2815,7 @@ class ToolService(BaseService):
                     created_user_agent=created_user_agent,
                     import_batch_id=import_batch_id,
                     federation_source=federation_source,
+                    unowned_names=unowned_names,
                 )
 
                 if result["status"] == "add":
@@ -2815,6 +2874,7 @@ class ToolService(BaseService):
         created_user_agent: Optional[str],
         import_batch_id: Optional[str],
         federation_source: Optional[str],
+        unowned_names: frozenset = frozenset(),
     ) -> dict:
         """Process a single tool for bulk import.
 
@@ -2831,6 +2891,7 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
+            unowned_names: Names of existing tools the caller may not modify.
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
@@ -2888,6 +2949,8 @@ class ToolService(BaseService):
                 if conflict_strategy == "skip":
                     return {"status": "skip"}
                 if conflict_strategy == "update":
+                    if tool.name in unowned_names:
+                        return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title

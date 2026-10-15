@@ -2152,12 +2152,14 @@ class TestPromptBulkRegistration:
             tags=["new"],
         )
 
-        result = await prompt_service.register_prompts_bulk(
-            db=db,
-            prompts=[prompt],
-            created_by="tester",
-            conflict_strategy="update",
-        )
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await prompt_service.register_prompts_bulk(
+                db=db,
+                prompts=[prompt],
+                created_by="tester",
+                conflict_strategy="update",
+                user_email="owner@example.com",
+            )
 
         assert result["updated"] == 1
         assert existing.description == "New desc"
@@ -2199,16 +2201,52 @@ class TestPromptBulkRegistration:
             tags=["new"],
         )
 
-        result = await prompt_service.register_prompts_bulk(
-            db=db,
-            prompts=[prompt],
-            created_by="tester",
-            conflict_strategy="update",
-        )
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await prompt_service.register_prompts_bulk(
+                db=db,
+                prompts=[prompt],
+                created_by="tester",
+                conflict_strategy="update",
+                user_email="owner@example.com",
+            )
 
         assert result["updated"] == 1
         assert existing.custom_name == "keep-custom"
         assert existing.display_name == "keep-display"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
+    async def test_register_prompts_bulk_update_denied_for_non_owner(self, prompt_service, caller, owns):
+        """Bulk update never modifies a prompt the caller does not own, and fails closed without a caller."""
+        existing = MagicMock(spec=DbPrompt)
+        existing.name = prompt_service._compute_prompt_name("prompt")
+        existing.gateway_id = None
+        existing.description = "Victim desc"
+        existing.template = "Victim {{ name }}"
+        existing.version = 1
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        db.add_all = MagicMock()
+        prompt_service._notify_prompt_added = AsyncMock()
+
+        prompt = PromptCreate(name="prompt", description="Attacker desc", template="Hijacked {{ name }}", arguments=[PromptArgument(name="name")])
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=owns)):
+            result = await prompt_service.register_prompts_bulk(
+                db=db,
+                prompts=[prompt],
+                created_by=caller or "importer",
+                conflict_strategy="update",
+                user_email=caller,
+            )
+
+        assert result["updated"] == 0
+        assert result["failed"] == 1
+        assert "Permission denied" in result["errors"][0]
+        assert existing.description == "Victim desc"
+        assert existing.template == "Victim {{ name }}"
+        assert existing.version == 1
 
     @pytest.mark.asyncio
     async def test_register_prompts_bulk_rename_conflict_with_gateway(self, prompt_service):

@@ -845,6 +845,7 @@ class ResourceService(BaseService):
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple resources in bulk with a single commit.
 
@@ -868,6 +869,9 @@ class ResourceService(BaseService):
             owner_email: Email of the user who owns these resources
             visibility: Resource visibility level (private, team, public)
             conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+            user_email: Email of the authenticated caller. The "update" strategy modifies
+                an existing resource only when this caller owns it. Without it, no existing
+                resource is modified.
 
         Returns:
             Dict with statistics:
@@ -926,6 +930,19 @@ class ResourceService(BaseService):
                 # Use (uri, gateway_id) tuple as key for proper conflict detection with gateway_id scoping
                 existing_resources_map = {(r.uri, r.gateway_id): r for r in existing_resources}
 
+                unowned_keys: set = set()
+                if conflict_strategy == "update":
+                    if user_email:
+                        # First-Party
+                        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                        permission_service = PermissionService(db)
+                        for key, existing in existing_resources_map.items():
+                            if not await permission_service.check_resource_ownership(user_email, existing):
+                                unowned_keys.add(key)
+                    else:
+                        unowned_keys = set(existing_resources_map)
+
                 resources_to_add = []
                 resources_to_update = []
 
@@ -977,6 +994,10 @@ class ResourceService(BaseService):
                                 stats["skipped"] += 1
                                 continue
                             if conflict_strategy == "update":
+                                if (resource.uri, resource_gateway_id) in unowned_keys:
+                                    stats["failed"] += 1
+                                    stats["errors"].append(f"Permission denied: cannot update resource {resource.uri}")
+                                    continue
                                 # Update existing resource
                                 # Bulk import supplies operator intent, not a new upstream identity.
                                 if existing_resource.gateway_id:

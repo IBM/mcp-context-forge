@@ -3575,12 +3575,14 @@ class TestResourceBulkRegistration:
             )
         ]
 
-        result = await resource_service.register_resources_bulk(
-            db=mock_db,
-            resources=resources,
-            created_by="tester",
-            conflict_strategy="update",
-        )
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await resource_service.register_resources_bulk(
+                db=mock_db,
+                resources=resources,
+                created_by="tester",
+                conflict_strategy="update",
+                user_email="owner@example.com",
+            )
 
         assert result["updated"] == 1
         assert result["created"] == 0
@@ -3590,6 +3592,38 @@ class TestResourceBulkRegistration:
         assert existing.tags[0]["label"] == "updated"
         assert existing.version == 2
         mock_db.add_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
+    async def test_register_resources_bulk_update_denied_for_non_owner(self, resource_service, mock_db, caller, owns):
+        """Bulk update never modifies a resource the caller does not own, and fails closed without a caller."""
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///victim.txt"
+        existing.gateway_id = None
+        existing.name = "Victim"
+        existing.description = "Victim desc"
+        existing.version = 1
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        mock_db.add_all = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+        resources = [ResourceCreate(name="Hijacked", uri="file:///victim.txt", description="Attacker desc", mime_type="text/plain", content="x")]
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=owns)):
+            result = await resource_service.register_resources_bulk(
+                db=mock_db,
+                resources=resources,
+                created_by=caller or "importer",
+                conflict_strategy="update",
+                user_email=caller,
+            )
+
+        assert result["updated"] == 0
+        assert result["failed"] == 1
+        assert "Permission denied" in result["errors"][0]
+        assert existing.name == "Victim"
+        assert existing.description == "Victim desc"
+        assert existing.version == 1
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_rename_conflict_creates_new(self, resource_service, mock_db):

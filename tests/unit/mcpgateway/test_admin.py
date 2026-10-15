@@ -8392,10 +8392,10 @@ class TestImportConfigurationEndpoints:
         result = await admin_import_configuration(mock_request, mock_db, user=user_dict)
 
         assert isinstance(result, JSONResponse)
-        # Verify the username was extracted correctly
+        # Verify the importer identity is the authenticated email (used for ownership checks)
         mock_import_config.assert_called_once()
         call_kwargs = mock_import_config.call_args[1]
-        assert call_kwargs["imported_by"] == "dict-user"
+        assert call_kwargs["imported_by"] == "dict-user@example.com"
 
     @patch.object(ImportService, "get_import_status")
     async def test_admin_get_import_status_success(self, mock_get_status, mock_db):
