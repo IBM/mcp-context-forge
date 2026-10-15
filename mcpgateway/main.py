@@ -5388,6 +5388,7 @@ def _extract_a2a_request_context(
         - token_teams: Optional[List[str]]
         - hop_count: int
         - bearer_token: Optional[str]
+        - authenticated_bearer_token: Optional[str]
         - content_type: Optional[str]
         - request_headers: Dict[str, str]
     """
@@ -5407,6 +5408,7 @@ def _extract_a2a_request_context(
     # Extract bearer token for cross-gateway forwarding
     # Prefer token extracted by auth middleware (validated and normalized)
     bearer_token = getattr(request.state, "bearer_token", None)
+    authenticated_bearer_token = getattr(request.state, "authenticated_bearer_token", None)
 
     # Fallback: extract from Authorization header if middleware didn't set it
     if not bearer_token:
@@ -5431,6 +5433,7 @@ def _extract_a2a_request_context(
         "token_teams": token_teams,
         "hop_count": hop_count,
         "bearer_token": bearer_token,
+        "authenticated_bearer_token": authenticated_bearer_token,
         "content_type": content_type,
         "request_headers": request_headers,
     }

@@ -1275,6 +1275,10 @@ class Settings(BaseSettings):
     mcpgateway_a2a_default_timeout: int = 30
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
+    a2a_obo_bearer_bridge_enabled: bool = Field(
+        default=False,
+        description="Expose the authenticated bearer to allowlisted A2A pre-invoke plugins and permit their replacement Authorization header.",
+    )
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
