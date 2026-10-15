@@ -19,7 +19,16 @@ from sqlalchemy.exc import IntegrityError, StatementError
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayToolNameConflictError
+from mcpgateway.services.gateway_service import (
+    GatewayConnectionError,
+    GatewayCredentialError,
+    GatewayDuplicateConflictError,
+    GatewayError,
+    GatewayNameConflictError,
+    GatewayNotFoundError,
+    GatewayToolNameConflictError,
+)
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
@@ -345,6 +354,51 @@ class TestGatewayUpdateErrorHandlers:
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 400
+
+    def test_update_gateway_wrapped_config_validation_error(self, test_client, auth_headers):
+        """A GatewayError wrapping a config-validation ValueError returns 400, not 500 (#7144).
+
+        gateway_service.update_gateway wraps every unexpected exception in a
+        GatewayError (``Failed to update gateway: ...``), including config
+        validation failures raised as ValueError subclasses from
+        _validate_token_exchange_config / _validate_private_key_jwt_config.
+        With the cause preserved, the PUT route must answer like POST /gateways/
+        does for the same invalid payload.
+        """
+
+        def _raise_wrapped_validation_error(*args, **kwargs):
+            try:
+                raise PublicValidationError("target_audience is required for token-exchange grant type")
+            except PublicValidationError as ve:
+                raise GatewayError(f"Failed to update gateway: {ve}") from ve
+
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = _raise_wrapped_validation_error
+
+            gateway_data = {
+                "name": "updated-gateway",
+                "url": "http://localhost:9000",
+                "description": "Updated gateway",
+            }
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 400
+            assert response.json()["message"] == "Unable to process input"
+
+    def test_update_gateway_gateway_error_without_validation_cause_still_500(self, test_client, auth_headers):
+        """A GatewayError whose cause is not a config-validation error stays a 500."""
+        error = GatewayError("Failed to update gateway: connection to upstream failed")
+        error.__cause__ = RuntimeError("socket died")
+
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = error
+
+            gateway_data = {
+                "name": "updated-gateway",
+                "url": "http://localhost:9000",
+                "description": "Updated gateway",
+            }
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 500
 
     def test_update_gateway_name_conflict_error(self, test_client, auth_headers):
         """Test GatewayNameConflictError handling in update_gateway."""
