@@ -73,6 +73,10 @@ pw = pytest.importorskip("playwright", reason="playwright is not installed – p
 from playwright.sync_api import APIRequestContext, APIResponse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect, Playwright
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 # First-Party
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -428,6 +432,38 @@ def prompt_error_upstream() -> Generator[str, None, None]:
             time.sleep(0.05)
         assert server.started, "Prompt error upstream failed to start"
         yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+
+
+
+@pytest.fixture
+def array_upstream() -> Generator[str, None, None]:
+    """Serve a plain HTTP endpoint whose JSON body is an array, for a REST tool with an array outputSchema (issue #6575).
+
+    The gateway must reach this process: set MCP_STRUCTURED_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
+    """
+    host = os.getenv("MCP_STRUCTURED_UPSTREAM_HOST", "host.docker.internal")
+
+    async def numbers(_request: Request) -> JSONResponse:
+        """Answer a JSON array."""
+        return JSONResponse([1, 2, 3])
+
+    app = Starlette(routes=[Route("/numbers", numbers)])
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.started, "Array upstream failed to start"
+        yield f"http://{host}:{port}/numbers"
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -950,6 +986,67 @@ class TestPromptErrorTranslation:
                     await http.delete(f"/prompts/{prompt_id}")
                 if gateway_id:
                     await http.delete(f"/gateways/{gateway_id}")
+
+
+class TestStructuredContentShapes:
+    """A tool's non-object structuredContent reaches a 2026-era caller and is dropped, text kept, for a 2025-era caller (issue #6575)."""
+
+    @pytest.mark.parametrize("era", [pytest.param("legacy"), pytest.param("modern", marks=skip_no_modern_inbound)])
+    async def test_array_structured_content_follows_the_callers_era(self, array_upstream: str, era: str) -> None:
+        """A REST tool with an array outputSchema answers a list: modern callers get it as structuredContent, legacy callers only in the text block."""
+        admin_token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None, secret=JWT_SECRET)
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        name = f"numbers{uuid.uuid4().hex[:8]}"
+        tool_id = None
+        server_id = None
+        async with httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=60) as http:
+            try:
+                response = await http.post(
+                    "/tools",
+                    json={
+                        "tool": {
+                            "name": name,
+                            "url": array_upstream,
+                            "integration_type": "REST",
+                            "request_type": "GET",
+                            "input_schema": {"type": "object", "properties": {}},
+                            "output_schema": {"type": "array", "items": {"type": "integer"}},
+                        },
+                        "team_id": None,
+                        "visibility": "public",
+                    },
+                )
+                assert response.status_code in (200, 201), response.text
+                tool_id = response.json()["id"]
+                tool_name = response.json()["name"]
+                response = await http.post("/servers", json={"server": {"name": name, "associated_tools": [tool_id]}, "visibility": "public"})
+                assert response.status_code in (200, 201), response.text
+                server_id = response.json()["id"]
+                scoped_url = f"{BASE_URL}/servers/{server_id}/mcp/"
+
+                http_client = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(_CLIENT_TIMEOUT))
+                if era == "legacy":
+                    async with streamable_http_client(scoped_url, http_client=http_client) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            result = await session.call_tool(tool_name, {})
+                else:
+                    async with Client(streamable_http_client(scoped_url, http_client=http_client), mode="2026-07-28", cache=None) as modern_client:
+                        result = await modern_client.call_tool(tool_name, {})
+
+                assert result.is_error is False, f"tool call failed: {result.content}"
+                assert json.loads(result.content[0].text) == [1, 2, 3], f"text block does not carry the data: {result.content}"
+                if era == "modern":
+                    assert result.structured_content == [1, 2, 3], f"modern caller lost the array: {result.structured_content!r}"
+                else:
+                    assert result.structured_content is None, f"legacy caller must not receive a non-object: {result.structured_content!r}"
+                print(f"    -> {era}: structuredContent={result.structured_content!r}, text={result.content[0].text}")
+            finally:
+                if server_id:
+                    await http.delete(f"/servers/{server_id}")
+                if tool_id:
+                    await http.delete(f"/tools/{tool_id}")
+
 
 
 # ---------------------------------------------------------------------------

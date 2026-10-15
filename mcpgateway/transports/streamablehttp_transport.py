@@ -1675,6 +1675,96 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         return []
 
 
+def _caller_is_modern() -> bool:
+    """True when the current request came over a 2026-era wire, where structuredContent may be any JSON value.
+
+    Returns:
+        bool: Whether the request's protocol version is a modern one.
+    """
+    return getattr(_v2_request_ctx.get(), "protocol_version", None) in MODERN_PROTOCOL_VERSIONS
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare two JSON values with their types kept apart: ``true`` is not ``1``, at any depth.
+
+    Args:
+        left: A parsed JSON value.
+        right: A parsed JSON value.
+
+    Returns:
+        bool: Whether both hold the same JSON.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_json_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return False
+    return left == right
+
+
+def text_content_carries(content: Any, value: Any) -> bool:
+    """True when a text block in ``content`` already holds ``value`` as JSON.
+
+    Args:
+        content: Content blocks, as dicts or content objects.
+        value: The JSON value to look for.
+
+    Returns:
+        bool: Whether some text block parses to exactly ``value``, booleans and numbers kept apart.
+    """
+    for block in content or []:
+        text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+        if not isinstance(text, str):
+            continue
+        try:
+            if _json_equal(orjson.loads(text), value):
+                return True
+        except orjson.JSONDecodeError:
+            continue
+    return False
+
+
+def _structured_for_caller(unstructured: List[Any], structured: Any) -> Any:
+    """Return ``structured`` as the caller's wire allows: any JSON value on 2026, an object only on 2025.
+
+    A non-object is dropped for a 2025-era caller. Its data must stay reachable, so when no text
+    block already carries it, one holding its JSON is appended to ``unstructured``.
+
+    Args:
+        unstructured: The result's content blocks; may gain a text block.
+        structured: The structuredContent value produced for the result.
+
+    Returns:
+        Any: The value to put on the wire, or None when the caller's era cannot carry it.
+    """
+    if structured is None or isinstance(structured, dict) or _caller_is_modern():
+        return structured
+    if not text_content_carries(unstructured, structured):
+        unstructured.append(types.TextContent(type="text", text=orjson.dumps(structured).decode()))
+    return None
+
+
+def _tools_for_caller(tools: List["types.Tool"]) -> List["types.Tool"]:
+    """Return the catalog as the caller's wire allows: a 2025-era caller may only see object output schemas.
+
+    The 2025 wire rejects a tool whose ``outputSchema`` is not an object schema, which would break
+    the whole ``tools/list``. Such a schema is omitted for that caller; its results arrive without
+    ``structuredContent`` anyway, so nothing is promised that the wire cannot carry.
+
+    Args:
+        tools: The tools the gateway would advertise.
+
+    Returns:
+        List[types.Tool]: The same tools, with non-object output schemas removed for a 2025-era caller.
+    """
+    if _caller_is_modern():
+        return tools
+    return [tool.model_copy(update={"output_schema": None}) if isinstance(tool.output_schema, dict) and tool.output_schema.get("type") != "object" else tool for tool in tools]
+
+
 def _truthy_is_error(result: Any) -> bool:
     """Return ``True`` when ``result`` represents an MCP error response.
 
@@ -2020,8 +2110,7 @@ async def call_tool(
                 structured = result_data.get("structuredContent")
                 if structured is None:
                     structured = result_data.get("structured_content")
-                if not isinstance(structured, dict):
-                    structured = None
+                structured = _structured_for_caller(unstructured, structured)
                 is_error = bool(result_data.get("isError") or result_data.get("is_error"))
                 if is_error:
                     # Preserve the upstream error payload verbatim (#4202). Wrap
@@ -2072,7 +2161,8 @@ async def call_tool(
                 plugin_global_context=plugin_global_context,
                 plugin_context_table=plugin_context_table,
             )
-            if not result or not result.content:
+            # A result may carry its data only in structuredContent; only an empty result on both counts is "no content".
+            if not result or (not result.content and not isinstance(getattr(result, "structured_content", None), (dict, list, str, int, float, bool))):
                 logger.warning("No content returned by tool: %s", name)
                 return []
 
@@ -2175,17 +2265,17 @@ async def call_tool(
                 structured = None
 
             # Fallback to by-alias dump (in case the result is a pydantic model with alias fields)
-            if not isinstance(structured, dict):
+            if structured is None:
                 try:
                     dump = result.model_dump(by_alias=True) if hasattr(result, "model_dump") else {}
                     structured = dump.get("structuredContent") if isinstance(dump, dict) else None
                 except Exception:
                     structured = None
 
-            # MCP CallToolResult.structuredContent accepts dict or None only;
-            # reject anything else (e.g. stray MagicMocks in tests, bad shapes).
-            if not isinstance(structured, dict):
+            # Only JSON values travel: anything else (e.g. a stray MagicMock in tests) is dropped.
+            if not isinstance(structured, (dict, list, str, int, float, bool, type(None))):
                 structured = None
+            structured = _structured_for_caller(unstructured, structured)
 
             is_error = _truthy_is_error(result)
 
@@ -3452,7 +3542,7 @@ async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsRe
     """v2 (ctx, params) -> v1 list_tools() -> ListToolsResult."""
     token = _v2_request_ctx.set(ctx)
     try:
-        tools = await list_tools()
+        tools = _tools_for_caller(await list_tools())
         return types.ListToolsResult(tools=tools, ttl_ms=await _catalog_ttl_ms(_request_server_id_var.get()), cache_scope="private")
     finally:
         _v2_request_ctx.reset(token)
