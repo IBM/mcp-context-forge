@@ -5850,7 +5850,11 @@ compose-sso: compose-validate
 	@echo "   Gateway:  http://localhost:8080"
 	@echo "   Keycloak: http://localhost:8180 (admin/changeme)"
 	@echo "   Next: once the gateway is healthy, run 'make compose-sso-seed-audience'"
-	@echo "         to accept Keycloak access tokens (web UI SSO) on the gateway API."
+	@echo "         to trust Keycloak access tokens (web UI SSO) on the gateway API."
+	@echo "   Note: an existing keycloak_data volume keeps its old realm; run 'make compose-sso-clean'"
+	@echo "         and restart to import the contextforge-web-ui client."
+	@echo "   Note: the gateway only fetches JWKS over https, so plain-http compose-sso"
+	@echo "         does not accept Keycloak tokens end to end. See docs/docs/manage/sso-keycloak-tutorial.md."
 
 compose-sso-monitoring: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5907,38 +5911,38 @@ sso-test-login:
 # The SSO provider's trusted_for_api_auth/api_audience fields have no env-var
 # bootstrap, so this sets them through the admin API on a running compose-sso stack.
 SSO_SEED_GATEWAY_URL ?= http://localhost:8080
-SSO_SEED_REALM ?= mcp-gateway
+SSO_SEED_PROVIDER_ID ?= keycloak
 SSO_SEED_API_AUDIENCE ?= mcp-gateway-api
+SSO_SEED_COMPOSE_FILES ?= -f docker-compose.yml -f docker-compose.sso.yml
 
 compose-sso-seed-audience:
 	@command -v jq >/dev/null 2>&1 || { echo "❌ jq is required"; exit 1; }
 	@set -eu; \
-	SECRET="$${JWT_SECRET_KEY:-$$(grep -E '^JWT_SECRET_KEY=' .env 2>/dev/null | cut -d= -f2- | tr -d "\"'" || true)}"; \
-	if [ -z "$$SECRET" ]; then echo "❌ JWT_SECRET_KEY is not set in the environment or .env"; exit 1; fi; \
-	TOKEN=$$($(VENV_DIR)/bin/python3 -m mcpgateway.utils.create_jwt_token \
-		--username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10 \
-		--secret "$$SECRET" --algo HS256 2>/dev/null) || { echo "❌ Could not mint an admin JWT (run 'make venv install-dev'?)"; exit 1; }; \
-	AUTH="Authorization: Bearer $$TOKEN"; \
-	API="$(SSO_SEED_GATEWAY_URL)/auth/sso/admin/providers"; \
-	LIST=$$(curl -fsS -H "$$AUTH" "$$API") || { echo "❌ Could not list SSO providers at $$API (is 'make compose-sso' up and healthy?)"; exit 1; }; \
-	IDS=$$(printf '%s' "$$LIST" | jq -r '.[].id'); \
-	PROVIDER=""; \
-	for id in $$IDS; do \
-		if curl -fsS -H "$$AUTH" "$$API/$$id" | jq -e --arg realm "$(SSO_SEED_REALM)" \
-			'(.provider_metadata.realm // "") == $$realm or ((.issuer // "") | endswith("/realms/" + $$realm))' >/dev/null; then \
-			PROVIDER="$$id"; break; \
-		fi; \
-	done; \
-	if [ -z "$$PROVIDER" ]; then echo "❌ No SSO provider matches Keycloak realm '$(SSO_SEED_REALM)' (found: $$(echo $$IDS))"; exit 1; fi; \
-	echo "🔐 Trusting provider '$$PROVIDER' for API auth (api_audience=$(SSO_SEED_API_AUDIENCE))..."; \
-	BODY=$$(jq -n --arg aud "$(SSO_SEED_API_AUDIENCE)" '{trusted_for_api_auth: true, api_audience: $$aud}'); \
-	curl -fsS -X PUT -H "$$AUTH" -H "Content-Type: application/json" -d "$$BODY" "$$API/$$PROVIDER" >/dev/null \
-		|| { echo "❌ PUT $$API/$$PROVIDER failed"; exit 1; }; \
-	if ! curl -fsS -H "$$AUTH" "$$API/$$PROVIDER" | jq -e --arg aud "$(SSO_SEED_API_AUDIENCE)" \
-		'.trusted_for_api_auth == true and .api_audience == $$aud' >/dev/null; then \
-		echo "❌ Provider '$$PROVIDER' did not keep trusted_for_api_auth=true / api_audience=$(SSO_SEED_API_AUDIENCE)"; exit 1; \
+	TOKEN=$$($(COMPOSE_CMD) $(SSO_SEED_COMPOSE_FILES) --profile sso exec -T gateway sh -c \
+		'for v in $$(env | sed -n "s/^\(EXPERIMENTAL_RUST_MCP_[A-Z_]*\)=$$/\1/p"); do unset $$v; done; \
+		python -m mcpgateway.utils.create_jwt_token --username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10' | tail -n 1); \
+	case "$$TOKEN" in *.*.*) ;; *) echo "❌ Could not mint an admin JWT in the gateway container (is 'make compose-sso' up?)"; exit 1;; esac; \
+	URL="$(SSO_SEED_GATEWAY_URL)/auth/sso/admin/providers/$(SSO_SEED_PROVIDER_ID)"; \
+	OUT=$$(mktemp); trap 'rm -f "$$OUT"' EXIT; \
+	call() { printf 'Authorization: Bearer %s\n' "$$TOKEN" | curl -sS -o "$$OUT" -w '%{http_code}' -H @- "$$@"; }; \
+	CODE=$$(call "$$URL") || { echo "❌ Could not reach $$URL"; exit 1; }; \
+	if [ "$$CODE" != "200" ]; then echo "❌ GET $$URL returned $$CODE: $$(cat "$$OUT")"; exit 1; fi; \
+	if jq -e --arg aud "$(SSO_SEED_API_AUDIENCE)" '.trusted_for_api_auth == true and .api_audience == $$aud' "$$OUT" >/dev/null; then \
+		echo "✅ Provider '$(SSO_SEED_PROVIDER_ID)' already trusted (api_audience=$(SSO_SEED_API_AUDIENCE))"; exit 0; \
 	fi; \
-	echo "✅ Provider '$$PROVIDER': trusted_for_api_auth=true, api_audience=$(SSO_SEED_API_AUDIENCE)"
+	PREVIOUS=$$(jq -r '.api_audience // ""' "$$OUT"); \
+	if [ -n "$$PREVIOUS" ] && [ "$$PREVIOUS" != "$(SSO_SEED_API_AUDIENCE)" ]; then \
+		echo "⚠️  Replacing existing api_audience '$$PREVIOUS'"; \
+	fi; \
+	echo "🔐 Trusting provider '$(SSO_SEED_PROVIDER_ID)' for API auth (api_audience=$(SSO_SEED_API_AUDIENCE))..."; \
+	BODY=$$(jq -n --arg aud "$(SSO_SEED_API_AUDIENCE)" '{trusted_for_api_auth: true, api_audience: $$aud}'); \
+	CODE=$$(call -X PUT -H "Content-Type: application/json" -d "$$BODY" "$$URL") || { echo "❌ Could not reach $$URL"; exit 1; }; \
+	if [ "$$CODE" != "200" ]; then echo "❌ PUT $$URL returned $$CODE: $$(cat "$$OUT")"; exit 1; fi; \
+	CODE=$$(call "$$URL") || { echo "❌ Could not reach $$URL"; exit 1; }; \
+	if ! jq -e --arg aud "$(SSO_SEED_API_AUDIENCE)" '.trusted_for_api_auth == true and .api_audience == $$aud' "$$OUT" >/dev/null; then \
+		echo "❌ Provider '$(SSO_SEED_PROVIDER_ID)' did not keep trusted_for_api_auth=true / api_audience=$(SSO_SEED_API_AUDIENCE)"; exit 1; \
+	fi; \
+	echo "✅ Provider '$(SSO_SEED_PROVIDER_ID)': trusted_for_api_auth=true, api_audience=$(SSO_SEED_API_AUDIENCE)"
 
 .PHONY: compose-lite-up
 compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
