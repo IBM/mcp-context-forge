@@ -3292,3 +3292,62 @@ class TestCheckPermissionInline:
         result = await decorated(user={"email": "user@test.com", "db": MagicMock()})
 
         assert result == "reached"
+
+
+class TestUserIdKeyedPermissionChecks:
+    """Permission checks resolve the caller identity via the canonical user_id.
+
+    Principals carry ``user_id == email`` in phase 1. These tests use diverged
+    values on purpose to prove the permission path passes the canonical
+    user_id to PermissionService.
+    """
+
+    class _SpyPS:
+        """DummyPS-style spy: records the kwargs of the last check_permission call."""
+
+        last_check_kwargs = None
+
+        def __init__(self, db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            TestUserIdKeyedPermissionChecks._SpyPS.last_check_kwargs = kwargs
+            return True
+
+    @pytest.mark.asyncio
+    async def test_check_permission_inline_uses_canonical_user_id(self, monkeypatch):
+        """check_permission_inline passes the canonical user_id as user_email."""
+        user_context = {"user_id": "u-1", "email": "e@x.test", "db": object()}
+        monkeypatch.setattr(rbac, "PermissionService", self._SpyPS)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None)):
+            granted = await rbac.check_permission_inline(user_context, "tools.read", db=user_context["db"])
+
+        assert granted is True
+        assert self._SpyPS.last_check_kwargs["user_email"] == "u-1"
+
+    @pytest.mark.asyncio
+    async def test_require_permission_denies_without_identity(self):
+        """A user context without email and without user_id still raises 401."""
+
+        async def dummy_func(user=None):
+            return "should-not-reach"
+
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user={"db": MagicMock()})
+
+        assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    @pytest.mark.asyncio
+    async def test_permission_checker_class_uses_canonical_user_id(self, monkeypatch):
+        """PermissionChecker passes the canonical user_id as user_email."""
+        mock_db = MagicMock()
+        user_context = {"user_id": "u-1", "email": "e@x.test", "db": mock_db}
+        monkeypatch.setattr(rbac, "PermissionService", self._SpyPS)
+
+        checker = rbac.PermissionChecker(user_context)
+        granted = await checker.has_permission("tools.read")
+
+        assert granted is True
+        assert self._SpyPS.last_check_kwargs["user_email"] == "u-1"
