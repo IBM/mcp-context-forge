@@ -31,7 +31,6 @@ delta = "0.23.44 -> 0.23.45"
 notes = "Security patch for RUSTSEC-2026-0285 / GHSA-2mjx-qc3c-rqvc. Reviewed full diff (10 files, 204 insertions, 29 deletions): adds encryption-level boundary enforcement for TLS 1.3 handshake records per RFC 8446 section 5.1. No unsafe code changes. Published by ctz (Joseph Birr-Pixton), the primary rustls maintainer."
 
 [[audits.rustls]]
-who = "Codex (automated review)"
 criteria = "safe-to-deploy"
 delta = "0.23.45 -> 0.23.46"
 notes = "Automated review of https://github.com/rustls/rustls/compare/v/0.23.45...v/0.23.46. Fixes RUSTSEC-2026-0346 through RUSTSEC-2026-0349. Reviewed secret redaction, decompression bounds, ECH and handshake validation, record limits, key sequencing, stream I/O, and regression coverage. No dependency or unsafe-code additions."
