@@ -235,6 +235,7 @@ from mcpgateway.transports.streamablehttp_transport import (
     set_shared_session_registry,
     streamable_http_auth,
     user_context_var,
+    text_content_carries,
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
@@ -10529,8 +10530,8 @@ async def _execute_rpc_initialize(
 def _object_only_structured_content(result: Any) -> Any:
     """Drop a non-object ``structuredContent`` from a dumped tool result, for the 2025-era JSON-RPC wires.
 
-    The 2026 spec allows any JSON value there, the 2025 spec only an object; the dropped
-    data is still in the result's text content block.
+    The 2026 spec allows any JSON value there, the 2025 spec only an object. The dropped data
+    must stay reachable: when no text block already carries it, one holding its JSON is appended.
 
     Args:
         result: The tool result, dumped to a dict, or anything else (returned as is).
@@ -10538,9 +10539,13 @@ def _object_only_structured_content(result: Any) -> Any:
     Returns:
         Any: The result with a non-object ``structuredContent`` removed.
     """
-    if isinstance(result, dict) and "structuredContent" in result and not isinstance(result["structuredContent"], dict):
-        result = {key: value for key, value in result.items() if key != "structuredContent"}
-    return result
+    if not (isinstance(result, dict) and "structuredContent" in result and not isinstance(result["structuredContent"], dict)):
+        return result
+    value = result["structuredContent"]
+    content = list(result.get("content") or [])
+    if not text_content_carries(content, value):
+        content.append({"type": "text", "text": orjson.dumps(value).decode()})
+    return {**{key: item for key, item in result.items() if key != "structuredContent"}, "content": content}
 
 
 async def _execute_rpc_tools_call(
@@ -10662,7 +10667,7 @@ async def _execute_rpc_tools_call(
             result = await tool_task
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
-            return _object_only_structured_content(result)
+            return result
         except asyncio.CancelledError as exc:
             logger.info("Tool execution cancelled for run_id=%s, tool=%s", run_id, name)
             raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False}) from exc
@@ -11593,6 +11598,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     lowered_request_headers=_lowered_request_headers(),
                     server_id=server_id,
                 )
+                if not _trusted_internal_mcp_dispatch:
+                    # /rpc is a 2025-era wire; an owner-worker dispatch is internal and keeps the value for the originating worker
+                    result = _object_only_structured_content(result)
             finally:
                 # Release transaction after tools/call completes
                 db.commit()
@@ -11819,7 +11827,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-                result = _object_only_structured_content(result)
+                if not _trusted_internal_mcp_dispatch:
+                    result = _object_only_structured_content(result)
             except (PluginError, PluginViolationError):
                 raise
             except ToolNotFoundError:

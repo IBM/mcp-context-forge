@@ -430,13 +430,49 @@ async def test_call_tool_success(monkeypatch):
     ],
 )
 def test_structured_for_caller_follows_the_callers_era(value, era, kept):
-    """A 2026-era caller may receive any JSON value as structuredContent; a 2025-era caller only an object (issue #6575)."""
+    """A 2026-era caller may receive any JSON value as structuredContent; a 2025-era caller only an object, with the data kept as JSON text (issue #6575)."""
     token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
     try:
-        assert tr._structured_for_caller(value) == (value if kept else None)
-        assert tr._structured_for_caller(None) is None
+        content: list = []
+        assert tr._structured_for_caller(content, value) == (value if kept else None)
+        assert tr._structured_for_caller([], None) is None
     finally:
         tr._v2_request_ctx.reset(token)
+    if kept:
+        assert content == []
+    else:
+        assert len(content) == 1 and json.loads(content[0].text) == value
+
+
+@pytest.mark.parametrize(
+    "content, value, appended",
+    [
+        pytest.param([], [1, 2, 3], True, id="no_text_at_all"),
+        pytest.param([types.TextContent(type="text", text="[1, 2, 3]")], [1, 2, 3], False, id="already_carried"),
+        pytest.param([types.TextContent(type="text", text="done")], [1, 2, 3], True, id="other_text_only"),
+        pytest.param([{"type": "text", "text": "[1,2,3]"}], [1, 2, 3], False, id="dict_block_already_carried"),
+    ],
+)
+def test_legacy_drop_keeps_a_json_text_copy_only_when_missing(content, value, appended):
+    """When a non-object is dropped for a legacy caller, its JSON is appended as text unless a text block already holds it."""
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+    try:
+        before = len(content)
+        assert tr._structured_for_caller(content, value) is None
+    finally:
+        tr._v2_request_ctx.reset(token)
+    assert (len(content) == before + 1) is appended
+    if appended:
+        assert json.loads(content[-1].text) == value
+
+
+def test_wire_omits_a_null_structured_content_like_every_sdk_server():
+    """The SDK's result serializer drops null fields, so an explicit null structuredContent is absent on the wire (documented in #6575)."""
+    # Third-Party
+    from mcp.server.runner import _dump_result
+
+    dumped = _dump_result(types.CallToolResult(content=[types.TextContent(type="text", text="null")], structured_content=None))
+    assert "structuredContent" not in dumped
 
 
 @pytest.mark.asyncio
@@ -480,6 +516,73 @@ async def test_call_tool_relays_a_list_structured_content_by_era(monkeypatch, er
         unstructured = result
     assert isinstance(unstructured[0], types.TextContent)
     assert unstructured[0].text == "[1, 2, 3]"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_structured_only_result_keeps_the_data_for_a_legacy_caller(monkeypatch):
+    """Local path: a result with no content and a list in structuredContent reaches a legacy caller as a text block with the JSON."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_result = MagicMock()
+    mock_result.content = []
+    mock_result.structured_content = [1, 2, 3]
+    mock_result.is_error = False
+    mock_result.meta = None
+    mock_result.model_dump = lambda by_alias=True: {"content": [], "structuredContent": [1, 2, 3]}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+    try:
+        result = await call_tool("mytool", {})
+    finally:
+        tr._v2_request_ctx.reset(token)
+
+    assert isinstance(result, list) and len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert json.loads(result[0].text) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_session_affinity_forwarded_structured_only_result_keeps_the_data_for_a_legacy_caller(monkeypatch):
+    """Forwarded path: the owning worker's structured-only result still reaches a legacy caller as JSON text."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+    era_token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [], "structuredContent": [1, 2, 3]}})
+    mock_pool.register_session_mapping = AsyncMock()
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+    finally:
+        tr._v2_request_ctx.reset(era_token)
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+    assert isinstance(result, list) and len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert json.loads(result[0].text) == [1, 2, 3]
 
 
 @pytest.mark.asyncio

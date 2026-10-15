@@ -1684,12 +1684,36 @@ def _caller_is_modern() -> bool:
     return getattr(_v2_request_ctx.get(), "protocol_version", None) in MODERN_PROTOCOL_VERSIONS
 
 
-def _structured_for_caller(structured: Any) -> Any:
-    """Return ``structured`` as the caller's wire allows: any JSON value on 2026, an object only on 2025.
-
-    A non-object is dropped for a 2025-era caller; its data stays in the text content block.
+def text_content_carries(content: Any, value: Any) -> bool:
+    """True when a text block in ``content`` already holds ``value`` as JSON.
 
     Args:
+        content: Content blocks, as dicts or content objects.
+        value: The JSON value to look for.
+
+    Returns:
+        bool: Whether some text block parses to exactly ``value``.
+    """
+    for block in content or []:
+        text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+        if not isinstance(text, str):
+            continue
+        try:
+            if orjson.loads(text) == value:
+                return True
+        except orjson.JSONDecodeError:
+            continue
+    return False
+
+
+def _structured_for_caller(unstructured: List[Any], structured: Any) -> Any:
+    """Return ``structured`` as the caller's wire allows: any JSON value on 2026, an object only on 2025.
+
+    A non-object is dropped for a 2025-era caller. Its data must stay reachable, so when no text
+    block already carries it, one holding its JSON is appended to ``unstructured``.
+
+    Args:
+        unstructured: The result's content blocks; may gain a text block.
         structured: The structuredContent value produced for the result.
 
     Returns:
@@ -1697,6 +1721,8 @@ def _structured_for_caller(structured: Any) -> Any:
     """
     if structured is None or isinstance(structured, dict) or _caller_is_modern():
         return structured
+    if not text_content_carries(unstructured, structured):
+        unstructured.append(types.TextContent(type="text", text=orjson.dumps(structured).decode()))
     return None
 
 
@@ -2063,7 +2089,7 @@ async def call_tool(
                 structured = result_data.get("structuredContent")
                 if structured is None:
                     structured = result_data.get("structured_content")
-                structured = _structured_for_caller(structured)
+                structured = _structured_for_caller(unstructured, structured)
                 is_error = bool(result_data.get("isError") or result_data.get("is_error"))
                 if is_error:
                     # Preserve the upstream error payload verbatim (#4202). Wrap
@@ -2114,7 +2140,8 @@ async def call_tool(
                 plugin_global_context=plugin_global_context,
                 plugin_context_table=plugin_context_table,
             )
-            if not result or not result.content:
+            # A result may carry its data only in structuredContent; only an empty result on both counts is "no content".
+            if not result or (not result.content and not isinstance(getattr(result, "structured_content", None), (dict, list, str, int, float, bool))):
                 logger.warning("No content returned by tool: %s", name)
                 return []
 
@@ -2227,7 +2254,7 @@ async def call_tool(
             # Only JSON values travel: anything else (e.g. a stray MagicMock in tests) is dropped.
             if not isinstance(structured, (dict, list, str, int, float, bool, type(None))):
                 structured = None
-            structured = _structured_for_caller(structured)
+            structured = _structured_for_caller(unstructured, structured)
 
             is_error = _truthy_is_error(result)
 

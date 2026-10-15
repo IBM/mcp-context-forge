@@ -539,6 +539,7 @@ The 2025 protocol requires a tool result's `structuredContent` to be a JSON obje
 - A `2026-07-28` client receives whatever the tool produced: an object, an array, a string, a number, a boolean or null, validated against the tool's `outputSchema` when one is declared. A tool may declare a non-object `outputSchema`, such as `{"type": "array"}`.
 - A handshake-era client, and `/rpc`, only ever receive an object. A non-object value is dropped from `structuredContent` for them; the same data is still in the result's text content block.
 - A handshake-era client also never sees a non-object `outputSchema` in `tools/list`, because its wire rejects one; the tool is listed without it.
+- An explicit `null` is validated against the `outputSchema` like any other value, but it is not sent on the wire: the SDK omits every null field when it serialises a result, as every server built on it does, so a client sees the field absent.
 
 #### Outbound MCP Connect Mode (Gateway → MCP Servers)
 

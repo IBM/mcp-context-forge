@@ -1981,6 +1981,31 @@ class TestStructuredContentAdditional:
         assert details["code"] == "type"
         assert details["path"] == [1]
 
+    def test_explicit_null_structured_content_is_validated(self, tool_service):
+        """An explicit null is a value: an integer schema rejects it, a nullable schema accepts it; an absent field is skipped."""
+        rejected = ToolResult.model_validate({"content": [], "structuredContent": None})
+        assert tool_service._extract_and_validate_structured_content(SimpleNamespace(output_schema={"type": "integer"}), rejected) is False
+        assert rejected.is_error is True
+        assert orjson.loads(rejected.content[0].text)["code"] == "type"
+
+        accepted = ToolResult.model_validate({"content": [], "structuredContent": None})
+        assert tool_service._extract_and_validate_structured_content(SimpleNamespace(output_schema={"type": ["integer", "null"]}), accepted) is True
+        assert accepted.is_error is False
+
+        absent = ToolResult.model_validate({"content": []})
+        assert tool_service._extract_and_validate_structured_content(SimpleNamespace(output_schema={"type": "integer"}), absent) is True
+
+    def test_coerce_keeps_structured_content_presence(self, tool_service):
+        """Coercing an SDK result keeps 'absent' absent and 'explicitly null' set, so the validator can tell them apart."""
+        # Third-Party
+        from mcp_types import CallToolResult as SdkCallToolResult
+
+        absent = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}]))
+        assert "structured_content" not in absent.model_fields_set
+
+        explicit = tool_service._coerce_to_tool_result(SdkCallToolResult(content=[{"type": "text", "text": "x"}], structuredContent=None))
+        assert "structured_content" in explicit.model_fields_set and explicit.structured_content is None
+
     def test_content_with_null_text_parses_to_none(self, tool_service):
         """Content with text=None should parse to null and be treated as no structured data."""
         tool = SimpleNamespace(output_schema={"type": "object"})
