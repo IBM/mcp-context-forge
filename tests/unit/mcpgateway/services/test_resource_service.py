@@ -25,9 +25,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound
+from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.db import Base, EmailUser
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -3624,6 +3627,50 @@ class TestResourceBulkRegistration:
         assert existing.name == "Victim"
         assert existing.description == "Victim desc"
         assert existing.version == 1
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_update_database_backed_ownership(self, resource_service, tmp_path):
+        """Real rows and real ownership decisions: a non-owner is denied, the owner and an admin are allowed."""
+        engine = create_engine(f"sqlite:///{tmp_path / 'ownership.db'}")
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as seed:
+            seed.add_all(
+                [
+                    EmailUser(email="victim@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="attacker@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="admin@example.com", password_hash="x", is_admin=True),
+                ]
+            )
+            seed.add(DbResource(uri="file:///shared.txt", name="shared", description="victim", visibility="public", owner_email="victim@example.com", team_id="victim-team"))
+            seed.commit()
+
+        payload = ResourceCreate(name="shared", uri="file:///shared.txt", description="attacker", mime_type="text/plain", content="x")
+        resource_service._notify_resource_added = AsyncMock()
+
+        async def run(caller):
+            with Session(engine) as session, patch("mcpgateway.services.resource_service.audit_trail"):
+                return await resource_service.register_resources_bulk(db=session, resources=[payload], created_by=caller or "importer", conflict_strategy="update", user_email=caller)
+
+        def persisted():
+            with Session(engine) as check:
+                row = check.query(DbResource).filter_by(uri="file:///shared.txt").one()
+                return row.description, row.owner_email, row.team_id
+
+        for caller in ("attacker@example.com", None):
+            denied = await run(caller)
+            assert (denied["updated"], denied["failed"]) == (0, 1)
+            assert persisted() == ("victim", "victim@example.com", "victim-team")
+
+        assert (await run("victim@example.com"))["updated"] == 1
+        assert persisted() == ("attacker", "victim@example.com", "victim-team")
+
+        with Session(engine) as reset:
+            reset.query(DbResource).filter_by(uri="file:///shared.txt").one().description = "victim"
+            reset.commit()
+        assert (await run("admin@example.com"))["updated"] == 1
+        assert persisted()[1:] == ("victim@example.com", "victim-team")
+        engine.dispose()
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_rename_conflict_creates_new(self, resource_service, mock_db):

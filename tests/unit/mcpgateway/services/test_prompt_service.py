@@ -23,10 +23,13 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 # Third-Party
 from mcp.shared.exceptions import MCPError
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
+from mcpgateway.db import Base, EmailUser
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
@@ -2247,6 +2250,64 @@ class TestPromptBulkRegistration:
         assert existing.description == "Victim desc"
         assert existing.template == "Victim {{ name }}"
         assert existing.version == 1
+
+    @pytest.mark.asyncio
+    async def test_register_prompts_bulk_update_database_backed_ownership(self, prompt_service, tmp_path):
+        """Real rows and real ownership decisions: a non-owner is denied, the owner and an admin are allowed."""
+        engine = create_engine(f"sqlite:///{tmp_path / 'ownership.db'}")
+        Base.metadata.create_all(engine)
+        name = prompt_service._compute_prompt_name("shared")
+
+        with Session(engine) as seed:
+            seed.add_all(
+                [
+                    EmailUser(email="victim@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="attacker@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="admin@example.com", password_hash="x", is_admin=True),
+                ]
+            )
+            seed.add(
+                DbPrompt(
+                    original_name="shared",
+                    custom_name="shared",
+                    custom_name_slug="shared",
+                    name=name,
+                    description="victim",
+                    template="Victim",
+                    argument_schema={},
+                    visibility="public",
+                    owner_email="victim@example.com",
+                    team_id="victim-team",
+                )
+            )
+            seed.commit()
+
+        payload = PromptCreate(name="shared", description="attacker", template="Attacker", arguments=[])
+        prompt_service._notify_prompt_added = AsyncMock()
+
+        async def run(caller):
+            with Session(engine) as session, patch("mcpgateway.services.prompt_service.audit_trail"):
+                return await prompt_service.register_prompts_bulk(db=session, prompts=[payload], created_by=caller or "importer", conflict_strategy="update", user_email=caller)
+
+        def persisted():
+            with Session(engine) as check:
+                row = check.query(DbPrompt).filter_by(name=name).one()
+                return row.template, row.owner_email, row.team_id
+
+        for caller in ("attacker@example.com", None):
+            denied = await run(caller)
+            assert (denied["updated"], denied["failed"]) == (0, 1)
+            assert persisted() == ("Victim", "victim@example.com", "victim-team")
+
+        assert (await run("victim@example.com"))["updated"] == 1
+        assert persisted() == ("Attacker", "victim@example.com", "victim-team")
+
+        with Session(engine) as reset:
+            reset.query(DbPrompt).filter_by(name=name).one().template = "Victim"
+            reset.commit()
+        assert (await run("admin@example.com"))["updated"] == 1
+        assert persisted()[1:] == ("victim@example.com", "victim-team")
+        engine.dispose()
 
     @pytest.mark.asyncio
     async def test_register_prompts_bulk_rename_conflict_with_gateway(self, prompt_service):

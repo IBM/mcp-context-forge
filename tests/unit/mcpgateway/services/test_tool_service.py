@@ -35,6 +35,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache, ToolLookupCache
 from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
+from mcpgateway.db import EmailUser
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import Base, Server as DbServer, server_tool_association
@@ -9587,6 +9588,136 @@ class TestToolServiceBulkImport:
         registry_cache.invalidate_tools.assert_not_called()
         lookup_cache.invalidate.assert_not_called()
         mock_admin_cache.invalidate_tags.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_update_database_backed_ownership(self, tmp_path):
+        """Real rows and real ownership decisions: a non-owner is denied, the owner and an admin are allowed."""
+        engine = create_engine(f"sqlite:///{tmp_path / 'ownership.db'}")
+        Base.metadata.create_all(engine)
+        victim_url = "https://example.com/internal-weather-api/v1/forecast"
+
+        with Session(engine) as seed:
+            seed.add_all(
+                [
+                    EmailUser(email="victim@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="attacker@example.com", password_hash="x", is_admin=False),
+                    EmailUser(email="admin@example.com", password_hash="x", is_admin=True),
+                ]
+            )
+            seed.add(
+                DbTool(
+                    original_name="shared",
+                    custom_name="shared",
+                    custom_name_slug="shared",
+                    name="shared",
+                    url=victim_url,
+                    description="d",
+                    integration_type="REST",
+                    request_type="GET",
+                    input_schema={"type": "object"},
+                    visibility="public",
+                    owner_email="victim@example.com",
+                    team_id="victim-team",
+                )
+            )
+            seed.commit()
+
+        service = ToolService()
+        payload = _make_bulk_tool_create(name="shared", url="http://example.net/attacker-collector/steal")
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        async def run(caller):
+            with (
+                Session(engine) as session,
+                patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+                patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+                patch("mcpgateway.services.tool_service.audit_trail"),
+                patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+            ):
+                mock_admin_cache.invalidate_tags = AsyncMock()
+                return await service.register_tools_bulk(db=session, tools=[payload], created_by=caller, conflict_strategy="update", user_email=caller)
+
+        def persisted():
+            with Session(engine) as check:
+                row = check.query(DbTool).filter_by(name="shared").one()
+                return row.url, row.owner_email, row.team_id
+
+        denied = await run("attacker@example.com")
+        assert (denied["updated"], denied["failed"]) == (0, 1)
+        assert persisted() == (victim_url, "victim@example.com", "victim-team")
+
+        anonymous = await run(None)
+        assert (anonymous["updated"], anonymous["failed"]) == (0, 1)
+        assert persisted() == (victim_url, "victim@example.com", "victim-team")
+
+        owner = await run("victim@example.com")
+        assert owner["updated"] == 1
+        assert persisted()[0] == "http://example.net/attacker-collector/steal"
+
+        with Session(engine) as reset:
+            reset.query(DbTool).filter_by(name="shared").one().url = victim_url
+            reset.commit()
+        admin = await run("admin@example.com")
+        assert admin["updated"] == 1
+        assert persisted()[1:] == ("victim@example.com", "victim-team")
+        engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_update_rejects_tool_published_after_authorization(self, tmp_path):
+        """A tool committed after the conflict load is never updated unchecked (no second conflict query)."""
+        engine = create_engine(f"sqlite:///{tmp_path / 'race.db'}")
+        Base.metadata.create_all(engine)
+        victim_url = "https://example.com/internal-weather-api/v1/forecast"
+        with Session(engine) as seed:
+            seed.add_all([EmailUser(email="victim@example.com", password_hash="x", is_admin=False), EmailUser(email="attacker@example.com", password_hash="x", is_admin=False)])
+            seed.commit()
+
+        service = ToolService()
+        payload = _make_bulk_tool_create(name="late-tool", url="http://example.net/attacker-collector/steal")
+        original_loader = service._load_authorized_tool_conflicts
+
+        async def publish_after_load(*args, **kwargs):
+            loaded = await original_loader(*args, **kwargs)
+            with Session(engine) as publisher:
+                publisher.add(
+                    DbTool(
+                        original_name="late-tool",
+                        custom_name="late-tool",
+                        custom_name_slug="late-tool",
+                        name="late-tool",
+                        url=victim_url,
+                        description="d",
+                        integration_type="REST",
+                        request_type="GET",
+                        input_schema={"type": "object"},
+                        visibility="public",
+                        owner_email="victim@example.com",
+                        team_id="victim-team",
+                    )
+                )
+                publisher.commit()
+            return loaded
+
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+        with (
+            Session(engine) as session,
+            patch.object(service, "_load_authorized_tool_conflicts", side_effect=publish_after_load),
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.audit_trail"),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            result = await service.register_tools_bulk(db=session, tools=[payload], created_by="attacker@example.com", conflict_strategy="update", user_email="attacker@example.com")
+
+        assert result["updated"] == 0
+        with Session(engine) as check:
+            rows = check.query(DbTool).filter_by(name="late-tool").all()
+            assert [row.url for row in rows] == [victim_url]
+            assert rows[0].owner_email == "victim@example.com"
+        engine.dispose()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caller,owns", [("attacker@example.com", False), (None, True)])
