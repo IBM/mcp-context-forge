@@ -15,6 +15,7 @@ from importlib import import_module as _im
 import inspect
 import logging
 import os
+import sys
 from typing import Any, Callable, cast, Dict, Mapping, Optional
 from urllib.parse import urlparse
 
@@ -191,6 +192,139 @@ class BaggageSpanAttributePolicy:
 # pylint: disable=invalid-name
 _TRACER = None
 _BAGGAGE_SPAN_ATTRIBUTE_POLICY = BaggageSpanAttributePolicy()
+
+
+_LEGACY_INSTANA_COMPAT_MARKER = "_contextforge_otel_context_compat"
+
+
+def _legacy_instana_span_context(context: Any, span_context_cls: Any) -> Any:
+    """Translate an OpenTelemetry ``Context`` into a legacy Instana ``SpanContext``.
+
+    Mirrors the parent conversion that Instana >= 3.12 performs for ``context=``.
+    An explicit context without a valid span yields an invalid Instana span
+    context, so the new span becomes a root (standard OTel semantics) instead of
+    silently inheriting the ambient current span.
+
+    Args:
+        context: OpenTelemetry context supplied by the caller.
+        span_context_cls: ``instana.span_context.SpanContext``.
+
+    Returns:
+        An Instana ``SpanContext`` describing the parent.
+    """
+    # Third-Party
+    from instana.util.ids import hex_id, hex_id_limited  # pylint: disable=import-outside-toplevel,import-error
+    from opentelemetry import trace as otel_trace_api  # pylint: disable=import-outside-toplevel
+
+    parent = otel_trace_api.get_current_span(context).get_span_context()
+    if isinstance(parent, span_context_cls):
+        return parent
+    if parent is None or not parent.is_valid:
+        return span_context_cls(trace_id=otel_trace_api.INVALID_TRACE_ID, span_id=otel_trace_api.INVALID_SPAN_ID, is_remote=False)
+    hex_trace_id = hex_id(parent.trace_id)
+    is_long = len(hex_trace_id) > 16
+    return span_context_cls(
+        trace_id=int(hex_id_limited(parent.trace_id), 16) if is_long else parent.trace_id,
+        span_id=parent.span_id,
+        is_remote=parent.is_remote,
+        trace_flags=parent.trace_flags,
+        trace_state=parent.trace_state,
+        long_trace_id=hex_trace_id if is_long else None,
+    )
+
+
+def _wrap_legacy_instana_method(original: Callable[..., Any], span_context_cls: Any) -> Callable[..., Any]:
+    """Wrap a legacy Instana tracer method so it accepts the OTel ``context=`` keyword.
+
+    Args:
+        original: Unbound ``InstanaTracer`` method that only understands ``span_context``.
+        span_context_cls: ``instana.span_context.SpanContext``.
+
+    Returns:
+        Wrapper translating ``context`` into ``span_context``; all other arguments,
+        return values, and exceptions pass through unchanged.
+    """
+
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        """Translate ``context`` to ``span_context`` and delegate.
+
+        Args:
+            self: Tracer instance.
+            *args: Positional arguments forwarded unchanged.
+            **kwargs: Keyword arguments; ``context`` is translated.
+
+        Returns:
+            Whatever the original method returns.
+        """
+        if "context" in kwargs:
+            context = kwargs.pop("context")
+            if context is not None and kwargs.get("span_context") is None:
+                kwargs["span_context"] = _legacy_instana_span_context(context, span_context_cls)
+        return original(self, *args, **kwargs)
+
+    wrapper.__name__ = getattr(original, "__name__", "wrapper")
+    wrapper.__qualname__ = getattr(original, "__qualname__", wrapper.__name__)
+    wrapper.__doc__ = getattr(original, "__doc__", None)
+    wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+    setattr(wrapper, _LEGACY_INSTANA_COMPAT_MARKER, True)
+    return wrapper
+
+
+def _accepts_kwarg(func: Any, name: str) -> Optional[bool]:
+    """Return whether ``func`` accepts keyword ``name``; ``None`` if not introspectable.
+
+    Args:
+        func: Callable to inspect.
+        name: Keyword argument name.
+
+    Returns:
+        True/False, or None when the signature cannot be determined.
+    """
+    try:
+        parameters = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return None
+    return name in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+
+
+def ensure_legacy_instana_context_compat() -> bool:
+    """Make legacy Instana tracers (< 3.12) accept the standard OTel ``context=`` keyword.
+
+    MCP SDK 2.x, FastAPI native telemetry, and ContextForge call
+    ``start_span(context=...)`` / ``start_as_current_span(context=...)``. Legacy
+    ``InstanaTracer`` only accepts ``span_context=`` and raises ``TypeError``.
+    The adapter patches the ``InstanaTracer`` class once, so tracers cached by
+    third-party modules before ContextForge initializes are covered too.
+
+    It is a no-op when Instana was not loaded by the process (this function never
+    imports Instana itself), when the tracer already supports ``context``
+    (Instana >= 3.12), or when it was already applied.
+
+    Returns:
+        True if the legacy tracer is (now) adapted, False otherwise.
+    """
+    tracer_module = sys.modules.get("instana.tracer")
+    span_context_module = sys.modules.get("instana.span_context")
+    tracer_cls = getattr(tracer_module, "InstanaTracer", None)
+    span_context_cls = getattr(span_context_module, "SpanContext", None)
+    if tracer_cls is None or span_context_cls is None:
+        return False
+
+    adapted = False
+    for method_name in ("start_span", "start_as_current_span"):
+        method = tracer_cls.__dict__.get(method_name)
+        if method is None:
+            continue
+        if getattr(method, _LEGACY_INSTANA_COMPAT_MARKER, False):
+            adapted = True
+            continue
+        # Only adapt the exact legacy capability: explicit `span_context`, no `context`.
+        if _accepts_kwarg(method, "context") is not False or _accepts_kwarg(method, "span_context") is not True:
+            continue
+        setattr(tracer_cls, method_name, _wrap_legacy_instana_method(method, span_context_cls))
+        adapted = True
+        logger.info("Adapted legacy InstanaTracer.%s to accept the OpenTelemetry `context` argument", method_name)
+    return adapted
 
 
 def _supports_exporter_kwarg(exporter_cls: Any, kwarg: str) -> bool:
@@ -1042,6 +1176,12 @@ def init_telemetry() -> Optional[Any]:
     """
     # pylint: disable=global-statement
     global _TRACER
+    # Process-wide: FastAPI and MCP SDK telemetry use the global (possibly legacy
+    # Instana) tracer even when ContextForge's own OTEL integration is disabled.
+    try:
+        ensure_legacy_instana_context_compat()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to adapt legacy Instana tracer: %s", exc)
     cfg = get_settings()
 
     # Check if observability is disabled (default: disabled)
