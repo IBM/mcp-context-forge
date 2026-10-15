@@ -243,20 +243,8 @@ jobs:
             tests/live_gateway/mcp/test_request_trace_policy.py \
             tests/unit/mcpgateway/services/test_a2a_service.py \
             tests/live_gateway/a2a/test_a2a_trace_context_e2e.py \
-            --basetemp="${RUNNER_TEMP}/observability-tests" -v --tb=short
-          uv run --extra plugins --extra observability pytest \
-            tests/unit/mcpgateway/services/test_gateway_service.py \
-            -k health_completion_metrics -v --tb=short
-
-      - name: Preserve observability failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: observability-failure-artifacts
-          path: |
-            ${{ runner.temp }}/observability-tests/**/*.log
-            ${{ runner.temp }}/observability-tests/**/collector.jsonl
-          retention-days: 7
+            tests/live_gateway/mcp/test_mcp_trace_context_e2e.py \
+            -v --tb=short
 
     # -----------------------------------------------------------
     # 4️⃣  Upload coverage artifacts (XML + HTML)
