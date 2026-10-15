@@ -1727,7 +1727,7 @@ def _wrap_start_span_with_context(original: Callable) -> Callable:
         Callable: A wrapper that accepts ``context`` and preserves the parent.
     """
 
-    def _compat(self: Any, name: str, context: Optional[Any] = None, *args: Any, **kwargs: Any) -> Any:
+    def _compat(self: Any, name: str, *args: Any, context: Optional[Any] = None, **kwargs: Any) -> Any:
         if context is None or otel_context is None:
             return original(self, name, *args, **kwargs)
         token = otel_context.attach(context)
@@ -1755,7 +1755,7 @@ def _wrap_start_as_current_span_with_context(original: Callable) -> Callable:
     """
 
     @contextmanager
-    def _compat(self: Any, name: str, context: Optional[Any] = None, *args: Any, **kwargs: Any) -> Any:
+    def _compat(self: Any, name: str, *args: Any, context: Optional[Any] = None, **kwargs: Any) -> Any:
         if context is None or otel_context is None:
             with original(self, name, *args, **kwargs) as span:
                 yield span
