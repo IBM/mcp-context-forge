@@ -1525,7 +1525,15 @@ def _build_proxy_list_headers(gateway: Any, request_headers: dict) -> dict[str, 
     return headers
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None, *, paginate: bool = False) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(
+    gateway: Any,
+    request_headers: dict,
+    user_context: dict,  # pylint: disable=unused-argument
+    meta: Optional[Any] = None,
+    *,
+    paginate: bool = False,
+    serialized_items: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[types.Tool]:
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -1534,6 +1542,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
         paginate: Collect every upstream page in the same session.
+        serialized_items: Optional output cache for collected wire descriptors.
 
     Returns:
         List of Tool objects from remote server
@@ -1548,7 +1557,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
             timeout=settings.mcpgateway_direct_proxy_timeout,
         ) as client:
             if paginate:
-                collected = await collect_proxy_catalog(client, "tools/list", meta)
+                collected = await collect_proxy_catalog(client, "tools/list", meta, serialized_items)
                 return filter_model_visible_tools(collected)
             # List tools with _meta forwarded
             if meta:
@@ -1568,7 +1577,15 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         return []
 
 
-async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None, *, paginate: bool = False) -> List[types.Resource]:  # pylint: disable=unused-argument
+async def _proxy_list_resources_to_gateway(
+    gateway: Any,
+    request_headers: dict,
+    user_context: dict,  # pylint: disable=unused-argument
+    meta: Optional[Any] = None,
+    *,
+    paginate: bool = False,
+    serialized_items: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[types.Resource]:
     """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -1577,6 +1594,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
         paginate: Collect every upstream page in the same session.
+        serialized_items: Optional output cache for collected wire descriptors.
 
     Returns:
         List of Resource objects from remote server
@@ -1596,7 +1614,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             timeout=settings.mcpgateway_direct_proxy_timeout,
         ) as client:
             if paginate:
-                collected = await collect_proxy_catalog(client, "resources/list", meta)
+                collected = await collect_proxy_catalog(client, "resources/list", meta, serialized_items)
                 return collected
             # List resources with _meta forwarded (auto-initializes on first call)
             if meta:
@@ -1948,7 +1966,7 @@ async def call_tool(
                     if isinstance(value, dict):
                         try:
                             value = types.ElicitResult.model_validate(value)
-                        except Exception:  # nosec B110 - Preserve non-elicitation response values.
+                        except Exception:  # noqa: BLE001 - non-elicitation responses pass through raw
                             pass
                     inbound_input_responses[key] = value
     except LookupError:
@@ -2665,7 +2683,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         final_teams = normalize_token_teams(payload)
 
     # SECURITY: API/legacy team claims must still match current active memberships.
-    if token_use != "session" and final_teams and email:  # nosec B105 - Token type discriminator, not a password.
+    if token_use != "session" and final_teams and email:
         # First-Party
         from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 

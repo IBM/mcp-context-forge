@@ -7,6 +7,7 @@ Bound direct-proxy catalog collection and Redis snapshot storage.
 """
 
 # Standard
+import asyncio
 from contextlib import asynccontextmanager
 import math
 from typing import Any, AsyncIterator
@@ -54,12 +55,21 @@ end
 _ADMIT = (
     _STATE
     + """
+if ARGV[5] and ARGV[5] ~= '' then
+    for id, lease in pairs(leases) do
+        if lease[4] == ARGV[5] then
+            save()
+            if lease[3] == -1 then return -1 end
+            return id
+        end
+    end
+end
 if collectors >= tonumber(ARGV[2]) or count >= tonumber(ARGV[3]) or not headroom(0) then
     save()
     return 0
 end
 deadline = math.max(deadline, now + tonumber(ARGV[4]))
-leases[ARGV[1]] = {now + tonumber(ARGV[4]), 0, -1}
+leases[ARGV[1]] = {now + tonumber(ARGV[4]), 0, -1, ARGV[5] or ''}
 save()
 return 1
 """
@@ -78,7 +88,7 @@ for page = 6, #ARGV do
     redis.call('HSET', key, id .. ':' .. (page - 6), ARGV[page])
 end
 redis.call('HSET', key, id .. ':manifest', ARGV[4])
-leases[id] = {now + ttl, charge, #ARGV - 5}
+leases[id] = {now + ttl, charge, #ARGV - 5, lease[4]}
 deadline = math.max(deadline, now + ttl)
 save()
 return 1
@@ -100,8 +110,17 @@ _READ = (
 local lease = leases[ARGV[1]]
 save()
 if not lease or lease[3] == -1 then return {} end
-return {redis.call('HGET', key, ARGV[1] .. ':manifest'),
-        redis.call('HGET', key, ARGV[1] .. ':' .. ARGV[2])}
+local manifest = redis.call('HGET', key, ARGV[1] .. ':manifest')
+local page = redis.call('HGET', key, ARGV[1] .. ':' .. ARGV[2])
+if tonumber(ARGV[2]) == lease[3] - 1 and ARGV[3] == '1' then
+    redis.call('HDEL', key, ARGV[1] .. ':manifest')
+    for index = 0, lease[3] - 1 do
+        redis.call('HDEL', key, ARGV[1] .. ':' .. index)
+    end
+    leases[ARGV[1]] = nil
+    save()
+end
+return {manifest, page}
 """
 )
 _local_collectors: set[str] = set()
@@ -113,36 +132,47 @@ def snapshot_key() -> str:
 
 
 @asynccontextmanager
-async def reserve_collection(redis: Any) -> AsyncIterator[str]:
+async def reserve_collection(redis: Any, scope: str = "") -> AsyncIterator[tuple[str, bool]]:
     """Reserve collection capacity before contacting an upstream server.
 
     Args:
         redis: Shared Redis client, or None for single-page operation.
+        scope: Authorization scope for snapshot reuse, or empty for independent collection.
 
     Yields:
-        Unique reservation and snapshot identifier.
+        Snapshot identifier and whether the reservation reuses an existing snapshot.
 
     Raises:
         JSONRPCError: If collection admission fails.
     """
     reservation = uuid.uuid4().hex
-    if len(_local_collectors) >= settings.mcp_proxy_list_max_collectors:
+    if redis is None and len(_local_collectors) >= settings.mcp_proxy_list_max_collectors:
         raise JSONRPCError(-32000, "MCP proxy catalog collection capacity is exhausted")
-    _local_collectors.add(reservation)
+    if redis is None:
+        _local_collectors.add(reservation)
     try:
         if redis is not None:
-            admitted = await redis.eval(
-                _ADMIT,
-                1,
-                snapshot_key(),
-                reservation,
-                settings.mcp_proxy_list_max_collectors,
-                settings.mcp_proxy_list_max_snapshots,
-                math.ceil(settings.mcpgateway_direct_proxy_timeout) + 30,
-            )
+            async with asyncio.timeout(settings.mcpgateway_direct_proxy_timeout):
+                while True:
+                    admitted = await redis.eval(
+                        _ADMIT,
+                        1,
+                        snapshot_key(),
+                        reservation,
+                        settings.mcp_proxy_list_max_collectors,
+                        settings.mcp_proxy_list_max_snapshots,
+                        math.ceil(settings.mcpgateway_direct_proxy_timeout) + 30,
+                        scope,
+                    )
+                    if admitted != -1:
+                        break
+                    await asyncio.sleep(0.05)
             if not admitted:
                 raise JSONRPCError(-32000, "MCP proxy catalog snapshot capacity is exhausted")
-        yield reservation
+            if isinstance(admitted, (str, bytes)):
+                yield (admitted.decode() if isinstance(admitted, bytes) else admitted), True
+                return
+        yield reservation, False
     finally:
         _local_collectors.discard(reservation)
         if redis is not None:
@@ -161,7 +191,9 @@ async def publish_snapshot(redis: Any, snapshot: str, scope: str, pages: list[by
     Raises:
         JSONRPCError: If publication exceeds capacity or loses its reservation.
     """
-    manifest = orjson.dumps({"scope": scope, "pages": len(pages)})
+    # Redis TIME sets the lease; clients receive this fixed expiry without extending reuse.
+    seconds, _ = await redis.time()
+    manifest = orjson.dumps({"scope": scope, "pages": len(pages), "expires": int(seconds) + settings.mcp_list_cursor_ttl_seconds})
     charge = sum(len(page) + 512 for page in pages) + len(manifest) + 512
     if len(pages) > 10000 or charge > settings.mcp_proxy_list_max_snapshot_bytes:
         raise JSONRPCError(-32000, "Direct-proxy MCP catalog exceeds the snapshot byte limit")
@@ -170,16 +202,17 @@ async def publish_snapshot(redis: Any, snapshot: str, scope: str, pages: list[by
         raise JSONRPCError(-32000, "MCP proxy catalog snapshot reservation is unavailable")
 
 
-async def read_snapshot(redis: Any, snapshot: str, page: int) -> tuple[Any, Any]:
+async def read_snapshot(redis: Any, snapshot: str, page: int, *, release_final: bool = False) -> tuple[Any, Any]:
     """Read a snapshot page and manifest before their fixed expiration.
 
     Args:
         redis: Shared Redis client.
         snapshot: Snapshot identifier.
         page: Requested page index.
+        release_final: Remove stored pages atomically when reading the final page.
 
     Returns:
         Manifest and page, or two None values after expiration or eviction.
     """
-    result = await redis.eval(_READ, 1, snapshot_key(), snapshot, page)
+    result = await redis.eval(_READ, 1, snapshot_key(), snapshot, page, "1" if release_final else "0")
     return (result[0], result[1]) if len(result) == 2 else (None, None)

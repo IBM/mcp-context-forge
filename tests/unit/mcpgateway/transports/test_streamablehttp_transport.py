@@ -163,13 +163,15 @@ def test_streamable_server_app_info():
     assert tr.mcp_app.version == __version__
 
 
-async def test_streamable_server_stamps_server_info_on_modern_requests():
+async def test_streamable_server_stamps_server_info_on_modern_requests(monkeypatch):
     """Verify that modern requests receive stamped serverInfo in result._meta."""
     from mcpgateway import __version__
     from mcpgateway.config import settings
 
+    monkeypatch.setattr(tr, "list_catalog_page", AsyncMock(return_value={"tools": [], "nextCursor": "next-page"}))
     async with Client(tr.mcp_app, mode="2026-07-28", cache=None) as modern_client:
         res = await modern_client.list_tools()
+        assert res.next_cursor == "next-page"
         meta = getattr(res, "meta", None)
         assert meta is not None
         assert "io.modelcontextprotocol/serverInfo" in meta
@@ -672,7 +674,7 @@ async def test_list_tools_adapter_hides_non_object_output_schemas_from_legacy_ca
         types.Tool(name="record", inputSchema={"type": "object"}, outputSchema={"type": "object", "properties": {"x": {"type": "integer"}}}),
         types.Tool(name="plain", inputSchema={"type": "object"}),
     ]
-    monkeypatch.setattr(tr, "list_tools", AsyncMock(return_value=tools))
+    monkeypatch.setattr(tr, "_list_catalog_page", AsyncMock(return_value={"tools": tools}))
     monkeypatch.setattr(tr, "_catalog_ttl_ms", AsyncMock(return_value=300_000))
 
     result = await tr._adapt_list_tools(SimpleNamespace(protocol_version=era, meta=None, request=None))

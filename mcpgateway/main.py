@@ -67,7 +67,6 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
-from starlette.types import Message
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -664,9 +663,9 @@ async def _run_internal_mcp_authentication(
         client_ip=client_ip,
     )
     request = starletteRequest(scope)
-    sent_messages: list[Message] = []
+    sent_messages: list[dict[str, Any]] = []
 
-    async def _receive() -> Message:
+    async def _receive() -> dict[str, Any]:
         """Return an empty request body for the synthetic auth probe.
 
         Returns:
@@ -674,7 +673,7 @@ async def _run_internal_mcp_authentication(
         """
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    async def _send(message: Message) -> None:
+    async def _send(message: dict[str, Any]) -> None:
         """Capture ASGI response messages emitted by auth middleware.
 
         Args:
@@ -8526,6 +8525,18 @@ async def _catalog_page_for_request(request: Request, db: Session, user: Any, me
     )
 
 
+def _catalog_error_status(code: int) -> int:
+    """Map catalog protocol errors to internal HTTP status codes.
+
+    Args:
+        code: JSON-RPC error code.
+
+    Returns:
+        HTTP status for invalid parameters, denied access, capacity, or internal failures.
+    """
+    return {-32602: 400, -32003: 403, -32000: 503}.get(code, 500)
+
+
 @utility_router.post("/_internal/mcp/tools/list/")
 @utility_router.post("/_internal/mcp/tools/list")
 async def handle_internal_mcp_tools_list(request: Request):
@@ -8559,6 +8570,13 @@ async def handle_internal_mcp_tools_list(request: Request):
         if not isinstance(params, dict):
             raise JSONRPCError(-32602, "Invalid list parameters")
         payload = await _catalog_page_for_request(request, db, user, "tools/list", server_id, params.get("cursor"), params.get("_meta"))
+        # The Rust tools bridge sends no body and cannot forward client continuation cursors.
+        if not raw_body:
+            while "nextCursor" in payload:
+                page = await _catalog_page_for_request(request, db, user, "tools/list", server_id, payload.pop("nextCursor"))
+                payload["tools"].extend(page["tools"])
+                if "nextCursor" in page:
+                    payload["nextCursor"] = page["nextCursor"]
         db.commit()
         return ORJSONResponse(content=payload)
     except HTTPException:
@@ -8571,7 +8589,7 @@ async def handle_internal_mcp_tools_list(request: Request):
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=400 if exc.code == -32602 else 403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content={"code": exc.code, "message": exc.message, "data": exc.data})
     except Exception as exc:
         logger.exception("Unexpected error in handle_internal_mcp_tools_list")
         try:
@@ -8648,7 +8666,7 @@ async def handle_internal_mcp_resources_list(request: Request):
             db.commit()
         return ORJSONResponse(content=payload)
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=400 if exc.code == -32602 else 403, content=exc.to_dict()["error"])
+        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content=exc.to_dict()["error"])
     except Exception as exc:
         logger.exception("Unexpected error in handle_internal_mcp_resources_list")
         try:
@@ -9044,7 +9062,7 @@ async def handle_internal_mcp_resource_templates_list(request: Request):
             db.commit()
         return ORJSONResponse(content=payload)
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=400 if exc.code == -32602 else 403, content=exc.to_dict()["error"])
+        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content=exc.to_dict()["error"])
     except Exception:
         try:
             db.rollback()
@@ -9424,7 +9442,7 @@ async def handle_internal_mcp_prompts_list(request: Request):
             db.commit()
         return ORJSONResponse(content=payload)
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=400 if exc.code == -32602 else 403, content=exc.to_dict()["error"])
+        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content=exc.to_dict()["error"])
     except Exception:
         try:
             db.rollback()

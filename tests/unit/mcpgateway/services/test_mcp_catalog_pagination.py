@@ -422,7 +422,7 @@ async def test_proxy_helpers_collect_all_pages(monkeypatch, method, result_key):
     helper = getattr(transport, f"_proxy_list_{result_key}_to_gateway")
     result = await helper(SimpleNamespace(id="gateway-a", url="http://peer/mcp"), {}, {}, {"key": "value"}, paginate=True)
     assert result == [item]
-    collected.assert_awaited_once_with(client, method, {"key": "value"})
+    collected.assert_awaited_once_with(client, method, {"key": "value"}, None)
 
 
 @pytest.mark.asyncio
@@ -468,8 +468,9 @@ async def test_proxy_header_binding(catalog_db, monkeypatch, snapshot_redis, hea
 
 
 @pytest.mark.asyncio
-async def test_prompt_page_avoids_gateway_queries(catalog_db):
-    """Serialize gateway-backed prompts without loading gateways or lookahead relationships."""
+@pytest.mark.parametrize("method,key,model", METHODS)
+async def test_catalog_page_avoids_gateway_queries(catalog_db, method, key, model):
+    """Serialize gateway-backed catalogs without loading gateways or lookahead relationships."""
     # First-Party
     from mcpgateway.db import Gateway
     from tests.helpers.query_counter import count_queries
@@ -477,17 +478,18 @@ async def test_prompt_page_avoids_gateway_queries(catalog_db):
     rows = []
     for index in range(4):
         gateway = Gateway(id=f"gateway-{index}", name=f"Gateway {index}", url=f"https://example.com/{index}", capabilities={})
-        row = _row("prompts/list", index, gateway=gateway)
+        row = _row(method, index, gateway=gateway)
         row.argument_schema = {"type": "object", "properties": {"question": {"type": "string", "description": "Question"}}, "required": ["question"]}
         rows.append(row)
     catalog_db.add_all(rows)
     catalog_db.commit()
     catalog_db.expunge_all()
     with count_queries(catalog_db.get_bind()) as counter:
-        page = await catalog.list_catalog_page(catalog_db, "prompts/list", user_email="user@example.com", token_teams=[])
+        page = await catalog.list_catalog_page(catalog_db, method, user_email="user@example.com", token_teams=[])
     assert counter.count == 1
-    assert len(page["prompts"]) == 3 and page["nextCursor"]
-    assert page["prompts"][0]["arguments"] == [{"name": "question", "description": "Question", "required": True}]
+    assert len(page[key]) == 3 and page["nextCursor"]
+    if model is Prompt:
+        assert page[key][0]["arguments"] == [{"name": "question", "description": "Question", "required": True}]
 
 
 @pytest.mark.asyncio
@@ -549,7 +551,7 @@ async def test_registered_adapter_session_header_parity(catalog_db, monkeypatch,
 async def test_proxy_admission_precedes_collection(catalog_db, monkeypatch, snapshot_redis):
     """Reject exhausted snapshot capacity before an upstream catalog request."""
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
-    async with snapshots.reserve_collection(snapshot_redis) as snapshot:
+    async with snapshots.reserve_collection(snapshot_redis) as (snapshot, _):
         await snapshots.publish_snapshot(snapshot_redis, snapshot, "scope", [b"[]", b"[]"])
     monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
     monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
@@ -581,13 +583,13 @@ async def test_single_page_proxy_releases_reservation(catalog_db, monkeypatch, s
 @pytest.mark.asyncio
 async def test_proxy_storage_diagnostics_are_sanitized(catalog_db, monkeypatch, caplog):
     """Report Redis exception categories without disclosing exception text."""
-    redis = SimpleNamespace(eval=AsyncMock(side_effect=ConnectionError("sensitive-redis-url")))
+    redis = SimpleNamespace(eval=AsyncMock(side_effect=catalog.RedisError("sensitive-redis-url")))
     monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=redis))
     monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
     gateway = SimpleNamespace(id="gateway-a", url="http://peer/mcp", updated_at="version-a")
     with pytest.raises(JSONRPCError, match="storage is unavailable"):
         await catalog._proxy_page(gateway, "tools/list", None, "scope", {}, None)
-    assert '"category":"ConnectionError"' in caplog.text
+    assert '"category":"RedisError"' in caplog.text
     assert "sensitive-redis-url" not in caplog.text
 
 
@@ -619,7 +621,7 @@ async def test_prompt_title_survives_catalog_and_adapter(catalog_db, monkeypatch
 async def test_retained_snapshot_does_not_reserve_collector_bytes(monkeypatch, snapshot_redis):
     """Admit many collectors while retaining a small snapshot with default limits."""
     monkeypatch.setattr(settings, "mcp_proxy_list_max_collectors", 32)
-    async with snapshots.reserve_collection(snapshot_redis) as retained:
+    async with snapshots.reserve_collection(snapshot_redis) as (retained, _):
         await snapshots.publish_snapshot(snapshot_redis, retained, "scope", [b"[]", b"[]"])
     try:
         async with AsyncExitStack() as stack:
@@ -639,10 +641,10 @@ async def test_publication_enforces_aggregate_bytes(monkeypatch, snapshot_redis)
     """Reject excessive retained bytes without altering existing snapshots or unrelated keys."""
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
     await snapshot_redis.set("unrelated-session", "preserved")
-    async with snapshots.reserve_collection(snapshot_redis) as retained:
+    async with snapshots.reserve_collection(snapshot_redis) as (retained, _):
         await snapshots.publish_snapshot(snapshot_redis, retained, "scope", [b"[]", b"[]"])
     with pytest.raises(JSONRPCError, match="reservation"):
-        async with snapshots.reserve_collection(snapshot_redis) as rejected:
+        async with snapshots.reserve_collection(snapshot_redis) as (rejected, _):
             await snapshots.publish_snapshot(snapshot_redis, rejected, "scope", [b"[]", b"[]"])
     assert await snapshot_redis.get("unrelated-session") == b"preserved"
     assert (await snapshots.read_snapshot(snapshot_redis, retained, 1))[1] == b"[]"
@@ -658,10 +660,10 @@ async def test_denied_info_keeps_snapshot_quotas(monkeypatch):
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
     redis = FakeRedis()
     try:
-        async with snapshots.reserve_collection(redis) as snapshot:
+        async with snapshots.reserve_collection(redis) as (snapshot, _):
             await snapshots.publish_snapshot(redis, snapshot, "scope", [b"[]", b"[]"])
         with pytest.raises(JSONRPCError, match="reservation"):
-            async with snapshots.reserve_collection(redis) as another:
+            async with snapshots.reserve_collection(redis) as (another, _):
                 await snapshots.publish_snapshot(redis, another, "scope", [b"[]", b"[]"])
         assert (await snapshots.read_snapshot(redis, snapshot, 1))[1] == b"[]"
     finally:
@@ -682,3 +684,131 @@ async def test_catalog_sdk_models_match_wire_pages(catalog_db, method, key, mode
     assert sdk["nextCursor"]
     next_page = await catalog.list_catalog_page(catalog_db, method, cursor=sdk["nextCursor"], model_items=True, **args)
     assert [item.name for item in next_page[key]] == [f"item-{index:03d}" for index in range(3, 6)]
+
+
+@pytest.mark.asyncio
+async def test_proxy_reuses_scope_and_releases_final_page(catalog_db, monkeypatch, snapshot_redis):
+    """Keep repeated first pages within one slot and release completed traversals."""
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
+    monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
+    monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
+    proxy = AsyncMock(return_value=[types.Tool(name=f"tool-{index}", input_schema={"type": "object"}) for index in range(7)])
+    monkeypatch.setattr(transport, "_proxy_list_tools_to_gateway", proxy)
+    gateway = SimpleNamespace(id="gateway", url="http://peer/mcp", updated_at="version-a")
+    first = await catalog._proxy_page(gateway, "tools/list", None, "scope", {}, None)
+    initial = snapshots.orjson.loads(await snapshot_redis.hget(snapshots.snapshot_key(), "leases"))
+    for _ in range(64):
+        repeated = await catalog._proxy_page(gateway, "tools/list", None, "scope", {}, None)
+        assert repeated["tools"] == first["tools"]
+    assert proxy.await_count == 1
+    assert snapshots.orjson.loads(await snapshot_redis.hget(snapshots.snapshot_key(), "leases")) == initial
+    with monkeypatch.context() as race:
+        race.setattr(catalog, "read_snapshot", AsyncMock(return_value=(None, None)))
+        with pytest.raises(JSONRPCError, match="expired during reuse"):
+            await catalog._proxy_page(gateway, "tools/list", None, "scope", {}, None)
+    assert proxy.await_count == 1
+    with pytest.raises(JSONRPCError, match="capacity"):
+        await catalog._proxy_page(gateway, "tools/list", None, "different-scope", {}, None)
+    second = await catalog._proxy_page(gateway, "tools/list", first["nextCursor"], "scope", {}, None)
+    final = await catalog._proxy_page(gateway, "tools/list", second["nextCursor"], "scope", {}, None)
+    assert len(final["tools"]) == 1 and "nextCursor" not in final
+    assert not snapshots.orjson.loads(await snapshot_redis.hget(snapshots.snapshot_key(), "leases"))
+    assert await snapshot_redis.hlen(snapshots.snapshot_key()) == 1
+    fresh = await catalog._proxy_page(gateway, "tools/list", None, "different-scope", {}, None)
+    assert fresh["nextCursor"] and proxy.await_count == 2
+    await snapshot_redis.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,key,model", METHODS)
+async def test_server_admin_private_visibility_and_order(catalog_db, method, key, model):
+    """Order server catalogs by ID and exclude other owners' private rows for administrators."""
+    rows = [
+        _row(method, 4, visibility="private", owner_email="other@example.com"),
+        _row(method, 3, visibility="private", owner_email="admin@example.com"),
+        _row(method, 2, visibility="team", team_id="t1"),
+        _row(method, 1),
+        _row(method, 0),
+    ]
+    server = Server(id="admin-server", name="Admin server")
+    setattr(server, "tools" if model is Tool else "prompts" if model is Prompt else "resources", rows)
+    catalog_db.add(server)
+    catalog_db.commit()
+    result = await _traverse(catalog_db, method, key, server_id=server.id, user_email="admin@example.com", token_teams=None)
+    assert [item["name"] for item in result] == [f"item-{index:03d}" for index in range(4)]
+
+
+def test_proxy_scope_uses_separate_key(monkeypatch):
+    """Prevent stored fingerprints from exposing credential hashes or cursor encryption keys."""
+    import hashlib
+    import hmac
+
+    binding = b"scope-and-low-entropy-api-key"
+    fingerprint = mcp_cursor.proxy_scope_fingerprint(binding)
+    assert fingerprint != hashlib.sha256(binding).hexdigest()
+    assert fingerprint != hmac.new(mcp_cursor._key(mcp_cursor._DOMAIN), binding, hashlib.sha256).hexdigest()
+    assert fingerprint == mcp_cursor.proxy_scope_fingerprint(binding)
+    monkeypatch.setattr(settings, "auth_encryption_secret", "another-encryption-secret-with-sufficient-entropy")
+    assert fingerprint != mcp_cursor.proxy_scope_fingerprint(binding)
+
+
+@pytest.mark.asyncio
+async def test_proxy_non_redis_failure_keeps_category(monkeypatch, snapshot_redis):
+    """Propagate programming errors instead of describing them as Redis failures."""
+    monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
+    monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
+    monkeypatch.setattr(transport, "_proxy_list_tools_to_gateway", AsyncMock(side_effect=ValueError("invalid upstream descriptor")))
+    with pytest.raises(ValueError, match="invalid upstream descriptor"):
+        await catalog._proxy_page(SimpleNamespace(id="gateway", url="http://peer/mcp", updated_at="a"), "tools/list", None, "scope", {}, None)
+    assert not snapshots.orjson.loads(await snapshot_redis.hget(snapshots.snapshot_key(), "leases"))
+    await snapshot_redis.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [2, 7])
+async def test_collected_proxy_items_serialize_once(monkeypatch, snapshot_redis, count):
+    """Reuse wire descriptors for byte accounting and stored proxy pages."""
+    monkeypatch.setattr(settings, "mcp_list_page_size", 3)
+    monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
+    monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
+    tools = [types.Tool(name=f"tool-{index}", input_schema={"type": "object"}) for index in range(count)]
+    client = SimpleNamespace(list_tools=AsyncMock(return_value=types.ListToolsResult(tools=tools)))
+    dumps = []
+    original = types.Tool.model_dump
+
+    def record_dump(item, *args, **kwargs):
+        """Count wire serialization calls for each SDK descriptor."""
+        dumps.append(item.name)
+        return original(item, *args, **kwargs)
+
+    @asynccontextmanager
+    async def upstream(**_kwargs):
+        """Supply a deterministic upstream catalog."""
+        yield client
+
+    monkeypatch.setattr(types.Tool, "model_dump", record_dump)
+    monkeypatch.setattr(transport, "mcp_proxy_client", upstream)
+    result = await catalog._proxy_page(SimpleNamespace(id="gateway", url="http://peer/mcp", updated_at="a"), "tools/list", None, "scope", {}, None)
+    assert len(result["tools"]) == min(count, 3)
+    assert dumps == [item.name for item in tools]
+    await snapshot_redis.aclose()
+
+
+def test_cursor_rejection_logs_category_without_payload(caplog):
+    """Record scope replay diagnostics without exposing cursors or sensitive scope values."""
+    import time
+
+    from mcpgateway.utils.correlation_id import _correlation_id_context
+
+    cursor = mcp_cursor.encode_cursor("sensitive-scope-value", int(time.time()) + 100, {"after": "sensitive-row-id"})
+    token = _correlation_id_context.set("catalog-request-id")
+    try:
+        with pytest.raises(JSONRPCError):
+            mcp_cursor.decode_cursor(cursor, "different-scope")
+    finally:
+        _correlation_id_context.reset(token)
+    assert "category=scope" in caplog.text
+    assert "correlation_id=catalog-request-id" in caplog.text
+    assert cursor not in caplog.text
+    assert "sensitive-scope-value" not in caplog.text
+    assert "sensitive-row-id" not in caplog.text

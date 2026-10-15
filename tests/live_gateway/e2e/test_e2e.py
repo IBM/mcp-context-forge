@@ -5233,7 +5233,13 @@ async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, resu
                     assert len(getattr(page, result_key)) == page_size
                     assert page.next_cursor is not None
                     found = [item.name for item in getattr(page, result_key)]
+                    initial_calls = len(received)
                     concurrent_pages = await asyncio.gather(*(list_method() for _ in range(3)))
+                    assert len(received) == initial_calls
+                    for _ in range(64):
+                        repeated = await list_method()
+                        assert [item.name for item in getattr(repeated, result_key)] == found
+                    assert len(received) == initial_calls
                     assert all(len(getattr(result, result_key)) == page_size and result.next_cursor for result in concurrent_pages)
                     upstream_calls = list(received)
                     assert len(upstream_calls) >= (count + 1) // 2

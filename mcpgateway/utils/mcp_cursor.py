@@ -12,6 +12,7 @@ import binascii
 from collections.abc import Mapping
 import hashlib
 import hmac
+import logging
 import os
 import re
 import time
@@ -27,8 +28,10 @@ from pydantic import SecretStr
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
+logger = logging.getLogger(__name__)
 _DOMAIN = b"contextforge:mcp-list:v1"
 
 
@@ -62,14 +65,37 @@ def scope_fingerprint(method: str, server_id: str | None, user_email: str | None
     return hashlib.sha256(orjson.dumps([method, server_id, user_email, teams, session_id])).hexdigest()
 
 
-def _cipher() -> AESGCM:
-    """Derive the domain-separated catalog encryption key."""
+def _key(domain: bytes) -> bytes:
+    """Derive a catalog key for the specified domain.
+
+    Args:
+        domain: Cryptographic purpose identifier.
+
+    Returns:
+        Domain-separated key bytes.
+    """
     configured_secret = settings.auth_encryption_secret
     secret = configured_secret.get_secret_value() if isinstance(configured_secret, SecretStr) else configured_secret
     if not secret:
         raise JSONRPCError(-32603, "MCP pagination requires AUTH_ENCRYPTION_SECRET")
-    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=_DOMAIN, info=_DOMAIN).derive(secret.encode())
-    return AESGCM(key)
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=_DOMAIN, info=domain).derive(secret.encode())
+
+
+def _cipher() -> AESGCM:
+    """Derive the domain-separated catalog encryption key."""
+    return AESGCM(_key(_DOMAIN))
+
+
+def proxy_scope_fingerprint(binding: bytes) -> str:
+    """Authenticate proxy scope without exposing credential hashes in Redis.
+
+    Args:
+        binding: Serialized scope and effective upstream authorization inputs.
+
+    Returns:
+        HMAC fingerprint with a purpose-specific key.
+    """
+    return hmac.new(_key(b"contextforge:mcp-list:proxy-scope:v1"), binding, hashlib.sha256).hexdigest()
 
 
 def encode_cursor(scope: str, expires: int, position: dict[str, Any]) -> str:
@@ -102,19 +128,25 @@ def decode_cursor(cursor: Any, scope: str) -> dict[str, Any]:
     Raises:
         JSONRPCError: If the cursor is invalid, expired, or belongs to another scope.
     """
+    category = "encoding"
     try:
         if not isinstance(cursor, str) or not cursor or len(cursor) > 8192 or re.fullmatch(r"[A-Za-z0-9_-]+", cursor) is None:
             raise ValueError("Invalid cursor length")
         raw = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
         if base64.urlsafe_b64encode(raw).decode().rstrip("=") != cursor:
             raise ValueError("Invalid cursor encoding")
+        category = "authentication"
         payload = orjson.loads(_cipher().decrypt(raw[:12], raw[12:], _DOMAIN))
+        category = "version"
         if not isinstance(payload, dict) or not isinstance(payload.get("v"), int) or isinstance(payload.get("v"), bool) or payload["v"] != 1:
             raise ValueError("Invalid cursor version")
+        category = "scope"
         if not isinstance(payload.get("scope"), str) or not hmac.compare_digest(payload["scope"], scope):
             raise ValueError("Invalid cursor scope")
+        category = "expiration"
         if not isinstance(payload.get("expires"), int) or isinstance(payload.get("expires"), bool) or payload["expires"] <= int(time.time()):
             raise ValueError("Expired cursor")
         return payload
     except (ValueError, TypeError, KeyError, binascii.Error, InvalidTag, orjson.JSONDecodeError) as exc:
+        logger.warning("MCP list cursor rejected: category=%s correlation_id=%s", category, get_correlation_id())
         raise JSONRPCError(-32602, "Invalid or expired MCP list cursor") from exc

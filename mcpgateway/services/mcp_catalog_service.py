@@ -12,7 +12,6 @@ Serve bounded MCP catalogs with current visibility checks.
 # Standard
 import asyncio
 from collections.abc import Sequence
-import hashlib
 import logging
 import time
 from typing import Any
@@ -20,6 +19,7 @@ from typing import Any
 # Third-Party
 import mcp_types as types
 import orjson
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,7 +33,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.gateway_access import check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.mcp_catalog_snapshot import publish_snapshot, read_snapshot, reserve_collection
-from mcpgateway.utils.mcp_cursor import catalog_session_id, decode_cursor, encode_cursor, scope_fingerprint
+from mcpgateway.utils.mcp_cursor import catalog_session_id, decode_cursor, encode_cursor, proxy_scope_fingerprint, scope_fingerprint
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
@@ -84,13 +84,14 @@ def _serialize(method: str, row: Any, *, model_items: bool = False) -> Any:
     return item.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-async def collect_proxy_catalog(client: Any, method: str, meta: Any) -> list[Any]:
+async def collect_proxy_catalog(client: Any, method: str, meta: Any, serialized_items: dict[str, dict[str, Any]] | None = None) -> list[Any]:
     """Collect an upstream catalog within one client session.
 
     Args:
         client: Initialized upstream MCP client.
         method: MCP list method.
         meta: Original request metadata.
+        serialized_items: Optional output cache for wire descriptors keyed by identifier.
 
     Returns:
         Complete upstream catalog.
@@ -116,7 +117,10 @@ async def collect_proxy_catalog(client: Any, method: str, meta: Any) -> list[Any
                 if identity in seen_items:
                     raise JSONRPCError(-32000, "Upstream MCP catalog contains duplicate identifiers")
                 seen_items.add(identity)
-                byte_count += len(orjson.dumps(item.model_dump(by_alias=True, mode="json", exclude_none=True))) + 1
+                wire_item = item.model_dump(by_alias=True, mode="json", exclude_none=True)
+                byte_count += len(orjson.dumps(wire_item)) + 1
+                if serialized_items is not None:
+                    serialized_items[identity] = wire_item
                 if byte_count > settings.mcp_proxy_list_max_snapshot_bytes:
                     raise JSONRPCError(-32000, "Direct-proxy MCP catalog exceeds the snapshot byte limit")
                 result.append(item)
@@ -157,7 +161,7 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
     upstream_headers = _build_proxy_list_headers(gateway, headers)
     bound_headers = sorted((name.lower(), value) for name, value in upstream_headers.items() if name.lower() not in _TRACING_HEADERS)
     binding = orjson.dumps([scope, gateway.id, gateway.url, str(gateway.updated_at), bound_headers])
-    scope = hashlib.sha256(binding).hexdigest()
+    scope = proxy_scope_fingerprint(binding)
     key = _CATALOGS[method][4]
     redis = await get_redis_client()
     if cursor is not None:
@@ -168,8 +172,8 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
         if redis is None:
             raise JSONRPCError(-32000, "MCP proxy pagination requires Redis")
         try:
-            manifest, page = await read_snapshot(redis, snapshot, page_index)
-        except Exception as exc:
+            manifest, page = await read_snapshot(redis, snapshot, page_index, release_final=True)
+        except RedisError as exc:
             log_proxy_catalog_failure(gateway.id, method, exc)
             raise JSONRPCError(-32000, "MCP proxy snapshot storage is unavailable") from exc
         if manifest is None or page is None:
@@ -184,23 +188,32 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
 
     proxy = _proxy_list_tools_to_gateway if method == "tools/list" else _proxy_list_resources_to_gateway
     try:
-        async with reserve_collection(redis) as snapshot:
+        async with reserve_collection(redis, scope) as (snapshot, reused):
+            if reused:
+                manifest, page = await read_snapshot(redis, snapshot, 0)
+                if manifest is not None and page is not None:
+                    stored = orjson.loads(manifest)
+                    return {key: orjson.loads(page), "nextCursor": encode_cursor(scope, stored["expires"], {"snapshot": snapshot, "page": 1})}
+                raise JSONRPCError(-32000, "MCP proxy snapshot expired during reuse; restart traversal")
             async with asyncio.timeout(settings.mcpgateway_direct_proxy_timeout):
-                upstream_items = await proxy(gateway, headers, {}, meta, paginate=True)
+                serialized_items: dict[str, dict[str, Any]] = {}
+                upstream_items = await proxy(gateway, headers, {}, meta, paginate=True, serialized_items=serialized_items)
+            items = []
+            for item in upstream_items:
+                identity = item.name if isinstance(item, types.Tool) else str(item.uri)
+                wire_item = serialized_items.get(identity)
+                items.append(wire_item if wire_item is not None else item.model_dump(by_alias=True, exclude_none=True, mode="json"))
             size = settings.mcp_list_page_size
             if len(upstream_items) <= size:
-                return {key: upstream_items if model_items else [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]}
+                return {key: upstream_items if model_items else items}
             if redis is None:
                 raise JSONRPCError(-32000, "Multi-page MCP proxy catalogs require Redis")
             expires = int(time.time()) + settings.mcp_list_cursor_ttl_seconds
             next_cursor = encode_cursor(scope, expires, {"snapshot": snapshot, "page": 1})
-            items = [item.model_dump(by_alias=True, exclude_none=True, mode="json") for item in upstream_items]
             pages = [orjson.dumps(items[start : start + size]) for start in range(0, len(items), size)]
             await publish_snapshot(redis, snapshot, scope, pages)
             return {key: upstream_items[:size] if model_items else items[:size], "nextCursor": next_cursor}
-    except JSONRPCError:
-        raise
-    except Exception as exc:
+    except RedisError as exc:
         log_proxy_catalog_failure(gateway.id, method, exc)
         raise JSONRPCError(-32000, "MCP proxy snapshot storage is unavailable") from exc
 

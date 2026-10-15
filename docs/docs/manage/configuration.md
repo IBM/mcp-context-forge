@@ -1489,7 +1489,10 @@ MCP `tools/list`, `resources/list`, `prompts/list`, and `resources/templates/lis
 Send the returned `nextCursor` as `params.cursor` until the response omits `nextCursor`.
 Python handles pagination for global and virtual-server catalogs.
 This change covers Python MCP endpoints. Rust runtime pagination remains outside this change.
-REST and Admin pagination settings remain separate.
+`MCP_LIST_PAGE_SIZE` controls protocol catalog pages. `PAGINATION_DEFAULT_PAGE_SIZE` controls REST and Admin pages.
+The separate defaults prevent REST configuration changes from altering MCP traversal behavior.
+The Rust tools bridge sends no request body. Python returns the complete authorized tools catalog for that bridge.
+Rust cursor support remains a separate part of [#6990](https://github.com/IBM/mcp-context-forge/issues/6990).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -1500,19 +1503,35 @@ REST and Admin pagination settings remain separate.
 | `MCP_PROXY_LIST_MAX_COLLECTORS` | `32` | Concurrent collectors across Redis workers; per worker without Redis |
 | `MCP_PROXY_LIST_MAX_SNAPSHOTS` | `64` | Maximum retained snapshots and active reservations |
 
-Database catalogs use stable ID ordering and check current visibility on every page.
+Database ordering changes from `created_at DESC` to `id ASC`.
+Database catalogs check current visibility on every page.
+Unrestricted administrators see public rows, team rows, and their own private rows.
+Server-scoped lists no longer include other users' private rows for administrators.
 Catalog changes can affect later pages. Restart traversal to obtain a current catalog.
 Cursors bind the method, virtual server, identity, teams, and MCP session.
+Keep the session alive until traversal completes. Reconnecting changes the session and invalidates existing cursors.
+Start again without a cursor after a reconnect.
 Invalid, expired, or mismatched cursors return JSON-RPC error `-32602`.
 All workers must share `AUTH_ENCRYPTION_SECRET`; rotating it invalidates existing cursors.
 
 Direct proxy collects upstream pages within one session and stores immutable snapshot pages in Redis.
 Multi-page proxy catalogs require `CACHE_TYPE=redis` and a reachable `REDIS_URL`.
 Single-page proxy catalogs do not require Redis.
-Snapshots expire with the traversal and bind the gateway configuration and upstream authorization headers.
+Snapshots bind the gateway configuration and upstream authorization headers.
+Repeated first-page requests reuse a live snapshot for the same scope without extending its expiration.
+Concurrent requests for the same scope wait for the active collector and reuse its result.
+Reading the final page releases the snapshot and its byte and count reservations.
+Other cursors for that snapshot then become invalid. Restart without a cursor if a completed response is lost.
+Abandoned snapshots expire with the traversal.
 Any gateway update invalidates existing proxy cursors, including description, tags, and state updates.
 Restart the traversal after a gateway update.
 Repeated upstream cursors, duplicate identifiers, timeouts, and collection limits return errors without partial catalogs.
+
+Immutable snapshots preserve upstream session consistency when catalogs span several upstream pages.
+Shared Redis storage lets continuations move between workers without retaining upstream connections.
+Redis is a trusted storage boundary: catalog descriptors remain in plaintext and can contain sensitive metadata.
+Restrict Redis access to gateway operators. Use authenticated TLS connections and protect Redis backups.
+Stored scope fingerprints use HMAC with a key derived separately from the cursor encryption key.
 
 Snapshot admission reserves a collector slot before contacting the upstream server.
 Collector slots do not reserve snapshot bytes. Publication atomically enforces the aggregate retained-byte limit.
@@ -1523,7 +1542,8 @@ When `INFO memory` is available, admission checks usage below 80% of `maxmemory`
 Publication also checks headroom for twice the charged snapshot bytes.
 Redis ACLs must permit `EVAL`. Denied `INFO memory` skips headroom checks; snapshot byte and count limits remain enforced.
 Use a dedicated Redis instance or configure sufficient headroom when `INFO memory` is unavailable.
-Quota exhaustion returns a generic protocol error before upstream collection.
+Quota exhaustion returns JSON-RPC error `-32000` before upstream collection.
+Internal HTTP handlers map `-32000` to 503, `-32603` to 500, `-32602` to 400, and `-32003` to 403.
 Single-page requests release their reservation without retaining a snapshot.
 Without Redis, collection concurrency is bounded per worker and multi-page catalogs return an error.
 Keep snapshot limits below the memory available after session and cache usage.

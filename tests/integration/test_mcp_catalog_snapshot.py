@@ -82,10 +82,10 @@ async def test_concurrent_workers_obey_admission_limits(snapshot_store):
 async def test_retained_bytes_and_snapshot_count_reject_new_collection(snapshot_store, monkeypatch):
     """Reject new collection when retained snapshots consume admission capacity."""
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 1600)
-    async with snapshots.reserve_collection(snapshot_store) as snapshot:
+    async with snapshots.reserve_collection(snapshot_store) as (snapshot, _):
         await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"[]", b"[]"])
     with pytest.raises(JSONRPCError, match="reservation"):
-        async with snapshots.reserve_collection(snapshot_store) as another:
+        async with snapshots.reserve_collection(snapshot_store) as (another, _):
             await snapshots.publish_snapshot(snapshot_store, another, "scope", [b"[]", b"[]"])
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", 8192)
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
@@ -93,7 +93,7 @@ async def test_retained_bytes_and_snapshot_count_reject_new_collection(snapshot_
         async with snapshots.reserve_collection(snapshot_store):
             pytest.fail("Snapshot count must reject collection")
     manifest, page = await snapshots.read_snapshot(snapshot_store, snapshot, 1)
-    assert orjson.loads(manifest) == {"scope": "scope", "pages": 2}
+    assert orjson.loads(manifest) | {"expires": 0} == {"scope": "scope", "pages": 2, "expires": 0}
     assert page == b"[]"
 
 
@@ -134,11 +134,11 @@ async def test_cancellation_releases_collection_capacity(snapshot_store):
 @pytest.mark.asyncio
 async def test_eviction_removes_snapshots_and_accounting_together(snapshot_store):
     """Reject evicted continuation and admit fresh work without orphaned snapshot pages."""
-    async with snapshots.reserve_collection(snapshot_store) as snapshot:
+    async with snapshots.reserve_collection(snapshot_store) as (snapshot, _):
         await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"[]", b"[]"])
     await snapshot_store.delete(snapshots.snapshot_key())
     assert await snapshots.read_snapshot(snapshot_store, snapshot, 1) == (None, None)
-    async with snapshots.reserve_collection(snapshot_store) as replacement:
+    async with snapshots.reserve_collection(snapshot_store) as (replacement, _):
         await snapshots.publish_snapshot(snapshot_store, replacement, "scope", [b"[]", b"[]"])
     fields = await snapshot_store.hkeys(snapshots.snapshot_key())
     assert all(snapshot.encode() not in field for field in fields)
@@ -154,7 +154,7 @@ async def test_memory_headroom_rejects_without_eviction(snapshot_store, monkeypa
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshot_bytes", maximum)
     monkeypatch.setattr(settings, "mcp_proxy_list_max_total_bytes", maximum * 2)
     with pytest.raises(JSONRPCError, match="reservation"):
-        async with snapshots.reserve_collection(snapshot_store) as snapshot:
+        async with snapshots.reserve_collection(snapshot_store) as (snapshot, _):
             await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"x" * (maximum // 2)])
     assert (await snapshot_store.info("stats"))["evicted_keys"] == before
 
@@ -163,7 +163,7 @@ async def test_memory_headroom_rejects_without_eviction(snapshot_store, monkeypa
 async def test_oversized_publication_releases_reservation(snapshot_store):
     """Reject page overhead beyond the reservation without retaining partial pages."""
     with pytest.raises(JSONRPCError, match="byte limit"):
-        async with snapshots.reserve_collection(snapshot_store) as snapshot:
+        async with snapshots.reserve_collection(snapshot_store) as (snapshot, _):
             await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"x" * 4096])
     assert await snapshot_store.hkeys(snapshots.snapshot_key()) == [b"leases"]
 
@@ -181,12 +181,52 @@ async def test_denied_info_allows_bounded_snapshots(snapshot_store, monkeypatch)
     try:
         with pytest.raises(NoPermissionError):
             await restricted.info("memory")
-        async with snapshots.reserve_collection(restricted) as snapshot:
+        async with snapshots.reserve_collection(restricted) as (snapshot, _):
             await snapshots.publish_snapshot(restricted, snapshot, "scope", [b"[]", b"[]"])
         with pytest.raises(JSONRPCError, match="reservation"):
-            async with snapshots.reserve_collection(restricted) as another:
+            async with snapshots.reserve_collection(restricted) as (another, _):
                 await snapshots.publish_snapshot(restricted, another, "scope", [b"[]", b"[]"])
         assert (await snapshots.read_snapshot(restricted, snapshot, 1))[1] == b"[]"
     finally:
         await restricted.aclose()
         await snapshot_store.acl_deluser(username)
+
+
+@pytest.mark.asyncio
+async def test_workers_share_scope_and_reclaim_completed_snapshot(snapshot_store, monkeypatch):
+    """Share one fixed-lifetime snapshot across workers and reclaim its final page."""
+    monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
+    async with snapshots.reserve_collection(snapshot_store, "scope") as (snapshot, _):
+        await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"[1]", b"[2]"])
+    original = await snapshot_store.hget(snapshots.snapshot_key(), "leases")
+
+    async def reuse():
+        """Simulate another worker requesting the same catalog."""
+        async with snapshots.reserve_collection(snapshot_store, "scope") as (reused, _):
+            assert reused == snapshot
+            return await snapshots.read_snapshot(snapshot_store, reused, 0)
+
+    results = await asyncio.gather(*(reuse() for _ in range(64)))
+    assert all(page == b"[1]" for _, page in results)
+    assert await snapshot_store.hget(snapshots.snapshot_key(), "leases") == original
+    assert (await snapshots.read_snapshot(snapshot_store, snapshot, 1, release_final=True))[1] == b"[2]"
+    assert await snapshots.read_snapshot(snapshot_store, snapshot, 0) == (None, None)
+    async with snapshots.reserve_collection(snapshot_store, "other-scope") as (fresh, _):
+        await snapshots.publish_snapshot(snapshot_store, fresh, "other-scope", [b"[]", b"[]"])
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_scope_waits_for_publication(snapshot_store):
+    """Coalesce concurrent collectors from different workers into one retained catalog."""
+    async with snapshots.reserve_collection(snapshot_store, "scope") as (snapshot, _):
+
+        async def reuse():
+            """Wait for the first worker's publication."""
+            async with snapshots.reserve_collection(snapshot_store, "scope") as (reused, _):
+                return reused
+
+        task = asyncio.create_task(reuse())
+        await asyncio.sleep(0.1)
+        assert not task.done()
+        await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"[]", b"[]"])
+        assert await task == snapshot

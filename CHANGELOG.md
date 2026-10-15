@@ -10,6 +10,8 @@
 
 ### Breaking Changes
 
+- **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — Python MCP lists now return at most `MCP_LIST_PAGE_SIZE=100` items by default. Clients that ignore `nextCursor` receive only the first page. Database order changes from `created_at DESC` to `id ASC`. Server-scoped lists exclude other users' private rows for unrestricted administrators; administrators retain their own private rows. Multi-page direct-proxy lists now require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and keep traversals on one version during deployment. Restart traversals after reconnect, rotation, or rollback. Rust tools lists remain complete until the bridge forwards client cursors. This change delivers part of #6990. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
+
 - **Completion authorization** ([#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - `POST /protocol/completion/complete` now requires `tools.read` RBAC permission. Previously, authentication alone passed this endpoint's authorization check. Before upgrading from 1.0.11, grant `tools.read` to completion callers' roles and include it in replacement tokens with explicit permission scopes. Denied callers receive HTTP 403 before upstream access. See [completion permission migration](docs/docs/manage/api-usage.md#completion-compatibility-and-permission-migration).
 
 ### Added
@@ -17,8 +19,6 @@
 - **Named response models for A2A routes** ([#6820](https://github.com/IBM/mcp-context-forge/pull/6820), [#6699](https://github.com/IBM/mcp-context-forge/issues/6699)) - Added named response models for `POST /v1/a2a/{agent_name}/invoke`, `POST /v1/a2a/invoke`, and `POST /v1/a2a/{agent_name}/jsonrpc`. The OpenAPI schema now exposes typed components while preserving the routes' passthrough behavior.
 
 - **Federated completions** ([#6629](https://github.com/IBM/mcp-context-forge/issues/6629)) - Forward `completion/complete` to the owning upstream with request metadata. Both legacy and modern MCP connections remain supported through existing negotiation settings; forwarding has no modern-only gate.
-
-- **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — MCP list methods return bounded pages. Clients must follow `nextCursor` to retrieve complete catalogs. Multi-page direct-proxy lists require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and restart traversals after rotation or rollback. Keep traversals on one version during deployment. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
 
 - **`make testing-up` web UI URL** - The startup summary now shows a `ContextForge Web UI` row whose port comes from the resolved Compose configuration. The printed URL now matches the port Compose publishes when `WEB_UI_PORT` is set only in `.env`. Resolution failure stops the target instead of printing a fallback URL.
 
