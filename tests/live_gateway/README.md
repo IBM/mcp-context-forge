@@ -34,6 +34,7 @@ Specific subsuites need additional services on top:
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
 | `mcp/test_oauth_status_live.py` | Postgres reachable at `localhost:5433` (the compose default) | `make testing-up` |
 | `mcp/test_private_key_jwt_e2e.py` | stub AS and upstream reachable via `host.docker.internal` (the compose default) | `make testing-up` |
+| `mcp/test_legacy_instana_e2e.py` | self-contained: boots its own gateway under legacy Instana AutoTrace; set `LEGACY_INSTANA_E2E=1` to fail instead of skip | `LEGACY_INSTANA_E2E=1 uv run --extra observability --with "instana==3.11.1" pytest tests/live_gateway/mcp/test_legacy_instana_e2e.py` |
 | `sso/` | Keycloak (jwks tests) and/or Entra ID (entra tests) | `docker compose --profile sso up -d` for Keycloak; `AZURE_*` env vars for Entra |
 | `e2e_rust/` | gateway built with the Rust transport (edge or full mode) | `make testing-up` with the Rust profile, or rebuild compose images with Rust enabled |
 | `a2a/` | self-contained: each test boots its own gateway subprocess; needs the `observability` extra | `uv run --extra plugins --extra observability pytest tests/live_gateway/a2a/` |
