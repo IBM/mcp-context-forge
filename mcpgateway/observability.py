@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Vendor-agnostic OpenTelemetry instrumentation for ContextForge.
 Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
+OTEL_AVAILABLE indicates core tracing support. Baggage support remains independently optional.
 """
 
 # Standard
@@ -15,31 +16,32 @@ from importlib import import_module as _im
 import inspect
 import logging
 import os
-from typing import Any, Callable, cast, Dict, Mapping, Optional
+from typing import Any, Callable, cast, Dict, Mapping, MutableMapping, Optional
 from urllib.parse import urlparse
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
+otel_baggage: Any = None  # pylint: disable=invalid-name
 try:
     # Third-Party
     from opentelemetry import trace
     from opentelemetry.propagate import extract as otel_extract
     from opentelemetry.propagate import inject as otel_inject
     from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
+    from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
     from opentelemetry.trace import SpanKind, Status, StatusCode
 
     try:
         # Third-Party
         from opentelemetry import baggage as otel_baggage
     except ImportError:
-        otel_baggage = None
+        logging.getLogger(__name__).debug("OpenTelemetry baggage support unavailable")
 
     OTEL_AVAILABLE = True
 except ImportError:
     # OpenTelemetry not installed - set to None for graceful degradation
-    otel_baggage = None
     trace = None
     otel_extract = None
     otel_inject = None
@@ -48,6 +50,15 @@ except ImportError:
         """Minimal SpanKind shim used when OpenTelemetry isn't installed."""
 
         SERVER = "server"
+
+    class _SamplerShim:
+        """Minimal sampler base used when OpenTelemetry isn't installed."""
+
+    class _SpanProcessorShim:
+        """Minimal span-processor base used when OpenTelemetry isn't installed."""
+
+    Sampler = cast(Any, _SamplerShim)
+    SpanProcessor = cast(Any, _SpanProcessorShim)
 
     # Provide a lightweight shim so tests can patch Resource.create
     class _ResourceShim:
@@ -74,6 +85,8 @@ except ImportError:
     TracerProvider = None
     BatchSpanProcessor = None
     ConsoleSpanExporter = None
+    Decision = None
+    SamplingResult = None
     SimpleSpanProcessor = None
     SpanKind = cast(Any, _SpanKindShim)
     Status = None
@@ -128,6 +141,146 @@ from mcpgateway.utils.trace_context import (  # noqa: E402  # pylint: disable=wr
     primary_team_from_scope,
 )
 from mcpgateway.utils.trace_redaction import sanitize_trace_attribute_value, sanitize_trace_text  # noqa: E402  # pylint: disable=wrong-import-position
+
+_SamplerBase = cast(Any, Sampler)
+_SpanProcessorBase = cast(Any, SpanProcessor)
+
+
+class RequestRootSampler(_SamplerBase):  # type: ignore[misc]
+    """Restrict exported traces to request roots and their descendants."""
+
+    def __init__(self, delegate: Any, system_traces_enabled: bool = False):
+        """Initialize request-root sampling policy.
+
+        Args:
+            delegate: SDK-configured sampler that controls accepted traces.
+            system_traces_enabled: Permit local non-server roots when true.
+        """
+        self._delegate = delegate
+        self._system_traces_enabled = system_traces_enabled
+
+    def should_sample(
+        self,
+        parent_context: Any,
+        trace_id: int,
+        name: str,
+        kind: Any = None,
+        attributes: Any = None,
+        links: Any = None,
+        trace_state: Any = None,
+    ) -> Any:
+        """Apply parent-based request policy before configured sampling.
+
+        Args:
+            parent_context: OpenTelemetry parent context.
+            trace_id: Candidate trace identifier.
+            name: Candidate span name.
+            kind: Candidate span kind.
+            attributes: Candidate span attributes.
+            links: Candidate span links.
+            trace_state: Candidate trace state.
+
+        Returns:
+            SamplingResult: Policy and configured-sampler decision.
+        """
+        parent_span_context = None
+        if trace is not None:
+            parent_span_context = trace.get_current_span(parent_context).get_span_context()
+
+        if parent_span_context is not None and parent_span_context.is_valid and not parent_span_context.trace_flags.sampled:
+            return cast(Any, SamplingResult)(cast(Any, Decision).DROP, trace_state=trace_state)
+
+        has_parent = bool(parent_span_context is not None and parent_span_context.is_valid)
+        is_server_root = not has_parent and kind == SpanKind.SERVER
+        if not has_parent and not is_server_root and not self._system_traces_enabled:
+            return cast(Any, SamplingResult)(cast(Any, Decision).DROP, trace_state=trace_state)
+
+        return self._delegate.should_sample(
+            parent_context=parent_context,
+            trace_id=trace_id,
+            name=name,
+            kind=kind,
+            attributes=attributes,
+            links=links,
+            trace_state=trace_state,
+        )
+
+    def get_description(self) -> str:
+        """Return sampler description.
+
+        Returns:
+            str: Human-readable sampler description.
+        """
+        return f"RequestRootSampler({self._delegate.get_description()})"
+
+
+class RequestRootFilteringSpanProcessor(_SpanProcessorBase):  # type: ignore[misc]
+    """Filter local non-request roots before queueing. RequestRootSampler suppresses their descendants."""
+
+    def __init__(self, delegate: Any, system_traces_enabled: bool = False):
+        """Initialize filtering processor.
+
+        Args:
+            delegate: Downstream span processor.
+            system_traces_enabled: Permit local non-server roots when true.
+        """
+        self._delegate = delegate
+        self._system_traces_enabled = system_traces_enabled
+
+    def on_start(self, span: Any, parent_context: Any = None) -> None:
+        """Attach allowed baggage and forward span start.
+
+        Args:
+            span: Writable span.
+            parent_context: Parent OpenTelemetry context.
+        """
+        if otel_baggage is not None:
+            try:
+                for key, value in _baggage_span_attributes(otel_baggage.get_all()).items():
+                    set_span_attribute(span, key, value)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.debug("Failed to inject baggage into auto-instrumented span: %s", exc)
+        self._delegate.on_start(span, parent_context)
+
+    def _should_forward(self, span: Any) -> bool:
+        """Return whether downstream processor should receive a span."""
+        parent = getattr(span, "parent", None)
+        is_root = parent is None or not getattr(parent, "is_valid", False)
+        return not (is_root and getattr(span, "kind", None) != SpanKind.SERVER and not self._system_traces_enabled)
+
+    def _on_ending(self, span: Any) -> None:
+        """Forward pre-end notification for an allowed span.
+
+        Args:
+            span: Ending writable span.
+        """
+        if self._should_forward(span):
+            self._delegate._on_ending(span)  # pylint: disable=protected-access
+
+    def on_end(self, span: Any) -> None:
+        """Forward allowed finished spans to downstream processor.
+
+        Args:
+            span: Finished readable span.
+        """
+        if self._should_forward(span):
+            self._delegate.on_end(span)
+
+    def shutdown(self) -> None:
+        """Shut down downstream processor."""
+        self._delegate.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        """Flush downstream processor.
+
+        Args:
+            timeout_millis: Maximum flush duration in milliseconds.
+
+        Returns:
+            bool: Downstream flush result.
+        """
+        return bool(self._delegate.force_flush(timeout_millis))
+
 
 # Try to import optional exporters
 try:
@@ -570,7 +723,7 @@ def _baggage_span_attributes(baggage_items: Mapping[str, Any]) -> Dict[str, Any]
         if policy.allowed_keys is not None and key not in policy.allowed_keys:
             continue
         attribute_name = f"baggage.{key}" if policy.emit_prefixed else key
-        span_attributes.setdefault(attribute_name, value)
+        span_attributes.setdefault(attribute_name, sanitize_trace_attribute_value(key, value))
     return span_attributes
 
 
@@ -795,7 +948,8 @@ def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) ->
                     from mcpgateway.baggage import format_w3c_baggage_header, sanitize_baggage_for_propagation
 
                     # Sanitize baggage before propagation
-                    sanitized_baggage = sanitize_baggage_for_propagation(baggage_dict)
+                    string_baggage = {str(key): str(value) for key, value in baggage_dict.items() if value is not None}
+                    sanitized_baggage = sanitize_baggage_for_propagation(string_baggage)
                     if sanitized_baggage:
                         baggage_header = format_w3c_baggage_header(sanitized_baggage)
                         carrier["baggage"] = baggage_header
@@ -879,7 +1033,7 @@ class OpenTelemetryRequestMiddleware:
 
         return getattr(self.app, name)
 
-    async def __call__(self, scope: Mapping[str, Any], receive: Any, send: Any) -> None:
+    async def __call__(self, scope: MutableMapping[str, Any], receive: Any, send: Any) -> None:
         """Handle an ASGI request and create a request-root span when tracing applies.
 
         Args:
@@ -1102,6 +1256,8 @@ def init_telemetry() -> Optional[Any]:
         else:
             provider = cast(Any, TracerProvider)()
 
+        provider.sampler = RequestRootSampler(provider.sampler, system_traces_enabled=cfg.otel_system_traces_enabled)
+
         # Register provider if trace API is present
         if trace is not None and hasattr(trace, "set_tracer_provider"):
             cast(Any, trace).set_tracer_provider(provider)
@@ -1216,6 +1372,7 @@ def init_telemetry() -> Optional[Any]:
                     max_export_batch_size=cfg.otel_bsp_max_export_batch_size,
                     schedule_delay_millis=cfg.otel_bsp_schedule_delay,
                 )
+            span_processor = RequestRootFilteringSpanProcessor(span_processor, system_traces_enabled=cfg.otel_system_traces_enabled)
             provider.add_span_processor(span_processor)
 
         # Get tracer

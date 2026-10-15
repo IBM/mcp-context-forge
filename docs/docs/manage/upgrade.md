@@ -26,6 +26,23 @@ Each version-specific guide includes:
 
 ---
 
+## OpenTelemetry request tracing defaults
+
+Background health checks, Redis heartbeats, and database operations no longer export local trace roots by default.
+Request-rooted traces and their sampled descendants remain available. Health execution metrics replace periodic
+background success traces. These metrics measure completion, not gateway health.
+
+Docker Compose defaults SQLAlchemy and Redis auto-instrumentation to disabled. Review explicit environment overrides
+when upgrading. Enable these instrumentors when request-level database or cache spans are required.
+
+Set `OTEL_SYSTEM_TRACES_ENABLED=true` to restore background tracing only when the configured exporter accepts
+tenantless platform traces. This switch uses the same configured exporter; it does not create a separate telemetry
+route. Do not assign a tenant identifier to the process-wide OpenTelemetry resource.
+
+See [OpenTelemetry configuration](observability/opentelemetry.md) for instrumentation settings and health metric semantics.
+
+---
+
 ## 🛠 Upgrade Steps
 
 ### 1. Backup Current Configuration and Data
