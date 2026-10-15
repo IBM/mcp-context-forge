@@ -7,10 +7,12 @@ Tests for observability module.
 """
 
 # Standard
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import inspect
 import logging
 import os
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 # Third-Party
@@ -1064,6 +1066,59 @@ class TestRequestMiddlewareTraceEnvelope:
         assert request_span.status.status_code is StatusCode.ERROR
 
     @pytest.mark.asyncio
+    async def test_fallback_restores_context_when_retry_raises_with_context_rejecting_tracer(self, monkeypatch):
+        """The fallback restores the outer context when the retry itself raises.
+
+        A context-rejecting tracer that fails again on the retry must not leak the inbound
+        parent into the task context. The retry failure propagates, but the outer context is
+        unchanged, so later spans in the task cannot inherit the failed request's parent.
+        """
+        pytest.importorskip("opentelemetry.sdk.trace")
+        # Third-Party
+        from opentelemetry import context as otel_context_api
+
+        class RetryFailingTracer:
+            """Rejects ``context``, then raises an unrelated error on the retry."""
+
+            def __init__(self):
+                self.attempts = []
+
+            def start_as_current_span(self, name, **kwargs):
+                self.attempts.append(sorted(kwargs))
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                raise RuntimeError("retry failure")
+
+        tracer = RetryFailingTracer()
+        monkeypatch.setattr(observability, "_TRACER", tracer)
+
+        ran = {}
+
+        async def app(_scope, _receive, _send):
+            ran["value"] = True
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        incoming_trace_id = "0af7651916cd43dd8448eb211c80319c"  # pragma: allowlist secret
+        incoming_span_id = "b7ad6b7169203331"  # pragma: allowlist secret
+        scope = self._make_scope([(b"traceparent", f"00-{incoming_trace_id}-{incoming_span_id}-01".encode())])
+        middleware = OpenTelemetryRequestMiddleware(app)
+
+        context_before = otel_context_api.get_current()
+        with pytest.raises(RuntimeError, match="retry failure"):
+            await middleware(scope, receive, send)
+        context_after = otel_context_api.get_current()
+
+        # The retry was attempted; the app never ran; the attached parent was detached.
+        assert tracer.attempts == [["context", "kind"], ["kind"]]
+        assert ran.get("value") is None
+        assert context_after is context_before
+
+    @pytest.mark.asyncio
     async def test_middleware_fallback_attaches_parent_injects_baggage_and_detaches(self):
         """The context-kwarg fallback attaches the inbound parent, injects baggage, and detaches it.
 
@@ -1210,3 +1265,214 @@ class TestRequestMiddlewareTraceEnvelope:
 
         assert ran["value"] is True
         mock_context.detach.assert_called_once_with(token)
+
+    @pytest.mark.asyncio
+    async def test_fallback_detaches_when_retry_raises(self):
+        """The fallback detaches the attached parent even when the retry itself raises.
+
+        Regression: a tracer that rejects ``context`` and then fails on the retry must not
+        leave the inbound parent attached to the task context. The request fails, but the
+        outer context is restored before the exception propagates.
+        """
+        scope = self._make_scope()
+        ran = {}
+
+        async def app(_scope, _receive, _send):
+            ran["value"] = True
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        class RetryFailingTracer:
+            """Rejects ``context``, then raises an unrelated error on the retry."""
+
+            def __init__(self):
+                self.attempts = []
+
+            def start_as_current_span(self, _name, **kwargs):
+                self.attempts.append(sorted(kwargs))
+                if "context" in kwargs:
+                    raise TypeError("start_as_current_span() got an unexpected keyword argument 'context'")
+                raise RuntimeError("retry boom")
+
+        mock_trace = MagicMock()
+        mock_trace.get_current_span.return_value.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+        mock_context = MagicMock()
+        token = object()
+        mock_context.attach.return_value = token
+
+        tracer = RetryFailingTracer()
+        with (
+            patch("mcpgateway.observability._TRACER", tracer),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_context", mock_context),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            with pytest.raises(RuntimeError, match="retry boom"):
+                await middleware(scope, receive, send)
+
+        # The retry was attempted; the app never ran; the attached parent was detached.
+        assert tracer.attempts == [["context", "kind"], ["kind"]]
+        assert ran.get("value") is None
+        mock_context.attach.assert_called_once()
+        mock_context.detach.assert_called_once_with(token)
+
+
+class TestLegacyTracerContextCompat:
+    """Tests for the Instana < 3.12 ``context`` keyword compatibility shim."""
+
+    @staticmethod
+    def _install(monkeypatch, tracer_cls, *, otel_context=None):
+        """Install a fake ``instana.tracer`` module and run the shim installer."""
+        fake_module = types.ModuleType("instana.tracer")
+        fake_module.InstanaTracer = tracer_cls
+        monkeypatch.setitem(sys.modules, "instana.tracer", fake_module)
+        monkeypatch.setattr(observability, "OTEL_AVAILABLE", True)
+        if otel_context is not None:
+            monkeypatch.setattr(observability, "otel_context", otel_context)
+        observability._install_legacy_tracer_context_compat()
+
+    def test_patches_span_starts_that_reject_context(self, monkeypatch):
+        """Methods lacking ``context`` are wrapped so the kwarg is accepted and the parent attaches."""
+        calls = []
+
+        class LegacyTracer:
+            """Emulates InstanaTracer < 3.12: no ``context`` parameter."""
+
+            def start_span(self, name, span_context=None, kind=None):
+                calls.append(("start_span", name, span_context, kind))
+                return "span"
+
+            @contextmanager
+            def start_as_current_span(self, name, span_context=None, kind=None):
+                calls.append(("start_as_current_span", name, span_context, kind))
+                yield "span"
+
+        mock_context = MagicMock()
+        self._install(monkeypatch, LegacyTracer, otel_context=mock_context)
+
+        tracer = LegacyTracer()
+        assert tracer.start_span("child", context=object(), kind="client") == "span"
+        with tracer.start_as_current_span("child", context=object(), kind="client") as span:
+            assert span == "span"
+
+        # The rejected `context` never leaks into `span_context`; other kwargs pass through.
+        assert calls == [
+            ("start_span", "child", None, "client"),
+            ("start_as_current_span", "child", None, "client"),
+        ]
+        # The supplied parent is attached for the span and detached afterwards.
+        assert mock_context.attach.call_count == 2
+        assert mock_context.detach.call_count == 2
+
+    def test_attach_and_detach_wrap_span_lifetime(self, monkeypatch):
+        """The parent stays attached for the whole span and detaches when the body raises."""
+        events = []
+
+        class LegacyTracer:
+            def start_span(self, name, span_context=None):
+                return "span"
+
+            @contextmanager
+            def start_as_current_span(self, name, span_context=None):
+                events.append("span-open")
+                yield "span"
+                events.append("span-close")
+
+        mock_context = MagicMock()
+        mock_context.attach.side_effect = lambda ctx: events.append("attach") or "token"
+        mock_context.detach.side_effect = lambda token: events.append("detach")
+        self._install(monkeypatch, LegacyTracer, otel_context=mock_context)
+
+        tracer = LegacyTracer()
+        with pytest.raises(RuntimeError):
+            with tracer.start_as_current_span("child", context=object()):
+                events.append("body")
+                raise RuntimeError("boom")
+
+        # Attach precedes the span; detach follows it even though the body raised.
+        assert events == ["attach", "span-open", "body", "detach"]
+
+    def test_no_context_does_not_touch_otel_context(self, monkeypatch):
+        """Without a supplied parent the wrapper only delegates."""
+
+        class LegacyTracer:
+            def start_span(self, name, span_context=None):
+                return "span"
+
+            @contextmanager
+            def start_as_current_span(self, name, span_context=None):
+                yield "span"
+
+        mock_context = MagicMock()
+        self._install(monkeypatch, LegacyTracer, otel_context=mock_context)
+
+        tracer = LegacyTracer()
+        assert tracer.start_span("child") == "span"
+        with tracer.start_as_current_span("child"):
+            pass
+
+        mock_context.attach.assert_not_called()
+        mock_context.detach.assert_not_called()
+
+    def test_install_is_idempotent(self, monkeypatch):
+        """A second install does not double-wrap the patched methods."""
+
+        class LegacyTracer:
+            def start_span(self, name, span_context=None):
+                return "span"
+
+            @contextmanager
+            def start_as_current_span(self, name, span_context=None):
+                yield "span"
+
+        self._install(monkeypatch, LegacyTracer, otel_context=MagicMock())
+        patched_start_span = LegacyTracer.start_span
+        patched_start_as_current_span = LegacyTracer.start_as_current_span
+
+        observability._install_legacy_tracer_context_compat()
+
+        assert LegacyTracer.start_span is patched_start_span
+        assert LegacyTracer.start_as_current_span is patched_start_as_current_span
+        assert getattr(LegacyTracer.start_span, "__cf_context_compat__", False) is True
+        assert getattr(LegacyTracer.start_as_current_span, "__cf_context_compat__", False) is True
+
+    def test_leaves_tracer_that_accepts_context_untouched(self, monkeypatch):
+        """A tracer that already declares ``context`` is not patched."""
+
+        class ModernTracer:
+            def start_span(self, name, context=None, kind=None):
+                return "span"
+
+            def start_as_current_span(self, name, context=None, kind=None):
+                return nullcontext("span")
+
+        self._install(monkeypatch, ModernTracer, otel_context=MagicMock())
+        original_start_span = ModernTracer.start_span
+        original_start_as_current_span = ModernTracer.start_as_current_span
+
+        observability._install_legacy_tracer_context_compat()
+
+        assert ModernTracer.start_span is original_start_span
+        assert ModernTracer.start_as_current_span is original_start_as_current_span
+
+    def test_missing_instana_is_nonfatal(self, monkeypatch):
+        """A missing Instana package leaves the shim a no-op."""
+        monkeypatch.setitem(sys.modules, "instana.tracer", None)
+        monkeypatch.setattr(observability, "OTEL_AVAILABLE", True)
+
+        observability._install_legacy_tracer_context_compat()
+
+    def test_skipped_when_otel_unavailable(self, monkeypatch):
+        """Nothing is patched when OpenTelemetry is not installed."""
+        monkeypatch.setattr(observability, "OTEL_AVAILABLE", False)
+        monkeypatch.delitem(sys.modules, "instana.tracer", raising=False)
+
+        observability._install_legacy_tracer_context_compat()
+
+        assert "instana.tracer" not in sys.modules
