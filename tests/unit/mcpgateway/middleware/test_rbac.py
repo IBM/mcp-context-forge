@@ -1652,7 +1652,7 @@ async def test_no_proxy_no_trust_anonymous(no_cookie_request):
 async def test_bearer_token_from_credentials():
     """Bearer token from Authorization header (line 239)."""
     mock_request = MagicMock(spec=Request)
-    mock_request.cookies = {}
+    mock_request.cookies = {"jwt_token": "different-cookie-token"}
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(
@@ -1674,6 +1674,7 @@ async def test_bearer_token_from_credentials():
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
 
     assert result["email"] == "api@test.com"
+    assert mock_request.state.authenticated_bearer_token == "valid-token"
 
 
 @pytest.mark.asyncio

@@ -129,9 +129,12 @@ class TestA2AInvokePreHook:
         mock_db,
         mock_agent,
     ):
-        """Only headers in agent.passthrough_headers reach plugins."""
+        """Only safe headers reach plugins when the OBO bridge is disabled."""
+        # First-Party
+        from mcpgateway.config import settings
+
         # Narrow whitelist to a subset of headers
-        mock_agent.passthrough_headers = ["x-request-id", "x-tenant-id"]
+        mock_agent.passthrough_headers = ["authorization", "x-request-id", "x-tenant-id"]
 
         inbound_headers = {
             "x-tenant-id": "tenant-123",
@@ -155,11 +158,16 @@ class TestA2AInvokePreHook:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
 
-        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            patch.object(settings, "a2a_obo_bearer_bridge_enabled", False),
+        ):
             await service.invoke_agent(
                 mock_db,
                 mock_agent.name,
                 {"query": "hello"},
+                authenticated_bearer_token="validated-secret",
                 request_headers=inbound_headers,
             )
 
@@ -186,6 +194,9 @@ class TestA2AInvokePreHook:
         mock_agent,
     ):
         """When agent.passthrough_headers is None, no headers reach plugins."""
+        # First-Party
+        from mcpgateway.config import settings
+
         mock_agent.passthrough_headers = None
 
         inbound_headers = {"x-tenant-id": "tenant-123", "x-request-id": "req-456"}
@@ -204,11 +215,16 @@ class TestA2AInvokePreHook:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
 
-        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            patch.object(settings, "a2a_obo_bearer_bridge_enabled", True),
+        ):
             await service.invoke_agent(
                 mock_db,
                 mock_agent.name,
                 {"query": "hello"},
+                authenticated_bearer_token="validated-secret",
                 request_headers=inbound_headers,
             )
 
@@ -364,6 +380,130 @@ class TestA2AInvokePreHook:
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("X-Custom") == "value"
         assert headers.get("X-Request-ID") == "plugin-req-123"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_obo_bridge_replaces_authenticated_bearer(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """Expose only the authenticated bearer and forward only its plugin replacement."""
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload
+
+        # First-Party
+        from mcpgateway.config import settings
+
+        mock_agent.passthrough_headers = ["Authorization"]
+        pm = _make_plugin_manager()
+
+        async def _exchange(_hook_type, payload, **_kwargs):
+            assert payload.headers.root == {"Authorization": "Bearer caller-token"}
+            modified_payload = payload.model_copy(update={"headers": HttpHeaderPayload(root={"Authorization": "Bearer exchanged-token"})})
+            return SimpleNamespace(modified_payload=modified_payload, retry_delay_ms=0, metadata={}), {}
+
+        pm.invoke_hook = _exchange
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer_fn.return_value = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            patch.object(settings, "a2a_obo_bearer_bridge_enabled", True),
+            patch.object(settings, "enable_sensitive_header_passthrough", False),
+        ):
+            await service.invoke_agent(
+                mock_db,
+                mock_agent.name,
+                {"query": "hello"},
+                authenticated_bearer_token="caller-token",
+                request_headers={"authorization": "Bearer untrusted-copy"},
+            )
+
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers.get("Authorization") == "Bearer exchanged-token"
+        assert "caller-token" not in str(headers)
+        assert "untrusted-copy" not in str(headers)
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_obo_bridge_rejects_unchanged_original_bearer(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """Never let an unchanged caller bearer escape through the plugin output exception."""
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload
+
+        # First-Party
+        from mcpgateway.config import settings
+
+        mock_agent.passthrough_headers = ["Authorization"]
+        pm = _make_plugin_manager(has_post=False)
+
+        returned_headers = iter(
+            (
+                {"authorization": "bearer  caller-token"},
+                {"Authorization": "Bearer exchanged-token", "authorization": "Bearer caller-token"},
+            )
+        )
+
+        async def _echo(_hook_type, payload, **_kwargs):
+            modified_payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=next(returned_headers))})
+            return SimpleNamespace(modified_payload=modified_payload, retry_delay_ms=0, metadata={}), {}
+
+        pm.invoke_hook = _echo
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer_fn.return_value = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            patch.object(settings, "a2a_obo_bearer_bridge_enabled", True),
+            patch.object(settings, "enable_sensitive_header_passthrough", False),
+        ):
+            for _ in range(2):
+                await service.invoke_agent(
+                    mock_db,
+                    mock_agent.name,
+                    {"query": "hello"},
+                    authenticated_bearer_token="caller-token",
+                )
+
+        for call in mock_client.post.await_args_list:
+            assert "authorization" not in {name.lower() for name in call.kwargs["headers"]}
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -570,10 +710,15 @@ class TestA2AInvokePreHook:
         service,
         mock_db,
         mock_agent,
+        caplog,
     ):
-        """Generic exception from PRE_INVOKE (not PluginViolationError) is raised as A2AAgentError."""
+        """An OBO exchange error blocks dispatch without exposing the caller bearer."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        mock_agent.passthrough_headers = ["Authorization"]
         pm = _make_plugin_manager()
-        pm.invoke_hook = AsyncMock(side_effect=RuntimeError("plugin crashed"))
+        pm.invoke_hook = AsyncMock(side_effect=RuntimeError("exchange failed for exchanged-token from caller-token"))
 
         mock_get_for_update.return_value = mock_agent
         mock_client = AsyncMock()
@@ -589,13 +734,26 @@ class TestA2AInvokePreHook:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
 
-        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
-            with pytest.raises(A2AAgentError, match="Pre-invoke plugin error"):
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            patch.object(settings, "a2a_obo_bearer_bridge_enabled", True),
+        ):
+            with pytest.raises(A2AAgentError, match="Pre-invoke plugin error during OBO bridge") as exc_info:
                 await service.invoke_agent(
                     mock_db,
                     mock_agent.name,
                     {"query": "hello"},
+                    authenticated_bearer_token="caller-token",
                 )
+
+        assert "caller-token" not in str(exc_info.value)
+        assert "exchanged-token" not in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
+        assert "caller-token" not in caplog.text
+        assert "exchanged-token" not in caplog.text
+        mock_client.post.assert_not_awaited()
 
 
 class TestA2AInvokePostHook:
@@ -713,7 +871,11 @@ class TestA2AInvokeNoPluginManager:
         mock_db,
         mock_agent,
     ):
-        """When _get_plugin_manager returns None, no hooks fire but invocation succeeds."""
+        """A missing plugin never forwards the original bearer."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        mock_agent.passthrough_headers = ["Authorization"]
         mock_get_for_update.return_value = mock_agent
         mock_client = AsyncMock()
         mock_response = MagicMock(status_code=200)
@@ -728,14 +890,23 @@ class TestA2AInvokeNoPluginManager:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
 
-        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            patch.object(settings, "a2a_obo_bearer_bridge_enabled", True),
+            patch.object(settings, "enable_sensitive_header_passthrough", False),
+        ):
             result = await service.invoke_agent(
                 mock_db,
                 mock_agent.name,
                 {"query": "hello"},
+                authenticated_bearer_token="caller-token",
+                request_headers={"Authorization": "Bearer raw-copy"},
             )
 
         assert result["result"] == "ok"
+        headers = mock_client.post.await_args.kwargs["headers"]
+        assert "authorization" not in {name.lower() for name in headers}
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")

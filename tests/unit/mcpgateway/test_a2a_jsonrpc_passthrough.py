@@ -1356,6 +1356,8 @@ def mock_request_for_context():
     request.headers = {}
     request.state = MagicMock()
     request.state.bearer_token = None
+    request.state.authenticated_bearer_token = None
+    request.state.user = None
     return request
 
 
@@ -1481,11 +1483,13 @@ class TestRequestContextUserIdentityExtraction:
 class TestRequestContextBearerTokenExtraction:
     """Test _extract_a2a_request_context bearer token extraction and JWT validation."""
 
-    def test_bearer_token_from_request_state(self, mock_request_for_context, mock_user_dict_for_context):
-        """Test bearer token extracted from request.state (preferred source)."""
+    def test_bearer_tokens_use_their_distinct_authenticated_sources(self, mock_request_for_context, mock_user_dict_for_context):
+        """Test OBO uses the route-authenticated token instead of the middleware token."""
         # JWT-shaped token
         jwt_token = "***REMOVED***"  # pragma: allowlist secret
+        authenticated_token = "header-authenticated-token"  # pragma: allowlist secret
         mock_request_for_context.state.bearer_token = jwt_token
+        mock_request_for_context.state.authenticated_bearer_token = authenticated_token
 
         with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
@@ -1493,6 +1497,7 @@ class TestRequestContextBearerTokenExtraction:
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
 
         assert context["bearer_token"] == jwt_token
+        assert context["authenticated_bearer_token"] == authenticated_token
 
     def test_bearer_token_fallback_from_authorization_header(self, mock_request_for_context, mock_user_dict_for_context):
         """Test bearer token extracted from Authorization header as fallback."""
@@ -1506,6 +1511,7 @@ class TestRequestContextBearerTokenExtraction:
                 context = _extract_a2a_request_context(mock_request_for_context, mock_user_dict_for_context)
 
         assert context["bearer_token"] == jwt_token
+        assert context["authenticated_bearer_token"] is None
 
     def test_bearer_token_case_insensitive(self, mock_request_for_context, mock_user_dict_for_context):
         """Test Authorization header parsing is case-insensitive."""

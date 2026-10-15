@@ -159,6 +159,18 @@ class TestPluginHeaderSecurityRefiltering:
         # (Layer 1 filtering happens before Layer 2 whitelist)
         assert "Authorization" not in result
 
+    def test_obo_bridge_allows_only_plugin_authorization(self, a2a_service, mock_agent_with_whitelist):
+        """The OBO exception permits Authorization without permitting other sensitive headers."""
+        mock_agent_with_whitelist.passthrough_headers = ["Authorization", "Cookie", "X-Custom-Header"]
+        result = a2a_service._refilter_plugin_headers(
+            plugin_headers={"Authorization": "Bearer exchanged", "Cookie": "session=blocked", "X-Custom-Header": "safe"},
+            agent=mock_agent_with_whitelist,
+            feature_flag_enabled=False,
+            allow_plugin_authorization=True,
+        )
+
+        assert result == {"Authorization": "Bearer exchanged", "X-Custom-Header": "safe"}
+
     def test_empty_whitelist_blocks_all_plugin_headers(self, a2a_service):
         """Agent with empty passthrough_headers blocks all plugin-returned headers."""
         agent = MagicMock(spec=A2AAgent)
