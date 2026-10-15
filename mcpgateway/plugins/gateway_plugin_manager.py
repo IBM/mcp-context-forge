@@ -39,6 +39,11 @@ from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_too
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
+# Sentinel tool-name used as the shared cache slot for team-scoped tools that
+# have no per-tool ToolPluginBinding rows.  All tools in a team without explicit
+# bindings resolve to "<team_id>::__team__" so they share one manager instance
+# instead of each creating their own slot.
+TEAM_SCOPED_TOOL_SENTINEL = "__team__"
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -86,7 +91,7 @@ class TenantPluginManagerFactory:
     Call sites should use :func:`make_context_id` to construct them.
     """
 
-    DEFAULT_CACHE_TTL = 30
+    DEFAULT_CACHE_TTL = 0  # 0 = no expiry; managers live for the worker lifetime
     CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
 
     def __init__(
@@ -127,7 +132,16 @@ class TenantPluginManagerFactory:
         return [plugin.name for plugin in self._base_config.plugins]
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
-        """Get or create a TenantPluginManager for the given context."""
+        """Get or create a TenantPluginManager for the given context.
+
+        For per-tool context IDs (``"<team_id>::<tool_name>"``), the factory
+        first checks whether a team-scoped canonical slot
+        (``"<team_id>::__team__"``) already exists.  When a tool has no
+        per-tool ``ToolPluginBinding`` rows, ``_build_manager`` normalises the
+        key to the team-scoped slot before caching, so all unbound tools in the
+        same team share one manager instance.  The per-tool key is looked up
+        first so that tools *with* bindings still get their own dedicated slot.
+        """
         context_id = context_id or "__global__"
         expired = None
 
@@ -139,6 +153,17 @@ class TenantPluginManagerFactory:
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
                     return entry.manager
+
+            # Fast path: check the canonical team-scoped slot for per-tool keys.
+            # _build_manager stores unbound tools under "<team_id>::__team__"
+            # so a second unbound tool in the same team hits the cache here.
+            if CONTEXT_ID_SEPARATOR in context_id:
+                team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+                if tool_name != TEAM_SCOPED_TOOL_SENTINEL:
+                    canonical = f"{team_id}{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
+                    canonical_entry = self._managers.get(canonical)
+                    if canonical_entry is not None and not canonical_entry.is_expired(self._cache_ttl):
+                        return canonical_entry.manager
 
             if expired is not None:
                 try:
@@ -164,10 +189,33 @@ class TenantPluginManagerFactory:
                     self._inflight.pop(context_id, None)
 
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
-        """Create, initialise, and cache a new manager for *context_id*."""
+        """Create, initialise, and cache a new manager for *context_id*.
+
+        When *context_id* is a per-tool key (``"<team_id>::<tool_name>"``) and
+        ``get_config_from_db`` finds no per-tool bindings, the manager is stored
+        under the canonical team-scoped key ``"<team_id>::__team__"`` instead.
+        Subsequent calls for other unbound tools in the same team hit the
+        team-scoped cache entry in ``get_manager`` without rebuilding.
+        """
         manager = None
         try:
             new_config = await self.get_config_from_db(context_id)
+
+            # Normalize unbound per-tool keys to the team-scoped canonical slot.
+            # A tool with no ToolPluginBinding rows produces the same manager as
+            # any other unbound tool in its team; sharing one slot avoids O(tools)
+            # cold-start rebuilds.
+            cache_key = context_id
+            if new_config is None and CONTEXT_ID_SEPARATOR in context_id:
+                team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+                if tool_name != TEAM_SCOPED_TOOL_SENTINEL:
+                    cache_key = f"{team_id}{CONTEXT_ID_SEPARATOR}{TEAM_SCOPED_TOOL_SENTINEL}"
+                    async with self._lock:
+                        existing = self._managers.get(cache_key)
+                        if existing is not None and not existing.is_expired(self._cache_ttl):
+                            logger.debug("_build_manager: reusing team-scoped slot %s for %s", cache_key, context_id)
+                            return existing.manager
+
             config = self._merge_tenant_config(new_config)
             config = await self._apply_redis_mode_overrides(config)
 
@@ -180,15 +228,15 @@ class TenantPluginManagerFactory:
             await manager.initialize()
 
             async with self._lock:
-                old_entry = self._managers.get(context_id)
-                self._managers[context_id] = _CachedManager(manager=manager, created_at=time.monotonic())
+                old_entry = self._managers.get(cache_key)
+                self._managers[cache_key] = _CachedManager(manager=manager, created_at=time.monotonic())
 
             old = old_entry.manager if old_entry is not None else None
             if old is not None and old is not manager:
                 try:
                     await old.shutdown()
                 except Exception:
-                    logger.warning("Failed to shutdown old manager for context_id=%s", context_id)
+                    logger.warning("Failed to shutdown old manager for context_id=%s", cache_key)
 
             return manager
 

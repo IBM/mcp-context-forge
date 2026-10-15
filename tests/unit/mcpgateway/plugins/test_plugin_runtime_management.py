@@ -305,10 +305,10 @@ class TestTTLCacheExpiry:
             assert entry.is_expired(factory._cache_ttl)
 
     def test_cache_ttl_default(self):
-        """Default TTL is 30 seconds."""
+        """Default TTL is 0 (no expiry) — managers live for the worker lifetime."""
         from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
-        assert GatewayTenantPluginManagerFactory.DEFAULT_CACHE_TTL == 30
+        assert GatewayTenantPluginManagerFactory.DEFAULT_CACHE_TTL == 0
 
     def test_cache_ttl_zero_disables(self):
         """TTL of 0 short-circuits the expiry check so entries never auto-evict."""
