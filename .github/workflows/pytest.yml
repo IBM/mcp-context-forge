@@ -225,6 +225,7 @@ jobs:
             tests/unit/mcpgateway/test_observability.py \
             tests/unit/mcpgateway/services/test_a2a_service.py \
             tests/live_gateway/a2a/test_a2a_trace_context_e2e.py \
+            tests/live_gateway/mcp/test_mcp_trace_context_e2e.py \
             -v --tb=short
 
     # -----------------------------------------------------------
