@@ -5869,7 +5869,7 @@ async def preview_tool(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolPreviewResponse:
-    """Validate and resolve a tool invocation without executing it (#5629, #6743).
+    """Validate and resolve a tool invocation without executing it.
 
     Dry-run counterpart to live tool invocation: no REST/MCP/A2A/gRPC call is made, and no
     TOOL_POST_INVOKE hook runs. Shares tool resolution/RBAC with the live invocation path
