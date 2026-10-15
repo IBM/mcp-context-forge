@@ -1074,6 +1074,8 @@ class TestRequestMiddlewareTraceEnvelope:
         unchanged, so later spans in the task cannot inherit the failed request's parent.
         """
         pytest.importorskip("opentelemetry.sdk.trace")
+        pytest.importorskip("opentelemetry.sdk.trace.export")
+        pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
         # Third-Party
         from opentelemetry import context as otel_context_api
 
