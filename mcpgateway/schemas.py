@@ -2140,7 +2140,7 @@ class ToolResult(BaseModelWithConfigDict):
     """
 
     content: List[Union[TextContent, ImageContent]]
-    structured_content: Optional[Dict[str, Any]] = None
+    structured_content: Optional[Any] = Field(default=None, description="Machine-readable result; any JSON value on the 2026 wire, an object only on the 2025 wire")
     is_error: bool = False
     error_message: Optional[str] = None
     meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta", description="MCP result metadata, e.g. the JSON-RPC error code of a failed call under io.contextforge/errorCode")

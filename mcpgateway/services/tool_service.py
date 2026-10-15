@@ -1940,10 +1940,9 @@ class ToolService(BaseService):
              ContextForge #4202 fix. Without this early return the gateway
              would clobber the upstream's original error message with a
              schema-mismatch dict.
-           - Require ``structured_content`` to be a JSON object when
-             explicitly set; reject lists, scalars and other shapes with a
-             structured ``invalid_structured_content_type`` error (per MCP
-             2025-11-25 "Output Schema").
+           - Accept any JSON value as ``structured_content`` (the 2026 spec
+             lifted the 2025 object-only rule); the schema alone decides
+             validity, and the transport drops non-objects for 2025-era callers.
            - Otherwise best-effort promote the first parseable
              ``TextContent`` item to ``structured_content`` (tolerates
              both dict and Pydantic shapes, which matters because
@@ -2091,22 +2090,11 @@ class ToolService(BaseService):
             if structured is None:
                 structured = getattr(tool_result, "structuredContent", None)
 
-            if structured is not None and not isinstance(structured, dict):
-                details = {
-                    "code": "invalid_structured_content_type",
-                    "expected": "object",
-                    "received": type(structured).__name__.lower(),
-                    "path": [],
-                    "message": "structured_content must be a JSON object",
-                }
-                try:
-                    tool_result.content = [TextContent(type="text", text=orjson.dumps(details).decode())]
-                except Exception:
-                    tool_result.content = [TextContent(type="text", text=str(details))]
-                tool_result.is_error = True
-                return False
-
-            if structured is None:
+            # Any JSON value is allowed here (the 2026 spec lifted the object-only rule): the
+            # schema decides what is valid, and the transport drops non-objects for 2025-era callers.
+            # An explicit null is a value the schema must accept; an absent field is nothing to validate.
+            explicit_null = structured is None and "structured_content" in getattr(tool_result, "model_fields_set", ())
+            if structured is None and not explicit_null:
                 # Try to parse first TextContent text payload as JSON. Content
                 # items may be raw dicts (MCP wire shape) or pydantic objects
                 # (e.g. TextContent synthesized by _coerce_to_tool_result
@@ -2123,7 +2111,7 @@ class ToolService(BaseService):
                         continue
 
             # If no structured data found, treat as valid (nothing to validate)
-            if structured is None:
+            if structured is None and not explicit_null:
                 return True
 
             # Attach structured content. A frozen or slotted ``tool_result``
@@ -2231,7 +2219,11 @@ class ToolService(BaseService):
         # straight into ``model_validate`` without a bespoke mapper.
         if isinstance(payload, BaseModel) and hasattr(payload, "content"):
             try:
-                return ToolResult.model_validate(payload.model_dump(by_alias=True, mode="json"))
+                dump = payload.model_dump(by_alias=True, mode="json")
+                if "structured_content" not in payload.model_fields_set:
+                    # an absent structuredContent stays absent; only a value the upstream set (null included) is one
+                    dump.pop("structuredContent", None)
+                return ToolResult.model_validate(dump)
             except ValidationError:
                 # User-visible reshape: an MCP-looking Pydantic upstream
                 # result is about to be downgraded to an opaque text blob.

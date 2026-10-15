@@ -3265,6 +3265,33 @@ class TestRPCEndpoints:
     """Tests for JSON-RPC functionality and utility endpoints."""
 
     @patch("mcpgateway.main.tool_service.invoke_tool")
+    @pytest.mark.parametrize("structured, kept", [pytest.param({"a": 1}, True, id="object_kept"), pytest.param([1, 2, 3], False, id="list_dropped"), pytest.param("text", False, id="string_dropped")])
+    def test_rpc_tool_invocation_keeps_only_object_structured_content(self, mock_invoke_tool, test_client, auth_headers, structured, kept):
+        """/rpc is a 2025-era wire: a non-object structuredContent is dropped and the data stays in the text block (issue #6575)."""
+        mock_invoke_tool.return_value = {"content": [{"type": "text", "text": "[1, 2, 3]"}], "structuredContent": structured, "isError": False}
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert ("structuredContent" in result) is kept
+        if kept:
+            assert result["structuredContent"] == structured
+        assert result["content"][0]["text"] == "[1, 2, 3]"
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    def test_rpc_tool_invocation_keeps_a_structured_only_result_as_text(self, mock_invoke_tool, test_client, auth_headers):
+        """/rpc: when the only copy of the data is a non-object structuredContent, it is kept as a JSON text block."""
+        mock_invoke_tool.return_value = {"content": [], "structuredContent": [1, 2, 3], "isError": False}
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "test-id", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}}, headers=auth_headers)
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert "structuredContent" not in result
+        assert [json.loads(block["text"]) for block in result["content"] if block["type"] == "text"] == [[1, 2, 3]]
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
     def test_rpc_tool_invocation(self, mock_invoke_tool, test_client, auth_headers):
         """Test tool invocation via JSON-RPC."""
         mock_invoke_tool.return_value = {"content": [{"type": "text", "text": "Tool response"}], "is_error": False}

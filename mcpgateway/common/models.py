@@ -663,7 +663,7 @@ class CallToolResult(BaseModelWithConfigDict):
         content (List[ContentType]): A list of content items returned by the tool.
         is_error (bool): Flag indicating if the tool call resulted in an error.
                         Will be serialized as 'isError' in JSON.
-        structured_content (Optional[Dict[str, Any]]): Optional structured JSON output.
+        structured_content (Optional[Any]): Optional structured output; any JSON value on the 2026 wire.
         meta (Optional[Dict[str, Any]]): Optional metadata for protocol extension.
                                         Serialized as '_meta' in JSON.
 
@@ -674,7 +674,7 @@ class CallToolResult(BaseModelWithConfigDict):
 
     content: List["ContentBlock"]  # Uses ContentBlock union for full MCP spec support
     is_error: Optional[bool] = Field(default=False, alias="isError")
-    structured_content: Optional[Dict[str, Any]] = Field(None, alias="structuredContent")
+    structured_content: Optional[Any] = Field(None, alias="structuredContent", description="Any JSON value on the 2026 wire; an object only on the 2025 wire")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
 
 
