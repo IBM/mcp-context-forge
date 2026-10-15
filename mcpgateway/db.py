@@ -4721,6 +4721,7 @@ class Gateway(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transport: Mapped[str] = mapped_column(String(20), default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    upstream_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
