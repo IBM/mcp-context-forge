@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Module Description.
 Module documentation...
 """
+
 # tests/unit/mcpgateway/services/test_token_exchange_integration.py
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,7 @@ import pytest
 # First-Party
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.tool_service import ToolInvocationError, ToolService
 
 
 class TestTokenExchangeConfigValidation:
@@ -140,7 +142,9 @@ class TestGetAccessTokenTokenExchange:
         # forwarded to token_exchange() so mTLS against corporate-CA IdPs works.
         mgr = OAuthManager()
         mgr.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 3600})
-        mgr._prepare_runtime_credentials = AsyncMock(return_value={"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "client_secret": "s", "target_audience": "aud"})  # pragma: allowlist secret
+        mgr._prepare_runtime_credentials = AsyncMock(
+            return_value={"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "client_secret": "s", "target_audience": "aud"}
+        )  # pragma: allowlist secret
 
         cfg = {"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "target_audience": "aud"}
         await mgr.get_access_token(cfg, subject_token="user-jwt", ca_certificate="PEM", client_cert="cert", client_key="key")
@@ -345,6 +349,228 @@ _FAKE_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist s
 _TE_CFG = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as/token", "subject_token_source": "inbound_user_jwt"}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("service_class,error_class", [(ToolService, ToolInvocationError), (GatewayService, GatewayConnectionError)])
+async def test_same_user_denied_credential_stays_denied(service_class, error_class):
+    """Keep denied credentials isolated from another credential's warm cache."""
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    email = "credential-isolation@example.test"
+    session = make_test_jwt(email, extra_payload={"token_use": "session", "jti": "session-credential"})
+    api = make_test_jwt(email, extra_payload={"jti": "api-credential"})
+    service = service_class()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+
+    async def exchange(**kwargs):
+        if kwargs["subject_token"] != session:
+            raise OAuthError("subject credential denied")
+        return {"access_token": "synthetic-upstream-bearer", "expires_in": 3600}
+
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(side_effect=exchange)
+    args = (dict(_TE_CFG), "credential-gateway", "credential-gateway", email)
+    with pytest.raises(error_class):
+        await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {api}"})
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    allowed = await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {session}"})
+    before = service.oauth_manager.token_exchange.await_count
+    with pytest.raises(error_class):
+        await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {api}"})
+    assert service.oauth_manager.token_exchange.await_count == before + 1
+    assert await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {session}"}) == allowed
+    assert service.oauth_manager.token_exchange.await_count == before + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("service_class,error_class", [(ToolService, ToolInvocationError), (GatewayService, GatewayConnectionError)])
+@pytest.mark.parametrize("headers", [None, {"authorization": "Bearer malformed"}, {"authorization": "Bearer opaque-token"}])
+async def test_warm_cache_rejects_unusable_subject_before_cache_access(service_class, error_class, headers):
+    """Reject missing and non-JWT credentials before checking a warm cache."""
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+
+    service = service_class()
+    cache = TokenExchangeCache(redis_url=None)
+    service._token_exchange_cache = cache
+    cache.get = AsyncMock(wraps=cache.get)
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock()
+    with pytest.raises(error_class):
+        await service._resolve_token_exchange_header(dict(_TE_CFG), "gw", "gw", "u@e", headers)
+    cache.get.assert_not_awaited()
+    service.oauth_manager.token_exchange.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gateway_opaque_bearer_does_not_fall_back_to_valid_cookie():
+    """Keep the authenticated bearer authoritative when a different cookie is present."""
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+
+    service = GatewayService()
+    cache = TokenExchangeCache(redis_url=None)
+    service._token_exchange_cache = cache
+    cache.get = AsyncMock(wraps=cache.get)
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock()
+    headers = {"authorization": "Bearer opaque-token", "cookie": f"jwt_token={_FAKE_JWT}"}
+    with pytest.raises(GatewayConnectionError):
+        await service._resolve_token_exchange_header(dict(_TE_CFG), "gw", "gw", "u@e", headers)
+    cache.get.assert_not_awaited()
+    service.oauth_manager.token_exchange.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_negative_cache_and_warm_tokens_are_subject_specific():
+    """A failed exchange for one JWT must not block another JWT for the same user."""
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    service = ToolService()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    a = make_test_jwt("same@example.test", extra_payload={"jti": "subject-a"})
+    b = make_test_jwt("same@example.test", extra_payload={"jti": "subject-b"})
+
+    async def exchange(**kwargs):
+        if kwargs["subject_token"] == b:
+            raise OAuthError("denied")
+        return {"access_token": "upstream-a", "expires_in": 3600}
+
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(side_effect=exchange)
+    args = (dict(_TE_CFG), "gw", "gw", "same@example.test")
+    with pytest.raises(ToolInvocationError):
+        await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {b}"})
+    assert await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {a}"}) == {"Authorization": "Bearer upstream-a"}
+    with pytest.raises(ToolInvocationError, match="unavailable"):
+        await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {b}"})
+    assert await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {a}"}) == {"Authorization": "Bearer upstream-a"}
+    assert service.oauth_manager.token_exchange.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_same_type_jwts_with_different_jti_exchange_independently():
+    """Include the complete JWT identity when claims share a principal."""
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    service = ToolService()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    first = make_test_jwt("same@example.test", extra_payload={"jti": "jwt-one"})
+    second = make_test_jwt("same@example.test", extra_payload={"jti": "jwt-two"})
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(side_effect=[{"access_token": "one", "expires_in": 3600}, {"access_token": "two", "expires_in": 3600}])
+    args = (dict(_TE_CFG), "gw", "gw", "same@example.test")
+    assert await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {first}"}) == {"Authorization": "Bearer one"}
+    assert await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {second}"}) == {"Authorization": "Bearer two"}
+    assert service.oauth_manager.token_exchange.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_distinct_subjects_receive_only_their_exchange():
+    """Distinct JWTs use separate single-flight locks and cache entries."""
+    import asyncio
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    service = ToolService()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    first = make_test_jwt("same@example.test", extra_payload={"jti": "concurrent-one"})
+    second = make_test_jwt("same@example.test", extra_payload={"jti": "concurrent-two"})
+
+    async def exchange(**kwargs):
+        await asyncio.sleep(0)
+        return {"access_token": "for-one" if kwargs["subject_token"] == first else "for-two", "expires_in": 3600}
+
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(side_effect=exchange)
+    args = (dict(_TE_CFG), "gw", "gw", "same@example.test")
+    results = await asyncio.gather(
+        service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {first}"}),
+        service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {second}"}),
+    )
+    assert results == [{"Authorization": "Bearer for-one"}, {"Authorization": "Bearer for-two"}]
+    assert service.oauth_manager.token_exchange.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_401_invalidates_only_the_exact_subject_and_retries_once():
+    """Evict only the JWT that received 401 and perform one refresh."""
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    service = ToolService()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    first = make_test_jwt("same@example.test", extra_payload={"jti": "refresh-one"})
+    second = make_test_jwt("same@example.test", extra_payload={"jti": "refresh-two"})
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(
+        side_effect=[
+            {"access_token": "one-old", "expires_in": 3600},
+            {"access_token": "two", "expires_in": 3600},
+            {"access_token": "one-new", "expires_in": 3600},
+        ]
+    )
+    args = (dict(_TE_CFG), "gw", "gw", "same@example.test")
+    old = await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {first}"})
+    await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {second}"})
+    sends = []
+
+    async def send(headers):
+        sends.append(headers)
+        response = MagicMock()
+        response.status_code = 401 if len(sends) == 1 else 200
+        return response
+
+    response = await service._send_with_token_exchange_retry(send, old, dict(_TE_CFG), "gw", "gw", "same@example.test", {"authorization": f"Bearer {first}"})
+    assert response.status_code == 200
+    assert [headers["Authorization"] for headers in sends] == ["Bearer one-old", "Bearer one-new"]
+    assert await service._resolve_token_exchange_header(*args, {"authorization": f"Bearer {second}"}) == {"Authorization": "Bearer two"}
+    assert service.oauth_manager.token_exchange.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "service_class,error_class,module_name",
+    [
+        (ToolService, ToolInvocationError, "mcpgateway.services.tool_service"),
+        (GatewayService, GatewayConnectionError, "mcpgateway.services.gateway_service"),
+    ],
+)
+@pytest.mark.parametrize("fail", [False, True])
+async def test_audit_and_logs_keep_correlation_without_raw_tokens(service_class, error_class, module_name, fail, caplog):
+    """Carry real correlation IDs into audit and logs without exposing credentials."""
+    import importlib
+    import logging
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+    from tests.helpers.auth import make_test_jwt
+
+    subject = make_test_jwt("audit@example.test", extra_payload={"jti": "audit-subject"})
+    exchanged = "synthetic-exchanged-secret"
+    correlation_id = "correlation-real-711"
+    service = service_class()
+    service._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    service.oauth_manager = MagicMock()
+    service.oauth_manager.token_exchange = AsyncMock(side_effect=OAuthError("synthetic failure") if fail else None)
+    if not fail:
+        service.oauth_manager.token_exchange.return_value = {"access_token": exchanged, "expires_in": 3600}
+    sec_logger = MagicMock()
+    module = importlib.import_module(module_name)
+    with patch.object(module, "audit_token_exchange") as audit, patch.object(module, "get_structured_logger", return_value=sec_logger), caplog.at_level(logging.INFO):
+        call = service._resolve_token_exchange_header(dict(_TE_CFG), "audit-gateway", "audit-gateway", "audit@example.test", {"authorization": f"Bearer {subject}", "x-correlation-id": correlation_id})
+        if fail:
+            with pytest.raises(error_class):
+                await call
+        else:
+            assert await call == {"Authorization": f"Bearer {exchanged}"}
+    assert audit.call_args.kwargs["correlation_id"] == correlation_id
+    structured_logs = repr(sec_logger.log.call_args_list)
+    assert correlation_id in structured_logs
+    captured = " ".join(record.getMessage() for record in caplog.records) + structured_logs + repr(audit.call_args_list)
+    assert correlation_id in captured
+    assert subject not in captured
+    assert exchanged not in captured
+
+
 def _mock_te_cache(get_return=None, failed=False):
     """A MagicMock TokenExchangeCache with all async methods + single-flight lock stubbed."""
     # Standard
@@ -527,7 +753,7 @@ class TestToolPathTokenExchange:
 
         svc = ToolService()
         svc._token_exchange_cache = _mock_te_cache()
-        await svc._invalidate_token_exchange_on_unauthorized(401, dict(_TE_CFG), "gw1", None)
+        await svc._invalidate_token_exchange_on_unauthorized(401, dict(_TE_CFG), "gw1", None, {"authorization": f"Bearer {_FAKE_JWT}"})
         svc._token_exchange_cache.invalidate.assert_not_awaited()
 
     async def test_non_jwt_subject_token_denies(self):
@@ -635,8 +861,9 @@ class TestUnauthorizedInvalidation:
             oauth_config={"grant_type": "token-exchange", "target_audience": "aud"},
             gateway_id="gw1",
             app_user_email="u@e",
+            request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
         )
-        svc._token_exchange_cache.invalidate.assert_awaited_once_with("gw1", "u@e", "aud")
+        svc._token_exchange_cache.invalidate.assert_awaited_once_with("gw1", "u@e", "aud", subject_token=_FAKE_JWT)
 
     async def test_non_401_does_not_invalidate(self):
         # Standard
@@ -651,6 +878,7 @@ class TestUnauthorizedInvalidation:
             oauth_config={"grant_type": "token-exchange", "target_audience": "aud"},
             gateway_id="gw1",
             app_user_email="u@e",
+            request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
         )
         svc._token_exchange_cache.invalidate.assert_not_awaited()
 
@@ -1043,7 +1271,7 @@ class TestRestIntegrationB2Wiring:
             ),
             patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
-            result = await svc.invoke_tool(test_db, "test_tool", {}, request_headers={"authorization": "Bearer inbound"}, app_user_email="u@e")
+            result = await svc.invoke_tool(test_db, "test_tool", {}, request_headers={"authorization": f"Bearer {_FAKE_JWT}"}, app_user_email="u@e")
 
         assert result.content[0].text == '{\n  "result": "ok"\n}'
         assert len(responses) == 2  # exactly one retry

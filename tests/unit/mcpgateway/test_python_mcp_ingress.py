@@ -141,6 +141,23 @@ async def test_real_affinity_dispatch_preserves_identity_and_team_scope(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_real_affinity_dispatch_keeps_a_non_object_structured_result(monkeypatch, affinity_application):
+    """An owner-worker dispatch is internal: a list in structuredContent must reach the originating worker untouched (issue #6575)."""
+    execute = AsyncMock(return_value={"content": [], "structuredContent": [1, 2, 3]})
+    monkeypatch.setattr(main, "_execute_rpc_tools_call", execute)
+    monkeypatch.setattr(main.PermissionChecker, "has_permission", AsyncMock(return_value=True))
+    response = await post_rpc_in_process(
+        content=orjson.dumps({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "numbers"}, "id": 1}),
+        headers={"x-forwarded-internally": "true"},
+        timeout=5,
+        auth_context=_context(scoped_permissions=["tools.execute"]),
+    )
+    result = response.json()["result"]
+    assert result["structuredContent"] == [1, 2, 3]
+    assert result["content"] == []
+
+
+@pytest.mark.asyncio
 async def test_real_affinity_dispatch_enforces_rbac(monkeypatch, affinity_application):
     """RBAC denial stops execution even when token permissions allow tools.execute."""
     execute = AsyncMock()

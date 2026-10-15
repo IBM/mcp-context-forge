@@ -38,7 +38,7 @@ async def test_transparent_exchange_emits_audit_without_token(caplog):
         "target_audience": "https://svc",
         "subject_token_source": "inbound_user_jwt",
     }
-    await svc._token_exchange_cache.invalidate("gw1", "u@e", "https://svc")
+    await svc._token_exchange_cache.invalidate("gw1", "u@e", "https://svc", subject_token=_FAKE_JWT)
 
     with caplog.at_level(logging.INFO):
         header = await svc._resolve_token_exchange_header(cfg, "gw1", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"})

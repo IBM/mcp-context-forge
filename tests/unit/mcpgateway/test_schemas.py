@@ -2200,3 +2200,25 @@ class TestGatewayTransportValidation:
 
         with pytest.raises(ValidationError, match="Transport must be a string"):
             GatewayUpdate(transport=123)
+
+
+class TestToolOutputSchemaShapes:
+    """A tool may declare any JSON Schema as its outputSchema, not only an object (issue #6575)."""
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            pytest.param({"type": "array", "items": {"type": "integer"}}, id="array"),
+            pytest.param({"type": "string"}, id="string"),
+            pytest.param({"type": "number"}, id="number"),
+            pytest.param({"type": "boolean"}, id="boolean"),
+        ],
+    )
+    def test_non_object_output_schema_is_accepted(self, schema):
+        tool = ToolCreate(name="shapes", url="https://example.com/shapes", integration_type="REST", request_type="GET", output_schema=schema)
+        assert tool.output_schema == schema
+
+    @pytest.mark.parametrize("value", [pytest.param([1, 2, 3], id="list"), pytest.param("text", id="string"), pytest.param(7, id="number"), pytest.param(False, id="boolean")])
+    def test_tool_result_carries_any_json_value(self, value):
+        result = ToolResult(content=[], structured_content=value)
+        assert result.structured_content == value
