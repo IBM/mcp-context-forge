@@ -40,6 +40,7 @@ from mcp_types import PromptArgument
 import mcp_types as types
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
+import orjson
 import pytest
 from starlette.types import Scope
 
@@ -464,6 +465,39 @@ def test_legacy_drop_keeps_a_json_text_copy_only_when_missing(content, value, ap
     assert (len(content) == before + 1) is appended
     if appended:
         assert json.loads(content[-1].text) == value
+
+
+@pytest.mark.parametrize(
+    "text, value, carried",
+    [
+        pytest.param("1", True, False, id="number_text_is_not_true"),
+        pytest.param("true", 1, False, id="boolean_text_is_not_one"),
+        pytest.param("0", False, False, id="zero_is_not_false"),
+        pytest.param("true", True, True, id="boolean_matches"),
+        pytest.param("[1]", [True], False, id="nested_list_number_vs_boolean"),
+        pytest.param('{"a": 1}', {"a": True}, False, id="nested_object_number_vs_boolean"),
+        pytest.param('{"a": [1, true]}', {"a": [1, True]}, True, id="nested_exact_match"),
+        pytest.param("1.0", 1, True, id="float_and_int_compare_as_numbers"),
+        pytest.param("[1, 2]", [1], False, id="different_length"),
+        pytest.param("not json", 1, False, id="unparseable_text"),
+    ],
+)
+def test_text_content_carries_keeps_json_booleans_apart_from_numbers(text, value, carried):
+    """The "already carried" check must not let Python's 1 == True make a boolean payload look present as text."""
+    assert tr.text_content_carries([types.TextContent(type="text", text=text)], value) is carried
+
+
+@pytest.mark.parametrize("value", [pytest.param(True, id="true"), pytest.param([True], id="list_of_true"), pytest.param([{"ok": False}], id="list_with_object_with_false")])
+def test_legacy_drop_appends_a_boolean_payload_next_to_numeric_text(value):
+    """A boolean payload is appended as JSON text even when a numeric text block looks equal under Python equality."""
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2025-03-26", meta=None, request=None))
+    content = [types.TextContent(type="text", text=orjson.dumps(value).decode().replace("true", "1").replace("false", "0"))]
+    try:
+        assert tr._structured_for_caller(content, value) is None
+    finally:
+        tr._v2_request_ctx.reset(token)
+    assert len(content) == 2
+    assert json.loads(content[1].text) == value and type(json.loads(content[1].text)) is type(value)
 
 
 def test_wire_omits_a_null_structured_content_like_every_sdk_server():

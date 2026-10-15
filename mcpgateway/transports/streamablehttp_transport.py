@@ -1684,6 +1684,27 @@ def _caller_is_modern() -> bool:
     return getattr(_v2_request_ctx.get(), "protocol_version", None) in MODERN_PROTOCOL_VERSIONS
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare two JSON values with their types kept apart: ``true`` is not ``1``, at any depth.
+
+    Args:
+        left: A parsed JSON value.
+        right: A parsed JSON value.
+
+    Returns:
+        bool: Whether both hold the same JSON.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_json_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return False
+    return left == right
+
+
 def text_content_carries(content: Any, value: Any) -> bool:
     """True when a text block in ``content`` already holds ``value`` as JSON.
 
@@ -1692,14 +1713,14 @@ def text_content_carries(content: Any, value: Any) -> bool:
         value: The JSON value to look for.
 
     Returns:
-        bool: Whether some text block parses to exactly ``value``.
+        bool: Whether some text block parses to exactly ``value``, booleans and numbers kept apart.
     """
     for block in content or []:
         text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
         if not isinstance(text, str):
             continue
         try:
-            if orjson.loads(text) == value:
+            if _json_equal(orjson.loads(text), value):
                 return True
         except orjson.JSONDecodeError:
             continue
