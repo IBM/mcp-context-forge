@@ -80,6 +80,8 @@ Seeded client settings (confidential, PKCE-required):
 - Direct access grants / service accounts: both disabled (this client only ever does the
   browser Authorization Code flow, never password or client-credentials grants)
 - An **Audience** protocol mapper stamping `aud: mcp-gateway-api` into its access tokens
+- The `groups` and `realm_access.roles` mappers copied from the `mcp-gateway` client, so
+  the gateway can map Keycloak roles and groups for web UI users
 
 That last point matters: `trusted_for_api_auth`/`api_audience` (the gateway-side settings
 that decide whether an external Keycloak token is accepted as a bearer credential) have no
@@ -90,11 +92,32 @@ admin API. Run this after the gateway is healthy:
 make compose-sso-seed-audience
 ```
 
-It mints a short-lived admin JWT, finds the SSO provider matching the `mcp-gateway` realm,
-and `PUT`s `{trusted_for_api_auth: true, api_audience: "mcp-gateway-api"}` onto it -- safe to
-re-run. Override the gateway URL, realm, or audience value with `SSO_SEED_GATEWAY_URL`,
-`SSO_SEED_REALM`, `SSO_SEED_API_AUDIENCE` (see `.env.example` for valid/suggested values and
-how to set them -- they're `make` variables, not read from `.env` automatically).
+`docker-compose.sso.yml` sets `SSO_API_TOKEN_AUTH_ENABLED=true` for the gateway. Without that
+flag the gateway ignores external bearer tokens, whatever the provider fields say. Set it
+yourself when you run the gateway outside this compose file.
+
+It mints a short-lived admin JWT inside the gateway container and `PUT`s
+`{trusted_for_api_auth: true, api_audience: "mcp-gateway-api"}` onto the `keycloak` SSO
+provider. It skips the `PUT` when the provider already matches, so it is safe to re-run, and
+it warns before replacing a different `api_audience`. Override the values with these `make`
+variables (they are not read from `.env`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SSO_SEED_GATEWAY_URL` | `http://localhost:8080` | Gateway origin the target calls |
+| `SSO_SEED_PROVIDER_ID` | `keycloak` | SSO provider row to update |
+| `SSO_SEED_API_AUDIENCE` | `mcp-gateway-api` | `aud` value to trust on incoming access tokens |
+
+> **Existing Keycloak volume:** Keycloak imports the realm export once, at first start. An
+> existing `keycloak_data` volume does not gain the `contextforge-web-ui` client. Run
+> `make compose-sso-clean` to remove the volume, then start the stack again.
+
+> **Limitation of the local stack:** the gateway rejects any discovered `jwks_uri` that is
+> not `https` and on the issuer's origin. The `compose-sso` Keycloak uses plain http, and the
+> provider issuer is rewritten to `http://localhost:8180`, which the gateway container cannot
+> reach. A Keycloak access token from this stack is therefore rejected until you front
+> Keycloak with https or set the provider `jwks_uri` override. The seed target only records
+> the trust settings. Use an https Keycloak for an end-to-end web UI to gateway run.
 
 #### Adding this client to an existing Keycloak instance by hand
 
