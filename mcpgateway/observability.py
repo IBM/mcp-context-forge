@@ -10,13 +10,14 @@ OTEL_AVAILABLE indicates core tracing support. Baggage support remains independe
 
 # Standard
 import base64
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from dataclasses import dataclass
 from importlib import import_module as _im
 import inspect
 import logging
 import os
-from typing import Any, Callable, cast, Dict, Mapping, MutableMapping, Optional
+import sys
+from typing import Any, Callable, cast, Dict, Mapping, Optional
 from urllib.parse import urlparse
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
@@ -24,7 +25,6 @@ OTEL_AVAILABLE = False
 otel_baggage: Any = None  # pylint: disable=invalid-name
 try:
     # Third-Party
-    from opentelemetry import context as otel_context
     from opentelemetry import trace
     from opentelemetry.propagate import extract as otel_extract
     from opentelemetry.propagate import inject as otel_inject
@@ -44,7 +44,6 @@ try:
 except ImportError:
     # OpenTelemetry not installed - set to None for graceful degradation
     otel_baggage = None
-    otel_context = None
     trace = None
     otel_extract = None
     otel_inject = None
@@ -347,6 +346,139 @@ class BaggageSpanAttributePolicy:
 # pylint: disable=invalid-name
 _TRACER = None
 _BAGGAGE_SPAN_ATTRIBUTE_POLICY = BaggageSpanAttributePolicy()
+
+
+_LEGACY_INSTANA_COMPAT_MARKER = "_contextforge_otel_context_compat"
+
+
+def _legacy_instana_span_context(context: Any, span_context_cls: Any) -> Any:
+    """Translate an OpenTelemetry ``Context`` into a legacy Instana ``SpanContext``.
+
+    Mirrors the parent conversion that Instana >= 3.12 performs for ``context=``.
+    An explicit context without a valid span yields an invalid Instana span
+    context, so the new span becomes a root (standard OTel semantics) instead of
+    silently inheriting the ambient current span.
+
+    Args:
+        context: OpenTelemetry context supplied by the caller.
+        span_context_cls: ``instana.span_context.SpanContext``.
+
+    Returns:
+        An Instana ``SpanContext`` describing the parent.
+    """
+    # Third-Party
+    from instana.util.ids import hex_id, hex_id_limited  # pylint: disable=import-outside-toplevel,import-error
+    from opentelemetry import trace as otel_trace_api  # pylint: disable=import-outside-toplevel
+
+    parent = otel_trace_api.get_current_span(context).get_span_context()
+    if isinstance(parent, span_context_cls):
+        return parent
+    if parent is None or not parent.is_valid:
+        return span_context_cls(trace_id=otel_trace_api.INVALID_TRACE_ID, span_id=otel_trace_api.INVALID_SPAN_ID, is_remote=False)
+    hex_trace_id = hex_id(parent.trace_id)
+    is_long = len(hex_trace_id) > 16
+    return span_context_cls(
+        trace_id=int(hex_id_limited(parent.trace_id), 16) if is_long else parent.trace_id,
+        span_id=parent.span_id,
+        is_remote=parent.is_remote,
+        trace_flags=parent.trace_flags,
+        trace_state=parent.trace_state,
+        long_trace_id=hex_trace_id if is_long else None,
+    )
+
+
+def _wrap_legacy_instana_method(original: Callable[..., Any], span_context_cls: Any) -> Callable[..., Any]:
+    """Wrap a legacy Instana tracer method so it accepts the OTel ``context=`` keyword.
+
+    Args:
+        original: Unbound ``InstanaTracer`` method that only understands ``span_context``.
+        span_context_cls: ``instana.span_context.SpanContext``.
+
+    Returns:
+        Wrapper translating ``context`` into ``span_context``; all other arguments,
+        return values, and exceptions pass through unchanged.
+    """
+
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        """Translate ``context`` to ``span_context`` and delegate.
+
+        Args:
+            self: Tracer instance.
+            *args: Positional arguments forwarded unchanged.
+            **kwargs: Keyword arguments; ``context`` is translated.
+
+        Returns:
+            Whatever the original method returns.
+        """
+        if "context" in kwargs:
+            context = kwargs.pop("context")
+            if context is not None and kwargs.get("span_context") is None:
+                kwargs["span_context"] = _legacy_instana_span_context(context, span_context_cls)
+        return original(self, *args, **kwargs)
+
+    wrapper.__name__ = getattr(original, "__name__", "wrapper")
+    wrapper.__qualname__ = getattr(original, "__qualname__", wrapper.__name__)
+    wrapper.__doc__ = getattr(original, "__doc__", None)
+    wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+    setattr(wrapper, _LEGACY_INSTANA_COMPAT_MARKER, True)
+    return wrapper
+
+
+def _accepts_kwarg(func: Any, name: str) -> Optional[bool]:
+    """Return whether ``func`` accepts keyword ``name``; ``None`` if not introspectable.
+
+    Args:
+        func: Callable to inspect.
+        name: Keyword argument name.
+
+    Returns:
+        True/False, or None when the signature cannot be determined.
+    """
+    try:
+        parameters = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return None
+    return name in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+
+
+def ensure_legacy_instana_context_compat() -> bool:
+    """Make legacy Instana tracers (< 3.12) accept the standard OTel ``context=`` keyword.
+
+    MCP SDK 2.x, FastAPI native telemetry, and ContextForge call
+    ``start_span(context=...)`` / ``start_as_current_span(context=...)``. Legacy
+    ``InstanaTracer`` only accepts ``span_context=`` and raises ``TypeError``.
+    The adapter patches the ``InstanaTracer`` class once, so tracers cached by
+    third-party modules before ContextForge initializes are covered too.
+
+    It is a no-op when Instana was not loaded by the process (this function never
+    imports Instana itself), when the tracer already supports ``context``
+    (Instana >= 3.12), or when it was already applied.
+
+    Returns:
+        True if the legacy tracer is (now) adapted, False otherwise.
+    """
+    tracer_module = sys.modules.get("instana.tracer")
+    span_context_module = sys.modules.get("instana.span_context")
+    tracer_cls = getattr(tracer_module, "InstanaTracer", None)
+    span_context_cls = getattr(span_context_module, "SpanContext", None)
+    if tracer_cls is None or span_context_cls is None:
+        return False
+
+    adapted = False
+    for method_name in ("start_span", "start_as_current_span"):
+        method = tracer_cls.__dict__.get(method_name)
+        if method is None:
+            continue
+        if getattr(method, _LEGACY_INSTANA_COMPAT_MARKER, False):
+            adapted = True
+            continue
+        # Only adapt the exact legacy capability: explicit `span_context`, no `context`.
+        if _accepts_kwarg(method, "context") is not False or _accepts_kwarg(method, "span_context") is not True:
+            continue
+        setattr(tracer_cls, method_name, _wrap_legacy_instana_method(method, span_context_cls))
+        adapted = True
+        logger.info("Adapted legacy InstanaTracer.%s to accept the OpenTelemetry `context` argument", method_name)
+    return adapted
 
 
 def _supports_exporter_kwarg(exporter_cls: Any, kwarg: str) -> bool:
@@ -1134,91 +1266,54 @@ class OpenTelemetryRequestMiddleware:
                             span.set_status(Status(StatusCode.OK))
             await send(message)
 
-        parent_context_token = None
-        try:
-            try:
-                span_context_manager = _TRACER.start_as_current_span(span_name, **start_span_kwargs)
-            except TypeError as exc:
-                # Some tracer implementations (e.g. Instana < 3.12) don't accept the
-                # `context` keyword argument even though it is part of the
-                # OpenTelemetry Tracer API. Retry only for that known incompatibility;
-                # unrelated TypeErrors must retain their original behavior.
-                error_message = str(exc)
-                rejected_context = "context" in start_span_kwargs and "unexpected keyword argument" in error_message and ("'context'" in error_message or '"context"' in error_message)
-                if not rejected_context:
-                    raise
-                # Attach the extracted inbound parent to the current context before
-                # starting the span, so the fallback span still nests under the inbound
-                # trace and active spans match raw-header forwarding. The outer finally
-                # detaches the parent, including when this fallback start raises.
-                compatible_kwargs = {key: value for key, value in start_span_kwargs.items() if key != "context"}
-                if parent_context is not None and otel_context is not None:
-                    try:
-                        parent_context_token = otel_context.attach(parent_context)
-                    except Exception as attach_exc:  # pylint: disable=broad-exception-caught
-                        logger.debug("Failed to attach inbound parent context: %s", attach_exc)
-                        parent_context_token = None
-                span_context_manager = _TRACER.start_as_current_span(span_name, **compatible_kwargs)
-                logger.debug(
-                    "Tracer %r rejected `context` kwarg; started span %r with attached parent context",
-                    type(_TRACER).__name__,
-                    span_name,
-                )
-
-            with span_context_manager as span:
-                # No valid inbound envelope: publish this new root span's context into
-                # the ASGI headers so downstream raw-header copies (session-task handoff,
-                # affinity envelopes, trusted-internal dispatch) carry the trace and
-                # internal spans nest under it instead of rooting detached traces.
-                if not has_remote_parent and otel_inject is not None:
-                    try:
-                        envelope_carrier: Dict[str, str] = {}
-                        otel_inject(carrier=envelope_carrier)
-                        envelope_traceparent = envelope_carrier.get("traceparent")
-                        if envelope_traceparent:
-                            new_scope_headers = list(scope.get("headers", []) or [])
-                            new_scope_headers.append((b"traceparent", envelope_traceparent.encode("latin-1")))
-                            envelope_tracestate = envelope_carrier.get("tracestate")
-                            if envelope_tracestate:
-                                new_scope_headers.append((b"tracestate", envelope_tracestate.encode("latin-1")))
-                            scope["headers"] = new_scope_headers
-                    except Exception as exc:  # pylint: disable=broad-exception-caught
-                        logger.debug("Failed to publish trace envelope into ASGI scope: %s", exc)
-                if span is not None:
-                    for key, value in span_attributes.items():
-                        if value is not None:
-                            set_span_attribute(span, key, value)
-
-                    # Inject baggage as span attributes so request-root spans retain
-                    # the same trace context dimensions carried on child spans.
-                    try:
-                        if OTEL_AVAILABLE and otel_baggage:
-                            baggage_dict = otel_baggage.get_all()
-                            if baggage_dict:
-                                baggage_attrs = _baggage_span_attributes(baggage_dict)
-                                for key, value in baggage_attrs.items():
-                                    set_span_attribute(span, key, value)
-                                logger.debug("Injected %d baggage entries into request span", len(baggage_attrs))
-                    except Exception as exc:
-                        logger.debug("Failed to inject baggage into request span: %s", exc)
-
+        with _TRACER.start_as_current_span(span_name, **start_span_kwargs) as span:
+            # No valid inbound envelope: publish this new root span's context into
+            # the ASGI headers so downstream raw-header copies (session-task handoff,
+            # affinity envelopes, trusted-internal dispatch) carry the trace and
+            # internal spans nest under it instead of rooting detached traces.
+            if not has_remote_parent and otel_inject is not None:
                 try:
-                    await self.app(scope, receive, _send_with_span_status)
-                    if span is not None and "status" not in status_code_holder and OTEL_AVAILABLE and Status and StatusCode:
-                        span.set_status(Status(StatusCode.OK))
-                except Exception as exc:
-                    if span is not None:
-                        error_message = _sanitize_span_exception_message(exc)
-                        set_span_error(span, exc, record_exception=True)
-                        if OTEL_AVAILABLE and Status and StatusCode:
-                            span.set_status(Status(StatusCode.ERROR, error_message))
-                    raise
-        finally:
-            if parent_context_token is not None and otel_context is not None:
-                try:
-                    otel_context.detach(parent_context_token)
+                    envelope_carrier: Dict[str, str] = {}
+                    otel_inject(carrier=envelope_carrier)
+                    envelope_traceparent = envelope_carrier.get("traceparent")
+                    if envelope_traceparent:
+                        new_scope_headers = list(scope.get("headers", []) or [])
+                        new_scope_headers.append((b"traceparent", envelope_traceparent.encode("latin-1")))
+                        envelope_tracestate = envelope_carrier.get("tracestate")
+                        if envelope_tracestate:
+                            new_scope_headers.append((b"tracestate", envelope_tracestate.encode("latin-1")))
+                        scope["headers"] = new_scope_headers
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.debug("Failed to detach inbound parent context: %s", exc)
+                    logger.debug("Failed to publish trace envelope into ASGI scope: %s", exc)
+            if span is not None:
+                for key, value in span_attributes.items():
+                    if value is not None:
+                        set_span_attribute(span, key, value)
+
+                # Inject baggage as span attributes so request-root spans retain
+                # the same trace context dimensions carried on child spans.
+                try:
+                    if OTEL_AVAILABLE and otel_baggage:
+                        baggage_dict = otel_baggage.get_all()
+                        if baggage_dict:
+                            baggage_attrs = _baggage_span_attributes(baggage_dict)
+                            for key, value in baggage_attrs.items():
+                                set_span_attribute(span, key, value)
+                            logger.debug("Injected %d baggage entries into request span", len(baggage_attrs))
+                except Exception as exc:
+                    logger.debug("Failed to inject baggage into request span: %s", exc)
+
+            try:
+                await self.app(scope, receive, _send_with_span_status)
+                if span is not None and "status" not in status_code_holder and OTEL_AVAILABLE and Status and StatusCode:
+                    span.set_status(Status(StatusCode.OK))
+            except Exception as exc:
+                if span is not None:
+                    error_message = _sanitize_span_exception_message(exc)
+                    set_span_error(span, exc, record_exception=True)
+                    if OTEL_AVAILABLE and Status and StatusCode:
+                        span.set_status(Status(StatusCode.ERROR, error_message))
+                raise
 
 
 def init_telemetry() -> Optional[Any]:
@@ -1236,6 +1331,12 @@ def init_telemetry() -> Optional[Any]:
     """
     # pylint: disable=global-statement
     global _TRACER
+    # Process-wide: FastAPI and MCP SDK telemetry use the global (possibly legacy
+    # Instana) tracer even when ContextForge's own OTEL integration is disabled.
+    try:
+        ensure_legacy_instana_context_compat()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to adapt legacy Instana tracer: %s", exc)
     cfg = get_settings()
 
     # Check if observability is disabled (default: disabled)
@@ -1712,105 +1813,6 @@ def create_child_span(name: str, attributes: Optional[Dict[str, Any]] = None) ->
     """
     return create_span(name, attributes)
 
-
-def _wrap_start_span_with_context(original: Callable) -> Callable:
-    """Return a ``start_span`` that honors the standard ``context`` argument.
-
-    The wrapped method attaches the supplied parent for the duration of span
-    creation so a tracer that reads the current OpenTelemetry context nests the
-    new span under it, then detaches the parent.
-
-    Args:
-        original: The legacy ``start_span`` method to wrap.
-
-    Returns:
-        Callable: A wrapper that accepts ``context`` and preserves the parent.
-    """
-
-    def _compat(self: Any, name: str, *args: Any, context: Optional[Any] = None, **kwargs: Any) -> Any:
-        if context is None or otel_context is None:
-            return original(self, name, *args, **kwargs)
-        token = otel_context.attach(context)
-        try:
-            return original(self, name, *args, **kwargs)
-        finally:
-            otel_context.detach(token)
-
-    setattr(_compat, "__cf_context_compat__", True)
-    return _compat
-
-
-def _wrap_start_as_current_span_with_context(original: Callable) -> Callable:
-    """Return a ``start_as_current_span`` that honors the standard ``context`` argument.
-
-    The wrapped method attaches the supplied parent for the span's lifetime so a
-    tracer that reads the current OpenTelemetry context nests the span under it,
-    then detaches the parent when the span ends.
-
-    Args:
-        original: The legacy ``start_as_current_span`` method to wrap.
-
-    Returns:
-        Callable: A context-manager wrapper that accepts ``context`` and preserves the parent.
-    """
-
-    @contextmanager
-    def _compat(self: Any, name: str, *args: Any, context: Optional[Any] = None, **kwargs: Any) -> Any:
-        if context is None or otel_context is None:
-            with original(self, name, *args, **kwargs) as span:
-                yield span
-            return
-        token = otel_context.attach(context)
-        try:
-            with original(self, name, *args, **kwargs) as span:
-                yield span
-        finally:
-            otel_context.detach(token)
-
-    setattr(_compat, "__cf_context_compat__", True)
-    return _compat
-
-
-def _install_legacy_tracer_context_compat() -> None:
-    """Teach a legacy OpenTelemetry tracer to accept the standard ``context`` keyword.
-
-    Instana < 3.12 subclasses the OpenTelemetry ``Tracer`` API but omits the
-    ``context`` parameter on ``start_span`` and ``start_as_current_span``. Consumers
-    that follow the published API (the MCP Python SDK middleware, FastAPI's native
-    ASGI telemetry, and this module's middleware) pass ``context=``, which raises
-    ``TypeError`` and aborts the request. Patch both methods to accept ``context``
-    and honor the supplied parent through the standard OpenTelemetry context API.
-
-    The patch is capability-gated (skipped when ``context`` is already a
-    parameter), idempotent, preserves unrelated exceptions, and is a no-op when
-    OpenTelemetry or the legacy tracer is absent.
-    """
-    if not OTEL_AVAILABLE:
-        return
-    try:
-        # Third-Party
-        from instana.tracer import InstanaTracer
-    except Exception:  # pylint: disable=broad-exception-caught
-        return
-
-    wrappers = {
-        "start_span": _wrap_start_span_with_context,
-        "start_as_current_span": _wrap_start_as_current_span_with_context,
-    }
-    for method_name, wrapper in wrappers.items():
-        try:
-            method = getattr(InstanaTracer, method_name)
-            if "context" in inspect.signature(method).parameters:
-                continue
-            if getattr(method, "__cf_context_compat__", False):
-                continue
-            setattr(InstanaTracer, method_name, wrapper(method))
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.debug("Skipping %s context compatibility shim: %s", method_name, exc)
-
-
-# Install the compatibility patch before any consumer captures the tracer.
-_install_legacy_tracer_context_compat()
 
 # Initialize on module import
 _TRACER = init_telemetry()
