@@ -4282,7 +4282,7 @@ class ToolService(BaseService):
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
     ) -> dict:
-        """Return an Authorization header carrying the exchanged token (cached or fresh).
+        """Return the exchanged token cached for this subject JWT, or resolve a fresh token.
 
         Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``)
         so the real ``expires_in`` drives the cache TTL (B1).
@@ -4305,12 +4305,19 @@ class ToolService(BaseService):
             ToolInvocationError: If no usable subject token exists or the exchange fails.
         """
         audience = oauth_config.get("target_audience")
-        # Fail closed: cache key is (gateway_id, user, audience). Without a user
+        # Fail closed: cache key is (gateway_id, user, audience, subject JWT). Without a user
         # identity there is no "behalf" to act on, and an empty key component
         # would let unrelated principals share one delegated token.
         if not app_user_email:
             raise ToolInvocationError("Token exchange requires an authenticated user identity. Contact your administrator.")
         user_key = app_user_email
+        # Resolve and validate the inbound JWT before any cache access. Opaque
+        # credentials must neither receive nor influence a cached exchange.
+        subject_token = extract_inbound_bearer(request_headers)
+        if subject_token and not looks_like_jwt(subject_token):
+            subject_token = None
+        if not subject_token:
+            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
         # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
         rh = request_headers or {}
         correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
@@ -4333,32 +4340,20 @@ class ToolService(BaseService):
             except (TypeError, ValueError):
                 return self._TOKEN_EXCHANGE_FALLBACK_TTL
 
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
         if cached:
             return {"Authorization": f"Bearer {cached}"}
 
         # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token):
             # L6: record the degraded-mode denial so an outage burst is observable.
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
             raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
-        # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
-        # an opaque CF session/API token is never forwarded to the external AS.
-        # GatewayService._VALID_SUBJECT_TOKEN_SOURCES only ever persists "inbound_user_jwt"
-        # (config-time validation rejects any other value), so inbound_user_jwt is the only
-        # supported subject_token_source here.
-        subject_token = extract_inbound_bearer(request_headers)
-        if subject_token and not looks_like_jwt(subject_token):
-            subject_token = None
-
-        if not subject_token:
-            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
-
-        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud}; the rest
+        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud,subject}; the rest
         # await the lock and read the freshly-cached token via the double-check below.
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
             if cached:
                 return {"Authorization": f"Bearer {cached}"}
 
@@ -4380,7 +4375,7 @@ class ToolService(BaseService):
                 latency_ms = int((time.monotonic() - started) * 1000)
                 # H1: caller gets a generic message; AS detail never echoed out.
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)  # P4
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token)  # P4
                 audit_token_exchange(
                     user_email=app_user_email,
                     gateway_id=gateway_id,
@@ -4417,7 +4412,7 @@ class ToolService(BaseService):
             exchanged = response["access_token"]
             expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
             latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token)
             audit_token_exchange(
                 user_email=app_user_email,
                 gateway_id=gateway_id,
@@ -4470,7 +4465,7 @@ class ToolService(BaseService):
             return passthrough_allowed
         return [h for h in passthrough_allowed if h.lower() != "authorization"]
 
-    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
+    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str], request_headers: Optional[dict]) -> None:
         """Evict the cached exchanged token on an upstream 401 (B2).
 
         A 401 from the upstream means the cached exchanged token is no longer
@@ -4483,6 +4478,7 @@ class ToolService(BaseService):
                 ``grant_type == "token-exchange"``.
             gateway_id: Gateway identifier used as a cache key component.
             app_user_email: Authenticated end-user email, used as a cache key component.
+            request_headers: Incoming headers used to identify the cached subject JWT.
         """
         if status_code != 401:
             return
@@ -4492,7 +4488,10 @@ class ToolService(BaseService):
             # No identity to invalidate under -- _resolve_token_exchange_header never
             # caches anonymous callers, so there is nothing to evict here either.
             return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"))
+        subject_token = extract_inbound_bearer(request_headers)
+        if not looks_like_jwt(subject_token):
+            return
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"), subject_token=subject_token)
 
     async def _send_with_token_exchange_retry(
         self,
@@ -4543,7 +4542,7 @@ class ToolService(BaseService):
             return resp
         if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
             return resp
-        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
+        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email, request_headers)
         fresh = await self._resolve_token_exchange_header(
             oauth_config, gateway_id, gateway_name, app_user_email, request_headers, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
         )
@@ -4736,6 +4735,7 @@ class ToolService(BaseService):
         """
 
         async def accessible_tools(candidates: List[DbTool]) -> List[DbTool]:
+            """Return candidates visible to the caller."""
             accessible: List[DbTool] = []
             for candidate in candidates:
                 tool_dict = {
