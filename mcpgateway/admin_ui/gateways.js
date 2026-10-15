@@ -3,7 +3,7 @@ import { MASKED_AUTH_VALUE } from "./constants.js";
 import { closeModal, openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
 import { initResourceSelect } from "./resources.js";
-import { validateInputName, validateJson, validateUrl } from "./security.js";
+import { escapeHtml, validateInputName, validateJson, validateUrl } from "./security.js";
 import {
   ensureNoResultsElement,
   serverSideEditPromptsSearch,
@@ -1703,7 +1703,7 @@ const handleGatewayTestSubmit = async function (e) {
     const body = result.body
       ? `<details open>
                 <summary class='cursor-pointer'><strong>Response Body</strong></summary>
-                <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
+                <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${escapeHtml(JSON.stringify(result.body, null, 2))}</pre>
             </details>`
       : "";
 

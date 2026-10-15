@@ -1,6 +1,7 @@
 [project]
 name = "completion-test-server"
 version = "0.1.0"
+license = "Apache-2.0"
 description = "Minimal MCP server fixture advertising the completions capability, used by tests/live_gateway/mcp/test_completion_federation.py (issue #6629)"
 requires-python = ">=3.11"
 dependencies = [
