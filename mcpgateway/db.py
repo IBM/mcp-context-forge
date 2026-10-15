@@ -4684,6 +4684,9 @@ class Server(Base):
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
+    # Operator-set instructions text. NULL: not set. Empty string: send no instructions.
+    instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
