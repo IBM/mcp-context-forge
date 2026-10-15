@@ -660,6 +660,7 @@ class TestMcpSerialization:
 
     def test_serialize_mcp_tool_definition_gets_title_from_object_attr(self):
         """title should be extractable via getattr for non-dict objects."""
+
         class FakeTool:
             name = "fake-tool"
             title = "Fake Tool Title"
@@ -10084,9 +10085,7 @@ class TestExportImportEndpoints:
         monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_selective_configuration.__wrapped__(
-                MagicMock(spec=Request), {"roots": ["https://example.com/root"]}, db=MagicMock(), user={"email": "admin@example.com"}
-            )
+            await main_mod.export_selective_configuration.__wrapped__(MagicMock(spec=Request), {"roots": ["https://example.com/root"]}, db=MagicMock(), user={"email": "admin@example.com"})
 
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
@@ -10131,7 +10130,9 @@ class TestExportImportEndpoints:
         import_data = {"entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}]}}
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"}
+            )
 
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
@@ -10148,7 +10149,9 @@ class TestExportImportEndpoints:
         monkeypatch.setattr(main_mod, "import_service", import_service)
         monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
-        result = await main_mod.import_configuration.__wrapped__(import_data={"entities": {"tools": []}}, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+        result = await main_mod.import_configuration.__wrapped__(
+            import_data={"entities": {"tools": []}}, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"}
+        )
 
         assert result == {"status": "ok"}
         import_service.import_configuration.assert_awaited_once()
@@ -10826,10 +10829,8 @@ class TestRemainingCoverageGaps:
         server_obj = MagicMock()
 
         response = await main_mod.create_server.__wrapped__(
-            server_obj,
+            SimpleNamespace(server=server_obj, team_id=None, visibility="team"),
             request,
-            team_id=None,
-            visibility="team",
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
@@ -10837,10 +10838,8 @@ class TestRemainingCoverageGaps:
 
         request.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
         response = await main_mod.create_server.__wrapped__(
-            server_obj,
+            SimpleNamespace(server=server_obj, team_id="team-2", visibility="team"),
             request,
-            team_id="team-2",
-            visibility="team",
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
@@ -10863,10 +10862,8 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.server_service, "register_server", register)
         db = MagicMock()
         _ = await main_mod.create_server.__wrapped__(
-            server_obj,
+            SimpleNamespace(server=server_obj, team_id="team-1", visibility="public"),
             request,
-            team_id="team-1",
-            visibility="public",
             db=db,
             user={"email": "user@example.com"},
         )
