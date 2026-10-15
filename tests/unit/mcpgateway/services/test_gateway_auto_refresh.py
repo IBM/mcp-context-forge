@@ -192,7 +192,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
                 return False
 
         with patch("mcpgateway.services.gateway_service.fresh_db_session", side_effect=[_FreshSessionContext(s) for s in fresh_contexts]):
-            gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+            gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], [], None))
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-404")
 
@@ -240,7 +240,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
             # Empty response from auth_code gateway
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
@@ -263,7 +263,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
             patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
-            mock_init.return_value = ({}, [], [], [], validation_errors)
+            mock_init.return_value = ({}, [], [], [], validation_errors, None)
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
@@ -292,7 +292,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
             # Empty response from client_credentials gateway
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
             mock_cache.return_value = AsyncMock()
             mock_tool_cache.return_value = AsyncMock()
 
@@ -327,7 +327,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
             # Empty response - should only remove MCP-discovered tools
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
             mock_cache.return_value = AsyncMock()
             mock_tool_cache.return_value = AsyncMock()
 
@@ -351,7 +351,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
             patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
 
             await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", pre_auth_headers=pre_auth_headers)
 
@@ -370,7 +370,7 @@ class TestInitializeGatewayPreAuthHeaders:
         pre_auth_headers = {"Authorization": "Bearer pre-fetched-token"}
 
         with (patch.object(gateway_service, "connect_to_sse_server", new_callable=AsyncMock) as mock_connect,):
-            mock_connect.return_value = ({}, [], [], [], [])
+            mock_connect.return_value = ({}, [], [], [], [], None)
 
             await gateway_service._initialize_gateway(
                 url="http://test:8000",
@@ -420,7 +420,7 @@ class TestCacheInvalidationPerType:
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as get_tool_cache,
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
-            mock_init.return_value = ({}, [mock_tool_schema], [], [], [])
+            mock_init.return_value = ({}, [mock_tool_schema], [], [], [], None)
             get_cache.return_value = mock_cache
             get_tool_cache.return_value = mock_tool_lookup_cache
 
@@ -432,6 +432,40 @@ class TestCacheInvalidationPerType:
         # Resources and prompts cache should NOT be invalidated (no changes)
         mock_cache.invalidate_resources.assert_not_called()
         mock_cache.invalidate_prompts.assert_not_called()
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("previous", "reported", "expected"),
+        [
+            (None, "Use the tools in order.", "Use the tools in order."),
+            ("Old text.", "New text.", "New text."),
+            ("Old text.", None, None),
+        ],
+    )
+    async def test_refresh_stores_upstream_instructions(self, gateway_service, previous, reported, expected):
+        """A refresh replaces the stored upstream instructions, or clears them."""
+        mock_gateway = _make_mock_gateway()
+        mock_gateway.upstream_instructions = previous
+        mock_session = MagicMock()
+        mock_session.dirty = set()
+        mock_session.execute.return_value.scalar_one_or_none.side_effect = [mock_gateway, mock_gateway]
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
+            patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
+            patch.object(gateway_service, "_update_or_create_tools", return_value=[]),
+            patch.object(gateway_service, "_update_or_create_resources", return_value=[]),
+            patch.object(gateway_service, "_update_or_create_prompts", return_value=[]),
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=AsyncMock()),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=AsyncMock()),
+        ):
+            mock_fresh.return_value.__enter__.return_value = mock_session
+            mock_init.return_value = ({}, [], [], [], [], reported)
+
+            await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
+
+        assert mock_gateway.upstream_instructions == expected
 
 
 class TestResolveAuthCodeRefreshHeaders:
@@ -575,7 +609,7 @@ class TestManualRefreshAuthCodeReporting:
             patch.object(gateway_service, "_reconcile_gateway_catalog") as mock_reconcile,
         ):
             mock_fresh.return_value.__enter__.return_value = self._session_for(gateway)
-            mock_init.return_value = ({}, [MagicMock()], [], [], [])
+            mock_init.return_value = ({}, [MagicMock()], [], [], [], None)
             mock_sync.return_value = MagicMock()
             mock_reconcile.return_value = MagicMock(
                 tools_added=1, tools_removed=0, resources_added=0, resources_removed=0, prompts_added=0, prompts_removed=0
@@ -640,7 +674,7 @@ class TestManualRefreshAuthCodeReporting:
             patch.object(gateway_service, "_reconcile_gateway_catalog") as mock_reconcile,
         ):
             mock_fresh.return_value.__enter__.return_value = self._session_for(gateway)
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
             result = await gateway_service._refresh_gateway_tools_resources_prompts(
                 "gw-123", user_email="user@example.com", created_via="manual_refresh", gateway=gateway
             )
@@ -700,7 +734,7 @@ class TestManualRefreshAuthCodeReporting:
             patch.object(gateway_service, "_reconcile_gateway_catalog") as mock_reconcile,
         ):
             mock_fresh.return_value.__enter__.return_value = self._session_for(gateway)
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
             mock_sync.return_value = MagicMock()
             mock_reconcile.return_value = MagicMock(
                 tools_added=0, tools_removed=0, resources_added=0, resources_removed=0, prompts_added=0, prompts_removed=0
@@ -727,7 +761,7 @@ class TestManualRefreshAuthCodeReporting:
             patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
         ):
             mock_fresh.return_value.__enter__.return_value = self._session_for(gateway)
-            mock_init.return_value = ({}, [], [], [], [])
+            mock_init.return_value = ({}, [], [], [], [], None)
             await gateway_service._refresh_gateway_tools_resources_prompts(
                 "gw-123",
                 user_email="user@example.com",
