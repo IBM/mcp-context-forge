@@ -40,6 +40,11 @@ def test_root_policy_configuration_validation():
     assert settings.root_allowed_schemes == ["https"]
 
 
+def test_a2a_obo_bearer_bridge_defaults_disabled():
+    """Keep the authenticated bearer bridge opt-in."""
+    assert Settings(_env_file=None).a2a_obo_bearer_bridge_enabled is False
+
+
 # --------------------------------------------------------------------------- #
 #                          Settings field parsers                             #
 # --------------------------------------------------------------------------- #

@@ -1974,6 +1974,7 @@ class A2AAgentService(BaseService):
         plugin_headers: Dict[str, str],
         agent: DbA2AAgent,
         feature_flag_enabled: bool,
+        allow_plugin_authorization: bool = False,
     ) -> Dict[str, str]:
         """Re-apply header filtering to plugin-returned headers.
 
@@ -1988,6 +1989,7 @@ class A2AAgentService(BaseService):
             plugin_headers: Headers returned by plugin in modified_payload.headers
             agent: Target A2A agent with passthrough_headers whitelist
             feature_flag_enabled: Value of ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+            allow_plugin_authorization: Permit only an allowlisted plugin-produced Authorization header
 
         Returns:
             Filtered and whitelisted headers safe for downstream forwarding
@@ -2003,7 +2005,10 @@ class A2AAgentService(BaseService):
         # Layer 2: Strip sensitive headers if feature flag is disabled
         # When flag is enabled, sensitive headers are allowed if whitelisted
         if not feature_flag_enabled:
-            return _filter_sensitive_headers(whitelisted)
+            filtered = _filter_sensitive_headers(whitelisted)
+            if allow_plugin_authorization:
+                filtered.update({key: value for key, value in whitelisted.items() if key.lower() == "authorization"})
+            return filtered
         return whitelisted
 
     async def invoke_agent(
@@ -2019,6 +2024,7 @@ class A2AAgentService(BaseService):
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
         bearer_token: Optional[str] = None,
+        authenticated_bearer_token: Optional[str] = None,
         content_type: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
@@ -2041,6 +2047,7 @@ class A2AAgentService(BaseService):
                 UAID cross-gateway loops (A->B->A and self-referential
                 `endpoint_url`). Outbound calls stamp `hop_count + 1`.
             bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
+            authenticated_bearer_token: Authenticated bearer exposed only through the opt-in OBO plugin bridge.
             content_type: Content-Type of the inbound request (for plugin context).
             request_headers: Inbound request headers (for plugin context in PRE_INVOKE hook).
 
@@ -2166,10 +2173,13 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
-        # SECURITY: Split header flows for plugin hooks vs downstream agent
-        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
-        # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+        # SECURITY: Split header flows before applying the narrow authenticated OBO bridge.
         plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
+        allowlisted_headers = {name.lower() for name in agent_passthrough_headers or []}
+        obo_bridge_active = bool(settings.a2a_obo_bearer_bridge_enabled and authenticated_bearer_token and "authorization" in allowlisted_headers)
+        if obo_bridge_active:
+            downstream_headers = {name: value for name, value in downstream_headers.items() if name.lower() != "authorization"}
+            plugin_headers["Authorization"] = f"Bearer {authenticated_bearer_token}"
 
         # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
         # Counter metric enables alerting/aggregation without log volume explosion.
@@ -2309,6 +2319,7 @@ class A2AAgentService(BaseService):
 
         # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
         if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
+            deferred_plugin_error: Optional[A2AAgentError] = None
             try:
                 pre_result, context_table = await plugin_manager.invoke_hook(
                     AgentHookType.AGENT_PRE_INVOKE,
@@ -2340,16 +2351,26 @@ class A2AAgentService(BaseService):
                         # `safe_headers` below would silently drop the sentinel (and thus never
                         # strip the real header) whenever Authorization isn't in this agent's
                         # passthrough_headers or sensitive passthrough is disabled. A real bearer
-                        # token is never empty, so this is unambiguous. The plugin never receives
-                        # the real Authorization value on this path (filtered out of
-                        # plugin_headers before this hook runs, by design, per #4925), so it can
-                        # only ever emit this sentinel, never a real value, through this channel.
-                        auth_mismatch = plugin_returned.get("authorization") == ""
+                        # token is never empty, so this is unambiguous.
+                        authorization_values = [value.strip() for name, value in plugin_returned.items() if name.lower() == "authorization"]
+                        auth_mismatch = any(value == "" for value in authorization_values)
+                        plugin_authorization = authorization_values[0] if len(authorization_values) == 1 else None
+                        scheme, separator, credential = plugin_authorization.partition(" ") if plugin_authorization else ("", "", "")
+                        exchanged_credential = credential.strip()
+                        allow_exchanged_authorization = bool(
+                            obo_bridge_active and scheme.lower() == "bearer" and separator and exchanged_credential and exchanged_credential != authenticated_bearer_token
+                        )
+                        plugin_headers_to_filter = plugin_returned
+                        if obo_bridge_active and authorization_values:
+                            plugin_headers_to_filter = {name: value for name, value in plugin_returned.items() if name.lower() != "authorization"}
+                            if allow_exchanged_authorization:
+                                plugin_headers_to_filter["Authorization"] = f"Bearer {exchanged_credential}"
 
                         safe_headers = self._refilter_plugin_headers(
-                            plugin_headers=plugin_returned,
+                            plugin_headers=plugin_headers_to_filter,
                             agent=agent,
                             feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+                            allow_plugin_authorization=allow_exchanged_authorization,
                         )
 
                         # Honor header REMOVALS as well as additions. ``prepared.headers`` was
@@ -2388,11 +2409,23 @@ class A2AAgentService(BaseService):
                                 settings.enable_sensitive_header_passthrough,
                             )
             except PluginViolationError as e:
-                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
+                if obo_bridge_active:
+                    logger.error("Plugin RBAC violation during OBO bridge for A2A agent %s", agent_id)
+                    deferred_plugin_error = A2AAgentError("Plugin RBAC violation during OBO bridge")
+                else:
+                    plugin_error = str(e)
+                    logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, plugin_error)
+                    raise A2AAgentError(f"Plugin RBAC violation: {plugin_error}") from e
             except Exception as e:
-                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+                if obo_bridge_active:
+                    logger.error("Pre-invoke plugin error during OBO bridge for A2A agent %s", agent_id)
+                    deferred_plugin_error = A2AAgentError("Pre-invoke plugin error during OBO bridge")
+                else:
+                    plugin_error = str(e)
+                    logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, plugin_error)
+                    raise A2AAgentError(f"Pre-invoke plugin error: {plugin_error}") from e
+            if deferred_plugin_error is not None:
+                raise deferred_plugin_error
 
         # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
         # headers. The Vault plugin removes this header when it processes the token,
