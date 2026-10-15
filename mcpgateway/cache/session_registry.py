@@ -65,7 +65,7 @@ import orjson
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.auth_context import get_user_email
-from mcpgateway.common.models import Implementation, InitializeResult, ServerCapabilities
+from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS, Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.services import PromptService, ResourceService, ToolService
@@ -2191,6 +2191,13 @@ class SessionRegistry(SessionBackend):
                 except Exception as e:
                     logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
 
+            instructions = DEFAULT_SERVER_INSTRUCTIONS
+            if server_id:
+                # First-Party
+                from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
+
+                instructions = await server_service.resolve_instructions(server_id)
+
             return InitializeResult(
                 protocol_version=protocol_version,
                 capabilities=ServerCapabilities(
@@ -2202,7 +2209,7 @@ class SessionRegistry(SessionBackend):
                     experimental=experimental,  # OAuth capability when configured
                 ),
                 server_info=Implementation(name=settings.app_name, version=__version__),
-                instructions=("ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."),
+                instructions=instructions,
             )
 
     async def store_client_capabilities(self, session_id: str, capabilities: Dict[str, Any]) -> None:
