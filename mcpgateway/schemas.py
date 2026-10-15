@@ -4681,6 +4681,35 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
+def _validate_instructions_length(value: Optional[str]) -> Optional[str]:
+    """Reject operator instructions that exceed the description length limit.
+
+    Instructions are text for a model. The validator keeps the text as given and does not sanitize it.
+
+    Args:
+        value: The instructions text, or None.
+
+    Returns:
+        Optional[str]: The unchanged text.
+
+    Raises:
+        ValueError: When the text is longer than ``SecurityValidator.MAX_DESCRIPTION_LENGTH``.
+
+    Examples:
+        >>> _validate_instructions_length(None) is None
+        True
+        >>> _validate_instructions_length("")
+        ''
+        >>> _validate_instructions_length("x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1))
+        Traceback (most recent call last):
+            ...
+        ValueError: Instructions must be at most ... characters
+    """
+    if value is not None and len(value) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+        raise ValueError(f"Instructions must be at most {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters")
+    return value
+
+
 class ServerCreate(BaseModel):
     """
     Schema for creating a new server.
@@ -4756,6 +4785,21 @@ class ServerCreate(BaseModel):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    instructions: Optional[str] = Field(None, description="Instructions text sent to MCP clients. Empty string: send no instructions. Absent: use the upstream server's text when there is one")
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the instructions length.
+
+        Args:
+            v: Value to validate.
+
+        Returns:
+            Optional[str]: The unchanged text.
+        """
+        return _validate_instructions_length(v)
 
     @field_validator("name")
     @classmethod
@@ -4870,6 +4914,21 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    instructions: Optional[str] = Field(None, description="Instructions text sent to MCP clients. Null clears the text. Empty string: send no instructions. Absent: no change")
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the instructions length.
+
+        Args:
+            v: Value to validate.
+
+        Returns:
+            Optional[str]: The unchanged text.
+        """
+        return _validate_instructions_length(v)
 
     @field_validator("tags")
     @classmethod
@@ -5053,6 +5112,8 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    instructions: Optional[str] = Field(None, description="Operator-set instructions text. Null: not set. Empty string: send no instructions")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 

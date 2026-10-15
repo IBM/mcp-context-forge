@@ -468,6 +468,7 @@ class ServerService(BaseService):
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            "instructions": getattr(server, "instructions", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -634,6 +635,7 @@ class ServerService(BaseService):
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=oauth_config,
+                instructions=getattr(server_in, "instructions", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1431,6 +1433,10 @@ class ServerService(BaseService):
                 elif server_update.oauth_config is not None:
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
+            # NULL means "not set" and "" means "send no instructions", so only a supplied field changes the value
+            if "instructions" in getattr(server_update, "model_fields_set", ()):
+                server.instructions = server_update.instructions
+
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
             if modified_by:
@@ -2048,10 +2054,12 @@ class ServerService(BaseService):
     def _resolve_instructions_sync(server_id: str) -> Optional[str]:
         """Choose the ``instructions`` text for a virtual server (blocking database read).
 
-        A virtual server is single-upstream when every tool, resource and prompt
-        has the same non-null ``gateway_id`` and the server has no A2A agent.
-        Such a server sends the text of that upstream server, or nothing when the
-        upstream server has no text. Every other server sends the default text.
+        An operator override wins when it is not NULL. An empty override sends nothing.
+        Without an override, a virtual server is single-upstream when every tool,
+        resource and prompt has the same non-null ``gateway_id`` and the server has
+        no A2A agent. Such a server sends the text of that upstream server, or
+        nothing when the upstream server has no text. Every other server sends the
+        default text.
 
         Args:
             server_id: Identifier of the virtual server.
@@ -2061,6 +2069,9 @@ class ServerService(BaseService):
         """
         db: Session = SessionLocal()
         try:
+            override = db.execute(select(DbServer.instructions).where(DbServer.id == server_id)).scalar_one_or_none()
+            if override is not None:
+                return override or None
             gateway_ids = (
                 db.execute(
                     union(

@@ -968,6 +968,24 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+def _form_instructions(form: Any) -> Optional[str]:
+    """Extract the server ``instructions`` text from form data.
+
+    An empty or whitespace-only field maps to None, which clears the override.
+    The form cannot express the empty-string override; use the API for that.
+
+    Args:
+        form: The multipart form data object from the request.
+
+    Returns:
+        The submitted text, or None when the field is absent or blank.
+    """
+    raw = form.get("instructions")
+    if not raw or not str(raw).strip():
+        return None
+    return str(raw)
+
+
 async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
     """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
 
@@ -3222,6 +3240,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
+            instructions=_form_instructions(form),
             associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in associated_resources_list),
             associated_prompts=",".join(str(x) for x in associated_prompts_list),
@@ -3384,6 +3403,7 @@ async def admin_edit_server(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
+            instructions=_form_instructions(form),
             associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in associated_resources_list),
             associated_prompts=",".join(str(x) for x in associated_prompts_list),

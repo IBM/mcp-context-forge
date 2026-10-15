@@ -817,6 +817,41 @@ class TestAdminServerRoutes:
         assert server_update.oauth_config["scopes_supported"] == ["openid", "profile", "email"]
 
     @patch.object(ServerService, "update_server")
+    @pytest.mark.parametrize("submitted, expected", [("Use the clock tools.", "Use the clock tools."), ("", None), ("   ", None)])
+    async def test_admin_edit_server_passes_instructions(self, mock_update_server, mock_request, mock_db, submitted, expected):
+        """The edit form sends its instructions text; a blank field clears the override."""
+        server_id = "00000000-0000-0000-0000-000000000001"
+        form_data = FakeForm({"id": server_id, "name": "Instr_Server", "instructions": submitted, "visibility": "public", "associatedTools": [], "associatedResources": [], "associatedPrompts": []})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+        mock_update_server.return_value = MagicMock()
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        server_update = mock_update_server.call_args[0][2]
+        assert "instructions" in server_update.model_fields_set
+        assert server_update.instructions == expected
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_passes_instructions(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """The create form sends its instructions text to the service."""
+        form_data = FakeForm({"name": "Instr_Server", "instructions": "Use the clock tools.", "associatedTools": [], "associatedResources": [], "associatedPrompts": []})
+        mock_request.form = AsyncMock(return_value=form_data)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u@example.com", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        assert mock_register_server.call_args.args[1].instructions == "Use the clock tools."
+
+    @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_oauth_with_audience(self, mock_update_server, mock_request, mock_db):
         """Test editing server with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
         server_id = "00000000-0000-0000-0000-000000000001"
