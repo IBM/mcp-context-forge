@@ -851,9 +851,13 @@ async def oauth_callback(
     #   (uses `!*%`), and our own session-bound state (uses `.` separator). Keep length
     #   caps but no pattern. Downstream token exchange & HMAC verification do the real
     #   validation.
+    # - `code` uses the same bound as the SSO callback (4096): some providers
+    #   (e.g. Atlassian 3LO with ~8 scopes) issue codes over 2048 chars, and a
+    #   422 at query validation would reject their redirects before the token
+    #   exchange. #7068
     # - `error` is a small, well-defined RFC 6749 Section 4.1.2.1 enum-like value.
     # - `error_description` is human-readable free text per RFC 6749 Section 5.2.
-    code: Annotated[str | None, Query(max_length=2048, description="Authorization code from OAuth provider")] = None,
+    code: Annotated[str | None, Query(max_length=4096, description="Authorization code from OAuth provider")] = None,
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
