@@ -345,8 +345,12 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 
 #### Opt in to per-user MCP server quotas
 
-Install `cpex-rate-limiter>=0.1.11` on every gateway replica before enabling `by_user_per_server`.
-Older packages do not enforce this option. Keep a shared Redis backend and the same prefix on all replicas.
+Install `cpex-rate-limiter>=0.1.12` on every gateway replica before enabling `by_user_per_server`.
+The [upstream prompt-hook correction](https://github.com/IBM/cpex-plugins/pull/203) confines this quota to tool
+invocations. Prompt retrieval requires no catalog identity and preserves the existing `by_user`, `by_tenant`,
+and prompt-name limits in `by_tool`. Global counters remain shared between prompt fetches and tool invocations.
+Version `0.1.11` incorrectly rejects ordinary prompt retrieval with `RATE_LIMIT_CONTEXT_MISSING` when this quota
+is enabled. Keep a shared Redis backend and the same prefix on all replicas.
 Set the plugin mode to `enforce` to enable enforcement; the shipped entry remains `disabled`.
 
 ```yaml

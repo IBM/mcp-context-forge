@@ -311,7 +311,9 @@ jobs:
                   python -m pytest "${{ matrix.plugin.tests }}" -v
 
             - name: Verify per-server quotas through both transports and replicas
-              if: matrix.plugin.name == 'rate-limiter' && matrix.plugin.enforcement == 'static'
+              env:
+                  PLUGIN_ENFORCEMENT: ${{ matrix.plugin.enforcement }}
+              if: matrix.plugin.name == 'rate-limiter'
               run: |
                   docker run --detach --name fast-time-server-b \
                     --publish 127.0.0.1:9081:9080 \
