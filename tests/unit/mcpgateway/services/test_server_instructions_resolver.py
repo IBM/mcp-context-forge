@@ -62,8 +62,8 @@ def seed(session_factory):
         db.flush()
         return row
 
-    def server(*items: Any, agent: bool = False) -> str:
-        row = Server(name="virtual")
+    def server(*items: Any, agent: bool = False, instructions: Optional[str] = None) -> str:
+        row = Server(name="virtual", instructions=instructions)
         for item in items:
             if isinstance(item, Tool):
                 row.tools.append(item)
@@ -147,3 +147,29 @@ async def test_lookup_failure_sends_default_text():
     """A database failure never fails the handshake."""
     with patch.object(ServerService, "_resolve_instructions_sync", side_effect=RuntimeError("db down")):
         assert await ServerService().resolve_instructions("any") == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_operator_override_beats_the_upstream_text(seed):
+    """An operator override wins over the text of the single upstream server."""
+    up = seed.gateway("clock", UPSTREAM_TEXT)
+    sid = seed.server(seed.tool("now", up), instructions="Operator text")
+    assert seed.resolve(sid) == "Operator text"
+
+
+def test_operator_override_applies_to_a_server_without_a_single_upstream(seed):
+    """An operator override replaces the default text on an empty server."""
+    assert seed.resolve(seed.server(instructions="Operator text")) == "Operator text"
+
+
+def test_empty_override_sends_no_instructions(seed):
+    """An empty-string override suppresses the upstream text."""
+    up = seed.gateway("clock", UPSTREAM_TEXT)
+    sid = seed.server(seed.tool("now", up), instructions="")
+    assert seed.resolve(sid) is None
+
+
+def test_unset_override_falls_back_to_the_upstream_text(seed):
+    """A NULL override leaves the single-upstream rule in charge."""
+    up = seed.gateway("clock", UPSTREAM_TEXT)
+    sid = seed.server(seed.tool("now", up), instructions=None)
+    assert seed.resolve(sid) == UPSTREAM_TEXT

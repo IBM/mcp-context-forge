@@ -1095,6 +1095,18 @@ class TestServerEndpoints:
         response = test_client.put("/servers/1", json=req, headers=auth_headers)
         assert response.status_code == status_code
 
+    @patch("mcpgateway.main.server_service.update_server")
+    def test_update_server_instructions_denied_for_non_owner(self, mock_update, test_client, auth_headers):
+        """A caller who does not own the server gets 403 when setting ``instructions``."""
+        mock_update.side_effect = PermissionError("Only the owner can update this server")
+        response = test_client.put("/servers/1", json={"instructions": "Injected text"}, headers=auth_headers)
+        assert response.status_code == 403
+
+    def test_update_server_instructions_over_limit_rejected(self, test_client, auth_headers):
+        """Instructions over the length limit fail request validation."""
+        response = test_client.put("/servers/1", json={"instructions": "x" * 9000}, headers=auth_headers)
+        assert response.status_code == 422
+
     @patch("mcpgateway.main.server_service.set_server_state")
     def test_set_server_state(self, mock_toggle, test_client, auth_headers):
         """Test setting server active/inactive state."""

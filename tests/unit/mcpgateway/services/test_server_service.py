@@ -106,6 +106,7 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     server.oauth_enabled = False
     server.oauth_config = None
+    server.instructions = None
 
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
@@ -1748,6 +1749,64 @@ class TestServerService:
         assert result.oauth_enabled is True
         assert result.oauth_config == new_oauth_config
         test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "stored, update_kwargs, expected",
+        [
+            (None, {"instructions": "Use the clock tools."}, "Use the clock tools."),
+            ("Old text", {"instructions": ""}, ""),
+            ("Old text", {"instructions": None}, None),
+            ("Old text", {"description": "new description"}, "Old text"),
+        ],
+        ids=["set", "empty-string-kept", "null-clears", "omitted-unchanged"],
+    )
+    async def test_update_server_instructions_follow_the_supplied_field(self, server_service, mock_server, test_db, stored, update_kwargs, expected):
+        """Only a supplied ``instructions`` field changes the stored value; "" and NULL stay distinct."""
+        mock_server.instructions = stored
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=Mock())
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(**update_kwargs), "user@example.com")  # pragma: allowlist secret
+
+        assert mock_server.instructions == expected
+
+    @pytest.mark.asyncio
+    async def test_update_server_instructions_denied_for_non_owner(self, server_service, mock_server, test_db):
+        """A non-owner cannot change ``instructions``; the stored value stays as it was."""
+        mock_server.instructions = "Owner text"
+        test_db.get = Mock(return_value=mock_server)
+        test_db.rollback = Mock()
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)):
+            with pytest.raises(ServerError):
+                await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(instructions="Injected text"), "other@example.com")  # pragma: allowlist secret
+
+        assert mock_server.instructions == "Owner text"
+
+    @pytest.mark.asyncio
+    async def test_register_server_stores_instructions(self, server_service, test_db):
+        """The operator text from the create request reaches the stored row."""
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        captured = []
+        test_db.add = Mock(side_effect=captured.append)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=Mock())
+
+        await server_service.register_server(test_db, ServerCreate(name="With Instructions", instructions="Use the clock tools."))
+
+        assert captured[0].instructions == "Use the clock tools."
 
     @pytest.mark.asyncio
     async def test_update_server_disable_oauth(self, server_service, mock_server, test_db):
