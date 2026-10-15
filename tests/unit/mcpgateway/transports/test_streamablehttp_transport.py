@@ -415,6 +415,137 @@ async def test_call_tool_success(monkeypatch):
     assert result[0].text == "hello"
 
 
+@pytest.mark.parametrize(
+    "value, era, kept",
+    [
+        pytest.param([1, 2, 3], "2026-07-28", True, id="modern_list"),
+        pytest.param("plain text", "2026-07-28", True, id="modern_string"),
+        pytest.param(3, "2026-07-28", True, id="modern_number"),
+        pytest.param(True, "2026-07-28", True, id="modern_boolean"),
+        pytest.param({"a": 1}, "2026-07-28", True, id="modern_object"),
+        pytest.param({"a": 1}, "2025-03-26", True, id="legacy_object"),
+        pytest.param([1, 2, 3], "2025-03-26", False, id="legacy_list_dropped"),
+        pytest.param("plain text", "2025-03-26", False, id="legacy_string_dropped"),
+        pytest.param(0, "2025-03-26", False, id="legacy_number_dropped"),
+    ],
+)
+def test_structured_for_caller_follows_the_callers_era(value, era, kept):
+    """A 2026-era caller may receive any JSON value as structuredContent; a 2025-era caller only an object (issue #6575)."""
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+    try:
+        assert tr._structured_for_caller(value) == (value if kept else None)
+        assert tr._structured_for_caller(None) is None
+    finally:
+        tr._v2_request_ctx.reset(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era, kept", [pytest.param("2026-07-28", True, id="modern"), pytest.param("2025-03-26", False, id="legacy")])
+async def test_call_tool_relays_a_list_structured_content_by_era(monkeypatch, era, kept):
+    """Local path: a list in structuredContent reaches a modern caller and is dropped for a legacy caller, whose text block keeps the data."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "[1, 2, 3]"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result = MagicMock()
+    mock_result.content = [mock_content]
+    mock_result.structured_content = [1, 2, 3]
+    mock_result.is_error = False
+    mock_result.meta = None
+    mock_result.model_dump = lambda by_alias=True: {"content": [{"type": "text", "text": "[1, 2, 3]"}], "structuredContent": [1, 2, 3]}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+    try:
+        result = await call_tool("mytool", {})
+    finally:
+        tr._v2_request_ctx.reset(token)
+
+    if kept:
+        assert isinstance(result, tuple)
+        unstructured, structured = result
+        assert structured == [1, 2, 3]
+    else:
+        assert isinstance(result, list)
+        unstructured = result
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == "[1, 2, 3]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era, kept", [pytest.param("2026-07-28", True, id="modern"), pytest.param("2025-03-26", False, id="legacy")])
+async def test_call_tool_session_affinity_forwarded_list_structured_content_by_era(monkeypatch, era, kept):
+    """Worker-forwarded path: the same era rule applies to a result another worker produced."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    h_token = request_headers_var.set({"mcp-session-id": "abc-123-valid-session"})
+    u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
+    era_token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+
+    mock_pool = MagicMock()
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "[1, 2, 3]"}], "structuredContent": [1, 2, 3]}})
+    mock_pool.register_session_mapping = AsyncMock()
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache),
+        ):
+            result = await call_tool("my_tool", {})
+    finally:
+        tr._v2_request_ctx.reset(era_token)
+        request_headers_var.reset(h_token)
+        user_context_var.reset(u_token)
+
+    if kept:
+        assert isinstance(result, tuple)
+        unstructured, structured = result
+        assert structured == [1, 2, 3]
+    else:
+        assert isinstance(result, list)
+        unstructured = result
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == "[1, 2, 3]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era, array_schema_kept", [pytest.param("2026-07-28", True, id="modern"), pytest.param("2025-03-26", False, id="legacy")])
+async def test_list_tools_adapter_hides_non_object_output_schemas_from_legacy_callers(monkeypatch, era, array_schema_kept):
+    """The 2025 wire rejects a non-object outputSchema in tools/list, so it is omitted for legacy callers and kept for modern ones (issue #6575)."""
+    tools = [
+        types.Tool(name="numbers", inputSchema={"type": "object"}, outputSchema={"type": "array", "items": {"type": "integer"}}),
+        types.Tool(name="record", inputSchema={"type": "object"}, outputSchema={"type": "object", "properties": {"x": {"type": "integer"}}}),
+        types.Tool(name="plain", inputSchema={"type": "object"}),
+    ]
+    monkeypatch.setattr(tr, "list_tools", AsyncMock(return_value=tools))
+    monkeypatch.setattr(tr, "_catalog_ttl_ms", AsyncMock(return_value=300_000))
+
+    result = await tr._adapt_list_tools(SimpleNamespace(protocol_version=era, meta=None, request=None))
+
+    by_name = {tool.name: tool for tool in result.tools}
+    assert set(by_name) == {"numbers", "record", "plain"}
+    assert (by_name["numbers"].output_schema is not None) is array_schema_kept
+    assert by_name["record"].output_schema == {"type": "object", "properties": {"x": {"type": "integer"}}}
+    assert by_name["plain"].output_schema is None
+
+
 @pytest.mark.asyncio
 async def test_call_tool_with_structured_content(monkeypatch):
     """Test call_tool returns tuple with both unstructured and structured content."""

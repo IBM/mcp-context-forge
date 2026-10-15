@@ -10526,6 +10526,23 @@ async def _execute_rpc_initialize(
     return result
 
 
+def _object_only_structured_content(result: Any) -> Any:
+    """Drop a non-object ``structuredContent`` from a dumped tool result, for the 2025-era JSON-RPC wires.
+
+    The 2026 spec allows any JSON value there, the 2025 spec only an object; the dropped
+    data is still in the result's text content block.
+
+    Args:
+        result: The tool result, dumped to a dict, or anything else (returned as is).
+
+    Returns:
+        Any: The result with a non-object ``structuredContent`` removed.
+    """
+    if isinstance(result, dict) and "structuredContent" in result and not isinstance(result["structuredContent"], dict):
+        result = {key: value for key, value in result.items() if key != "structuredContent"}
+    return result
+
+
 async def _execute_rpc_tools_call(
     request: Request,
     db: Session,
@@ -10645,7 +10662,7 @@ async def _execute_rpc_tools_call(
             result = await tool_task
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
-            return result
+            return _object_only_structured_content(result)
         except asyncio.CancelledError as exc:
             logger.info("Tool execution cancelled for run_id=%s, tool=%s", run_id, name)
             raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False}) from exc
@@ -10860,7 +10877,7 @@ async def _handle_app_bridge_tools_call(db: Session, request: Request, app_sessi
         )
         if hasattr(result, "model_dump"):
             result = result.model_dump(by_alias=True, exclude_none=True)
-        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+        return {"jsonrpc": "2.0", "result": _object_only_structured_content(result), "id": req_id}
     except ToolNotFoundError:
         return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
     except ToolError as exc:
@@ -11802,6 +11819,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+                result = _object_only_structured_content(result)
             except (PluginError, PluginViolationError):
                 raise
             except ToolNotFoundError:
