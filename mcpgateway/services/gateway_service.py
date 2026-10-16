@@ -171,16 +171,18 @@ class MCPListMethod(Enum):
 
 
 async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
-    """Collect MCP list results until the server returns no next cursor.
+    """Collect unique MCP list results and stop when pagination ends or repeats.
 
     A repeated pagination cursor stops pagination with a warning and returns the results collected so far.
 
     Args:
-        session: MCP client session
-        mcp_method: MCPListMethod Enum for list_* method and response
+        session: MCP client session.
+        mcp_method: MCP list method and response collection.
 
     Returns:
-        list of MCP objects across all pages
+        Objects in encounter order, retaining the first object for each protocol identity.
+        Repeated cursors produce a warning and preserve collected unique objects.
+        Upstream exceptions propagate to the caller.
     """
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
@@ -195,7 +197,18 @@ async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[An
         seen_cursors.add(cursor)
         response = await list_method(cursor=cursor)
         mcp_responses.extend(getattr(response, response_attribute, []))
-    return mcp_responses
+    identity_attribute = {
+        "tools": "name",
+        "prompts": "name",
+        "resources": "uri",
+        "resource_templates": "uri_template",
+    }[response_attribute]
+    unique_responses = {}
+    for item in mcp_responses:
+        unique_responses.setdefault(str(getattr(item, identity_attribute)), item)
+    if len(unique_responses) < len(mcp_responses):
+        logger.warning("Duplicate pagination items from list_%s", method_suffix)
+    return list(unique_responses.values())
 
 
 def _safe_connection_error_text(exc: BaseException) -> str:
