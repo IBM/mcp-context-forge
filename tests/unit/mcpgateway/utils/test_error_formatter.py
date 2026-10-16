@@ -344,10 +344,11 @@ def test_format_database_error_no_orig():
     assert result["success"] is False
 
 
-def test_safe_error_detail_never_returns_exception_text():
+def test_safe_error_detail_never_returns_exception_text(monkeypatch):
     """safe_error_detail always returns the fallback; raw exception text never reaches a response."""
     from mcpgateway.utils.error_formatter import safe_error_detail
 
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_correlation_id", lambda: None)
     result = safe_error_detail(ValueError("UNIQUE constraint failed: tools.name"), "Generic fallback")
     assert result == "Generic fallback"
     assert safe_error_detail(RuntimeError("boom")) == "Invalid request. Please check your input and try again."
