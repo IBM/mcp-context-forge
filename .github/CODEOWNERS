@@ -9,7 +9,6 @@
 /rust-toolchain.toml @lucarlig @dawid-nowak
 /supply-chain/ @lucarlig @dawid-nowak
 /.github/workflows/rust.yml @lucarlig @dawid-nowak
-/.github/workflows/pytest-rust.yml @lucarlig @dawid-nowak
 
 # Tests for plugin framework
 /tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri
