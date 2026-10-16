@@ -307,6 +307,7 @@ def init_plugin_manager_factory(
     hook_policies: dict,
     observability: Optional[ObservabilityProvider] = None,
     db_factory: Optional[Callable] = None,
+    cache_ttl: Optional[int] = None,
 ) -> None:
     """Explicitly initialise the global plugin manager factory."""
     global _plugin_manager_factory
@@ -321,6 +322,7 @@ def init_plugin_manager_factory(
         hook_policies=hook_policies,
         observability=observability,
         db_factory=db_factory,
+        cache_ttl=cache_ttl,
     )
 
 
