@@ -1154,3 +1154,23 @@ async def test_verify_oauth_access_token_jwt_error(monkeypatch):
     result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"])
 
     assert result is None
+
+
+@pytest.mark.parametrize("skip_ssl_verify,expected_verify", [(False, True), (True, False)])
+def test_jwks_fetch_uses_default_verify(monkeypatch, skip_ssl_verify, expected_verify):
+    """JWKS requests honor the shared TLS setting and preserve request options."""
+    from mcpgateway.config import settings
+    from mcpgateway.utils.verify_credentials import _NoRedirectPyJWKClient
+
+    monkeypatch.setattr(settings, "skip_ssl_verify", skip_ssl_verify)
+    uri = "https://issuer.example.com/jwks"
+    headers = {"Accept": "application/json"}
+    with patch("mcpgateway.utils.verify_credentials.httpx.Client") as mock_client:
+        http_client = mock_client.return_value.__enter__.return_value
+        http_client.get.return_value.is_redirect = False
+        http_client.get.return_value.json.return_value = {"keys": []}
+
+        assert _NoRedirectPyJWKClient(uri, timeout=12, headers=headers).fetch_data() == {"keys": []}
+
+        mock_client.assert_called_once_with(follow_redirects=False, timeout=12, verify=expected_verify)
+        http_client.get.assert_called_once_with(uri, headers=headers)
