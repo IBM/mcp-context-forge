@@ -687,8 +687,41 @@ async def test_catalog_sdk_models_match_wire_pages(catalog_db, method, key, mode
 
 
 @pytest.mark.asyncio
-async def test_proxy_reuses_scope_and_releases_final_page(catalog_db, monkeypatch, snapshot_redis):
-    """Keep repeated first pages within one slot and release completed traversals."""
+@pytest.mark.parametrize("method,key", [("tools/list", "tools"), ("resources/list", "resources")])
+@pytest.mark.parametrize("count", [4, 7])
+@pytest.mark.parametrize("traversals", [1, 2])
+async def test_proxy_overlapping_traversals_and_final_page_retries(catalog_db, monkeypatch, snapshot_redis, method, key, count, traversals):
+    """Preserve shared pages for overlapping traversals and retries until expiration."""
+    monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
+    monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
+    items = [types.Tool(name=f"item-{index}", input_schema={"type": "object"}) if key == "tools" else types.Resource(name=f"item-{index}", uri=f"test://item-{index}") for index in range(count)]
+    proxy = AsyncMock(return_value=items)
+    monkeypatch.setattr(transport, f"_proxy_list_{key}_to_gateway", proxy)
+    gateway = SimpleNamespace(id="gateway", url="http://peer/mcp", updated_at="version-a")
+    first = await catalog._proxy_page(gateway, method, None, "scope", {}, None)
+    overlapping = await catalog._proxy_page(gateway, method, None, "scope", {}, None)
+    initial = await snapshot_redis.hget(snapshots.snapshot_key(), "leases")
+    final_pages = []
+    for start in (first, overlapping)[:traversals]:
+        found = list(start[key])
+        cursor = start["nextCursor"]
+        while cursor is not None:
+            final_cursor = cursor
+            page = await catalog._proxy_page(gateway, method, cursor, "scope", {}, None)
+            found.extend(page[key])
+            cursor = page.get("nextCursor")
+        assert [item["name"] for item in found] == [item.name for item in items]
+        final_pages.append((final_cursor, page))
+    for final_cursor, page in final_pages:
+        assert await catalog._proxy_page(gateway, method, final_cursor, "scope", {}, None) == page
+    assert proxy.await_count == 1
+    assert await snapshot_redis.hget(snapshots.snapshot_key(), "leases") == initial
+    await snapshot_redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_proxy_reuses_scope_until_expiration(catalog_db, monkeypatch, snapshot_redis):
+    """Keep completed traversals within one slot until the fixed expiration."""
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
     monkeypatch.setattr(catalog, "get_redis_client", AsyncMock(return_value=snapshot_redis))
     monkeypatch.setattr(transport, "_build_proxy_list_headers", lambda *_: {})
@@ -712,7 +745,13 @@ async def test_proxy_reuses_scope_and_releases_final_page(catalog_db, monkeypatc
     second = await catalog._proxy_page(gateway, "tools/list", first["nextCursor"], "scope", {}, None)
     final = await catalog._proxy_page(gateway, "tools/list", second["nextCursor"], "scope", {}, None)
     assert len(final["tools"]) == 1 and "nextCursor" not in final
-    assert not snapshots.orjson.loads(await snapshot_redis.hget(snapshots.snapshot_key(), "leases"))
+    assert snapshots.orjson.loads(await snapshot_redis.hget(snapshots.snapshot_key(), "leases")) == initial
+    with pytest.raises(JSONRPCError, match="capacity"):
+        await catalog._proxy_page(gateway, "tools/list", None, "different-scope", {}, None)
+    expired = {snapshot: [0, *lease[1:]] for snapshot, lease in initial.items()}
+    await snapshot_redis.hset(snapshots.snapshot_key(), "leases", snapshots.orjson.dumps(expired))
+    with pytest.raises(JSONRPCError, match="expired"):
+        await catalog._proxy_page(gateway, "tools/list", second["nextCursor"], "scope", {}, None)
     assert await snapshot_redis.hlen(snapshots.snapshot_key()) == 1
     fresh = await catalog._proxy_page(gateway, "tools/list", None, "different-scope", {}, None)
     assert fresh["nextCursor"] and proxy.await_count == 2

@@ -112,14 +112,6 @@ save()
 if not lease or lease[3] == -1 then return {} end
 local manifest = redis.call('HGET', key, ARGV[1] .. ':manifest')
 local page = redis.call('HGET', key, ARGV[1] .. ':' .. ARGV[2])
-if tonumber(ARGV[2]) == lease[3] - 1 and ARGV[3] == '1' then
-    redis.call('HDEL', key, ARGV[1] .. ':manifest')
-    for index = 0, lease[3] - 1 do
-        redis.call('HDEL', key, ARGV[1] .. ':' .. index)
-    end
-    leases[ARGV[1]] = nil
-    save()
-end
 return {manifest, page}
 """
 )
@@ -202,17 +194,16 @@ async def publish_snapshot(redis: Any, snapshot: str, scope: str, pages: list[by
         raise JSONRPCError(-32000, "MCP proxy catalog snapshot reservation is unavailable")
 
 
-async def read_snapshot(redis: Any, snapshot: str, page: int, *, release_final: bool = False) -> tuple[Any, Any]:
+async def read_snapshot(redis: Any, snapshot: str, page: int) -> tuple[Any, Any]:
     """Read a snapshot page and manifest before their fixed expiration.
 
     Args:
         redis: Shared Redis client.
         snapshot: Snapshot identifier.
         page: Requested page index.
-        release_final: Remove stored pages atomically when reading the final page.
 
     Returns:
         Manifest and page, or two None values after expiration or eviction.
     """
-    result = await redis.eval(_READ, 1, snapshot_key(), snapshot, page, "1" if release_final else "0")
+    result = await redis.eval(_READ, 1, snapshot_key(), snapshot, page)
     return (result[0], result[1]) if len(result) == 2 else (None, None)

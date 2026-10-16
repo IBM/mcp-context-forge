@@ -1520,9 +1520,9 @@ Single-page proxy catalogs do not require Redis.
 Snapshots bind the gateway configuration and upstream authorization headers.
 Repeated first-page requests reuse a live snapshot for the same scope without extending its expiration.
 Concurrent requests for the same scope wait for the active collector and reuse its result.
-Reading the final page releases the snapshot and its byte and count reservations.
-Other cursors for that snapshot then become invalid. Restart without a cursor if a completed response is lost.
-Abandoned snapshots expire with the traversal.
+Reading the final page preserves the snapshot for overlapping traversals and retries until its fixed expiration.
+Completed and abandoned snapshots retain their byte and count reservations until expiration.
+Page reads and repeated first-page requests do not extend the snapshot lifetime.
 Any gateway update invalidates existing proxy cursors, including description, tags, and state updates.
 Restart the traversal after a gateway update.
 Repeated upstream cursors, duplicate identifiers, timeouts, and collection limits return errors without partial catalogs.

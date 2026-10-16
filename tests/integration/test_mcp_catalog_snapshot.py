@@ -193,8 +193,8 @@ async def test_denied_info_allows_bounded_snapshots(snapshot_store, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_workers_share_scope_and_reclaim_completed_snapshot(snapshot_store, monkeypatch):
-    """Share one fixed-lifetime snapshot across workers and reclaim its final page."""
+async def test_workers_share_scope_and_preserve_completed_snapshot(snapshot_store, monkeypatch):
+    """Preserve completed snapshots across workers until their fixed expiration."""
     monkeypatch.setattr(settings, "mcp_proxy_list_max_snapshots", 1)
     async with snapshots.reserve_collection(snapshot_store, "scope") as (snapshot, _):
         await snapshots.publish_snapshot(snapshot_store, snapshot, "scope", [b"[1]", b"[2]"])
@@ -209,8 +209,17 @@ async def test_workers_share_scope_and_reclaim_completed_snapshot(snapshot_store
     results = await asyncio.gather(*(reuse() for _ in range(64)))
     assert all(page == b"[1]" for _, page in results)
     assert await snapshot_store.hget(snapshots.snapshot_key(), "leases") == original
-    assert (await snapshots.read_snapshot(snapshot_store, snapshot, 1, release_final=True))[1] == b"[2]"
-    assert await snapshots.read_snapshot(snapshot_store, snapshot, 0) == (None, None)
+    assert (await snapshots.read_snapshot(snapshot_store, snapshot, 1))[1] == b"[2]"
+    assert (await snapshots.read_snapshot(snapshot_store, snapshot, 1))[1] == b"[2]"
+    assert (await snapshots.read_snapshot(snapshot_store, snapshot, 0))[1] == b"[1]"
+    assert await snapshot_store.hget(snapshots.snapshot_key(), "leases") == original
+    with pytest.raises(JSONRPCError, match="capacity"):
+        async with snapshots.reserve_collection(snapshot_store, "other-scope"):
+            pytest.fail("Completed snapshots retain their reservations until expiration")
+    expired = {snapshot: [0, *orjson.loads(original)[snapshot][1:]]}
+    await snapshot_store.hset(snapshots.snapshot_key(), "leases", orjson.dumps(expired))
+    assert await snapshots.read_snapshot(snapshot_store, snapshot, 1) == (None, None)
+    assert await snapshot_store.hlen(snapshots.snapshot_key()) == 1
     async with snapshots.reserve_collection(snapshot_store, "other-scope") as (fresh, _):
         await snapshots.publish_snapshot(snapshot_store, fresh, "other-scope", [b"[]", b"[]"])
 

@@ -172,7 +172,7 @@ async def _proxy_page(gateway: Gateway, method: str, cursor: Any, scope: str, he
         if redis is None:
             raise JSONRPCError(-32000, "MCP proxy pagination requires Redis")
         try:
-            manifest, page = await read_snapshot(redis, snapshot, page_index, release_final=True)
+            manifest, page = await read_snapshot(redis, snapshot, page_index)
         except RedisError as exc:
             log_proxy_catalog_failure(gateway.id, method, exc)
             raise JSONRPCError(-32000, "MCP proxy snapshot storage is unavailable") from exc

@@ -5246,12 +5246,25 @@ async def test_direct_proxy_catalog_pagination(jwt_token: str, method: str, resu
                     changed = True
                     cursor = page.next_cursor
                     while cursor is not None:
+                        final_cursor = cursor
                         page = await list_method(params=PaginatedRequestParams(cursor=cursor))
                         assert len(getattr(page, result_key)) <= page_size
                         found.extend(item.name for item in getattr(page, result_key))
                         cursor = page.next_cursor
                     assert received == upstream_calls
                     assert found == [f"{prefix}-original-{index:04d}" for index in range(count)]
+                    final_page = page
+                    for overlapping in concurrent_pages:
+                        cursor = overlapping.next_cursor
+                        overlapping_names = [item.name for item in getattr(overlapping, result_key)]
+                        while cursor is not None:
+                            overlapping = await list_method(params=PaginatedRequestParams(cursor=cursor))
+                            overlapping_names.extend(item.name for item in getattr(overlapping, result_key))
+                            cursor = overlapping.next_cursor
+                        assert overlapping_names == found
+                    retried = await list_method(params=PaginatedRequestParams(cursor=final_cursor))
+                    assert retried == final_page
+                    assert received == upstream_calls
             disabled_url = os.getenv("MCP_CATALOG_DISABLED_PROXY_URL")
             if disabled_url:
                 selection = {"X-Context-Forge-Gateway-Id": gateway_id}
