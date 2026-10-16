@@ -5304,7 +5304,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Use isolated client for gateway health checks (each gateway may have custom CA cert)
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
-            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context, follow_redirects=False) as client:
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context, follow_redirects=True) as client:
                 logger.debug("Checking health of gateway: %s (%s)", gateway_name, gateway_url_sanitized)
                 try:
                     # Handle different authentication types
@@ -6260,7 +6260,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        target_user = db.execute(
+            select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)  # noqa: E712  # pylint: disable=singleton-comparison
+        ).scalar_one_or_none()
         if not target_user:
             raise PublicValidationError(f"Target user not found or inactive: {target_owner_email}")
 
