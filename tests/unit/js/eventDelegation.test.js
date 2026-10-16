@@ -191,6 +191,31 @@ describe("eventDelegation", () => {
 
       expect(mockAdminFunction).toHaveBeenCalledWith("explicit-value", expect.any(Event));
     });
+
+    it("passes the event first when requested", () => {
+      const input = document.createElement("textarea");
+      input.setAttribute("data-action-input", "testFunction");
+      input.setAttribute("data-event-first", "true");
+      container.appendChild(input);
+
+      input.value = "not passed as an argument";
+      const event = new Event("input", { bubbles: true });
+      input.dispatchEvent(event);
+
+      expect(mockAdminFunction).toHaveBeenCalledWith(event);
+    });
+
+    it("auto-resizes a textarea through delegated input", () => {
+      const input = document.createElement("textarea");
+      input.setAttribute("data-action-input", "autoResizeTextarea");
+      input.setAttribute("data-event-first", "true");
+      Object.defineProperty(input, "scrollHeight", { value: 84 });
+      container.appendChild(input);
+
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+
+      expect(input.style.height).toBe("84px");
+    });
   });
 
   describe("change events", () => {
@@ -230,6 +255,19 @@ describe("eventDelegation", () => {
       select.dispatchEvent(new Event("change", { bubbles: true }));
 
       expect(mockAdminFunction).toHaveBeenCalledWith("option1", expect.any(Event));
+    });
+
+    it("passes the event before explicit arguments when requested", () => {
+      const input = document.createElement("input");
+      input.setAttribute("data-action-change", "testFunction");
+      input.setAttribute("data-event-first", "true");
+      input.setAttribute("data-arg0", '"certificate"');
+      container.appendChild(input);
+
+      const event = new Event("change", { bubbles: true });
+      input.dispatchEvent(event);
+
+      expect(mockAdminFunction).toHaveBeenCalledWith(event, "certificate");
     });
   });
 
