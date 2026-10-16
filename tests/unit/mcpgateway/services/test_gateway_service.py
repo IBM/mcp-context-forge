@@ -2235,6 +2235,38 @@ class TestGatewayService:
         test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_config_validation_wraps_value_error_as_cause(self, gateway_service, mock_gateway, test_db):
+        """Config-validation ValueError on the update path keeps its cause attached (#7144).
+
+        update_gateway's final wrap must preserve the original ValueError (e.g.
+        from _validate_token_exchange_config) as __cause__, so the PUT router can
+        respond 400 for invalid OAuth config the way POST /gateways/ does.
+        """
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = None
+        gateway_service._enforce_token_exchange_admin_only = AsyncMock()
+        gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
+        gateway_service._initialize_gateway = AsyncMock()
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(
+            oauth_config={"grant_type": "token-exchange", "token_url": "https://ids.example.com/token"},
+            one_time_auth=True,
+        )
+
+        with pytest.raises(GatewayError) as exc_info:
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert "target_audience is required for token-exchange grant type" in str(exc_info.value.__cause__)
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_cosmetic_change_tolerates_credential_error(self, gateway_service, mock_gateway, test_db):
         """A cosmetic-only change (visibility, no URL/auth change) whose best-effort re-init
         hits a pre-existing malformed stored credential must still commit -- matching the
