@@ -35,6 +35,7 @@ on:
             - "uv.lock"
             - "plugins/config.yaml"
             - "tests/live_gateway/plugins/**"
+            - "tests/integration/test_rate_limiter_per_server.py"
             - ".github/workflows/plugin-integration.yml"
     workflow_dispatch:
 
@@ -309,6 +310,17 @@ jobs:
                   . .venv/bin/activate
                   python -m pytest "${{ matrix.plugin.tests }}" -v
 
+            - name: Verify per-server quotas through both transports and replicas
+              env:
+                  PLUGIN_ENFORCEMENT: ${{ matrix.plugin.enforcement }}
+              if: matrix.plugin.name == 'rate-limiter'
+              run: |
+                  docker run --detach --name fast-time-server-b \
+                    --publish 127.0.0.1:9081:9080 \
+                    ghcr.io/ibm/cfex-mcp-fast-time-server:5eac210da1c96a5fb2386c82a0c6f543b68fd76a
+                  . .venv/bin/activate
+                  python -m pytest tests/integration/test_rate_limiter_per_server.py -v --with-integration
+
             - name: Capture fast-time-server logs on failure
               if: failure()
               run: docker logs fast-time-server > fast-time-server.log 2>&1 || true
@@ -332,7 +344,7 @@ jobs:
         name: Plugin Integration Complete
         runs-on: ubuntu-latest
         needs: [plugin-e2e]
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
         steps:
             - name: Verify all plugin E2E legs succeeded
               run: |

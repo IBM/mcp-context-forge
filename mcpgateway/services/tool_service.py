@@ -193,16 +193,15 @@ def _apply_tool_payload_to_global_context(
     app_user_email: Optional[str],
     payload_tenant_id: Optional[str],
 ) -> None:
-    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+    """Set upstream catalog identity and fill absent user and tenant values.
 
-    Populates server_id, user, and tenant_id on a GlobalContext that was
-    supplied by the plugin manager / middleware — filling gaps the upstream
-    propagation did not cover while never overwriting a value that was
-    already set there. Shared by the two tool-invocation call sites so they
-    stay in lockstep.
+    Args:
+        global_context: Context reused from middleware or an earlier invocation.
+        tool_gateway_id: Upstream MCP catalog UUID, when the tool has a gateway.
+        app_user_email: Authenticated caller email.
+        payload_tenant_id: Team identity from the resolved tool payload.
     """
-    if tool_gateway_id and isinstance(tool_gateway_id, str):
-        global_context.server_id = tool_gateway_id
+    global_context.server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
     if not global_context.user and app_user_email and isinstance(app_user_email, str):
         global_context.user = app_user_email
     if not global_context.tenant_id and payload_tenant_id:
