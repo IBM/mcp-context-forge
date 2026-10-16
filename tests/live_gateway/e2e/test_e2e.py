@@ -90,7 +90,6 @@ from ..helpers.mcp_test_helpers import (
     build_initialize,
     JWT_SECRET,
     skip_no_gateway,
-    skip_no_rust_mcp_gateway,
     TEST_PASSWORD,
     TOKEN_EXPIRY,
 )
@@ -140,7 +139,7 @@ skip_no_mcp_apps = pytest.mark.skipif(
 _MODERN_INBOUND_E2E_ENABLED = os.getenv("MCP_INBOUND_PROTOCOL_MODE", "legacy").strip().lower() == "auto"
 skip_no_modern_inbound = pytest.mark.skipif(
     not _MODERN_INBOUND_E2E_ENABLED,
-    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto and RUST_MCP_MODE=off",
+    reason="Modern MCP E2E requires a gateway started with MCP_INBOUND_PROTOCOL_MODE=auto",
 )
 
 
@@ -1249,38 +1248,6 @@ class TestRawJsonRpc:
                     http.delete(f"{BASE_URL}/resources/{resource_id}", headers=rest_headers)
 
 
-@skip_no_rust_mcp_gateway
-class TestRawHttpTransportParity:
-    """Direct HTTP checks for the Rust-fronted MCP transport."""
-
-    def test_initialize_delete_flow_uses_rust_transport(self, jwt_token: str) -> None:
-        """Raw initialize and DELETE should stay on the Rust MCP edge when enabled."""
-        initialize_headers = {
-            "authorization": f"Bearer {jwt_token}",
-            "accept": "application/json, text/event-stream",
-            "content-type": "application/json",
-            "mcp-protocol-version": "2025-03-26",
-        }
-
-        with httpx.Client(timeout=10.0) as client:
-            init_response = client.post(f"{BASE_URL}/mcp/", headers=initialize_headers, json=build_initialize())
-            assert init_response.status_code == 200, init_response.text
-            runtime_marker = init_response.headers.get("x-contextforge-mcp-runtime")
-            if runtime_marker != "rust":
-                pytest.skip("Rust MCP runtime not enabled on target gateway")
-
-            print(f"    -> Raw HTTP initialize runtime header: {runtime_marker}")
-
-            delete_headers = {
-                "authorization": f"Bearer {jwt_token}",
-                "accept": "application/json, text/event-stream",
-            }
-            delete_response = client.request("DELETE", f"{BASE_URL}/mcp/", headers=delete_headers)
-            assert delete_response.status_code == 405, delete_response.text
-            assert delete_response.headers.get("x-contextforge-mcp-runtime") == "rust"
-            print(f"    -> Raw HTTP DELETE runtime header: {delete_response.headers.get('x-contextforge-mcp-runtime')}")
-
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -1974,8 +1941,6 @@ async def _federated_templates(peers: list[TemplatePeer], token: str, *, standar
             health = await http.get("/health")
             health.raise_for_status()
             runtime = health.headers.get("x-contextforge-mcp-transport-mounted", "python")
-            if runtime == "rust":
-                pytest.skip("Issue #6625 covers the Python MCP runtime")
             print(json.dumps({"issue": 6625, "gateway_commit": os.getenv("MCP_TEMPLATE_GATEWAY_COMMIT", "unverified"), "runtime": runtime, "client_mcp_sdk": version("mcp")}))
             for peer in peers:
                 response = await http.post("/gateways", json={"name": peer.label, "url": peer.url, "transport": "STREAMABLEHTTP", "visibility": "public"})
