@@ -173,15 +173,14 @@ class MCPListMethod(Enum):
 async def get_list_paginated(session: Any, mcp_method: MCPListMethod) -> list[Any]:
     """Collect MCP list results until the server returns no next cursor.
 
+    A repeated pagination cursor stops pagination with a warning and returns the results collected so far.
+
     Args:
         session: MCP client session
         mcp_method: MCPListMethod Enum for list_* method and response
 
     Returns:
         list of MCP objects across all pages
-
-    Raises:
-        ValueError: If the server repeats a pagination cursor.
     """
     method_suffix, response_attribute = mcp_method.value
     list_method = getattr(session, f"list_{method_suffix}")
