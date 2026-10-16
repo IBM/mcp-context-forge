@@ -858,7 +858,7 @@ plugins:
         slack_token: true
         private_key_block: true
         jwt_like: true
-        hex_secret_32: true
+        hex_secret_32: true # Shape match only, no authenticity check -- false-positives on ANY legitimate 32-char hex value (session tokens, MD5 hashes, dashless UUIDs); combined with block_on_detection below, this can silently break a tool that legitimately returns such values for every caller, not just attackers. See docs/docs/api/plugin-bindings-api.md#secretsdetection.
         base64_24: false # Broad intrinsic-shape heuristic; keep opt-in because it can block ordinary 24+ char IDs and tokens
       redact: false
       redaction_text: "***REDACTED***"
