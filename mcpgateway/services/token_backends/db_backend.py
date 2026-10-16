@@ -12,11 +12,20 @@ This is purely code reorganization to enable the façade pattern.
 Phase 2 (future): Add team_id column to oauth_tokens table and use it in queries.
 """
 
+import asyncio
+import hashlib
 import logging
+import os
+import tempfile
+import time
+import weakref
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, AsyncIterator, cast, ClassVar, Optional
 
-from sqlalchemy import and_, delete, or_, select
+from filelock import FileLock, Timeout
+from sqlalchemy import and_, delete, or_, select, Text, type_coerce, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from mcpgateway.common.validators import SecurityValidator
@@ -29,6 +38,79 @@ from .base import AbstractTokenBackend, TokenRecord
 from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
+
+# Worker processes on one host serialize a token refresh through one of these lock
+# files. The wait is longer than OAuthManager's default refresh: 3 attempts with a
+# 30 s timeout each, plus backoff. After the wait the refresh goes ahead unlocked.
+_REFRESH_LOCK_STRIPES = 64
+_REFRESH_LOCK_WAIT_SECONDS = 120.0
+_REFRESH_LOCK_POLL_SECONDS = 0.05
+
+
+def _refresh_lock_path(gateway_id: str, app_user_email: str) -> str:
+    """Return the lock file that serializes refreshes of one token on this host.
+
+    Args:
+        gateway_id: Gateway ID
+        app_user_email: ContextForge user email
+
+    Returns:
+        Path of one of a fixed set of lock files in the system temp directory
+    """
+    digest = hashlib.sha256(f"{gateway_id}\0{app_user_email}".encode()).digest()
+    stripe = int.from_bytes(digest[:4], "big") % _REFRESH_LOCK_STRIPES
+    return os.path.join(tempfile.gettempdir(), f"mcpgateway_oauth_refresh_{stripe:02d}.lock")
+
+
+@asynccontextmanager
+async def _refresh_file_lock(gateway_id: str, app_user_email: str) -> AsyncIterator[None]:
+    """Hold the host-wide refresh lock for one token without blocking the event loop.
+
+    The lock is polled with non-blocking attempts. If it stays busy for
+    _REFRESH_LOCK_WAIT_SECONDS, or the lock file is not usable, the caller
+    continues without it, as before this lock existed.
+
+    Args:
+        gateway_id: Gateway ID
+        app_user_email: ContextForge user email
+
+    Yields:
+        None, while the lock is held or after the wait gave up
+    """
+    lock = FileLock(_refresh_lock_path(gateway_id, app_user_email))
+    deadline = time.monotonic() + _REFRESH_LOCK_WAIT_SECONDS
+    acquired = False
+    while not acquired:
+        try:
+            lock.acquire(blocking=False)
+            acquired = True
+        except Timeout:
+            if time.monotonic() >= deadline:
+                logger.warning("Token refresh lock for gateway %s is still busy; refreshing without it", SecurityValidator.sanitize_log_message(gateway_id))
+                break
+            await asyncio.sleep(_REFRESH_LOCK_POLL_SECONDS)
+        except OSError as e:
+            logger.warning("Token refresh lock file is not usable (%s); refreshing without it", e)
+            break
+    try:
+        yield
+    finally:
+        if acquired:
+            lock.release()
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Return a timestamp as timezone-aware UTC, so database and in-memory values compare equal.
+
+    Args:
+        value: Timestamp that may lack a timezone (SQLite returns naive values)
+
+    Returns:
+        The timestamp in UTC, or None
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
 
 
 # Note: _preserve_prior_ttl() has been replaced by compute_prior_ttl() from refresh_helpers.py
@@ -45,6 +127,12 @@ class DatabaseTokenBackend(AbstractTokenBackend):
 
     Phase 2 will add team_id column and update queries.
     """
+
+    # Per-(gateway_id, app_user_email) locks that let one request at a time in this
+    # process refresh a token. Providers that rotate refresh tokens reject or
+    # supersede a second use of the same refresh token. Weak values drop a lock as
+    # soon as no request holds or waits on it, so the map needs no size limit.
+    _refresh_locks: ClassVar["weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock]"] = weakref.WeakValueDictionary()
 
     def __init__(self, db: Session, settings: Settings):
         """Initialize database backend.
@@ -243,15 +331,13 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 )
                 if token_record.refresh_token:
                     # Attempt to refresh token
-                    new_token = await self._refresh_access_token(token_record)
+                    new_token = await self._refresh_expired_token(token_record, threshold_seconds)
                     if new_token:
                         return new_token
                 return None
 
             # Decrypt and return valid token
-            if self.encryption:
-                return await self.encryption.decrypt_secret_async(token_record.access_token)
-            return token_record.access_token
+            return await self._decrypt_access_token(token_record.access_token)
 
         except Exception as e:
             logger.error("Failed to retrieve OAuth token: %s", str(e))
@@ -463,17 +549,142 @@ class DatabaseTokenBackend(AbstractTokenBackend):
     # Private helper methods (from original token_storage_service.py)
     # ──────────────────────────────────────────────────────────────────────
 
-    async def _refresh_access_token(self, token_record: OAuthToken) -> Optional[str]:
+    async def _refresh_expired_token(self, token_record: OAuthToken, threshold_seconds: int) -> Optional[str]:
+        """Refresh an expired token, unless another request or worker already did.
+
+        Requests that find the same expired token wait on a per-key asyncio lock,
+        then on a host-wide file lock shared by all worker processes. The lock
+        holder reads the row again before it calls the token endpoint. If the row
+        changed since the first read, or the token is no longer expired, another
+        request or worker refreshed it. That token is returned, and the refresh
+        token is not sent again.
+
+        Args:
+            token_record: Expired OAuth token record
+            threshold_seconds: Seconds before expiry to consider token expired
+
+        Returns:
+            Valid access token, or None if no token is available
+        """
+        key = (token_record.gateway_id, token_record.app_user_email)
+        async with self._refresh_locks.setdefault(key, asyncio.Lock()), _refresh_file_lock(*key):
+            current = self._read_stored_token(*key)
+            if current is None:
+                return None
+            if _as_utc(current.updated_at) == _as_utc(token_record.updated_at) and self._is_token_expired(current, threshold_seconds):
+                return await self._refresh_access_token(token_record, current.refresh_token)
+        # Decrypt after the locks are released, so that waiting requests do not queue behind the key derivation.
+        logger.info(
+            "OAuth token for gateway %s, app user %s was already refreshed; using the stored token",
+            SecurityValidator.sanitize_log_message(token_record.gateway_id),
+            SecurityValidator.sanitize_log_message(token_record.app_user_email),
+        )
+        return await self._decrypt_access_token(current.access_token)
+
+    def _read_stored_token(self, gateway_id: str, app_user_email: str) -> Any:
+        """Read the token row as stored, without decrypting the token columns.
+
+        Each encryption uses a new random salt, so only the stored text identifies
+        the refresh token that a refresh starts from. Skipping column decryption
+        also keeps the key derivation off the event loop.
+
+        Args:
+            gateway_id: Gateway ID
+            app_user_email: ContextForge user email
+
+        Returns:
+            Row with expires_at, updated_at and the stored access_token and
+            refresh_token text, or None if the token no longer exists
+        """
+        statement = select(
+            OAuthToken.expires_at,
+            OAuthToken.updated_at,
+            type_coerce(OAuthToken.access_token, Text).label("access_token"),
+            type_coerce(OAuthToken.refresh_token, Text).label("refresh_token"),
+        ).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)
+        return self.db.execute(statement).one_or_none()
+
+    async def _decrypt_access_token(self, access_token: str) -> Optional[str]:
+        """Return the plain-text form of a stored access token.
+
+        Args:
+            access_token: Access token as stored or as loaded from the token record
+
+        Returns:
+            Plain-text access token, or None if decryption fails
+        """
+        if self.encryption:
+            return await self.encryption.decrypt_secret_async(access_token)
+        return access_token
+
+    def _claim_unchanged_token(self, token_record: OAuthToken, stored_refresh_token: Optional[str], now: datetime) -> bool:
+        """Lock the token row for this transaction if it still holds the given refresh token.
+
+        One guarded UPDATE compares the stored refresh token and locks the row, on
+        every supported database. If another request or worker stored new tokens
+        after this refresh started, no row matches. The caller must still end the
+        transaction, because SQLite takes its database write lock in both cases.
+
+        Args:
+            token_record: OAuth token record being refreshed
+            stored_refresh_token: Refresh token as stored when the refresh started
+            now: Update time to record on the row
+
+        Returns:
+            True if the row is unchanged and locked, False otherwise
+        """
+        statement = (
+            update(OAuthToken)
+            .where(
+                OAuthToken.gateway_id == token_record.gateway_id,
+                OAuthToken.app_user_email == token_record.app_user_email,
+                type_coerce(OAuthToken.refresh_token, Text) == stored_refresh_token,
+            )
+            .values(updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        result = cast(CursorResult[Any], self.db.execute(statement))
+        return result.rowcount != 0
+
+    async def _use_token_stored_concurrently(self, token_record: OAuthToken) -> Optional[str]:
+        """Return the token that another request or worker stored during this refresh.
+
+        Args:
+            token_record: OAuth token record that this refresh started from
+
+        Returns:
+            Stored access token, or None if the token was deleted
+        """
+        logger.info(
+            "OAuth token for gateway %s, user %s changed during refresh; keeping the stored token",
+            SecurityValidator.sanitize_log_message(token_record.gateway_id),
+            SecurityValidator.sanitize_log_message(token_record.app_user_email),
+        )
+        current = self._read_stored_token(token_record.gateway_id, token_record.app_user_email)
+        # The missed claim wrote nothing. End its transaction before the next await so that SQLite releases its write lock.
+        self.db.commit()
+        return await self._decrypt_access_token(current.access_token) if current else None
+
+    async def _refresh_access_token(self, token_record: OAuthToken, stored_refresh_token: Optional[str] = None) -> Optional[str]:
         """Refresh an expired access token using refresh token.
+
+        The new tokens are written only if the row still holds the refresh token that
+        this refresh read. An invalid_grant response deletes the token under the same
+        condition. Otherwise another request or worker stored new tokens, and those
+        are kept and returned.
 
         Args:
             token_record: OAuth token record to refresh
+            stored_refresh_token: Refresh token text as stored, if the caller already read it
 
         Returns:
             New access token or None if refresh failed
         """
         try:
-            if not token_record.refresh_token:
+            if stored_refresh_token is None and token_record.refresh_token:
+                current = self._read_stored_token(token_record.gateway_id, token_record.app_user_email)
+                stored_refresh_token = current.refresh_token if current else None
+            if not stored_refresh_token:
                 logger.warning("No refresh token available for gateway %s", SecurityValidator.sanitize_log_message(token_record.gateway_id))
                 return None
 
@@ -494,7 +705,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 return None
 
             # Decrypt the refresh token
-            refresh_token = token_record.refresh_token
+            refresh_token = stored_refresh_token
             if self.encryption:
                 try:
                     refresh_token = await self.encryption.decrypt_secret_async(refresh_token)
@@ -555,10 +766,13 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 encrypted_access = await self.encryption.encrypt_secret_async(new_access_token)
                 encrypted_refresh = await self.encryption.encrypt_secret_async(new_refresh_token)
 
+            now = datetime.now(timezone.utc)
+            if not self._claim_unchanged_token(token_record, stored_refresh_token, now):
+                return await self._use_token_stored_concurrently(token_record)
+
             # Update the token record
             token_record.access_token = encrypted_access
             token_record.refresh_token = encrypted_refresh
-            now = datetime.now(timezone.utc)
             if expires_in is not None:
                 token_record.expires_at = now + timedelta(seconds=expires_in)
             else:
@@ -589,6 +803,10 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             # OAuthInvalidGrantError is raised by OAuthManager only when the
             # token endpoint explicitly returns {"error": "invalid_grant"}, so
             # this match is based on structured type, not substring heuristics.
+            # If the stored refresh token changed after this refresh read it, another
+            # request or worker replaced it. The rejection applies only to the old one.
+            if not self._claim_unchanged_token(token_record, stored_refresh_token, datetime.now(timezone.utc)):
+                return await self._use_token_stored_concurrently(token_record)
             logger.warning(
                 "Refresh token is permanently invalid for gateway %s (invalid_grant). Deleting token to force re-authorization. Error: %s",
                 token_record.gateway_id,
