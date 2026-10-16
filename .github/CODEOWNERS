@@ -6,7 +6,6 @@
 /rust-toolchain.toml @lucarlig @dawid-nowak
 /supply-chain/ @lucarlig @dawid-nowak
 /.github/workflows/rust.yml @lucarlig @dawid-nowak
-/.github/workflows/pytest-rust.yml @lucarlig @dawid-nowak
 
 # UI related files
 /mcpgateway/admin_ui/ @gcgoncalves
