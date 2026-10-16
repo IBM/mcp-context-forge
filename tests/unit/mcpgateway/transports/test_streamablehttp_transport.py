@@ -52,7 +52,7 @@ from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptUpstreamError, PromptValidationError
-from mcpgateway.services.resource_service import ResourceNotFoundError
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceUpstreamError
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import (
@@ -20396,3 +20396,95 @@ class TestCatalogTtl:
         with patch("mcpgateway.transports.streamablehttp_transport.settings", self._settings), caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
             assert await tr._catalog_ttl_ms("srv-1") == 0
         assert any("Could not derive the catalog TTL" in r.getMessage() for r in caplog.records)
+
+
+class TestRequestMetaLimitsAndUpstreamResourceErrors:
+    """Issue #6568: oversize ``_meta`` is -32602 on every method; an upstream resource error keeps its code."""
+
+    ENVELOPE = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "c", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {"form": {}}},
+    }
+
+    @staticmethod
+    def _with_meta(monkeypatch, meta, era="2026-07-28"):
+        TestUnknownEntityErrors._fake_db(monkeypatch)
+        ctx = SimpleNamespace(meta=meta, session=None, protocol_version=era, params={})
+        return patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "meta, fragment",
+        [
+            pytest.param({"k": "x" * 5000}, "maximum size", id="too_many_bytes"),
+            pytest.param({f"k{i}": 1 for i in range(17)}, "maximum key count", id="too_many_keys"),
+            pytest.param({"too": {"deep": {"by": 1}}}, "maximum nesting depth", id="too_deep"),
+        ],
+    )
+    async def test_oversize_meta_is_invalid_params_on_every_method(self, monkeypatch, meta, fragment):
+        """tools/call, prompts/get and resources/read reject bad ``_meta`` with -32602 before any service call."""
+        tool_invoke = AsyncMock()
+        prompt_get = AsyncMock()
+        resource_read = AsyncMock()
+        monkeypatch.setattr(tool_service, "invoke_tool", tool_invoke)
+        monkeypatch.setattr(prompt_service, "get_prompt", prompt_get)
+        monkeypatch.setattr(resource_service, "read_resource", resource_read)
+
+        for call in (lambda: call_tool("t", {}), lambda: get_prompt("p", {}), lambda: read_resource("file:///r")):
+            with self._with_meta(monkeypatch, meta):
+                with pytest.raises(MCPError) as exc_info:
+                    await call()
+            assert exc_info.value.error.code == types.INVALID_PARAMS
+            assert fragment in exc_info.value.error.message
+        tool_invoke.assert_not_awaited()
+        prompt_get.assert_not_awaited()
+        resource_read.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_modern_envelope_meta_is_accepted(self, monkeypatch):
+        """The mandatory modern keys, with nested client capabilities, pass the limits."""
+        resource_read = AsyncMock(side_effect=ResourceNotFoundError("nope"))
+        monkeypatch.setattr(resource_service, "read_resource", resource_read)
+        with self._with_meta(monkeypatch, dict(self.ENVELOPE)):
+            with pytest.raises(MCPError) as exc_info:
+                await read_resource("file:///r")
+        assert exc_info.value.error.message == "Unknown resource: file:///r"
+        resource_read.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "era, upstream_code, relayed",
+        [
+            pytest.param("2026-07-28", -32002, types.INVALID_PARAMS, id="modern_not_found_becomes_invalid_params"),
+            pytest.param("2026-07-28", -32601, -32601, id="modern_other_code_unchanged"),
+            pytest.param("2025-03-26", -32002, -32002, id="legacy_code_unchanged"),
+        ],
+    )
+    async def test_upstream_resource_error_keeps_its_code(self, monkeypatch, era, upstream_code, relayed):
+        """ResourceUpstreamError becomes an MCPError with the upstream's code, message and data."""
+        err = ResourceUpstreamError(upstream_code, "upstream says no", {"uri": "x://y"})
+        monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=err))
+        token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version=era, meta=None, request=None))
+        try:
+            with self._with_meta(monkeypatch, None, era):
+                with pytest.raises(MCPError) as exc_info:
+                    await read_resource("x://y")
+        finally:
+            tr._v2_request_ctx.reset(token)
+        assert exc_info.value.error.code == relayed
+        assert exc_info.value.error.message == "upstream says no"
+        assert exc_info.value.error.data == {"uri": "x://y"}
+
+    @pytest.mark.asyncio
+    async def test_modern_prompt_not_found_from_upstream_becomes_invalid_params(self, monkeypatch):
+        """A modern caller never sees the retired -32002 on prompts/get."""
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptUpstreamError(-32002, "gone")))
+        token = tr._v2_request_ctx.set(SimpleNamespace(protocol_version="2026-07-28", meta=None, request=None))
+        try:
+            with self._with_meta(monkeypatch, None):
+                with pytest.raises(MCPError) as exc_info:
+                    await get_prompt("p", {})
+        finally:
+            tr._v2_request_ctx.reset(token)
+        assert exc_info.value.error.code == types.INVALID_PARAMS
