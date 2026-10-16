@@ -833,6 +833,23 @@ class TestAdminServerRoutes:
         assert "instructions" in server_update.model_fields_set
         assert server_update.instructions == expected
 
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_without_instructions_field_keeps_override(self, mock_update_server, mock_request, mock_db):
+        """A form POST without an instructions field must not clear the stored override."""
+        server_id = "00000000-0000-0000-0000-000000000002"
+        # Deliberately omit the "instructions" key from the form data.
+        form_data = FakeForm({"id": server_id, "name": "Keep_Override", "visibility": "public", "associatedTools": [], "associatedResources": [], "associatedPrompts": []})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+        mock_update_server.return_value = MagicMock()
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        server_update = mock_update_server.call_args[0][2]
+        # instructions must not be in model_fields_set so the service leaves the stored override intact.
+        assert "instructions" not in server_update.model_fields_set
+
     @patch.object(ServerService, "register_server")
     async def test_admin_add_server_passes_instructions(self, mock_register_server, mock_request, mock_db, monkeypatch):
         """The create form sends its instructions text to the service."""
