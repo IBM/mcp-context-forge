@@ -19315,12 +19315,15 @@ class TestXMcpHeaderServing:
 
     @pytest.mark.asyncio
     async def test_mcp_param_header_disagreeing_with_the_body_is_rejected_before_dispatch(self, monkeypatch):
+        # mcp 2.3.0: Client.call_tool() transparently retries on HEADER_MISMATCH after a tools/list.
+        # Use client.session.call_tool() (ClientSession) which has no retry logic, so the server
+        # rejection surfaces directly as MCPError.
         invoke = self._serve_annotated_tool(monkeypatch)
         async with self._modern_client({"Mcp-Param-Region": "us"}) as client:
             with pytest.raises(MCPError) as mismatch:
-                await client.call_tool("routed", {"region": "eu"})
+                await client.session.call_tool("routed", {"region": "eu"})
             with pytest.raises(MCPError) as absent:
-                await client.call_tool("routed", {})
+                await client.session.call_tool("routed", {})
         assert mismatch.value.error.code == -32020
         assert mismatch.value.error.message == "Mcp-Param-Region header does not match the request body's 'region' argument"
         assert absent.value.error.code == -32020
