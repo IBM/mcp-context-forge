@@ -5859,6 +5859,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 </p>
               </div>
 
+              <div class="mt-4">
+                <label class="flex items-center">
+                  <input
+                    type="checkbox"
+                    name="requires_user_credentials"
+                    id="requires-user-credentials-gw"
+                    class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
+                  />
+                  <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Use per-user credentials
+                  </span>
+                </label>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Resolve non-OAuth credentials for each user. Credential storage must remain available for tool invocation.
+                </p>
+              </div>
+
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -10352,6 +10369,22 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         class="mt-2 text-sm text-gray-700 dark:text-gray-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-md p-2"
                       >
                         ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
+                      </p>
+                    </div>
+                    <div class="mt-4">
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="requires_user_credentials"
+                          id="requires-user-credentials-gw-edit"
+                          class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Use per-user credentials
+                        </span>
+                      </label>
+                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Resolve non-OAuth credentials for each user. Credential storage must remain available for tool invocation.
                       </p>
                     </div>
                     <div>

@@ -1354,6 +1354,19 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "cache"
 
+    def test_gateway_per_user_credential_policy_defaults_and_aliases(self):
+        """Gateway schemas preserve create, update, and read policy semantics."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate
+
+        assert GatewayCreate(name="gw", url="https://example.com").requires_user_credentials is False
+        assert GatewayCreate(name="gw", url="https://example.com", requiresUserCredentials=True).requires_user_credentials is True
+        assert GatewayUpdate().requires_user_credentials is None
+        assert GatewayUpdate(requires_user_credentials=False).requires_user_credentials is False
+
+        read = GatewayRead(id="gw-1", name="gw", slug="gw", url="https://example.com", requires_user_credentials=True)
+        assert read.model_dump(by_alias=True)["requiresUserCredentials"] is True
+
     def test_gateway_create_with_invalid_gateway_mode(self):
         """Test GatewayCreate rejects invalid gateway_mode values."""
         # First-Party
