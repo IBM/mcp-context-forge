@@ -576,7 +576,7 @@ class ObservabilityService:
 
         Args:
             span_id: Span ID to end
-            status: Span status (ok, error)
+            status: Span status (ok, error, cancelled)
             status_message: Optional status message
             attributes: Additional attributes to merge
             commit: Whether to commit immediately (default True).
@@ -1603,7 +1603,7 @@ class ObservabilityService:
             name_contains: Filter spans where name contains this substring
             kind: Filter by span kind (client, server, internal)
             kind_in: Filter by multiple kinds (OR logic)
-            status: Filter by single status (ok, error)
+            status: Filter by single status (ok, error, cancelled)
             status_in: Filter by multiple statuses (OR logic)
             status_not_in: Exclude these statuses (NOT logic)
             start_time: Filter spans after this time
