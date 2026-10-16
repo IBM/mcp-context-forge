@@ -298,7 +298,7 @@ plugins:
   # opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
-    version: "0.1.7"
+    version: "0.1.11"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
     mode: "disabled"
@@ -312,6 +312,7 @@ plugins:
       redis_key_prefix: "rl"
       algorithm: "fixed_window"
       by_user: "30/m"
+      by_user_per_server: null
       by_tenant: "3000/m"
       by_tool: {}
 
