@@ -46,10 +46,11 @@ export const getCatalogUrl = function (server) {
     window.location.port ||
     (window.location.protocol === "https:" ? "443" : "80");
   const protocol = window.location.protocol;
+  const rootPath = window.ROOT_PATH || "";
 
   const baseUrl = `${protocol}//${currentHost}${
     currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""
-  }`;
+  }${rootPath}`;
 
   return `${baseUrl}/servers/${server.id}`;
 };
@@ -145,7 +146,8 @@ export const generateConfig = function (server, configType) {
     window.location.port ||
     (window.location.protocol === "https:" ? "443" : "80");
   const protocol = window.location.protocol;
-  const baseUrl = `${protocol}//${currentHost}${currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""}`;
+  const rootPath = window.ROOT_PATH || "";
+  const baseUrl = `${protocol}//${currentHost}${currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""}${rootPath}`;
 
   // Clean server name for use as config key (alphanumeric and hyphens only)
   const cleanServerName = server.name
