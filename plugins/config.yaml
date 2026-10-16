@@ -1346,3 +1346,29 @@ plugins:
       detect_ssn: true
       block_on_detection: false
       log_detections: false
+
+  # Tool Shadow Detector — flags tool names within a small edit distance of
+  # another already-registered tool (the "tool shadowing" pattern: a
+  # malicious server registers e.g. get_user_roles to impersonate a
+  # legitimate get_user_role). Warns by default (does not block) so
+  # operators can review candidates before opting into enforcement.
+  # Compares across AND within the same gateway by default: the reference
+  # DVMCP Challenge 5 vulnerability registers both the legitimate and
+  # shadow tool on the SAME server specifically to blend in, so a
+  # same-gateway exemption would miss the exact case this plugin targets.
+  - name: "ToolShadowDetectorPlugin"
+    kind: "plugins.tool_shadow_detector.tool_shadow_detector.ToolShadowDetectorPlugin"
+    description: "Flags tool invocations whose name is a near-miss of another registered tool"
+    version: "0.1.0"
+    author: "ZTAI Security Advisors"
+    hooks: ["tool_pre_invoke"]
+    tags: ["security", "tool-shadowing", "typosquatting", "detection"]
+    mode: "disabled"  # set to "sequential" to activate
+    priority: 15  # Run early, after UnifiedPDPPlugin (10) but before most others
+    conditions: []
+    config:
+      max_edit_distance: 2
+      min_name_length: 6
+      block_on_detection: false
+      exempt_same_gateway: false
+
