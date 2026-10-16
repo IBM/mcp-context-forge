@@ -197,7 +197,7 @@ def live_stack(tmp_path: Path) -> Iterator[dict[str, Any]]:
             "JWT_ISSUER": issuer,
             "AUTH_ENCRYPTION_SECRET": secrets.token_urlsafe(48),
             "PLATFORM_ADMIN_EMAIL": admin_email,
-            "PLATFORM_ADMIN_PASSWORD": admin_password,
+            "PLATFORM_ADMIN_PASSWORD": admin_password,  # pragma: allowlist secret
             "DEFAULT_USER_PASSWORD": secrets.token_urlsafe(24),
             "AUTH_REQUIRED": "true",
             "REQUIRE_USER_IN_DB": "true",
@@ -233,7 +233,7 @@ def live_stack(tmp_path: Path) -> Iterator[dict[str, Any]]:
             else:
                 pytest.fail(f"Gateway startup timed out: {log_path.read_text()[-3000:]}")
 
-            admin_login = api.post("/auth/email/login", json={"email": admin_email, "password": admin_password})
+            admin_login = api.post("/auth/email/login", json={"email": admin_email, "password": admin_password})  # pragma: allowlist secret
             assert admin_login.status_code == 200, admin_login.text[:500]
             admin_payload = admin_login.json()
             admin_id = str(jwt.decode(admin_payload["access_token"], options={"verify_signature": False})["sub"])
@@ -241,7 +241,7 @@ def live_stack(tmp_path: Path) -> Iterator[dict[str, Any]]:
 
             user_create = admin.post(
                 "/auth/email/admin/users",
-                json={"email": user_email, "password": _PASSWORD, "full_name": "Credential Isolation User", "is_admin": False, "is_active": True, "password_change_required": False},
+                json={"email": user_email, "password": _PASSWORD, "full_name": "Credential Isolation User", "is_admin": False, "is_active": True, "password_change_required": False},  # pragma: allowlist secret
             )
             assert user_create.status_code == 201, user_create.text[:500]
             team = admin.post("/teams/", json={"name": f"credential-isolation-{uuid.uuid4().hex[:8]}", "visibility": "private"})
@@ -258,7 +258,7 @@ def live_stack(tmp_path: Path) -> Iterator[dict[str, Any]]:
             assert assigned.status_code in {200, 201}, assigned.text[:500]
             owned_assignments.append((user_email, developer_id, team_id))
 
-            user_login = api.post("/auth/email/login", json={"email": user_email, "password": _PASSWORD})
+            user_login = api.post("/auth/email/login", json={"email": user_email, "password": _PASSWORD})  # pragma: allowlist secret
             assert user_login.status_code == 200, user_login.text[:500]
             session_jwt = user_login.json()["access_token"]
             session_claims = jwt.decode(session_jwt, options={"verify_signature": False})
@@ -281,10 +281,10 @@ def live_stack(tmp_path: Path) -> Iterator[dict[str, Any]]:
             owned_user_emails.append(denied_email)
             denied_create = admin.post(
                 "/auth/email/admin/users",
-                json={"email": denied_email, "password": _PASSWORD, "full_name": "Credential Denied User", "is_admin": False, "is_active": True, "password_change_required": False},
+                json={"email": denied_email, "password": _PASSWORD, "full_name": "Credential Denied User", "is_admin": False, "is_active": True, "password_change_required": False},  # pragma: allowlist secret
             )
             assert denied_create.status_code == 201, denied_create.text[:500]
-            denied_login = api.post("/auth/email/login", json={"email": denied_email, "password": _PASSWORD})
+            denied_login = api.post("/auth/email/login", json={"email": denied_email, "password": _PASSWORD})  # pragma: allowlist secret
             assert denied_login.status_code == 200, denied_login.text[:500]
             denied_jwt = denied_login.json()["access_token"]
 
