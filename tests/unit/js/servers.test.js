@@ -56,6 +56,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
     btn.textContent = "Copy";
     return btn;
   }),
+  getCurrentTeamId: vi.fn(() => null),
 }));
 
 beforeEach(() => {
