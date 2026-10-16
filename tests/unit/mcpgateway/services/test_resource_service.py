@@ -9027,6 +9027,80 @@ class TestValidateMetaData:
         with pytest.raises(ValueError, match="not serializable"):
             _validate_meta_data({"bad": _Unserializable()})
 
+    def test_envelope_keys_do_not_count_and_may_nest(self):
+        """The mandatory modern keys are exempt from the key-count and depth limits (issue #6568)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        meta = {f"k{i}": i for i in range(16)}
+        meta["io.modelcontextprotocol/protocolVersion"] = "2026-07-28"
+        meta["io.modelcontextprotocol/clientInfo"] = {"name": "c", "version": "1"}
+        meta["io.modelcontextprotocol/clientCapabilities"] = {"elicitation": {"form": {}}}
+        _validate_meta_data(meta)
+
+    def test_envelope_keys_do_not_exempt_other_keys(self):
+        """One key over the limit is still rejected when the envelope keys are present."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        meta = {f"k{i}": i for i in range(17)}
+        meta["io.modelcontextprotocol/clientCapabilities"] = {}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(meta)
+
+    def test_envelope_keys_have_a_depth_cap_and_count_toward_bytes(self):
+        """An envelope key nested past its own cap, or one that is oversize, is rejected."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        deep = {"a": {"b": {"c": {"d": {"e": 1}}}}}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data({"io.modelcontextprotocol/clientCapabilities": deep})
+        with pytest.raises(ValueError, match="maximum size"):
+            _validate_meta_data({"io.modelcontextprotocol/clientInfo": {"name": "x" * 5000}})
+
+
+class TestRaiseUnresolvedGatewayResource:
+    """An upstream JSON-RPC error keeps its code; every other failure stays generic (issue #6568)."""
+
+    def test_mcp_error_becomes_resource_upstream_error(self):
+        """The upstream code, message and data survive, wrapped in a task-group error."""
+        # Third-Party
+        from mcp.shared.exceptions import MCPError
+
+        # First-Party
+        from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError
+
+        group = BaseExceptionGroup("tg", [MCPError(code=-32002, message="Resource not found", data={"uri": "x://y"})])
+        with pytest.raises(ResourceUpstreamError) as exc_info:
+            _raise_unresolved_gateway_resource(group, None)
+        assert exc_info.value.code == -32002
+        assert exc_info.value.data == {"uri": "x://y"}
+        assert "Resource not found" in str(exc_info.value)
+
+    def test_upstream_text_is_sanitized(self):
+        """Auth query parameters never reach the relayed message or data."""
+        # Third-Party
+        from mcp.shared.exceptions import MCPError
+
+        # First-Party
+        from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError
+
+        err = MCPError(code=-32603, message="failed https://up.example/mcp?api_key=SECRETVALUE", data="https://up.example/mcp?api_key=SECRETVALUE")
+        with pytest.raises(ResourceUpstreamError) as exc_info:
+            _raise_unresolved_gateway_resource(err, {"api_key": "SECRETVALUE"})
+        assert "SECRETVALUE" not in str(exc_info.value)
+        assert "SECRETVALUE" not in exc_info.value.data
+
+    def test_transport_failure_stays_generic(self):
+        """A non-JSON-RPC failure raises the generic error with the fixed message."""
+        # First-Party
+        from mcpgateway.services.resource_service import _raise_unresolved_gateway_resource, ResourceUpstreamError, UNRESOLVED_GATEWAY_RESOURCE_MESSAGE
+
+        with pytest.raises(ResourceError, match=UNRESOLVED_GATEWAY_RESOURCE_MESSAGE) as exc_info:
+            _raise_unresolved_gateway_resource(ConnectionError("boom"), None)
+        assert not isinstance(exc_info.value, ResourceUpstreamError)
+
 
 class TestBuildReadResourceRequest:
     """Unit tests for _build_read_resource_request (CWE-20 and CWE-284 guards)."""
