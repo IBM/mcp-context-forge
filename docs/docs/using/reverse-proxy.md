@@ -46,7 +46,7 @@ python3 -m mcpgateway.reverse_proxy \
 
 ```bash
 python3 -m mcpgateway.reverse_proxy \
-    --local-stdio "uvx mcp-server-filesystem --directory /path/to/files" \
+    --local-stdio "uvx mcp-server-fetch" \
     --gateway https://gateway.example.com \
     --token your-bearer-token \
     --reconnect-delay 2 \
@@ -133,17 +133,14 @@ services:
       --log-level INFO
     restart: unless-stopped
 
-  reverse-proxy-filesystem:
+  reverse-proxy-fetch:
     image: mcp-gateway:latest
     environment:
       REVERSE_PROXY_GATEWAY: https://gateway.example.com
       REVERSE_PROXY_TOKEN: ${TOKEN}
-    volumes:
-
-      - ./data:/data:ro
     command: >
       python -m mcpgateway.reverse_proxy
-      --local-stdio "mcp-server-filesystem --directory /data"
+      --local-stdio "uvx mcp-server-fetch"
     restart: unless-stopped
 ```
 
@@ -337,8 +334,8 @@ servers:
     command: "uvx mcp-server-git"
     gateway: "https://gateway1.example.com"
 
-  - name: filesystem-server
-    command: "uvx mcp-server-filesystem --directory /data"
+  - name: fetch-server
+    command: "uvx mcp-server-fetch"
     gateway: "https://gateway2.example.com"
 ```
 
