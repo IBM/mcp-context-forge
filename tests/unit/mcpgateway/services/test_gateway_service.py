@@ -3285,6 +3285,28 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
+    async def test_connectors_truncate_oversized_upstream_instructions(self, gateway_service, connector):
+        """Upstream instructions that exceed MAX_DESCRIPTION_LENGTH are truncated at ingest."""
+        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
+
+        oversized = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 100)
+        client = AsyncMock()
+        client.server_capabilities = MagicMock()
+        client.server_capabilities.model_dump = MagicMock(return_value={})
+        client.instructions = oversized
+        client.list_tools.return_value = SimpleNamespace(tools=[])
+        proxy = AsyncMock()
+        proxy.__aenter__.return_value = client
+
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=proxy):
+            result = await getattr(gateway_service, connector)("https://test.example.com/mcp")
+
+        stored_instructions = result[5]
+        assert stored_instructions is not None
+        assert len(stored_instructions) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("connector", ["connect_to_sse_server", "connect_to_streamablehttp_server", "_connect_to_sse_server_without_validation"])
     async def test_catalog_discovery_list_resources_exception_returns_empty_list(self, gateway_service, connector):
         """Resource discovery failures remain isolated from prompt discovery."""
         # mcp v2: mcp_proxy_client yields an auto-initialised Client exposing server_capabilities.

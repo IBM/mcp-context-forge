@@ -3398,12 +3398,11 @@ async def admin_edit_server(
                 oauth_enabled = False
                 oauth_config = None
 
-        server = ServerUpdate(
+        server_kwargs: Dict[str, Any] = dict(
             id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            instructions=_form_instructions(form),
             associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in associated_resources_list),
             associated_prompts=",".join(str(x) for x in associated_prompts_list),
@@ -3414,6 +3413,12 @@ async def admin_edit_server(
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
         )
+        # Only include instructions when the form field was submitted; omitting it leaves the
+        # stored override unchanged.  Passing None explicitly would land in model_fields_set
+        # and clear a previously saved override.
+        if "instructions" in form:
+            server_kwargs["instructions"] = _form_instructions(form)
+        server = ServerUpdate(**server_kwargs)
 
         await server_service.update_server(
             db,

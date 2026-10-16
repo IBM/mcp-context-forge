@@ -7,7 +7,7 @@ Tests for the choice of ``instructions`` text for a virtual server.
 """
 
 # Standard
-from typing import Any, Optional
+from typing import Any, List, Optional
 from unittest.mock import patch
 
 # Third-Party
@@ -77,9 +77,9 @@ def seed(session_factory):
         db.commit()
         return row.id
 
-    def resolve(server_id: str) -> Optional[str]:
+    def resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
         with patch("mcpgateway.services.server_service.SessionLocal", session_factory):
-            return ServerService._resolve_instructions_sync(server_id)  # pylint: disable=protected-access
+            return ServerService._resolve_instructions_sync(server_id, user_email=user_email, token_teams=token_teams)  # pylint: disable=protected-access
 
     yield type("Seed", (), {"gateway": staticmethod(gateway), "tool": staticmethod(tool), "resource": staticmethod(resource), "prompt": staticmethod(prompt), "server": staticmethod(server), "resolve": staticmethod(resolve)})
     db.close()
@@ -130,16 +130,16 @@ def test_a2a_agent_sends_default_text(seed):
     assert seed.resolve(sid) == DEFAULT_SERVER_INSTRUCTIONS
 
 
-def test_upstream_without_text_sends_nothing(seed):
-    """A single-upstream server whose upstream has no text: None, not the default text."""
+def test_upstream_without_text_sends_default(seed):
+    """A single-upstream server whose upstream has no text sends the default text, not None."""
     sid = seed.server(seed.tool("now", seed.gateway("clock")))
-    assert seed.resolve(sid) is None
+    assert seed.resolve(sid) == DEFAULT_SERVER_INSTRUCTIONS
 
 
 def test_upstream_with_empty_text_sends_nothing(seed):
-    """An upstream server with an empty text: None."""
+    """An upstream server with an empty string stored as text: None (empty string is falsy)."""
     sid = seed.server(seed.tool("now", seed.gateway("clock", "")))
-    assert seed.resolve(sid) is None
+    assert seed.resolve(sid) == DEFAULT_SERVER_INSTRUCTIONS
 
 
 @pytest.mark.asyncio
@@ -173,3 +173,82 @@ def test_unset_override_falls_back_to_the_upstream_text(seed):
     up = seed.gateway("clock", UPSTREAM_TEXT)
     sid = seed.server(seed.tool("now", up), instructions=None)
     assert seed.resolve(sid) == UPSTREAM_TEXT
+
+
+# ---------------------------------------------------------------------------
+# Visibility deny-path tests (CWE-639 / CWE-200)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def vis_seed(session_factory):
+    """Fixture that seeds servers with varying visibility for deny-path tests."""
+    db: Session = session_factory()
+    up = Gateway(name="up", slug="up", url="https://up.example.com/mcp", capabilities={}, upstream_instructions=UPSTREAM_TEXT)
+    db.add(up)
+    db.flush()
+
+    def _server(visibility: str = "public", owner_email: Optional[str] = None, team_id: Optional[str] = None) -> str:
+        t = Tool(original_name="t", custom_name="t", custom_name_slug="t", input_schema={"type": "object"}, gateway_id=up.id)
+        db.add(t)
+        db.flush()
+        row = Server(name="vs", visibility=visibility, owner_email=owner_email, team_id=team_id)
+        row.tools.append(t)
+        db.add(row)
+        db.commit()
+        return row.id
+
+    def _resolve(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
+        with patch("mcpgateway.services.server_service.SessionLocal", session_factory):
+            return ServerService._resolve_instructions_sync(server_id, user_email=user_email, token_teams=token_teams)  # pylint: disable=protected-access
+
+    yield type("VisSeed", (), {"server": staticmethod(_server), "resolve": staticmethod(_resolve)})
+    db.close()
+
+
+def test_public_server_visible_to_public_only_token(vis_seed):
+    """A public server is visible to a public-only token (token_teams=[])."""
+    sid = vis_seed.server(visibility="public")
+    assert vis_seed.resolve(sid, user_email=None, token_teams=[]) == UPSTREAM_TEXT
+
+
+def test_private_server_not_visible_to_public_only_token(vis_seed):
+    """A private server is not visible to a public-only token; returns default text."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email=None, token_teams=[]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_private_server_visible_to_owner(vis_seed):
+    """A private server is visible to its owner."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=[]) == UPSTREAM_TEXT
+
+
+def test_private_server_not_visible_to_wrong_user(vis_seed):
+    """A private server is not visible to a different authenticated user."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email="bob@example.com", token_teams=[]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_team_server_visible_to_team_member(vis_seed):
+    """A team server is visible to a caller whose token includes the server's team."""
+    sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-1"]) == UPSTREAM_TEXT
+
+
+def test_team_server_not_visible_to_wrong_team(vis_seed):
+    """A team server is not visible to a caller from a different team."""
+    sid = vis_seed.server(visibility="team", team_id="team-1")
+    assert vis_seed.resolve(sid, user_email="alice@example.com", token_teams=["team-2"]) == DEFAULT_SERVER_INSTRUCTIONS
+
+
+def test_admin_bypass_sees_private_server(vis_seed):
+    """token_teams=None is the admin-bypass shape and sees all servers regardless of visibility."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email="admin@example.com", token_teams=None) == UPSTREAM_TEXT
+
+
+def test_no_auth_context_sees_only_public(vis_seed):
+    """token_teams=[] with no user_email (public-only token, no owner match) sees only public servers."""
+    sid = vis_seed.server(visibility="private", owner_email="alice@example.com")
+    assert vis_seed.resolve(sid, user_email=None, token_teams=[]) == DEFAULT_SERVER_INSTRUCTIONS
