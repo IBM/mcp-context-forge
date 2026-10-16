@@ -30,6 +30,17 @@ class TestServerToolAssignmentBugFix:
         )
         assert server.associated_tools == [valid_uuid]
 
+    def test_server_create_accepts_camel_case_associated_tools(self):
+        """Test that ServerCreate accepts associatedTools camelCase (issue #6956)."""
+        valid_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
+        server = ServerCreate.model_validate(
+            {
+                "name": "Test Server",
+                "associatedTools": [valid_uuid],
+            }
+        )
+        assert server.associated_tools == [valid_uuid]
+
     def test_server_create_with_valid_hyphenated_uuid_list(self):
         """Test that ServerCreate normalizes hyphenated UUIDs to hex form."""
         hyphenated_uuid = "550e8400-e29b-41d4-a716-446655440000"
