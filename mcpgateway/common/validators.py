@@ -63,6 +63,7 @@ from urllib.parse import unquote, urlparse
 import uuid
 
 # Third-Party
+from mcp_types import CLIENT_CAPABILITIES_META_KEY, CLIENT_INFO_META_KEY, PROTOCOL_VERSION_META_KEY
 from pydantic import AfterValidator
 
 # First-Party
@@ -2578,14 +2579,33 @@ META_MAX_DEPTH: int = settings.meta_max_depth
 META_MAX_BYTES: int = settings.meta_max_bytes
 
 
+# Mandatory per-request keys that a modern MCP client stamps into ``_meta``. They
+# do not count toward the key-count or depth limits, so a valid modern request is
+# never rejected. They keep a fixed depth cap and count toward the byte limit.
+MCP_ENVELOPE_META_KEYS = frozenset({PROTOCOL_VERSION_META_KEY, CLIENT_INFO_META_KEY, CLIENT_CAPABILITIES_META_KEY})
+MCP_ENVELOPE_META_MAX_DEPTH = 4
+
+
 def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
     """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
+
+    The mandatory MCP envelope keys (protocol version, client info, client
+    capabilities) are exempt from the key-count and depth limits. They use a
+    fixed depth cap and count toward the byte limit.
 
     Args:
         meta_data: The metadata dictionary to validate. ``None`` is always accepted.
 
     Raises:
         ValueError: if any limit is exceeded.
+
+    Examples:
+        >>> validate_meta_data({"a": 1})
+        >>> validate_meta_data({"io.modelcontextprotocol/clientCapabilities": {"elicitation": {"form": {}}}})
+        >>> validate_meta_data({"a": {"b": {"c": 1}}})
+        Traceback (most recent call last):
+            ...
+        ValueError: meta_data exceeds maximum nesting depth (2)
     """
     max_keys = settings.meta_max_keys
     max_depth = settings.meta_max_depth
@@ -2593,37 +2613,41 @@ def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
 
     if not meta_data:
         return
-    if len(meta_data) > max_keys:
-        raise ValueError(f"meta_data exceeds maximum key count ({max_keys}): got {len(meta_data)}")
+    user_keys = [k for k in meta_data if k not in MCP_ENVELOPE_META_KEYS]
+    if len(user_keys) > max_keys:
+        raise ValueError(f"meta_data exceeds maximum key count ({max_keys}): got {len(user_keys)}")
 
-    def _check_depth(obj: Any, depth: int) -> None:
+    def _check_depth(obj: Any, depth: int, limit: int) -> None:
         """Recursively enforce nesting depth, traversing both dicts and lists (CWE-400).
 
         Lists are traversed without incrementing the depth counter so that a
         list-of-dicts does not hide an extra level of dict nesting — e.g.
         ``{"k": [{"l2": {"l3": "x"}}]}`` is correctly caught as depth 3.
         """
-        if depth > max_depth:
-            raise ValueError(f"meta_data exceeds maximum nesting depth ({max_depth})")
+        if depth > limit:
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({limit})")
         if isinstance(obj, dict):
             for v in obj.values():
-                _check_depth(v, depth + 1)
+                _check_depth(v, depth + 1, limit)
         elif isinstance(obj, list):
             for item in obj:
-                _check_depth(item, depth)
+                _check_depth(item, depth, limit)
 
-    for v in meta_data.values():
-        _check_depth(v, 1)
+    for key, value in meta_data.items():
+        if key in MCP_ENVELOPE_META_KEYS:
+            _check_depth(value, 1, MCP_ENVELOPE_META_MAX_DEPTH)
+        else:
+            _check_depth(value, 1, max_depth)
 
     try:
         # CWE-20: Use strict json.dumps (no default=str) so non-serializable objects
         # raise TypeError rather than being silently coerced — keeps the byte limit
         # meaningful and matches the strict rejection behaviour used in prompt_service.
         size = len(json.dumps(meta_data))
-        if size > max_bytes:
-            raise ValueError(f"meta_data exceeds maximum size ({max_bytes} bytes): got {size}")
     except (TypeError, ValueError) as exc:
         raise ValueError(f"meta_data is not serializable: {exc}") from exc
+    if size > max_bytes:
+        raise ValueError(f"meta_data exceeds maximum size ({max_bytes} bytes): got {size}")
 
 
 # ---------------------------------------------------------------------------

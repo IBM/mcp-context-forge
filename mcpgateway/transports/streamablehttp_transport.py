@@ -96,7 +96,7 @@ from mcpgateway.services.metrics import (
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, set_upstream_cache_directive, upstream_read_cache_var
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceUpstreamError, set_upstream_cache_directive, upstream_read_cache_var
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -1684,6 +1684,27 @@ def _caller_is_modern() -> bool:
     return getattr(_v2_request_ctx.get(), "protocol_version", None) in MODERN_PROTOCOL_VERSIONS
 
 
+LEGACY_RESOURCE_NOT_FOUND = -32002
+
+
+def _relayed_upstream_code(code: int) -> int:
+    """Return the JSON-RPC code to relay: a modern caller never sees the retired -32002.
+
+    Args:
+        code: The code the upstream answered with.
+
+    Returns:
+        int: ``INVALID_PARAMS`` for ``-32002`` on a modern wire; ``code`` otherwise.
+
+    Examples:
+        >>> _relayed_upstream_code(-32601)
+        -32601
+    """
+    if code == LEGACY_RESOURCE_NOT_FOUND and _caller_is_modern():
+        return types.INVALID_PARAMS
+    return code
+
+
 def _json_equal(left: Any, right: Any) -> bool:
     """Compare two JSON values with their types kept apart: ``true`` is not ``1``, at any depth.
 
@@ -1799,6 +1820,29 @@ def _truthy_is_error(result: Any) -> bool:
         literally ``True``.
     """
     return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
+
+
+def _reject_invalid_meta(meta_data: Optional[Dict[str, Any]]) -> None:
+    """Reject request ``_meta`` that exceeds the configured limits (CWE-400).
+
+    Args:
+        meta_data: The ``_meta`` mapping extracted from the request context.
+
+    Raises:
+        MCPError: With ``INVALID_PARAMS`` (-32602) when a limit is exceeded.
+
+    Examples:
+        >>> _reject_invalid_meta(None)
+        >>> _reject_invalid_meta({"a": {"b": {"c": 1}}})
+        Traceback (most recent call last):
+            ...
+        mcp.shared.exceptions.MCPError: meta_data exceeds maximum nesting depth (2)
+    """
+    try:
+        _validate_meta_data(meta_data)
+    except ValueError as e:
+        logger.info("Rejected request _meta: %s", e)
+        raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
 
 
 def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
@@ -1938,6 +1982,8 @@ async def call_tool(
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
+
+    _reject_invalid_meta(meta_data)
 
     async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
         """Forward an upstream progress update to the downstream caller.
@@ -2901,6 +2947,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
+    _reject_invalid_meta(meta_data)
+
     # Cross-hook plugin state sharing on /mcp (issue #3879).
     plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
 
@@ -2926,7 +2974,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                 raise MCPError(code=types.INVALID_PARAMS, message=str(e)) from e
             except PromptUpstreamError as e:
                 logger.info("Upstream answered prompt %s with JSON-RPC error %s", prompt_id, e.code)
-                raise MCPError(code=e.code, message=str(e), data=e.data) from e
+                raise MCPError(code=_relayed_upstream_code(e.code), message=str(e), data=e.data) from e
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
                 return types.GetPromptResult(messages=[])
@@ -3101,6 +3149,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
+    _reject_invalid_meta(meta_data)
+
     # Cross-hook plugin state sharing on /mcp (issue #3879).
     plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
 
@@ -3130,8 +3180,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                         GATEWAY_ID_HEADER,
                         sorted(meta_data.keys()) if meta_data else None,
                     )
-                    # CWE-400: validate _meta limits before network I/O (bypassed in direct-proxy branch)
-                    _validate_meta_data(meta_data)
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
@@ -3158,6 +3206,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
             except ResourceNotFoundError as e:
                 logger.info("Unknown resource requested: %s", resource_uri)
                 raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown resource: {resource_uri}") from e
+            except ResourceUpstreamError as e:
+                logger.info("Upstream answered resource %s with JSON-RPC error %s", resource_uri, e.code)
+                raise MCPError(code=_relayed_upstream_code(e.code), message=str(e), data=e.data) from e
             except ValueError as e:
                 if str(e) != "Resource has no content":
                     raise
