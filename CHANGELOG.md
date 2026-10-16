@@ -10,6 +10,8 @@
 
 ### Breaking Changes
 
+- **Downstream MCP catalog pagination** ([#6990](https://github.com/IBM/mcp-context-forge/issues/6990)) — Python MCP lists now return at most `MCP_LIST_PAGE_SIZE=100` items by default. Clients that ignore `nextCursor` receive only the first page. Database order changes from `created_at DESC` to `id ASC`. Server-scoped lists exclude other users' private rows for unrestricted administrators; administrators retain their own private rows. Multi-page direct-proxy lists now require Redis. Share `AUTH_ENCRYPTION_SECRET` across workers and keep traversals on one version during deployment. Restart traversals after reconnect, rotation, or rollback. Rust tools lists remain complete until the bridge forwards client cursors. This change delivers part of #6990. See [pagination configuration](docs/docs/manage/configuration.md#mcp-catalog-pagination).
+
 - **Completion authorization** ([#6760](https://github.com/IBM/mcp-context-forge/pull/6760)) - `POST /protocol/completion/complete` now requires `tools.read` RBAC permission. Previously, authentication alone passed this endpoint's authorization check. Before upgrading from 1.0.11, grant `tools.read` to completion callers' roles and include it in replacement tokens with explicit permission scopes. Denied callers receive HTTP 403 before upstream access. See [completion permission migration](docs/docs/manage/api-usage.md#completion-compatibility-and-permission-migration).
 
 ### Added
