@@ -179,7 +179,8 @@ async def test_handshake_instructions_follow_the_server_scope_in_both_protocol_e
     if resolved_server_id == "default_server_id":
         resolve.assert_not_awaited()
     else:
-        resolve.assert_awaited_with("srv-1")
+        # Caller passes user_email and token_teams derived from the request user_context.
+        resolve.assert_awaited_with("srv-1", user_email=None, token_teams=[])
 
 
 async def test_legacy_initialize_middleware_leaves_other_methods_untouched():

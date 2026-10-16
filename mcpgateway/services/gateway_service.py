@@ -7762,7 +7762,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
                 # Read negotiated capabilities from the auto-initialized session
                 capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
-                instructions = client.instructions or None
+                raw_instructions = client.instructions or None
+                if raw_instructions and len(raw_instructions) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+                    logger.debug("Upstream instructions exceed limit; truncating at ingest (url=%s)", sanitize_url_for_logging(server_url))
+                    raw_instructions = raw_instructions[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+                instructions = raw_instructions
                 logger.debug("Server capabilities: %s", capabilities)
 
                 tools = await get_list_paginated(client, MCPListMethod.TOOLS)
@@ -7943,7 +7947,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
             # Read negotiated capabilities from the auto-initialized session
             capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
-            instructions = client.instructions or None
+            raw_instructions = client.instructions or None
+            if raw_instructions and len(raw_instructions) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+                logger.debug("Upstream instructions exceed limit; truncating at ingest (url=%s)", sanitize_url_for_logging(server_url))
+                raw_instructions = raw_instructions[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            instructions = raw_instructions
             logger.debug("Server capabilities: %s", capabilities)
 
             tools = await get_list_paginated(client, MCPListMethod.TOOLS)
@@ -8118,7 +8126,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         ) as client:
             # Client auto-initializes; get capabilities from the auto-initialized session
             capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
-            instructions = client.instructions or None
+            raw_instructions = client.instructions or None
+            if raw_instructions and len(raw_instructions) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+                logger.debug("Upstream instructions exceed limit; truncating at ingest (url=%s)", sanitize_url_for_logging(server_url))
+                raw_instructions = raw_instructions[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            instructions = raw_instructions
             logger.debug("Server capabilities: %s", capabilities)
 
             tools = await get_list_paginated(client, MCPListMethod.TOOLS)
