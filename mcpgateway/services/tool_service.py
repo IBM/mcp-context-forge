@@ -2580,6 +2580,7 @@ class ToolService(BaseService):
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2603,6 +2604,9 @@ class ToolService(BaseService):
             owner_email: Email of the user who owns these tools
             visibility: Tool visibility level (private, team, public)
             conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+            user_email: Email of the authenticated caller. The "update" strategy modifies
+                an existing tool only when this caller owns it. Without it, no existing
+                tool is modified.
 
         Returns:
             Dict with statistics:
@@ -2637,6 +2641,7 @@ class ToolService(BaseService):
 
         for chunk_start in range(0, len(tools), chunk_size):
             chunk = tools[chunk_start : chunk_start + chunk_size]
+            existing_tools_map, unowned_names = await self._load_authorized_tool_conflicts(db, chunk, conflict_strategy, visibility, team_id, owner_email, created_by, user_email)
             chunk_stats = self._process_tool_chunk(
                 db,
                 chunk=chunk,
@@ -2650,6 +2655,8 @@ class ToolService(BaseService):
                 created_user_agent=created_user_agent,
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
+                unowned_names=unowned_names,
+                existing_tools_map=existing_tools_map,
             )
 
             # Aggregate stats
@@ -2681,6 +2688,71 @@ class ToolService(BaseService):
 
         return stats
 
+    @staticmethod
+    def _existing_tools_query(tool_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
+        """Build the conflict lookup for bulk registration within the requested scope.
+
+        Args:
+            tool_names: Tool names to look up.
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+
+        Returns:
+            Select statement matching existing tools by name within the scope.
+        """
+        if visibility.lower() == "public":
+            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
+        if visibility.lower() == "team" and team_id:
+            return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
+        # Private tools - check by owner
+        return select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
+
+    async def _load_authorized_tool_conflicts(
+        self,
+        db: Session,
+        chunk: List[ToolCreate],
+        conflict_strategy: str,
+        visibility: str,
+        team_id: Optional[str],
+        owner_email: Optional[str],
+        created_by: Optional[str],
+        user_email: Optional[str],
+    ) -> tuple:
+        """Load the existing tools for a chunk once and decide which the caller may not modify.
+
+        The chunk processor mutates exactly the rows returned here. A tool that appears after
+        this query is not in the map, so it can never be updated without an ownership decision.
+
+        Args:
+            db: The SQLAlchemy database session.
+            chunk: List of ToolCreate objects to process.
+            conflict_strategy: Strategy for handling conflicts ("skip", "update", "rename", or "fail").
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+            user_email: Email of the authenticated caller. When empty, every existing tool is unowned.
+
+        Returns:
+            Tuple of the existing tools map keyed by name and the frozen set of names the caller must not modify.
+        """
+        tool_names = [name for name in (getattr(tool, "name", None) for tool in chunk) if name]
+        existing_tools = db.execute(self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)).scalars().all()
+        existing_tools_map = {tool.name: tool for tool in existing_tools}
+        if conflict_strategy != "update":
+            return existing_tools_map, frozenset()
+        if not user_email:
+            return existing_tools_map, frozenset(existing_tools_map)
+
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        permission_service = PermissionService(db)
+        unowned = [name for name, tool in existing_tools_map.items() if not await permission_service.check_resource_ownership(user_email, tool)]
+        return existing_tools_map, frozenset(unowned)
+
     def _process_tool_chunk(
         self,
         db: Session,
@@ -2695,6 +2767,8 @@ class ToolService(BaseService):
         created_user_agent: Optional[str],
         import_batch_id: Optional[str],
         federation_source: Optional[str],
+        unowned_names: frozenset = frozenset(),
+        existing_tools_map: Optional[dict] = None,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2711,6 +2785,9 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
+            unowned_names: Names of existing tools the caller may not modify.
+            existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
+                given, no second conflict query runs, so only checked rows can be modified.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2718,19 +2795,12 @@ class ToolService(BaseService):
         stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
         try:
-            # Batch check for existing tools to detect conflicts
-            tool_names = [tool.name for tool in chunk]
-
-            if visibility.lower() == "public":
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
-            elif visibility.lower() == "team" and team_id:
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
-            else:
-                # Private tools - check by owner
-                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
-
-            existing_tools = db.execute(existing_tools_query).scalars().all()
-            existing_tools_map = {tool.name: tool for tool in existing_tools}
+            if existing_tools_map is None:
+                tool_names = [tool.name for tool in chunk]
+                existing_tools_query = self._existing_tools_query(tool_names, visibility, team_id, owner_email, created_by)
+                existing_tools = db.execute(existing_tools_query).scalars().all()
+                existing_tools_map = {tool.name: tool for tool in existing_tools}
+                unowned_names = frozenset(existing_tools_map)
 
             tools_to_add = []
             tools_to_update = []
@@ -2749,6 +2819,7 @@ class ToolService(BaseService):
                     created_user_agent=created_user_agent,
                     import_batch_id=import_batch_id,
                     federation_source=federation_source,
+                    unowned_names=unowned_names,
                 )
 
                 if result["status"] == "add":
@@ -2762,6 +2833,17 @@ class ToolService(BaseService):
                 elif result["status"] == "fail":
                     stats["failed"] += 1
                     stats["errors"].append(result["error"])
+
+            if conflict_strategy == "update" and tools_to_add:
+                # A tool committed after the authorized load is a new collision. Reject it; never modify it.
+                added_names = [db_tool.name for db_tool in tools_to_add]
+                late_names = {row.name for row in db.execute(self._existing_tools_query(added_names, visibility, team_id, owner_email, created_by)).scalars().all()}
+                rejected = [db_tool for db_tool in tools_to_add if db_tool.name in late_names]
+                if rejected:
+                    tools_to_add = [db_tool for db_tool in tools_to_add if db_tool.name not in late_names]
+                    stats["created"] -= len(rejected)
+                    stats["failed"] += len(rejected)
+                    stats["errors"].extend(f"Tool name conflict: {db_tool.name}" for db_tool in rejected)
 
             # Bulk add new tools
             if tools_to_add:
@@ -2807,6 +2889,7 @@ class ToolService(BaseService):
         created_user_agent: Optional[str],
         import_batch_id: Optional[str],
         federation_source: Optional[str],
+        unowned_names: frozenset = frozenset(),
     ) -> dict:
         """Process a single tool for bulk import.
 
@@ -2823,6 +2906,7 @@ class ToolService(BaseService):
             created_user_agent: User agent string from the request.
             import_batch_id: Batch identifier for bulk imports.
             federation_source: Source identifier for federated tools.
+            unowned_names: Names of existing tools the caller may not modify.
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
@@ -2880,6 +2964,8 @@ class ToolService(BaseService):
                 if conflict_strategy == "skip":
                     return {"status": "skip"}
                 if conflict_strategy == "update":
+                    if tool.name in unowned_names:
+                        return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title

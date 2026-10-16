@@ -2432,6 +2432,33 @@ class TestGlobalOnlyPermission:
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler_name", ["import_configuration", "get_import_status", "list_import_statuses", "cleanup_import_statuses"])
+    async def test_import_routes_do_not_aggregate_team_scoped_roles(self, monkeypatch, handler_name):
+        """admin.import routes must check global roles only, so a team-scoped role cannot satisfy them."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        mock_db = MagicMock()
+        mock_user = {"email": "attacker@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        kwargs = {"user": mock_user}
+        if handler_name == "import_configuration":
+            kwargs.update(import_data={"entities": {"tools": []}}, db=mock_db)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
+            with pytest.raises(HTTPException) as excinfo:
+                await getattr(main_mod, handler_name)(**kwargs)
+
+        assert excinfo.value.status_code == 403
+        call_kwargs = mock_perm_service.check_permission.call_args.kwargs
+        assert call_kwargs["permission"] == "admin.import"
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
     async def test_global_only_false_by_default_still_aggregates(self, monkeypatch):
         """Sanity check: omitting global_only preserves the pre-existing check_any_team
         aggregation behavior (regression guard against changing the default)."""

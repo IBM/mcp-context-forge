@@ -12730,7 +12730,7 @@ async def export_selective_configuration(
 
 
 @export_import_router.post("/import", response_model=Dict[str, Any])
-@require_permission("admin.import")
+@require_permission("admin.import", global_only=True)
 async def import_configuration(
     request: Request = None,
     import_data: Dict[str, Any] = Body(...),
@@ -12807,7 +12807,7 @@ async def import_configuration(
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
-@require_permission("admin.import")
+@require_permission("admin.import", global_only=True)
 async def get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Get the status of an import operation.
@@ -12832,7 +12832,7 @@ async def get_import_status(import_id: str, user=Depends(get_current_user_with_p
 
 
 @export_import_router.get("/import/status", response_model=List[Dict[str, Any]])
-@require_permission("admin.import")
+@require_permission("admin.import", global_only=True)
 async def list_import_statuses(user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List all import operation statuses.
@@ -12850,7 +12850,7 @@ async def list_import_statuses(user=Depends(get_current_user_with_permissions)) 
 
 
 @export_import_router.post("/import/cleanup", response_model=Dict[str, Any])
-@require_permission("admin.import")
+@require_permission("admin.import", global_only=True)
 async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Clean up completed import statuses older than specified age.

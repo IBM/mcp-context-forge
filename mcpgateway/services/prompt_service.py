@@ -1096,6 +1096,7 @@ class PromptService(BaseService):
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple prompts in bulk with a single commit.
 
@@ -1119,6 +1120,9 @@ class PromptService(BaseService):
             owner_email: Email of the user who owns these prompts
             visibility: Prompt visibility level (private, team, public)
             conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+            user_email: Email of the authenticated caller. The "update" strategy modifies
+                an existing prompt only when this caller owns it. Without it, no existing
+                prompt is modified.
 
         Returns:
             Dict with statistics:
@@ -1209,6 +1213,19 @@ class PromptService(BaseService):
                 # Use (name, gateway_id) tuple as key for proper conflict detection
                 existing_prompts_map = {(p.name, p.gateway_id): p for p in existing_prompts}
 
+                unowned_keys: set = set()
+                if conflict_strategy == "update":
+                    if user_email:
+                        # First-Party
+                        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                        permission_service = PermissionService(db)
+                        for key, existing in existing_prompts_map.items():
+                            if not await permission_service.check_resource_ownership(user_email, existing):
+                                unowned_keys.add(key)
+                    else:
+                        unowned_keys = set(existing_prompts_map)
+
                 prompts_to_add = []
                 prompts_to_update = []
 
@@ -1264,6 +1281,10 @@ class PromptService(BaseService):
                                 stats["skipped"] += 1
                                 continue
                             if conflict_strategy == "update":
+                                if (computed_name, prompt_gateway_id) in unowned_keys:
+                                    stats["failed"] += 1
+                                    stats["errors"].append(f"Permission denied: cannot update prompt {prompt.name}")
+                                    continue
                                 # Update existing prompt
                                 existing_prompt.title = getattr(prompt, "title", None)
                                 existing_prompt.description = prompt.description
