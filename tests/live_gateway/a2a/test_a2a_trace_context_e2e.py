@@ -202,6 +202,22 @@ def _wait_for_spans(log_path, names, deadline_seconds=15):
     return by_name
 
 
+def _is_descendant(child_span_id, ancestor_span_id, spans):
+    """Return True when child_span_id is a descendant of ancestor_span_id.
+
+    Builds a parent_id lookup from all exported spans and walks up the chain.
+    """
+    parent_of = {_hex_id(s["context"]["span_id"]): _hex_id(s.get("parent_id") or "") for s in spans}
+    current = child_span_id
+    seen: set[str] = set()
+    while current and current not in seen:
+        if current == ancestor_span_id:
+            return True
+        seen.add(current)
+        current = parent_of.get(current, "")
+    return False
+
+
 def test_a2a_invoke_continues_incoming_trace(isolated_a2a_gateway):
     """One trace spans the inbound request, the a2a.invoke span, and the downstream call."""
     client, log_path, propagate_external = isolated_a2a_gateway
@@ -219,6 +235,7 @@ def test_a2a_invoke_continues_incoming_trace(isolated_a2a_gateway):
     assert response.status_code == 200, response.text
 
     by_name = _wait_for_spans(log_path, [f"POST /a2a/{AGENT_NAME}/invoke", "a2a.invoke"])
+    all_spans = _console_spans(log_path)
     request_span = by_name[f"POST /a2a/{AGENT_NAME}/invoke"][-1]
     invoke_span = by_name["a2a.invoke"][-1]
 
@@ -230,7 +247,11 @@ def test_a2a_invoke_continues_incoming_trace(isolated_a2a_gateway):
     assert request_trace_id == INBOUND_TRACE_ID
     assert _hex_id(request_span["parent_id"]) == INBOUND_SPAN_ID
     assert _hex_id(invoke_span["context"]["trace_id"]) == INBOUND_TRACE_ID
-    assert _hex_id(invoke_span["parent_id"]) == request_span_id
+    # a2a.invoke must be a descendant of the request span — FastAPI may insert
+    # intermediate spans (e.g. fastapi.endpoint) between them.
+    assert _is_descendant(invoke_span_id, request_span_id, all_spans), (
+        f"a2a.invoke span {invoke_span_id!r} is not a descendant of request span {request_span_id!r}"
+    )
     # Inbound, request, and invocation span IDs are distinct.
     assert len({INBOUND_SPAN_ID, request_span_id, invoke_span_id}) == 3
 
