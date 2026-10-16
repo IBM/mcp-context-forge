@@ -2051,27 +2051,55 @@ class ServerService(BaseService):
         metrics_cache.invalidate_prefix("top_servers:")
 
     @staticmethod
-    def _resolve_instructions_sync(server_id: str) -> Optional[str]:
+    def _resolve_instructions_sync(server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
         """Choose the ``instructions`` text for a virtual server (blocking database read).
 
         An operator override wins when it is not NULL. An empty override sends nothing.
         Without an override, a virtual server is single-upstream when every tool,
         resource and prompt has the same non-null ``gateway_id`` and the server has
-        no A2A agent. Such a server sends the text of that upstream server, or
-        nothing when the upstream server has no text. Every other server sends the
+        no A2A agent. Such a server sends the text of that upstream server, or the
+        default text when the upstream has no text. Every other server sends the
         default text.
+
+        The caller must supply ``user_email`` and ``token_teams`` (from the authenticated
+        request) when the server is not already verified as visible to the caller.
+        A server that is not visible to the caller returns the default text instead of
+        leaking operator or upstream text (CWE-639 / CWE-200).
+
+        ``token_teams=None`` means an API admin token — no visibility restriction applies.
+        ``token_teams=[]`` means a public-only token — only public servers are visible.
 
         Args:
             server_id: Identifier of the virtual server.
+            user_email: Email of the authenticated caller, or None for admin bypass.
+            token_teams: Team IDs from the caller's token, or None for admin bypass.
 
         Returns:
             Optional[str]: The text to send, or None when the server sends no ``instructions``.
         """
         db: Session = SessionLocal()
         try:
+            # Visibility check: confirm the caller can see this server before revealing
+            # operator or upstream text.  token_teams=None is the admin-bypass shape
+            # (API token with is_admin=True) and skips the filter.
+            if token_teams is not None:
+                vis_conditions = [DbServer.visibility == "public"]
+                if user_email:
+                    vis_conditions.append(and_(DbServer.owner_email == user_email, DbServer.visibility == "private"))
+                if token_teams:
+                    vis_conditions.append(and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])))
+                visible = db.execute(select(DbServer.id).where(DbServer.id == server_id).where(or_(*vis_conditions))).first()
+                if not visible:
+                    logger.debug("Server %s not visible to caller; sending default instructions", server_id)
+                    return DEFAULT_SERVER_INSTRUCTIONS
+
             override = db.execute(select(DbServer.instructions).where(DbServer.id == server_id)).scalar_one_or_none()
             if override is not None:
-                return override or None
+                # Empty string override: suppress instructions entirely.
+                winning_rule = "override"
+                result = override or None
+                logger.debug("Instructions for server %s: rule=%s", server_id, winning_rule)
+                return result
             gateway_ids = (
                 db.execute(
                     union(
@@ -2086,29 +2114,38 @@ class ServerService(BaseService):
                 .all()
             )
             if len(gateway_ids) != 1 or gateway_ids[0] is None:
+                logger.debug("Instructions for server %s: rule=default (multi-upstream or no items)", server_id)
                 return DEFAULT_SERVER_INSTRUCTIONS
             has_a2a_agent = db.execute(select(server_a2a_association.c.a2a_agent_id).where(server_a2a_association.c.server_id == server_id).limit(1)).first() is not None
             if has_a2a_agent:
+                logger.debug("Instructions for server %s: rule=default (a2a agent present)", server_id)
                 return DEFAULT_SERVER_INSTRUCTIONS
             upstream_instructions = db.execute(select(DbGateway.upstream_instructions).where(DbGateway.id == gateway_ids[0])).scalar_one_or_none()
-            return upstream_instructions or None
+            if upstream_instructions:
+                logger.debug("Instructions for server %s: rule=upstream", server_id)
+                return upstream_instructions
+            # Single upstream with no text: return the default so clients keep the hint.
+            logger.debug("Instructions for server %s: rule=default (upstream has no text)", server_id)
+            return DEFAULT_SERVER_INSTRUCTIONS
         finally:
             db.close()
 
-    async def resolve_instructions(self, server_id: str) -> Optional[str]:
+    async def resolve_instructions(self, server_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
         """Choose the ``instructions`` text for a virtual server.
 
         Call this only after the request passed server authorization.
 
         Args:
             server_id: Identifier of the virtual server.
+            user_email: Email of the authenticated caller, or None for admin bypass.
+            token_teams: Team IDs from the caller's token, or None for admin bypass.
 
         Returns:
             Optional[str]: The text to send, or None when the server sends no ``instructions``.
             A lookup failure returns the default text.
         """
         try:
-            return await asyncio.to_thread(self._resolve_instructions_sync, server_id)
+            return await asyncio.to_thread(self._resolve_instructions_sync, server_id, user_email, token_teams)
         except Exception:  # noqa: BLE001 — instructions are advisory; never fail a handshake over them
             logger.warning("Could not resolve instructions for server %s; sending the default text", server_id, exc_info=True)
             return DEFAULT_SERVER_INSTRUCTIONS

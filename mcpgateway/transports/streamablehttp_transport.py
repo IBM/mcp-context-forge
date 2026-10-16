@@ -3605,11 +3605,17 @@ async def _catalog_ttl_ms(server_id: Optional[str]) -> int:
     return _upstream_refresh_seconds(None) * 1000
 
 
-async def _instructions_for_server(server_id: Optional[str]) -> Optional[str]:
+async def _instructions_for_server(server_id: Optional[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[str]:
     """``instructions`` text for a handshake answer: the virtual server's own text, or the default text when unscoped.
+
+    ``user_email`` and ``token_teams`` are forwarded to the resolver so that it can enforce
+    per-server visibility (CWE-639 / CWE-200).  Pass them from the authenticated request
+    context; omit them only when no server is scoped (returns the default text directly).
 
     Args:
         server_id: The virtual server the request is scoped to, or None.
+        user_email: Email of the authenticated caller; None for admin bypass.
+        token_teams: Team IDs from the caller's token; None for admin bypass.
 
     Returns:
         Optional[str]: The text to send, or None when the answer carries no ``instructions``.
@@ -3619,7 +3625,7 @@ async def _instructions_for_server(server_id: Optional[str]) -> Optional[str]:
     # First-Party
     from mcpgateway.services.server_service import server_service as _server_svc  # pylint: disable=import-outside-toplevel,no-name-in-module
 
-    instructions: Optional[str] = await _server_svc.resolve_instructions(server_id)
+    instructions: Optional[str] = await _server_svc.resolve_instructions(server_id, user_email=user_email, token_teams=token_teams)
     return instructions
 
 
@@ -3642,8 +3648,12 @@ async def _legacy_initialize_instructions(ctx: Any, call_next: Any) -> Any:
         return result
     token = _v2_request_ctx.set(ctx)
     try:
-        await _get_request_context_or_default()
-        instructions = await _instructions_for_server(_request_server_id_var.get())
+        _, _, user_context = await _get_request_context_or_default()
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+        instructions = await _instructions_for_server(_request_server_id_var.get(), user_email=user_email, token_teams=token_teams)
     finally:
         _v2_request_ctx.reset(token)
     result = dict(result)
@@ -3668,11 +3678,15 @@ async def _adapt_discover_with_ttl_cache_scope(ctx: Any, params: Any = None) -> 
     try:
         # Resolve the request like the list handlers do, so a discover aimed at a
         # virtual server gets that server's TTL rather than the global default.
-        await _get_request_context_or_default()
+        _, _, user_context = await _get_request_context_or_default()
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
+
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
         result = await mcp_app._handle_discover(ctx, params)  # pylint: disable=protected-access  # the SDK's documented default, overridden here only to add the directive
         result.ttl_ms = await _catalog_ttl_ms(_request_server_id_var.get())
         result.cache_scope = "private"
-        result.instructions = await _instructions_for_server(_request_server_id_var.get())
+        result.instructions = await _instructions_for_server(_request_server_id_var.get(), user_email=user_email, token_teams=token_teams)
         return result
     finally:
         _v2_request_ctx.reset(token)
