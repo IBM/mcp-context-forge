@@ -780,7 +780,7 @@ class ImportService:
                         existing_gateway = next((g for g in gateways if g.name == gateway_name), None)
                         if existing_gateway:
                             update_data = self._convert_to_gateway_update(gateway_data)
-                            await self.gateway_service.update_gateway(db, existing_gateway.id, update_data)
+                            await self.gateway_service.update_gateway(db, existing_gateway.id, update_data, user_email=imported_by)
                             status.updated_entities += 1
                             logger.debug("Updated gateway: %s", gateway_name)
                         else:
@@ -1008,6 +1008,7 @@ class ImportService:
                 created_via="import",
                 import_batch_id=batch_id,
                 conflict_strategy=conflict_strategy.value,
+                user_email=imported_by,
             )
 
             # Restore original_description from export data for newly created tools.
@@ -1083,6 +1084,7 @@ class ImportService:
                 created_by=imported_by,
                 created_via="import",
                 conflict_strategy=conflict_strategy.value,
+                user_email=imported_by,
             )
 
             # Update status based on results
@@ -1142,6 +1144,7 @@ class ImportService:
                 created_by=imported_by,
                 created_via="import",
                 conflict_strategy=conflict_strategy.value,
+                user_email=imported_by,
             )
 
             # Update status based on results
