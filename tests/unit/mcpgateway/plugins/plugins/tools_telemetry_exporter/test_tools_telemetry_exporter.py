@@ -15,6 +15,7 @@ import pytest
 
 # First-Party
 from cpex.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework.memory import CopyOnWriteDict
 from plugins.tools_telemetry_exporter.telemetry_exporter import ToolsTelemetryExporterPlugin
 
 
@@ -78,6 +79,21 @@ class TestToolsTelemetryExporterPlugin:
         assert exported_headers["X-Vault-Tokens"] == "******"
         assert exported_headers["Content-Type"] == "application/json"
         assert exported_headers["X-Request-Id"] == "req-123"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_exports_copy_on_write_args(self):
+        """Args arriving as a CopyOnWriteDict should still be exported in full."""
+        plugin = _create_plugin()
+        payload = ToolPreInvokePayload.model_construct(
+            name="test_tool",
+            args=CopyOnWriteDict({"sysid": "PRD", "client": "999"}),
+            headers=HttpHeaderPayload({}),
+        )
+
+        await plugin.tool_pre_invoke(payload, _create_context())
+
+        attrs = plugin._export_telemetry.await_args.kwargs["attributes"]
+        assert json.loads(attrs["tool.invocation.args"]) == {"sysid": "PRD", "client": "999"}
 
     @pytest.mark.asyncio
     async def test_pre_invoke_redacts_broad_token_header_patterns(self):
