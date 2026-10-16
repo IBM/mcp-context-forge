@@ -194,8 +194,11 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 |------|-------|-----------------|
 | `platform_admin` | global | `*` (all) |
 | `team_admin` | team | teams.*, tools.read/execute, resources.read |
-| `developer` | team | tools.read/execute, resources.read |
+| `developer` | team | CRUD on gateways, servers, tools, resources, prompts, and A2A agents; execution/invocation; token self-service; dashboard access; team read/join |
 | `viewer` | team | tools.read/execute, resources.read |
+
+The `developer` role includes gateway registration, update, and deletion.
+See the [complete built-in permission table](docs/docs/manage/rbac.md#built-in-rbac-roles) before assigning this role.
 
 ### Documentation
 
