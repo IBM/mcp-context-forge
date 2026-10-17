@@ -24,13 +24,13 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
 from mcp.shared.inbound import find_invalid_x_mcp_header
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, StringConstraints, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -2172,7 +2172,7 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
-    server_id: Optional[str] = Field(None, description="Optional virtual server ID for server-scoped tool resolution")
+    server_id: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]] = Field(None, description="Optional virtual server ID for server-scoped tool resolution")
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -2186,26 +2186,6 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
             Dict[str, Any]: ``value`` unchanged, or ``{}`` when ``value`` is ``None``.
         """
         return {} if value is None else value
-
-    @field_validator("server_id")
-    @classmethod
-    def validate_server_id(cls, v: Optional[str]) -> Optional[str]:
-        """Validate server_id is not empty or whitespace-only.
-
-        Args:
-            v: The server_id value to validate.
-
-        Returns:
-            The validated server_id (stripped) or None.
-
-        Raises:
-            ValueError: If server_id is empty or whitespace-only string.
-        """
-        if v is not None and isinstance(v, str):
-            if not v.strip():
-                raise ValueError("server_id cannot be empty or whitespace-only")
-            return v.strip()
-        return v
 
 
 class ToolPreviewTarget(BaseModelWithConfigDict):

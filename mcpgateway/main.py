@@ -254,13 +254,14 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, 
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import shutdown_validation_pool, start_validation_pool
-from mcpgateway.utils.token_scoping import extract_token_scopes_from_request, validate_server_access
+from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
+    get_auth_bearer_token_from_request,
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_admin_auth,
@@ -5902,7 +5903,15 @@ async def preview_tool(
 
     server_id = body.server_id
     if server_id:
-        token_scopes = await extract_token_scopes_from_request(request)
+        cached = getattr(request.state, "_jwt_verified_payload", None)
+        payload = cached[1] if isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], dict) else None
+        token = get_auth_bearer_token_from_request(request) or request.cookies.get("jwt_token") or request.cookies.get("access_token")
+        if payload is None and (token or cached is not None):
+            raise HTTPException(status_code=403, detail="Unable to read verified token scopes")
+        # Legacy and session tokens may omit scopes; malformed scopes must not grant access.
+        token_scopes = payload.get("scopes", {}) if payload is not None else {}
+        if not isinstance(token_scopes, dict):
+            raise HTTPException(status_code=403, detail="Unable to read verified token scopes")
         if not validate_server_access(token_scopes, server_id):
             raise HTTPException(status_code=403, detail=f"Token not authorized for server: {server_id}")
 

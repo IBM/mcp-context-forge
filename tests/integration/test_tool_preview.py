@@ -48,6 +48,7 @@ from mcpgateway.schemas import ToolAnnotations, ToolPreviewResponse, ToolPreview
 from mcpgateway.services.server_service import ServerNotFoundError
 from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError
 from mcpgateway.utils.verify_credentials import require_auth
+from tests.helpers.auth import make_test_jwt
 
 # ---------------------------------------------------------------------------
 # Local helpers
@@ -205,7 +206,8 @@ def _auth_client():
         app.dependency_overrides[rbac_get_db] = _override_get_db
 
         client = TestClient(app, raise_server_exceptions=False)
-        auth_headers = {"Authorization": "Bearer integration.test.token"}  # pragma: allowlist secret
+        token = make_test_jwt(email="integration-test-user@example.com", teams=None, is_admin=True)
+        auth_headers = {"Authorization": f"Bearer {token}"}
         yield client, auth_headers
 
         app.dependency_overrides.pop(require_auth, None)
@@ -318,10 +320,10 @@ class TestToolPreviewIntegration:
         assert mock_preview.call_args.kwargs["server_id"] is None
         mock_ensure_server_access.assert_not_awaited()
 
-    @pytest.mark.parametrize("server_id", ["", "   "])
+    @pytest.mark.parametrize("server_id", ["", "   ", "a" * 37])
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_empty_server_id_returns_422(self, mock_preview, server_id, _auth_client):
-        """Empty and whitespace-only server IDs are rejected before service dispatch."""
+        """Empty, whitespace-only, and overlong IDs are rejected before service dispatch."""
         client, auth_headers = _auth_client
 
         response = client.post(
@@ -334,20 +336,17 @@ class TestToolPreviewIntegration:
         mock_preview.assert_not_awaited()
 
     @pytest.mark.parametrize("path", ["/tools/preview/get_weather", "/v1/tools/preview/get_weather"])
-    @patch("mcpgateway.main.extract_token_scopes_from_request", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock)
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_scoped_preview_forwards_server_id_on_both_routes(
         self,
         mock_preview,
         mock_ensure_server_access,
-        mock_extract_scopes,
         path,
         _auth_client,
     ):
         """Both route prefixes verify and forward the requested virtual-server scope."""
         client, auth_headers = _auth_client
-        mock_extract_scopes.return_value = {"server_id": "server-123"}
         mock_preview.return_value = _sample_local_response()
 
         response = client.post(
@@ -360,44 +359,16 @@ class TestToolPreviewIntegration:
         assert mock_ensure_server_access.await_args.kwargs["server_id"] == "server-123"
         assert mock_preview.await_args.kwargs["server_id"] == "server-123"
 
-    @patch("mcpgateway.main.extract_token_scopes_from_request", new_callable=AsyncMock)
-    @patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock)
-    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
-    def test_server_scoped_token_cannot_preview_another_server(
-        self,
-        mock_preview,
-        mock_ensure_server_access,
-        mock_extract_scopes,
-        _auth_client,
-    ):
-        """A server-scoped token receives 403 before server lookup or tool resolution."""
-        client, auth_headers = _auth_client
-        mock_extract_scopes.return_value = {"server_id": "server-allowed"}
-
-        response = client.post(
-            "/tools/preview/get_weather",
-            json={"arguments": {}, "server_id": "server-denied"},
-            headers=auth_headers,
-        )
-
-        assert response.status_code == 403
-        assert response.json()["detail"] == "Token not authorized for server: server-denied"
-        mock_ensure_server_access.assert_not_awaited()
-        mock_preview.assert_not_awaited()
-
-    @patch("mcpgateway.main.extract_token_scopes_from_request", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock)
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_unknown_or_inaccessible_server_returns_generic_404(
         self,
         mock_preview,
         mock_ensure_server_access,
-        mock_extract_scopes,
         _auth_client,
     ):
         """Unknown and inaccessible servers share ServerService's generic 404 response."""
         client, auth_headers = _auth_client
-        mock_extract_scopes.return_value = None
         mock_ensure_server_access.side_effect = ServerNotFoundError("Server not found: server-hidden")
 
         response = client.post(
@@ -561,6 +532,59 @@ class TestToolPreviewIntegration:
 
 class TestToolPreviewServerScopedRealDB:
     """Real database tests for server-scoped tool preview resolution."""
+
+    @pytest.mark.parametrize("prefix", ["/tools", "/v1/tools"])
+    @pytest.mark.parametrize("server_kind", ["missing", "private", "wrong-team"])
+    def test_inaccessible_server_returns_generic_404(self, _auth_client, prefix, server_kind):
+        """Missing, another user's private, and wrong-team servers have the same error."""
+        client, auth_headers = _auth_client
+        server_id = uuid.uuid4().hex
+        session = db_mod.SessionLocal()
+        try:
+            tool = db_mod.Tool(
+                id=uuid.uuid4().hex,
+                original_name=f"preview-access-tool-{server_id}",
+                url="http://example.com/tool",
+                owner_email="integration-test-user@example.com",
+                visibility="public",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                output_schema={},
+                enabled=True,
+                deprecated=False,
+                created_by="integration-test-user@example.com",
+                tags=[],
+            )
+            session.add(tool)
+            if server_kind != "missing":
+                server = db_mod.Server(
+                    id=server_id,
+                    name=f"preview-hidden-server-{server_id}",
+                    owner_email="another-user@example.com",
+                    visibility="private" if server_kind == "private" else "team",
+                    team_id="team-a" if server_kind == "wrong-team" else None,
+                )
+                session.add(server)
+                session.flush()
+                session.execute(db_mod.server_tool_association.insert().values(server_id=server.id, tool_id=tool.id))
+            session.commit()
+
+            with (
+                patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("integration-test-user@example.com", ["team-b"])),
+                patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock) as preview,
+            ):
+                response = client.post(
+                    f"{prefix}/preview/{tool.name}",
+                    json={"arguments": {}, "server_id": server_id},
+                    headers=auth_headers,
+                )
+
+            assert response.status_code == 404
+            assert response.json() == {"detail": f"Server not found: {server_id}"}
+            preview.assert_not_awaited()
+        finally:
+            session.close()
 
     def test_tool_attached_to_server_succeeds(self, _auth_client):
         """A scoped preview resolves a tool attached to the requested server."""
@@ -738,13 +762,14 @@ class TestToolPreviewServerScopedRealDB:
             assert unqualified_response.status_code == 400
             assert "qualified tool name" in unqualified_response.json()["detail"].lower()
 
-            for tool in (tool_one, tool_two):
+            for tool, gateway in ((tool_one, gateway_one), (tool_two, gateway_two)):
                 qualified_response = client.post(
                     f"/tools/preview/{tool.name}",
                     json={"arguments": {}, "server_id": server.id},
                     headers=auth_headers,
                 )
                 assert qualified_response.status_code == 200
+                assert qualified_response.json()["target"]["gatewayName"] == gateway.name
         finally:
             session.close()
 
