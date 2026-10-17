@@ -650,7 +650,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 ### Preview a Tool Call (Dry Run)
 
-`POST /tools/preview/{name}` validates and resolves a tool call without executing it — no
+`POST /v1/tools/preview/{name}` (also available as `POST /tools/preview/{name}`) validates
+and resolves a tool call without executing it — no
 REST/MCP/A2A/gRPC call is made, and no `TOOL_POST_INVOKE` hook runs. It shares tool
 resolution, RBAC, and input-schema validation with the live `tools/call` path (via
 `ToolService._resolve_tool_for_invocation`), so a `validated: true` preview is a reliable
@@ -669,6 +670,43 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d @- "$BASE_URL/tools/preview/$TOOL_NAME" | jq
 ```
+
+#### Virtual-server-scoped preview
+
+Add `server_id` to preview a tool attached to a specific virtual server. The server must be
+visible to the caller, and the tool must be attached to that server. Omitting `server_id` or
+setting it to `null` keeps the existing global tool lookup. Surrounding whitespace is
+stripped; the resulting ID must contain between 1 and 36 characters.
+
+If several tools on the same server share an upstream name, use the qualified tool name
+shown in the server's Components list; `server_id` alone does not resolve that ambiguity.
+
+```bash
+# SERVER_ID is the virtual server ID; TOOL_NAME is its qualified tool name.
+jq -n --arg server_id "$SERVER_ID" --argjson args '{"param1":"value1"}' \
+  '{"server_id":$server_id,"arguments":$args}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/v1/tools/preview/$TOOL_NAME" | jq
+```
+
+!!! note "Server-scoped API tokens"
+    A `server_id` in the request body scopes tool resolution; it does not change which
+    routes a token may access. Token-scoping middleware currently rejects this REST
+    preview route with `403` for tokens restricted to a server, even when the body names
+    that same server. Use an otherwise authorized token without a server restriction.
+    This applies to both the `/v1` and legacy routes.
+
+#### Preview responses
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Preview completed. Check `validated`; invalid tool arguments return `validated: false` with warnings, without executing the tool. |
+| `400` | Tool resolution failed, for example because an upstream name is ambiguous within the requested server. Use a qualified tool name. |
+| `401` | Authentication is missing or invalid. |
+| `403` | The caller lacks `tools.preview`, or token restrictions deny the request (including server-scoped API tokens). |
+| `404` | Preview is disabled, the tool is missing or inaccessible, or it is not attached to the requested server. Missing and inaccessible servers both return `{"detail":"Server not found: <server_id>"}`. |
+| `422` | The request body is invalid, for example an empty, whitespace-only, or overlong `server_id`. |
 
 Response shape (`pre_hooks_run` lists the names of `preview_safe`-tagged plugins that actually
 ran — not a fixed set of built-in stages, so it's empty on a gateway with no such plugins

@@ -70,7 +70,7 @@ class TestToolPreviewRequestSchema:
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("server_id",)
-        assert "cannot be empty" in errors[0]["msg"]
+        assert errors[0]["type"] == "string_too_short"
 
     def test_server_id_whitespace_only_rejected(self):
         """Test that whitespace-only server_id raises ValidationError."""
@@ -80,7 +80,7 @@ class TestToolPreviewRequestSchema:
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("server_id",)
-        assert "cannot be empty" in errors[0]["msg"]
+        assert errors[0]["type"] == "string_too_short"
 
     def test_server_id_tab_only_rejected(self):
         """Test that tab-only server_id raises ValidationError."""
@@ -90,7 +90,22 @@ class TestToolPreviewRequestSchema:
         errors = exc_info.value.errors()
         assert len(errors) == 1
         assert errors[0]["loc"] == ("server_id",)
-        assert "cannot be empty" in errors[0]["msg"]
+        assert errors[0]["type"] == "string_too_short"
+
+    @pytest.mark.parametrize("length", [1, 32, 36])
+    def test_server_id_length_boundary_accepted(self, length):
+        """Server IDs fit the database limit after surrounding whitespace is stripped."""
+        server_id = "a" * length
+        assert ToolPreviewRequest(server_id=f"  {server_id}\t").server_id == server_id
+
+    @pytest.mark.parametrize("length", [37, 100_000])
+    def test_server_id_over_database_limit_rejected(self, length):
+        """Overlong IDs are rejected before reaching server lookup."""
+        with pytest.raises(ValidationError) as exc_info:
+            ToolPreviewRequest(server_id="a" * length)
+
+        assert exc_info.value.errors()[0]["loc"] == ("server_id",)
+        assert exc_info.value.errors()[0]["type"] == "string_too_long"
 
     def test_server_id_various_formats(self):
         """Test that various server_id formats are accepted."""
