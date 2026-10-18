@@ -737,3 +737,179 @@ class TestSSEHealthCheckNoRedirects:
         assert captured_kwargs["follow_redirects"] is False, (
             f"SSE health-check client must set follow_redirects=False to prevent SSRF via redirect; got {captured_kwargs['follow_redirects']!r}"
         )
+
+
+class TestTokenExchangeDiscoveryHealthCheck:
+    """Health checks and scheduled auto-refresh with the token-exchange discovery credential."""
+
+    _TE_DISCOVERY = {
+        "grant_type": "token-exchange",
+        "client_id": "cf",
+        "client_secret": "parent-secret",  # pragma: allowlist secret
+        "token_url": "https://as.example.com/token",
+        "target_audience": "aud",
+        "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+    }
+
+    @staticmethod
+    def _make_gateway(oauth_config, *, last_refresh_at=None):
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "te-gw-1"
+        gw.name = "te-gw"
+        gw.url = "http://gw.test"
+        gw.transport = "sse"
+        gw.enabled = True
+        gw.reachable = True
+        gw.ca_certificate = None
+        gw.ca_certificate_sig = None
+        gw.client_cert = None
+        gw.client_key = None
+        gw.auth_type = "oauth"
+        gw.oauth_config = oauth_config
+        gw.auth_value = {}
+        gw.auth_query_params = None
+        gw.last_refresh_at = last_refresh_at
+        gw.refresh_interval_seconds = None
+        return gw
+
+    @staticmethod
+    async def _run(service, gateway, *, auto_refresh=False):
+        """Run one health check over SSE and return the headers sent to the upstream.
+
+        Args:
+            service: GatewayService under test.
+            gateway: Gateway mock.
+            auto_refresh: Value for ``settings.auto_refresh_servers``.
+
+        Returns:
+            MagicMock: The client whose ``stream`` call carries the probe headers.
+        """
+        response = MagicMock(status_code=200, raise_for_status=MagicMock())
+
+        class _RespCM:
+            async def __aenter__(self):
+                return response
+
+            async def __aexit__(self, *exc):
+                return False
+
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_RespCM())
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return client
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        pinned = MagicMock()
+        pinned.pin = lambda url: url
+        pinned.apply_headers = lambda headers: headers
+        pinned.extensions = {}
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    auto_refresh_servers=auto_refresh,
+                    gateway_auto_refresh_interval=300,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+            patch("mcpgateway.services.gateway_service.resolve_pinned_target", new=AsyncMock(return_value=pinned)),
+        ):
+            await service._check_single_gateway_health(gateway)
+        return client
+
+    @staticmethod
+    def _service():
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+        service._mark_gateway_reachable = AsyncMock()
+        service._classification_service = None
+        service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600})
+        service.oauth_manager.token_exchange = AsyncMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_probe_runs_with_discovery_token(self):
+        service = self._service()
+        client = await self._run(service, self._make_gateway(dict(self._TE_DISCOVERY)))
+
+        client.stream.assert_called_once()
+        assert client.stream.call_args.kwargs["headers"]["Authorization"] == "Bearer svc-discovery-tok"
+        sent_config = service.oauth_manager.get_client_credentials_token_response.call_args.args[0]
+        assert sent_config["grant_type"] == "client_credentials"
+        assert sent_config["scopes"] == ["mcp.discover"]
+        service.oauth_manager.token_exchange.assert_not_awaited()
+        service._handle_gateway_failure.assert_not_awaited()
+        service._mark_gateway_reachable.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_second_probe_reuses_cached_token(self):
+        service = self._service()
+        gateway = self._make_gateway(dict(self._TE_DISCOVERY))
+        await self._run(service, gateway)
+        await self._run(service, gateway)
+        assert service.oauth_manager.get_client_credentials_token_response.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_skip_without_discovery_credential(self):
+        service = self._service()
+        config = {k: v for k, v in self._TE_DISCOVERY.items() if k != "discovery"}
+        client = await self._run(service, self._make_gateway(config))
+
+        client.stream.assert_not_called()
+        service.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
+        service._handle_gateway_failure.assert_not_awaited()
+        service._mark_gateway_reachable.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_discovery_token_failure_marks_unhealthy(self):
+        service = self._service()
+        service.oauth_manager.get_client_credentials_token_response = AsyncMock(side_effect=RuntimeError("as down"))
+        client = await self._run(service, self._make_gateway(dict(self._TE_DISCOVERY)))
+
+        client.stream.assert_not_called()
+        service._handle_gateway_failure.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_auto_refresh_runs_after_interval_with_discovery_token(self):
+        # Standard
+        from datetime import datetime, timedelta, timezone
+
+        service = self._service()
+        gateway = self._make_gateway(dict(self._TE_DISCOVERY), last_refresh_at=datetime.now(timezone.utc) - timedelta(seconds=301))
+        await self._run(service, gateway, auto_refresh=True)
+
+        service._refresh_gateway_tools_resources_prompts.assert_awaited_once()
+        kwargs = service._refresh_gateway_tools_resources_prompts.call_args.kwargs
+        assert kwargs["created_via"] == "health_check"
+        assert kwargs["pre_auth_headers"] == {"Authorization": "Bearer svc-discovery-tok"}
+
+    @pytest.mark.asyncio
+    async def test_auto_refresh_waits_for_interval(self):
+        # Standard
+        from datetime import datetime, timedelta, timezone
+
+        service = self._service()
+        gateway = self._make_gateway(dict(self._TE_DISCOVERY), last_refresh_at=datetime.now(timezone.utc) - timedelta(seconds=10))
+        await self._run(service, gateway, auto_refresh=True)
+
+        service._refresh_gateway_tools_resources_prompts.assert_not_awaited()

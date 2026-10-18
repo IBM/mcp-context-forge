@@ -2267,6 +2267,59 @@ class TestResolveTokenTeamsForScopeCheck:
         assert kwargs["request_headers"]["cookie"].startswith("jwt_token=")
 
     @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_with_discovery_cookie_only_succeeds(self, mock_db, mock_current_user):
+        """Fetch Tools with only a ContextForge cookie uses the discovery credential and never exchanges the cookie JWT."""
+        cookie_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln"  # pragma: allowlist secret
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        request.headers = {"cookie": f"jwt_token={cookie_jwt}"}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "aud",
+            "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+        from mcpgateway.services.gateway_service import GatewayService
+
+        from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
+
+        service = GatewayService()
+        service._service_token_cache = GatewayServiceTokenCache()
+        service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600})
+        service.oauth_manager.token_exchange = AsyncMock()
+        service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={"success": True, "tools_added": 4, "tools_updated": 0, "tools_removed": 0, "resources_added": 0, "resources_updated": 0, "resources_removed": 0, "prompts_added": 0, "prompts_updated": 0, "prompts_removed": 0})
+
+        class _DBCM:
+            def __enter__(self):
+                db = MagicMock()
+                db.execute.return_value.scalar_one_or_none.return_value = gateway
+                return db
+
+            def __exit__(self, *exc):
+                return False
+
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayService", return_value=service),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+            patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
+        ):
+            result = await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert result == {"success": True, "message": "Successfully fetched and created 4 tools"}
+        service.oauth_manager.token_exchange.assert_not_awaited()
+        assert service._refresh_gateway_tools_resources_prompts.call_args.kwargs["pre_auth_headers"] == {"Authorization": "Bearer svc-discovery-tok"}
+        assert cookie_jwt not in repr(service.oauth_manager.get_client_credentials_token_response.call_args)
+
+    @pytest.mark.asyncio
     async def test_fetch_tools_token_exchange_failure_maps_to_400(self, mock_db, mock_current_user):
         """success=False from refresh_gateway_manually must surface as HTTP 400, not 200."""
         request = Mock(spec=Request)

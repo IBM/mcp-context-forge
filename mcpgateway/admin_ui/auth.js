@@ -633,6 +633,31 @@ export function toggleTokenExchangeFields(prefix, grantType) {
   }
 }
 
+/**
+ * Show or hide the discovery credential fields of a token-exchange gateway form.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ * @param {boolean} enabled - Whether the discovery credential checkbox is set
+ */
+export function toggleDiscoveryFields(prefix, enabled) {
+  const fields = safeGetElement(`oauth-discovery-fields-${prefix}`, true);
+  if (fields) {
+    fields.style.display = enabled ? "block" : "none";
+  }
+}
+
+/**
+ * Bind the discovery checkbox of a gateway form to its field group.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ */
+export function bindDiscoveryToggle(prefix) {
+  const checkbox = safeGetElement(`oauth-discovery-enabled-${prefix}`, true);
+  if (checkbox) {
+    checkbox.addEventListener("change", () =>
+      toggleDiscoveryFields(prefix, checkbox.checked),
+    );
+  }
+}
+
 export function handleOAuthGrantTypeChange() {
   const grantType = this.value;
 

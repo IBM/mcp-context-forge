@@ -777,6 +777,29 @@ class OAuthManager:
 
         Returns:
             Access token string
+        """
+        token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+        return token_response["access_token"]
+
+    async def get_client_credentials_token_response(
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Run the client-credentials grant and return the parsed token response, including ``expires_in``.
+
+        Callers that cache the token use this instead of ``get_access_token()`` to learn its lifetime.
+
+        Args:
+            credentials: OAuth configuration with client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
+
+        Returns:
+            Parsed token endpoint response containing at least ``access_token``.
 
         Raises:
             OAuthError: If token acquisition fails after all retries
@@ -815,7 +838,7 @@ class OAuthManager:
                     raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
-                return token_response["access_token"]
+                return token_response
 
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
