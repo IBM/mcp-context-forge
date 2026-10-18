@@ -2154,6 +2154,12 @@ describe("editGateway - token-exchange", () => {
         <select id="oauth-subject-token-source-gw-edit">
           <option value="inbound_user_jwt">inbound_user_jwt</option>
         </select>
+        <select id="oauth-actor-token-source-gw-edit">
+          <option value="none">none</option>
+          <option value="client_credentials">client_credentials</option>
+          <option value="client_assertion" disabled>client_assertion</option>
+        </select>
+        <input id="oauth-actor-token-type-gw-edit" />
         <input type="checkbox" id="oauth-discovery-enabled-gw-edit" />
         <input id="oauth-discovery-scopes-gw-edit" />
         <input id="oauth-discovery-token-url-gw-edit" />
@@ -2202,6 +2208,50 @@ describe("editGateway - token-exchange", () => {
     expect(value("oauth-subject-token-source-gw-edit")).toBe("inbound_user_jwt");
     expect(toggleTokenExchangeFields).toHaveBeenLastCalledWith("gw-edit", "token-exchange");
     expect(document.getElementById("oauth-client-id-gw-edit").disabled).toBe(false);
+  });
+
+  test("populates the stored delegation settings", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway({
+      ...TE_CONFIG,
+      actor_token_source: "client_credentials",
+      actor_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    });
+
+    await editGateway("gw-te");
+
+    const value = (id) => document.getElementById(id).value;
+    expect(value("oauth-actor-token-source-gw-edit")).toBe("client_credentials");
+    expect(value("oauth-actor-token-type-gw-edit")).toBe("urn:ietf:params:oauth:token-type:access_token");
+  });
+
+  test("selects none and keeps client_assertion disabled without a stored private key", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    document.getElementById("oauth-actor-token-type-gw-edit").value = "stale";
+    mockGateway(TE_CONFIG);
+
+    await editGateway("gw-te");
+
+    const select = document.getElementById("oauth-actor-token-source-gw-edit");
+    const assertion = Array.from(select.options).find((o) => o.value === "client_assertion");
+    expect(select.value).toBe("none");
+    expect(assertion.disabled).toBe(true);
+    expect(document.getElementById("oauth-actor-token-type-gw-edit").value).toBe("");
+  });
+
+  test("enables client_assertion when the stored config has a private key", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway({ ...TE_CONFIG, private_key: "*****" }); // pragma: allowlist secret
+
+    await editGateway("gw-te");
+
+    const select = document.getElementById("oauth-actor-token-source-gw-edit");
+    const assertion = Array.from(select.options).find((o) => o.value === "client_assertion");
+    expect(assertion.disabled).toBe(false);
+    expect(select.value).toBe("none");
   });
 
   test("populates the stored discovery credential with the masked secret", async () => {

@@ -5687,6 +5687,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <option value="inbound_user_jwt" selected>inbound_user_jwt</option>
                       </select>
                     </div>
+                    <div id="oauth-actor-token-section-gw" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                      <div>
+                        <label for="oauth-actor-token-source-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Actor Token Source (delegation)
+                        </label>
+                        <select name="oauth_actor_token_source" id="oauth-actor-token-source-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                          <option value="none" selected>none (impersonation)</option>
+                          <option value="client_credentials">client_credentials</option>
+                          <option value="client_assertion" disabled>client_assertion (requires a private key configured through the API)</option>
+                        </select>
+                        <p class="mt-1 text-sm text-gray-500">
+                          RFC 8693 delegation sends a token that names this gateway as the actor with each exchange. Exchanges fail when the actor token cannot be obtained.
+                        </p>
+                      </div>
+                      <div>
+                        <label for="oauth-actor-token-type-gw" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Actor Token Type (optional)
+                        </label>
+                        <input type="text" name="oauth_actor_token_type" id="oauth-actor-token-type-gw" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="Default for the selected source" />
+                      </div>
+                    </div>
                     <div id="oauth-discovery-section-gw" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
                       <input type="hidden" name="oauth_discovery_present" value="1" />
                       <div class="flex items-center">
@@ -10369,6 +10390,27 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <select name="oauth_subject_token_source" id="oauth-subject-token-source-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                               <option value="inbound_user_jwt" selected>inbound_user_jwt</option>
                             </select>
+                          </div>
+                          <div id="oauth-actor-token-section-gw-edit" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                            <div>
+                              <label for="oauth-actor-token-source-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Actor Token Source (delegation)
+                              </label>
+                              <select name="oauth_actor_token_source" id="oauth-actor-token-source-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                                <option value="none" selected>none (impersonation)</option>
+                                <option value="client_credentials">client_credentials</option>
+                                <option value="client_assertion" disabled>client_assertion (requires a private key configured through the API)</option>
+                              </select>
+                              <p class="mt-1 text-sm text-gray-500">
+                                RFC 8693 delegation sends a token that names this gateway as the actor with each exchange. Exchanges fail when the actor token cannot be obtained.
+                              </p>
+                            </div>
+                            <div>
+                              <label for="oauth-actor-token-type-gw-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Actor Token Type (optional)
+                              </label>
+                              <input type="text" name="oauth_actor_token_type" id="oauth-actor-token-type-gw-edit" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" placeholder="Default for the selected source" />
+                            </div>
                           </div>
                           <div id="oauth-discovery-section-gw-edit" class="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
                             <input type="hidden" name="oauth_discovery_present" value="1" />

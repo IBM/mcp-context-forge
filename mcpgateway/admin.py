@@ -974,6 +974,8 @@ _TOKEN_EXCHANGE_FORM_FIELDS: Dict[str, str] = {
     "oauth_requested_token_type": "requested_token_type",
     "oauth_subject_token_source": "subject_token_source",
     "oauth_token_endpoint_auth_method": "token_endpoint_auth_method",
+    "oauth_actor_token_source": "actor_token_source",
+    "oauth_actor_token_type": "actor_token_type",
 }
 
 _DISCOVERY_OVERRIDE_FORM_FIELDS: Dict[str, str] = {

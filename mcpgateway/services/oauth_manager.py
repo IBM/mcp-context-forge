@@ -31,6 +31,7 @@ from requests_oauthlib import OAuth2Session
 from mcpgateway.common.oauth import (
     CLIENT_ASSERTION_TYPE_JWT_BEARER,
     DEFAULT_TOKEN_ENDPOINT_SIGNING_ALG,
+    is_delegation_config,
     load_private_key_for_signing,
     MAX_CLIENT_ASSERTION_TTL_SECONDS,
     normalize_token_endpoint_auth_method,
@@ -217,7 +218,15 @@ class OAuthManager:
         return audience
 
     async def get_access_token(
-        self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, subject_token: Optional[str] = None
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+        subject_token: Optional[str] = None,
+        *,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
     ) -> str:
         """Get access token based on grant type.
 
@@ -228,6 +237,8 @@ class OAuthManager:
             client_key: Optional client private key for mTLS (PEM format or file path)
             subject_token: Optional subject token (e.g. the inbound user's JWT) required
                 for the RFC 8693 ``token-exchange`` grant type
+            actor_token: Optional RFC 8693 actor token for a ``token-exchange`` delegation config
+            actor_token_type: RFC 8693 type identifier for ``actor_token``
 
         Returns:
             Access token string
@@ -285,6 +296,8 @@ class OAuthManager:
                 ca_certificate=ca_certificate,
                 client_cert=client_cert,
                 client_key=client_key,
+                actor_token=actor_token,
+                actor_token_type=actor_token_type,
             )
             return response["access_token"]
         if grant_type == "authorization_code":
@@ -404,7 +417,7 @@ class OAuthManager:
             return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
 
     # Keys whose values must never be echoed in error messages or logs.
-    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "client_assertion"})
+    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "actor_token", "client_assertion"})
 
     # Cap on raw_response excerpts and any other string values surfaced via
     # OAuthError / logs (defense-in-depth against unbounded provider bodies).
@@ -419,7 +432,7 @@ class OAuthManager:
     # secrets embedded in HTML error pages or stack traces don't survive the
     # length cap (the value can fit entirely inside the truncation window).
     _LEAKY_PARAM_RE = re.compile(
-        r"(?i)\b(access_token|refresh_token|id_token|token|code|secret|key|password|api[_-]?key|client_assertion)=[^&\s\"'<>]+",
+        r"(?i)\b(access_token|refresh_token|id_token|subject_token|actor_token|token|code|secret|key|password|api[_-]?key|client_assertion)=[^&\s\"'<>]+",
     )
 
     @staticmethod
@@ -550,8 +563,11 @@ class OAuthManager:
         encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
         return f"Basic {encoded_credentials}"
 
-    async def _build_client_assertion(self, runtime_credentials: Dict[str, Any]) -> str:
+    async def build_client_assertion(self, runtime_credentials: Dict[str, Any]) -> str:
         """Sign a JWT bearer client assertion for private_key_jwt (RFC 7523 Section 2.2).
+
+        The same signed shape serves as an RFC 8693 ``actor_token`` for the
+        ``client_assertion`` delegation source. Each call carries a fresh ``jti``.
 
         Args:
             runtime_credentials: Runtime-ready OAuth configuration after decryption.
@@ -624,6 +640,8 @@ class OAuthManager:
             return await asyncio.to_thread(jwt.encode, payload, signing_key, algorithm=alg, headers=headers)
         except Exception as exc:
             raise OAuthError("Failed to sign client assertion for private_key_jwt client authentication") from exc
+
+    _build_client_assertion = build_client_assertion
 
     async def _refresh_client_assertion(self, token_data: Any, runtime_credentials: Dict[str, Any]) -> None:
         """Regenerate the client assertion before a retry when using private_key_jwt.
@@ -1004,6 +1022,9 @@ class OAuthManager:
         client_key: Optional[str] = None,
         client_secret_is_plaintext: bool = False,
         oauth_config: Optional[Dict[str, Any]] = None,
+        *,
+        actor_token: Optional[str] = None,
+        actor_token_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -1039,13 +1060,18 @@ class OAuthManager:
                 ``private_key_jwt``) is honored through ``_apply_token_endpoint_auth``.
                 The ``token_url``/``client_id``/``client_secret`` arguments are then
                 ignored.
+            actor_token: RFC 8693 §2.1 token that identifies ContextForge as the
+                acting party. Required when ``oauth_config`` sets an
+                ``actor_token_source`` other than ``none``.
+            actor_token_type: RFC 8693 §3 type identifier for ``actor_token``.
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
             ``expires_in`` and ``scope``.
 
         Raises:
-            OAuthError: If token exchange fails after all retries, or the
+            OAuthError: If the config requests delegation and no ``actor_token``
+                is given (fail closed, never impersonate), if token exchange fails after all retries, or the
                 response ``token_type`` is not ``Bearer`` (RFC 8693 §2.2.1
                 allows ``N_A`` for non-access-token ``issued_token_type``
                 values, but CF only forwards exchanged tokens as
@@ -1080,6 +1106,10 @@ class OAuthManager:
                     logger.warning("Failed to decrypt client secret for token exchange: %s", e)
             runtime_credentials["client_secret"] = client_secret
 
+        # Fail closed: a delegation config must never degrade to an impersonation request.
+        if is_delegation_config(oauth_config) and not (actor_token and actor_token_type):
+            raise OAuthError("Delegation is configured but no actor token is available")
+
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
@@ -1090,6 +1120,9 @@ class OAuthManager:
             token_data["audience"] = audience
         if scope:
             token_data["scope"] = scope
+        if actor_token and actor_token_type:
+            token_data["actor_token"] = actor_token
+            token_data["actor_token_type"] = actor_token_type
 
         headers: Dict[str, str] = {}
         await self._apply_token_endpoint_auth(token_data, headers, runtime_credentials, require_client_id=False)
@@ -1124,7 +1157,7 @@ class OAuthManager:
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.debug("Token exchange attempt %s failed: %s", attempt + 1, e)
+                logger.debug("Token exchange attempt %s failed: %s", attempt + 1, self._LEAKY_PARAM_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", str(e)))
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {unexpected_error_detail(e)}")
                 await asyncio.sleep(2**attempt)

@@ -4716,6 +4716,107 @@ class TestInvokeResourceCoverage:
         mock_sse.assert_not_called()
         span.set_attribute.assert_any_call("health.status", "unhealthy")
 
+    async def _invoke_delegation_read(self, resource_service, oauth_config, inbound_jwt):
+        """Invoke a resource read on an SSE token-exchange gateway with the given oauth_config.
+
+        Args:
+            resource_service: Service under test.
+            oauth_config: Gateway oauth_config.
+            inbound_jwt: Inbound user JWT.
+
+        Returns:
+            tuple: (result or raised exception, captured upstream headers, the mock SSE client).
+        """
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="oauth")
+        gateway.oauth_config = oauth_config
+        db = MagicMock()
+        db.close = MagicMock()
+        captured_headers = {}
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            def _capture_sse(*_a, **kw):
+                captured_headers.update(kw.get("headers") or {})
+                return mock_sse.return_value
+
+            mock_sse.side_effect = _capture_sse
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+            try:
+                outcome = await resource_service.invoke_resource(
+                    db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway, request_headers={"Authorization": f"Bearer {inbound_jwt}"}
+                )
+            except Exception as exc:  # noqa: BLE001 - returned for assertion
+                outcome = exc
+        return outcome, captured_headers, mock_sse
+
+    @pytest.mark.asyncio
+    async def test_token_exchange_delegation_sends_actor_token(self, resource_service, monkeypatch):
+        """A resource read on a delegation gateway sends the client-credentials actor token in the exchange."""
+        # First-Party
+        from mcpgateway.services import gateway_service_token_cache
+
+        monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", gateway_service_token_cache.GatewayServiceTokenCache())
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+        oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as.example.com/token", "client_id": "cf", "actor_token_source": "client_credentials"}
+        resource_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "actor-tok", "expires_in": 300})
+        resource_service.oauth_manager.get_access_token = AsyncMock(return_value="exchanged-tok")
+
+        outcome, captured_headers, _ = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+
+        assert outcome == "ok"
+        call_kwargs = resource_service.oauth_manager.get_access_token.call_args.kwargs
+        assert call_kwargs["subject_token"] == inbound_jwt
+        assert call_kwargs["actor_token"] == "actor-tok"
+        assert call_kwargs["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+        assert captured_headers.get("Authorization") == "Bearer exchanged-tok"
+
+    @pytest.mark.asyncio
+    async def test_token_exchange_delegation_actor_failure_fails_read(self, resource_service, monkeypatch):
+        """An actor token acquisition failure fails the read, sends no exchange, and never reaches upstream."""
+        # First-Party
+        from mcpgateway.services import gateway_service_token_cache
+
+        monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", gateway_service_token_cache.GatewayServiceTokenCache())
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+        oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as.example.com/token", "client_id": "cf", "actor_token_source": "client_credentials"}
+        resource_service.oauth_manager.get_client_credentials_token_response = AsyncMock(side_effect=RuntimeError("actor as down"))
+        resource_service.oauth_manager.get_access_token = AsyncMock(return_value="exchanged-tok")
+
+        outcome, _, mock_sse = await self._invoke_delegation_read(resource_service, oauth_config, inbound_jwt)
+
+        assert isinstance(outcome, ResourceError)
+        assert "Token exchange failed" in str(outcome)
+        resource_service.oauth_manager.get_access_token.assert_not_awaited()
+        mock_sse.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_sse_auth_value_string_decode_returns_none_defaults_authentication_to_empty_dict(self, resource_service):
         """Cover non-OAuth auth decode returning None which triggers authentication defaulting in connect_to_sse_session()."""

@@ -3015,3 +3015,170 @@ class TestRefreshClientAssertionNormalization:
             )
             assert decoded["iss"] == "test-client"
         assert first["client_assertion"] != second["client_assertion"]
+
+
+# ---------- RFC 8693 delegation (actor_token) ----------
+
+_ACTOR_TOKEN_VALUE = "actor-token-value-7f3a9c"  # pragma: allowlist secret
+_ACTOR_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
+
+
+def _te_secret_config(**overrides):
+    config = {
+        "grant_type": "token-exchange",
+        "client_id": "cf",
+        "client_secret": "cf-secret",  # pragma: allowlist secret
+        "token_url": "https://issuer.example.com/token",
+        "token_endpoint_auth_method": "client_secret_post",
+        "target_audience": "https://downstream",
+    }
+    config.update(overrides)
+    return config
+
+
+class TestTokenExchangeDelegation:
+    """``actor_token``/``actor_token_type`` in the RFC 8693 request body and the fail-closed guard."""
+
+    @pytest.mark.asyncio
+    async def test_request_body_contains_actor_token(self, oauth_manager):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            post.return_value = _token_exchange_success_response()
+            await oauth_manager.token_exchange(
+                oauth_config=_te_secret_config(actor_token_source="client_credentials"),
+                subject_token="inbound.jwt",
+                audience="https://downstream",
+                actor_token=_ACTOR_TOKEN_VALUE,
+                actor_token_type=_ACTOR_TOKEN_TYPE,
+            )
+
+        token_data = post.await_args.args[1]
+        assert token_data["actor_token"] == _ACTOR_TOKEN_VALUE
+        assert token_data["actor_token_type"] == _ACTOR_TOKEN_TYPE
+        assert token_data["subject_token"] == "inbound.jwt"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("config_overrides", [{}, {"actor_token_source": "none"}])
+    async def test_request_body_without_actor_matches_impersonation_body(self, oauth_manager, config_overrides):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            post.return_value = _token_exchange_success_response()
+            await oauth_manager.token_exchange(oauth_config=_te_secret_config(**config_overrides), subject_token="inbound.jwt", audience="https://downstream", scope="mcp.call")
+
+        assert post.await_args.args[1] == {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": "inbound.jwt",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "audience": "https://downstream",
+            "scope": "mcp.call",
+            "client_id": "cf",
+            "client_secret": "cf-secret",  # pragma: allowlist secret
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_access_token_forwards_actor_arguments(self, oauth_manager):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            post.return_value = _token_exchange_success_response()
+            token = await oauth_manager.get_access_token(
+                _te_secret_config(actor_token_source="client_credentials"),
+                subject_token="inbound.jwt",
+                actor_token=_ACTOR_TOKEN_VALUE,
+                actor_token_type=_ACTOR_TOKEN_TYPE,
+            )
+
+        assert token == "exchanged-token"
+        assert post.await_args.args[1]["actor_token"] == _ACTOR_TOKEN_VALUE
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("source", ["client_credentials", "client_assertion"])
+    @pytest.mark.parametrize(("actor_token", "actor_token_type"), [(None, None), ("", _ACTOR_TOKEN_TYPE), (_ACTOR_TOKEN_VALUE, None)])
+    async def test_delegation_without_actor_token_fails_closed(self, oauth_manager, source, actor_token, actor_token_type):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            with pytest.raises(OAuthError, match="Delegation is configured but no actor token is available"):
+                await oauth_manager.token_exchange(oauth_config=_te_secret_config(actor_token_source=source), subject_token="inbound.jwt", actor_token=actor_token, actor_token_type=actor_token_type)
+
+        post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_access_token_delegation_without_actor_fails_closed(self, oauth_manager):
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock) as post:
+            with pytest.raises(OAuthError, match="no actor token"):
+                await oauth_manager.get_access_token(_te_secret_config(actor_token_source="client_credentials"), subject_token="inbound.jwt")
+
+        post.assert_not_awaited()
+
+
+def test_redact_token_response_masks_actor_token():
+    out = OAuthManager._redact_token_response({"actor_token": _ACTOR_TOKEN_VALUE, "actor_token_type": _ACTOR_TOKEN_TYPE})
+    assert out["actor_token"] == "[REDACTED]"
+    assert out["actor_token_type"] == _ACTOR_TOKEN_TYPE
+
+
+def test_redact_token_response_scrubs_actor_token_in_raw_body():
+    out = OAuthManager._redact_token_response({"raw_response": f"<a href='/retry?actor_token={_ACTOR_TOKEN_VALUE}&x=1'>retry</a>"})
+    assert _ACTOR_TOKEN_VALUE not in out["raw_response"]
+
+
+def _http_status_error_response():
+    request = httpx.Request("POST", "https://issuer.example.com/token")
+    response = MagicMock()
+    response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(f"400 echo actor_token={_ACTOR_TOKEN_VALUE}", request=request, response=httpx.Response(400, request=request)))
+    return response
+
+
+def _json_response(payload):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.headers = {"content-type": "application/json"}
+    response.json.return_value = payload
+    return response
+
+
+class TestTokenExchangeActorTokenSecrecy:
+    """No ``token_exchange()`` failure branch writes the actor token value to a log record or error."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "post_kwargs",
+        [
+            pytest.param({"side_effect": httpx.ConnectError(f"connect failed actor_token={_ACTOR_TOKEN_VALUE}")}, id="transport-error"),
+            pytest.param({"return_value": _http_status_error_response()}, id="http-status-error"),
+            pytest.param({"return_value": _json_response({"error": "invalid_grant", "actor_token": _ACTOR_TOKEN_VALUE})}, id="no-access-token"),
+            pytest.param({"return_value": _json_response({"access_token": "x", "token_type": "N_A", "actor_token": _ACTOR_TOKEN_VALUE})}, id="bad-token-type"),
+        ],
+    )
+    async def test_failure_branches_never_log_actor_token(self, oauth_manager, caplog, post_kwargs):
+        with caplog.at_level(logging.DEBUG):
+            with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, **post_kwargs):
+                with pytest.raises(OAuthError) as exc_info:
+                    await oauth_manager.token_exchange(
+                        oauth_config=_te_secret_config(actor_token_source="client_credentials"),
+                        subject_token="inbound.jwt",
+                        actor_token=_ACTOR_TOKEN_VALUE,
+                        actor_token_type=_ACTOR_TOKEN_TYPE,
+                    )
+
+        assert _ACTOR_TOKEN_VALUE not in str(exc_info.value)
+        for record in caplog.records:
+            assert _ACTOR_TOKEN_VALUE not in record.getMessage()
+            assert _ACTOR_TOKEN_VALUE not in repr(record.__dict__)
+
+    @pytest.mark.asyncio
+    async def test_guard_failure_never_logs_actor_type_values(self, oauth_manager, caplog):
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(OAuthError) as exc_info:
+                await oauth_manager.token_exchange(oauth_config=_te_secret_config(actor_token_source="client_credentials"), subject_token="inbound.jwt", actor_token=_ACTOR_TOKEN_VALUE)
+
+        assert _ACTOR_TOKEN_VALUE not in str(exc_info.value)
+        assert all(_ACTOR_TOKEN_VALUE not in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_build_client_assertion_is_public_with_private_alias(oauth_manager):
+    credentials = _private_key_jwt_credentials()
+    public_pem = credentials.pop("_test_public_pem")
+
+    assert OAuthManager._build_client_assertion is OAuthManager.build_client_assertion
+    first = jwt.decode(await oauth_manager.build_client_assertion(credentials), public_pem, algorithms=["RS256"], audience=credentials["token_url"])
+    second = jwt.decode(await oauth_manager._build_client_assertion(credentials), public_pem, algorithms=["RS256"], audience=credentials["token_url"])
+    assert first["iss"] == first["sub"] == "test-client"
+    assert first["jti"] != second["jti"]
