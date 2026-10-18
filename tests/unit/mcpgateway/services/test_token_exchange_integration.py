@@ -901,7 +901,7 @@ class TestUnauthorizedInvalidation:
             app_user_email="u@e",
             request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
         )
-        svc._token_exchange_cache.invalidate.assert_awaited_once_with("gw1", "u@e", "aud", subject_token=_FAKE_JWT)
+        svc._token_exchange_cache.invalidate.assert_awaited_once_with("gw1", "u@e", "aud", subject_token=_FAKE_JWT, variant="")
 
     async def test_non_401_does_not_invalidate(self):
         # Standard
@@ -1374,3 +1374,236 @@ class TestGatewayRefreshTokenExchangeSubjectSources:
             )
         assert mock_audit.call_args.kwargs["correlation_id"] == "corr-42"
         assert mock_audit.call_args.kwargs["request_id"] == "req-7"
+
+
+# ---------- RFC 8693 delegation on the tool and gateway exchange paths ----------
+
+_DELEGATION_CFG = {**_TE_CFG, "client_id": "cf", "actor_token_source": "client_credentials", "actor_token_type": "urn:ietf:params:oauth:token-type:access_token"}
+
+
+@pytest.fixture
+def shared_service_cache(monkeypatch):
+    """Give each test a fresh process-wide service-token cache."""
+    # First-Party
+    from mcpgateway.services import gateway_service_token_cache
+
+    cache = gateway_service_token_cache.GatewayServiceTokenCache()
+    monkeypatch.setattr(gateway_service_token_cache, "_shared_cache", cache)
+    return cache
+
+
+def _delegation_tool_service(*, actor_side_effect=None, exchange_side_effect=None):
+    """Build a ToolService with a real per-user cache and a mocked OAuth manager.
+
+    Args:
+        actor_side_effect: Optional exception for the actor client-credentials request.
+        exchange_side_effect: Optional exception for the exchange request.
+
+    Returns:
+        ToolService: Service under test.
+    """
+    # First-Party
+    from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+
+    svc = ToolService()
+    svc._token_exchange_cache = TokenExchangeCache(redis_url=None)
+    svc.oauth_manager = MagicMock()
+    svc.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "actor-tok", "expires_in": 600}, side_effect=actor_side_effect)
+    svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "delegated-tok", "expires_in": 600}, side_effect=exchange_side_effect)
+    return svc
+
+
+def _subject(email="d@example.test", jti="d-subject"):
+    # First-Party
+    from tests.helpers.auth import make_test_jwt
+
+    return make_test_jwt(email, extra_payload={"jti": jti})
+
+
+@pytest.mark.asyncio
+class TestToolPathDelegation:
+    async def test_exchange_carries_actor_token(self, shared_service_cache):
+        svc = _delegation_tool_service()
+        subject = _subject()
+
+        header = await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", {"authorization": f"Bearer {subject}"})
+
+        assert header == {"Authorization": "Bearer delegated-tok"}
+        kwargs = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert kwargs["subject_token"] == subject
+        assert kwargs["actor_token"] == "actor-tok"
+        assert kwargs["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+        actor_config = svc.oauth_manager.get_client_credentials_token_response.await_args.args[0]
+        assert actor_config["grant_type"] == "client_credentials"
+        assert "subject_token" not in actor_config and "actor_token_source" not in actor_config
+
+    async def test_impersonation_sends_no_actor_token(self, shared_service_cache):
+        svc = _delegation_tool_service()
+
+        await svc._resolve_token_exchange_header(dict(_TE_CFG), "gw", "gw", "d@example.test", {"authorization": f"Bearer {_subject()}"})
+
+        kwargs = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert kwargs["actor_token"] is None and kwargs["actor_token_type"] is None
+        svc.oauth_manager.get_client_credentials_token_response.assert_not_awaited()
+
+    async def test_one_actor_request_serves_two_users(self, shared_service_cache):
+        svc = _delegation_tool_service()
+
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "a@example.test", {"authorization": f"Bearer {_subject('a@example.test', 'a')}"})
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "b@example.test", {"authorization": f"Bearer {_subject('b@example.test', 'b')}"})
+
+        assert svc.oauth_manager.token_exchange.await_count == 2
+        svc.oauth_manager.get_client_credentials_token_response.assert_awaited_once()
+
+    async def test_actor_failure_fails_closed_and_sets_negative_cache(self, shared_service_cache, caplog):
+        # Standard
+        import logging
+
+        svc = _delegation_tool_service(actor_side_effect=OAuthError("actor as down"))
+        headers = {"authorization": f"Bearer {_subject()}"}
+
+        with caplog.at_level(logging.INFO, logger="mcpgateway.audit.token_exchange"):
+            with pytest.raises(ToolInvocationError, match="Token exchange failed"):
+                await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+
+        with pytest.raises(ToolInvocationError, match="Token exchange unavailable"):
+            await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+        svc.oauth_manager.get_client_credentials_token_response.assert_awaited_once()
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+        events = [r.token_exchange for r in caplog.records if hasattr(r, "token_exchange")]
+        assert [(e["mode"], e["success"]) for e in events] == [("delegation", False)]
+
+    async def test_rejected_exchange_discards_cached_actor_token(self, shared_service_cache):
+        svc = _delegation_tool_service(exchange_side_effect=OAuthError("invalid actor"))
+        headers = {"authorization": f"Bearer {_subject()}"}
+
+        with pytest.raises(ToolInvocationError):
+            await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+        assert shared_service_cache._mem == {}
+
+        # After the negative-cache TTL, the next exchange requests a new actor token.
+        svc._token_exchange_cache._neg.clear()
+        svc.oauth_manager.token_exchange.side_effect = None
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+        assert svc.oauth_manager.get_client_credentials_token_response.await_count == 2
+
+    async def test_enabling_delegation_with_warm_impersonation_cache_reexchanges(self, shared_service_cache):
+        svc = _delegation_tool_service()
+        subject = _subject()
+        headers = {"authorization": f"Bearer {subject}"}
+        await svc._token_exchange_cache.set("gw", "d@example.test", "aud", "impersonation-tok", expires_in=3600, subject_token=subject)
+
+        assert await svc._resolve_token_exchange_header(dict(_TE_CFG), "gw", "gw", "d@example.test", headers) == {"Authorization": "Bearer impersonation-tok"}
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+
+        header = await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+
+        assert header == {"Authorization": "Bearer delegated-tok"}
+        assert svc.oauth_manager.token_exchange.await_args.kwargs["actor_token"] == "actor-tok"
+
+    async def test_disabling_delegation_does_not_serve_delegated_token(self, shared_service_cache):
+        svc = _delegation_tool_service()
+        headers = {"authorization": f"Bearer {_subject()}"}
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+        svc.oauth_manager.token_exchange.return_value = {"access_token": "impersonation-tok", "expires_in": 600}
+
+        header = await svc._resolve_token_exchange_header(dict(_TE_CFG), "gw", "gw", "d@example.test", headers)
+
+        assert header == {"Authorization": "Bearer impersonation-tok"}
+
+    async def test_upstream_401_invalidates_delegation_entry(self, shared_service_cache):
+        svc = _delegation_tool_service()
+        headers = {"authorization": f"Bearer {_subject()}"}
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+
+        await svc._invalidate_token_exchange_on_unauthorized(401, dict(_DELEGATION_CFG), "gw", "d@example.test", headers)
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+
+        assert svc.oauth_manager.token_exchange.await_count == 2
+
+    async def test_success_audit_mode_and_no_token_values(self, shared_service_cache, caplog):
+        # Standard
+        import logging
+
+        svc = _delegation_tool_service()
+        subject = _subject()
+        with (
+            caplog.at_level(logging.INFO),
+            patch("mcpgateway.utils.token_exchange_audit._db_logger") as db_logger,
+            patch("mcpgateway.services.tool_service.get_structured_logger") as get_sec_logger,
+        ):
+            await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", {"authorization": f"Bearer {subject}", "x-correlation-id": "corr-d"})
+
+        event = next(r.token_exchange for r in caplog.records if hasattr(r, "token_exchange"))
+        assert event["mode"] == "delegation"
+        assert event["correlation_id"] == "corr-d"
+        captured = repr(event) + repr(db_logger.log.call_args_list) + repr(get_sec_logger.return_value.log.call_args_list) + " ".join(r.getMessage() for r in caplog.records)
+        assert get_sec_logger.return_value.log.call_args.kwargs["custom_fields"]["mode"] == "delegation"
+        for secret in (subject, "actor-tok", "delegated-tok"):
+            assert secret not in captured
+
+
+@pytest.mark.asyncio
+class TestGatewayPathDelegation:
+    """Manual refresh with a user subject token runs the same delegation rules."""
+
+    @staticmethod
+    def _service(*, actor_side_effect=None):
+        # First-Party
+        from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+
+        svc = GatewayService()
+        svc._token_exchange_cache = TokenExchangeCache(redis_url=None)
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "actor-tok", "expires_in": 600}, side_effect=actor_side_effect)
+        svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "delegated-tok", "expires_in": 600})
+        return svc
+
+    async def test_manual_refresh_exchange_carries_actor_token(self, shared_service_cache, caplog):
+        # Standard
+        import logging
+
+        svc = self._service()
+        subject = _subject()
+
+        with caplog.at_level(logging.INFO, logger="mcpgateway.audit.token_exchange"):
+            header = await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", {"authorization": f"Bearer {subject}"})
+
+        assert header == {"Authorization": "Bearer delegated-tok"}
+        kwargs = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert kwargs["subject_token"] == subject
+        assert kwargs["actor_token"] == "actor-tok"
+        events = [r.token_exchange for r in caplog.records if hasattr(r, "token_exchange")]
+        assert events[0]["mode"] == "delegation"
+
+    async def test_manual_refresh_actor_failure_fails_closed(self, shared_service_cache):
+        svc = self._service(actor_side_effect=OAuthError("actor as down"))
+        headers = {"authorization": f"Bearer {_subject()}"}
+
+        with pytest.raises(GatewayConnectionError, match="Token exchange failed"):
+            await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+        with pytest.raises(GatewayConnectionError, match="Token exchange unavailable"):
+            await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", headers)
+
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+        svc.oauth_manager.get_client_credentials_token_response.assert_awaited_once()
+
+    async def test_manual_refresh_mode_change_misses_warm_cache(self, shared_service_cache):
+        svc = self._service()
+        subject = _subject()
+        await svc._token_exchange_cache.set("gw", "d@example.test", "aud", "impersonation-tok", expires_in=3600, subject_token=subject)
+
+        header = await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", {"authorization": f"Bearer {subject}"})
+
+        assert header == {"Authorization": "Bearer delegated-tok"}
+
+    async def test_gateway_invalidate_clears_actor_token(self, shared_service_cache):
+        svc = self._service()
+        assert svc._service_token_cache is shared_service_cache
+        await svc._resolve_token_exchange_header(dict(_DELEGATION_CFG), "gw", "gw", "d@example.test", {"authorization": f"Bearer {_subject()}"})
+        assert len(shared_service_cache._mem) == 1
+
+        await svc._service_token_cache.invalidate("gw")
+
+        assert shared_service_cache._mem == {}

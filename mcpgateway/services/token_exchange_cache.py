@@ -253,7 +253,7 @@ class TokenExchangeCache(_BearerTokenStore):
         self._neg: "OrderedDict[str, float]" = OrderedDict()  # key -> neg_until_epoch
 
     @staticmethod
-    def _key(gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> str:
+    def _key(gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> str:
         """Build a namespaced key for a gateway/user/audience/credential tuple.
 
         Each component is hashed independently (rather than joined with a bare
@@ -268,17 +268,22 @@ class TokenExchangeCache(_BearerTokenStore):
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode discriminator, for example ``actor:client_credentials``.
+                The empty default produces the impersonation key unchanged, so a mode
+                change misses earlier entries on every worker without invalidation.
 
         Returns:
             A namespaced cache key string.
         """
         if not subject_token:
             raise ValueError("Token exchange cache requires a subject token")
-        parts = (gateway_id or "", user_email or "", audience or "", subject_token)
+        parts: Tuple[str, ...] = (gateway_id or "", user_email or "", audience or "", subject_token)
+        if variant:
+            parts = (*parts, variant)
         hashed = ":".join(hashlib.sha256(part.encode("utf-8")).hexdigest() for part in parts)
         return f"token_exchange:v2:{hashed}"
 
-    def lock(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> "asyncio.Lock":
+    def lock(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> "asyncio.Lock":
         """Return the single-flight lock for this key, creating it on first use.
 
         The lock registry is bounded (G7): an unbounded dict of locks is the same
@@ -291,13 +296,14 @@ class TokenExchangeCache(_BearerTokenStore):
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
 
         Returns:
             The ``asyncio.Lock`` instance associated with this key.
         """
-        return self._lock_for_key(self._key(gateway_id, user_email, audience, subject_token=subject_token))
+        return self._lock_for_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant))
 
-    async def get(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> Optional[str]:
+    async def get(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> Optional[str]:
         """Return a cached token if present and still inside its serve window.
 
         Args:
@@ -305,13 +311,14 @@ class TokenExchangeCache(_BearerTokenStore):
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
 
         Returns:
             The cached token string, or ``None`` on a miss, expiry, or malformed entry.
         """
-        return await self._get_key(self._key(gateway_id, user_email, audience, subject_token=subject_token))
+        return await self._get_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant))
 
-    async def set(self, gateway_id: str, user_email: str, audience: str, token: str, expires_in: int, *, subject_token: str) -> None:
+    async def set(self, gateway_id: str, user_email: str, audience: str, token: str, expires_in: int, *, subject_token: str, variant: str = "") -> None:
         """Cache an exchanged token. Hard TTL is ``expires_in``; serve window clamps skew.
 
         Args:
@@ -319,12 +326,13 @@ class TokenExchangeCache(_BearerTokenStore):
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
             token: The exchanged access token to cache.
             expires_in: Token lifetime in seconds as returned by the token endpoint.
         """
-        await self._set_key(self._key(gateway_id, user_email, audience, subject_token=subject_token), token, expires_in)
+        await self._set_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant), token, expires_in)
 
-    async def invalidate(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> None:
+    async def invalidate(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> None:
         """Remove a cached token, e.g. after an upstream 401.
 
         Args:
@@ -332,10 +340,11 @@ class TokenExchangeCache(_BearerTokenStore):
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
         """
-        await self._delete_key(self._key(gateway_id, user_email, audience, subject_token=subject_token))
+        await self._delete_key(self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant))
 
-    async def is_failed(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str) -> bool:
+    async def is_failed(self, gateway_id: str, user_email: str, audience: str, *, subject_token: str, variant: str = "") -> bool:
         """Return True if a recent exchange failure is within its negative-cache TTL (P4).
 
         Args:
@@ -343,11 +352,12 @@ class TokenExchangeCache(_BearerTokenStore):
             user_email: Email of the user the token was exchanged on behalf of.
             audience: Target audience of the exchanged token.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
 
         Returns:
             True if a failure was recorded recently and the negative-cache TTL has not lapsed.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token) + ":neg"
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant) + ":neg"
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
@@ -364,7 +374,7 @@ class TokenExchangeCache(_BearerTokenStore):
             return False
         return True
 
-    async def set_failure(self, gateway_id: str, user_email: str, audience: str, ttl: int = 10, *, subject_token: str) -> None:
+    async def set_failure(self, gateway_id: str, user_email: str, audience: str, ttl: int = 10, *, subject_token: str, variant: str = "") -> None:
         """Record a short-lived exchange failure to short-circuit a retry storm (P4).
 
         Args:
@@ -373,8 +383,9 @@ class TokenExchangeCache(_BearerTokenStore):
             audience: Target audience of the exchanged token.
             ttl: Seconds the failure should be remembered.
             subject_token: Inbound JWT used as the RFC 8693 subject token.
+            variant: Exchange-mode key variant; see ``_key()``.
         """
-        key = self._key(gateway_id, user_email, audience, subject_token=subject_token) + ":neg"
+        key = self._key(gateway_id, user_email, audience, subject_token=subject_token, variant=variant) + ":neg"
         if self._redis_live():
             assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:

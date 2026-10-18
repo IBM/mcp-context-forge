@@ -252,7 +252,11 @@ const TOKEN_EXCHANGE_EDIT_FIELDS = {
   "oauth-subject-token-type-gw-edit": "subject_token_type",
   "oauth-requested-token-type-gw-edit": "requested_token_type",
   "oauth-subject-token-source-gw-edit": "subject_token_source",
+  "oauth-actor-token-source-gw-edit": "actor_token_source",
+  "oauth-actor-token-type-gw-edit": "actor_token_type",
 };
+
+const TOKEN_EXCHANGE_EDIT_DEFAULTS = { actor_token_source: "none" };
 
 /**
  * Fill the edit form's token-exchange field group from a stored oauth_config.
@@ -261,12 +265,15 @@ const TOKEN_EXCHANGE_EDIT_FIELDS = {
  */
 export function populateTokenExchangeEditFields(config) {
   const isTokenExchange = config.grant_type === "token-exchange";
+  setActorClientAssertionAvailable(isTokenExchange && Boolean(config.private_key));
   Object.entries(TOKEN_EXCHANGE_EDIT_FIELDS).forEach(([id, key]) => {
     const field = safeGetElement(id, true);
     if (!field) {
       return;
     }
-    const value = isTokenExchange ? config[key] || "" : "";
+    const value = isTokenExchange
+      ? config[key] || TOKEN_EXCHANGE_EDIT_DEFAULTS[key] || ""
+      : "";
     if (field.tagName === "SELECT" && value) {
       const option = Array.from(field.options).find((o) => o.value === value);
       if (option) {
@@ -279,6 +286,21 @@ export function populateTokenExchangeEditFields(config) {
   });
   toggleTokenExchangeFields("gw-edit", config.grant_type || "");
   populateDiscoveryEditFields(isTokenExchange ? config.discovery : null);
+}
+
+/**
+ * Enable the edit form's client_assertion actor source only when a private key is stored.
+ * Key upload is API-only, so the option stays disabled without one.
+ * @param {boolean} available - Whether the stored oauth_config has a private key
+ */
+export function setActorClientAssertionAvailable(available) {
+  const select = safeGetElement("oauth-actor-token-source-gw-edit", true);
+  const option = select
+    ? Array.from(select.options).find((o) => o.value === "client_assertion")
+    : null;
+  if (option) {
+    option.disabled = !available;
+  }
 }
 
 const DISCOVERY_EDIT_FIELDS = {

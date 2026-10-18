@@ -7124,3 +7124,87 @@ class TestTokenExchangeDiscoveryRestDenyPaths:
 
         assert response.status_code in (400, 422)
         assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+
+class TestTokenExchangeDelegationRestDenyPaths:
+    """``PUT /gateways/{id}`` deny paths for the token-exchange delegation keys.
+
+    Each test seeds a real gateway row and asserts that the stored ``oauth_config`` is unchanged.
+    """
+
+    _STORED_CONFIG = TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG
+    _seed_gateway = staticmethod(TestTokenExchangeDiscoveryRestDenyPaths._seed_gateway)
+    _stored_oauth_config = staticmethod(TestTokenExchangeDiscoveryRestDenyPaths._stored_oauth_config)
+
+    @staticmethod
+    def _update_body(**delegation) -> dict:
+        """Build a PUT body that sets delegation keys.
+
+        Args:
+            **delegation: Delegation keys to add to the stored config.
+
+        Returns:
+            dict: Request body.
+        """
+        return {"auth_type": "oauth", "oauth_config": {**TestTokenExchangeDelegationRestDenyPaths._STORED_CONFIG, **delegation}}
+
+    def test_non_admin_enabling_delegation_returns_403(self, test_client, auth_headers):
+        """The requester owns the gateway but is not a platform admin."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        async def deny_wildcard(self, user_email, permission, *args, **kwargs):
+            return permission != "*"
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_permission", new=deny_wildcard),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_credentials"), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert "platform administrator" in response.json()["message"]
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_wrong_team_user_changing_delegation_rejected(self, test_client, auth_headers):
+        """The requester is neither the owner nor a team owner of the gateway's team."""
+        gateway_id = self._seed_gateway()
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService._is_user_admin", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.services.permission_service.PermissionService._get_user_team_role", new=AsyncMock(return_value=None)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_credentials"), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_unknown_actor_token_source_rejected(self, test_client, auth_headers):
+        """A platform admin cannot save an unsupported actor_token_source."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="password"), headers=auth_headers)
+
+        assert response.status_code in (400, 422)
+        assert "actor_token_source" in response.text
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_client_assertion_without_private_key_rejected(self, test_client, auth_headers):
+        """client_assertion needs a stored or submitted private key."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_assertion"), headers=auth_headers)
+
+        # update_gateway wraps service-layer ValueErrors in GatewayError, as for the private_key_jwt key check.
+        assert response.status_code >= 400
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_admin_enabling_delegation_stores_default_type(self, test_client, auth_headers):
+        """A platform admin enables delegation and the stored config carries the default actor_token_type."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body(actor_token_source="client_credentials"), headers=auth_headers)
+
+        assert response.status_code == 200, response.text
+        stored = self._stored_oauth_config(gateway_id)
+        assert stored["actor_token_source"] == "client_credentials"
+        assert stored["actor_token_type"] == "urn:ietf:params:oauth:token-type:access_token"

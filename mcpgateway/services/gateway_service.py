@@ -84,7 +84,15 @@ except ImportError:
 
 # First-Party
 from mcpgateway import __version__
-from mcpgateway.common.oauth import normalize_token_endpoint_auth_method, SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS, validate_private_key_material
+from mcpgateway.common.oauth import (
+    ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION,
+    ACTOR_TOKEN_SOURCE_NONE,
+    ACTOR_TOKEN_SOURCES,
+    DEFAULT_ACTOR_TOKEN_TYPES,
+    normalize_token_endpoint_auth_method,
+    SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS,
+    validate_private_key_material,
+)
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
@@ -126,11 +134,12 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
-from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache, service_token_fingerprint
+from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.server_service import server_service
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -396,15 +405,6 @@ GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
 MCP_SYNC_CREATED_VIA_VALUES = {"MCP", "federation", "health_check", "manual_refresh", "notification_service", "oauth", "update"}
 
 
-_DISCOVERY_INHERITED_CLIENT_AUTH_KEYS = (
-    "token_url",
-    "client_id",
-    "client_secret",
-    "token_endpoint_auth_method",
-    "private_key",
-    "private_key_jwt_kid",
-    "token_endpoint_auth_signing_alg",
-)
 _DISCOVERY_PURPOSE = "discovery"
 _DISCOVERY_OVERRIDE_KEYS = ("token_url", "client_id", "client_secret", "token_endpoint_auth_method")
 
@@ -437,7 +437,7 @@ def build_discovery_oauth_config(oauth_config: Optional[dict]) -> Optional[dict]
     discovery = oauth_config.get("discovery")
     if not isinstance(discovery, dict):
         return None
-    effective: dict = {key: oauth_config[key] for key in _DISCOVERY_INHERITED_CLIENT_AUTH_KEYS if oauth_config.get(key) is not None}
+    effective: dict = {key: oauth_config[key] for key in SERVICE_TOKEN_CLIENT_AUTH_KEYS if oauth_config.get(key) is not None}
     for key in _DISCOVERY_OVERRIDE_KEYS:
         if discovery.get(key) not in (None, ""):
             effective[key] = discovery[key]
@@ -965,7 +965,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
-        self._service_token_cache = GatewayServiceTokenCache(redis_url=getattr(settings, "redis_url", None))
+        self._service_token_cache = get_service_token_cache()
 
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
         self._refresh_locks: Dict[str, asyncio.Lock] = {}
@@ -1069,6 +1069,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     # subject token is a CF-issued JWT, not an AS-issued access token, so "jwt" is the correct
     # default subject_token_type for ASes that enforce the distinction (e.g. Keycloak).
     _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
+    _TOKEN_TYPE_URI_PREFIX = "urn:ietf:params:oauth:token-type:"  # nosec B105 - RFC 8693 URI prefix
 
     @staticmethod
     def _initialize_skips_discovery(oauth_config: Optional[dict]) -> bool:
@@ -1153,7 +1154,34 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
         oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
         GatewayService._validate_discovery_config(oauth_config.get("discovery"))
+        GatewayService._validate_actor_token_config(oauth_config)
         return oauth_config
+
+    @staticmethod
+    def _validate_actor_token_config(oauth_config: dict) -> None:
+        """Default and validate the RFC 8693 delegation keys of a token-exchange config in place.
+
+        The private key that ``client_assertion`` signs with is validated in
+        ``_validate_private_key_jwt_config``, which can resolve masked placeholders.
+
+        Args:
+            oauth_config: Token-exchange oauth_config dict.
+
+        Raises:
+            ValueError: If ``actor_token_source`` is not a supported value, or
+                ``actor_token_type`` is not an RFC 8693 token type URI.
+        """
+        source = oauth_config.get("actor_token_source") or ACTOR_TOKEN_SOURCE_NONE
+        if source not in ACTOR_TOKEN_SOURCES:
+            raise PublicValidationError(f"actor_token_source must be one of {ACTOR_TOKEN_SOURCES}")
+        oauth_config["actor_token_source"] = source
+        if source == ACTOR_TOKEN_SOURCE_NONE:
+            oauth_config.pop("actor_token_type", None)
+            return
+        token_type = oauth_config.get("actor_token_type") or DEFAULT_ACTOR_TOKEN_TYPES[source]
+        if not isinstance(token_type, str) or not token_type.startswith(GatewayService._TOKEN_TYPE_URI_PREFIX):
+            raise PublicValidationError(f"actor_token_type must be an RFC 8693 token type URI starting with '{GatewayService._TOKEN_TYPE_URI_PREFIX}'")
+        oauth_config["actor_token_type"] = token_type
 
     @staticmethod
     def _validate_discovery_config(discovery: Any) -> None:
@@ -1230,6 +1258,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return
 
         GatewayService._validate_private_key_jwt_material(oauth_config, existing_oauth_config)
+        uses_private_key_jwt = normalize_token_endpoint_auth_method(oauth_config.get("token_endpoint_auth_method")) == "private_key_jwt"
+        if oauth_config.get("actor_token_source") == ACTOR_TOKEN_SOURCE_CLIENT_ASSERTION and not uses_private_key_jwt:
+            GatewayService._validate_signing_key(oauth_config, existing_oauth_config, "actor_token_source is client_assertion")
         discovery_config = build_discovery_oauth_config(oauth_config)
         if discovery_config is not None:
             GatewayService._validate_private_key_jwt_material(discovery_config, build_discovery_oauth_config(existing_oauth_config) or existing_oauth_config)
@@ -1250,10 +1281,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # with private_key_jwt.
         if normalize_token_endpoint_auth_method(oauth_config.get("token_endpoint_auth_method")) != "private_key_jwt":
             return
+        GatewayService._validate_signing_key(oauth_config, existing_oauth_config, "token_endpoint_auth_method is private_key_jwt")
 
+    @staticmethod
+    def _validate_signing_key(oauth_config: dict, existing_oauth_config: Optional[dict], requirement: str) -> None:
+        """Validate the effective ``private_key`` that the gateway signs JWT assertions with.
+
+        Args:
+            oauth_config: Client-auth config being applied.
+            existing_oauth_config: The stored counterpart of ``oauth_config``, or ``None`` on create.
+            requirement: Reason the key is required, used in the error message.
+
+        Raises:
+            ValueError: See ``_validate_private_key_jwt_config``.
+        """
         private_key = oauth_config.get("private_key")
         if not isinstance(private_key, str) or not private_key.strip():
-            raise ValueError("oauth_config.private_key is required when token_endpoint_auth_method is private_key_jwt")
+            raise ValueError(f"oauth_config.private_key is required when {requirement}")
 
         signing_alg = oauth_config.get("token_endpoint_auth_signing_alg")
         encryption = get_encryption_service(settings.auth_encryption_secret)
@@ -1425,11 +1469,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except (TypeError, ValueError):
                 return self._TOKEN_EXCHANGE_FALLBACK_TTL
 
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
+        # Delegation keys never collide with impersonation keys, so a mode change misses stale entries.
+        variant = exchange_cache_variant(oauth_config)
+        mode = exchange_mode(oauth_config)
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
         if cached:
             return {"Authorization": f"Bearer {cached}"}
 
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token):
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience, subject_token=subject_token, variant=variant):
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id})
             raise GatewayConnectionError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
@@ -1437,14 +1484,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
         request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
 
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token)
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience, subject_token=subject_token, variant=variant):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
             if cached:
                 return {"Authorization": f"Bearer {cached}"}
 
             scopes = oauth_config.get("scopes") or []
             started = time.monotonic()
             try:
+                # Inside the try block: an actor acquisition failure takes the same negative-cache and audit path.
+                actor_token, actor_token_type = await resolve_actor_token(
+                    self.oauth_manager, oauth_config, gateway_id=gateway_id, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
+                )
                 response = await self.oauth_manager.token_exchange(
                     oauth_config=oauth_config,
                     subject_token=subject_token,
@@ -1455,11 +1506,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     ca_certificate=ca_certificate,
                     client_cert=client_cert,
                     client_key=client_key,
+                    actor_token=actor_token,
+                    actor_token_type=actor_token_type,
                 )
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
                 safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token)
+                await invalidate_actor_token(gateway_id, oauth_config)
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience, subject_token=subject_token, variant=variant)
                 audit_token_exchange(
                     user_email=app_user_email,
                     gateway_id=gateway_id,
@@ -1471,6 +1525,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     latency_ms=latency_ms,
                     correlation_id=correlation_id,
                     request_id=request_id,
+                    mode=mode,
                 )
                 sec_logger.log(
                     level="WARNING",
@@ -1480,6 +1535,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     custom_fields={
                         "gateway_id": gateway_id,
                         "target_audience": audience,
+                        "mode": mode,
                         "latency_ms": latency_ms,
                         "error": safe_reason,
                         "correlation_id": correlation_id,
@@ -1493,7 +1549,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             exchanged = response["access_token"]
             expires_in = _coerce_ttl(response.get("expires_in"))
             latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in, subject_token=subject_token, variant=variant)
             audit_token_exchange(
                 user_email=app_user_email,
                 gateway_id=gateway_id,
@@ -1505,6 +1561,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 latency_ms=latency_ms,
                 correlation_id=correlation_id,
                 request_id=request_id,
+                mode=mode,
             )
             sec_logger.log(
                 level="INFO",
@@ -1514,6 +1571,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 custom_fields={
                     "gateway_id": gateway_id,
                     "target_audience": audience,
+                    "mode": mode,
                     "expires_in": expires_in,
                     "latency_ms": latency_ms,
                     "correlation_id": correlation_id,
