@@ -205,6 +205,7 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 | `requested_token_type` | no | `urn:ietf:params:oauth:token-type:access_token` | The `requested_token_type` parameter sent to the AS. |
 | `client_id` / `client_secret` | yes | — | Client credentials used to authenticate the exchange request itself. `client_secret` is stored encrypted. |
 | `scopes` | no | — | Optional scopes requested for the exchanged token. |
+| `discovery` | no | — | Optional discovery credential for catalog discovery and health checks. See [Tool discovery for token-exchange gateways](#tool-discovery-for-token-exchange-gateways). |
 
 ### Subject Token Sources
 
@@ -213,18 +214,63 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 
 ### Tool discovery for token-exchange gateways
 
-Registration (`POST /gateways`) intentionally skips the discovery probe for
-`grant_type: "token-exchange"` — there is no end-user JWT at registration
-time, so the gateway is persisted with an empty tool list. Two explicit,
-authenticated triggers populate it afterwards:
+A token-exchange gateway needs a credential to run `initialize`, `tools/list`,
+`resources/list`, and `prompts/list` upstream. Registration, update,
+reactivation, health checks, and scheduled auto-refresh run without an end
+user, so they have no subject token for an exchange. The optional `discovery`
+object supplies a service credential for these paths.
+
+#### With a discovery credential
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://as.example.com/oauth2/token",
+  "client_id": "contextforge",
+  "client_secret": "...",
+  "target_audience": "https://mcp.example.com",
+  "discovery": {
+    "grant_type": "client_credentials",
+    "scopes": ["mcp.discover"]
+  }
+}
+```
+
+`discovery.grant_type` accepts `client_credentials` only. The optional keys
+`token_url`, `client_id`, `client_secret`, `token_endpoint_auth_method`, and
+`scopes` override the parent values. Each unset key inherits from the parent
+`oauth_config`, and `private_key_jwt` settings are always inherited.
+`discovery.token_url` passes the same SSRF validation as the parent
+`token_url`. `discovery.client_secret` is encrypted at rest and masked in every
+read response. Only a platform admin can add, change, or remove `discovery`.
+
+With a discovery credential, ContextForge requests a client-credentials token
+and uses it for:
+
+- registration (`POST /gateways`), which then saves the discovered tools;
+- update re-initialization and reactivation, which reconcile the catalog against the upstream lists;
+- health checks, which probe the gateway and run scheduled auto-refresh;
+- `POST /gateways/{gateway_id}/tools/refresh` and the Admin UI `🔧 Fetch Tools`
+  button, which no longer exchange the caller's JWT.
+
+A failed discovery token request fails registration with a connection error,
+leaves the catalog unchanged on update, and marks the gateway unhealthy on a
+health check.
+
+#### Without a discovery credential
+
+Registration skips the discovery probe and saves the gateway with an empty
+tool list. Health checks skip the gateway and do not mark it unhealthy.
+Updates and reactivation keep the existing tools, resources, and prompts
+instead of pruning the catalog against the empty result. Two authenticated
+triggers populate the catalog:
 
 - **`POST /gateways/{gateway_id}/tools/refresh`** — the manual-refresh API.
-  For token-exchange gateways the caller's own inbound ContextForge JWT is
-  used as the RFC 8693 `subject_token` for a single discovery-time exchange;
-  the exchanged token (never the raw JWT) authenticates the MCP connection.
+  The caller's own inbound ContextForge JWT is used as the RFC 8693
+  `subject_token` for a single discovery-time exchange; the exchanged token
+  (never the raw JWT) authenticates the MCP connection.
 - **`POST /oauth/fetch-tools/{gateway_id}`** — the Admin UI `🔧 Fetch Tools`
-  button. For token-exchange gateways this delegates to the same
-  manual-refresh pipeline.
+  button. It delegates to the same manual-refresh pipeline.
 
 The subject token is resolved from the `Authorization: Bearer` header if one
 is present; the HttpOnly `jwt_token` session cookie is only consulted when no
@@ -235,25 +281,58 @@ than the one the bearer already authenticated the request as, so the request
 fails closed instead of silently swapping identities. Both routes are
 CSRF-protected for cookie-credentialed callers, and both fail closed: a caller
 without a structurally valid JWT gets an error — the raw credential is never
-forwarded upstream. Every exchange attempt (success or failure) is audited via
-the structured `token-exchange` event with the request's correlation id.
+forwarded upstream.
+
+`🔧 Fetch Tools` sends the `jwt_token` session cookie as the subject token.
+That cookie always holds a ContextForge-issued JWT, also after an SSO login.
+Without a discovery credential, the button therefore works only when the
+Authorization Server at `token_url` trusts the ContextForge JWT issuer. An
+external Authorization Server that trusts only its own tokens (for example IBM
+Security Verify) rejects the exchange. Configure a discovery credential, or
+call `POST /gateways/{gateway_id}/tools/refresh` with a bearer token that the
+Authorization Server accepts.
 
 There is no `🔐 Authorize` step for token-exchange gateways — no user
 consent flow exists, and the Admin UI hides that action for them.
 
-`🔧 Fetch Tools` in the Admin UI sends the `jwt_token` session cookie as the
-subject token. That cookie always holds a ContextForge-issued JWT, also after
-an SSO login. The button therefore works only when the Authorization Server at
-`token_url` trusts the ContextForge JWT issuer. An external Authorization Server
-that trusts only its own tokens (for example IBM Security Verify) rejects the
-exchange. In that case, call `POST /gateways/{gateway_id}/tools/refresh` with a
-bearer token that the Authorization Server accepts.
+#### Invocation isolation
 
-Gateway updates (`PUT /gateways/{gateway_id}` and the Admin UI edit form) and
-reactivation re-initialize the gateway without a user request, so they cannot
-run discovery for a token-exchange gateway. These paths keep the existing
-tools, resources, and prompts instead of pruning the catalog against the empty
-result. Only an authenticated refresh reconciles the catalog.
+The discovery token authorizes only `initialize`, the list methods, and health
+probes. Tool calls, resource reads, and prompt gets always use a token
+exchanged from the calling user's subject token. A request without a usable
+user JWT is rejected, and ContextForge never falls back to the discovery
+token. The invocation services (`ToolService`, `ResourceService`,
+`PromptService`) have no reference to the discovery credential.
+
+The catalog lists every tool the discovery identity can see, which can include
+tools that a given user cannot call. Visibility in ContextForge stays governed
+by the gateway's team and visibility settings. The upstream server enforces
+per-user authorization when the call arrives with the user's exchanged token.
+
+#### Caching
+
+Discovery tokens are cached per gateway in a store separate from the per-user
+exchanged-token cache, so a lookup in one store never returns a token from the
+other. The cache key includes a fingerprint of the effective discovery config,
+including the stored ciphertext of the secret. A config change on any worker
+therefore misses the old entry. Updating the gateway's `oauth_config` or
+deleting the gateway also discards the cached entries. A cached token is served
+until shortly before its `expires_in`, so health checks send at most one token
+request per token lifetime per worker. Registration does not cache, because the
+gateway row does not exist yet.
+
+#### Audit
+
+Every token request emits the structured `token-exchange` audit event with a
+`correlation_id`. The `purpose` field tells the two kinds apart:
+
+| `purpose` | Emitted for | `user_email` |
+|-----------|-------------|--------------|
+| `invocation` | A per-user exchange on a tool call, resource read, or manual refresh without a discovery credential | The calling user |
+| `discovery` | A discovery credential token request | `null` |
+
+A cache hit emits no event. No event contains an access token or a client
+secret.
 
 ### `subject_token_type`
 

@@ -1,6 +1,7 @@
 import {
   getAuthHeaders,
   loadAuthHeaders,
+  toggleDiscoveryFields,
   toggleTokenExchangeFields,
   updateAuthHeadersJSON,
 } from "./auth.js";
@@ -277,6 +278,43 @@ export function populateTokenExchangeEditFields(config) {
     field.value = value;
   });
   toggleTokenExchangeFields("gw-edit", config.grant_type || "");
+  populateDiscoveryEditFields(isTokenExchange ? config.discovery : null);
+}
+
+const DISCOVERY_EDIT_FIELDS = {
+  "oauth-discovery-token-url-gw-edit": "token_url",
+  "oauth-discovery-client-id-gw-edit": "client_id",
+};
+
+/**
+ * Fill the edit form's discovery credential fields from a stored discovery object.
+ * A stored secret shows the masked placeholder, so a save keeps it.
+ * @param {object|null} discovery - Masked oauth_config.discovery, or null
+ */
+export function populateDiscoveryEditFields(discovery) {
+  const enabled = Boolean(discovery && typeof discovery === "object");
+  const checkbox = safeGetElement("oauth-discovery-enabled-gw-edit", true);
+  if (checkbox) {
+    checkbox.checked = enabled;
+  }
+  const scopes = safeGetElement("oauth-discovery-scopes-gw-edit", true);
+  if (scopes) {
+    scopes.value =
+      enabled && Array.isArray(discovery.scopes)
+        ? discovery.scopes.join(" ")
+        : "";
+  }
+  Object.entries(DISCOVERY_EDIT_FIELDS).forEach(([id, key]) => {
+    const field = safeGetElement(id, true);
+    if (field) {
+      field.value = enabled ? discovery[key] || "" : "";
+    }
+  });
+  const secret = safeGetElement("oauth-discovery-client-secret-gw-edit", true);
+  if (secret) {
+    secret.value = enabled && discovery.client_secret ? MASKED_AUTH_VALUE : "";
+  }
+  toggleDiscoveryFields("gw-edit", enabled);
 }
 
 /**

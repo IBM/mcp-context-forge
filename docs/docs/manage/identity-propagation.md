@@ -186,6 +186,39 @@ Existing gateways configured with `grant_type: "client_credentials"`, `"authoriz
 
 See the [worked configuration example](../architecture/oauth-design.md#example-configuration) in the OAuth design doc.
 
+#### Adding a discovery credential
+
+Without a discovery credential, registration, health checks, and scheduled auto-refresh skip a token-exchange gateway, and every tool refresh needs a user token that the Authorization Server accepts. Add a `discovery` object to let ContextForge discover tools with a service token:
+
+```json
+{
+  "grant_type": "token-exchange",
+  "token_url": "https://as.example.com/oauth2/token",
+  "client_id": "contextforge",
+  "client_secret": "...",
+  "target_audience": "https://mcp.example.com",
+  "scopes": ["mcp.call"],
+  "discovery": {
+    "grant_type": "client_credentials",
+    "scopes": ["mcp.discover"],
+    "client_id": "contextforge-discovery",
+    "client_secret": "..."
+  }
+}
+```
+
+- `discovery.grant_type` must be `client_credentials`.
+- `token_url`, `client_id`, `client_secret`, `token_endpoint_auth_method`, and `scopes` are optional overrides. Unset keys inherit from the parent `oauth_config`.
+- `discovery.token_url` passes the same SSRF validation as `token_url`. `discovery.client_secret` is stored encrypted and masked on read.
+- Only a platform admin can add, change, or remove `discovery`.
+
+The discovery token is used only for `initialize`, `tools/list`, `resources/list`, `prompts/list`, and health probes. Tool calls, resource reads, and prompt gets always use the per-user exchange, and fail without a usable user JWT. See [Tool discovery for token-exchange gateways](../architecture/oauth-design.md#tool-discovery-for-token-exchange-gateways) for caching and audit details.
+
+!!! warning "Upstream policy requirement"
+    Configure the upstream MCP server to accept the discovery service token for `initialize` and the list methods only. It must reject that token for `tools/call`, `resources/read`, and `prompts/get`, and require a token exchanged for the calling user. ContextForge never sends the service token on an invocation, but the upstream policy is the second layer of that boundary.
+
+The catalog shows every tool the discovery identity can list. A user who calls a tool that the upstream does not allow for them gets an upstream authorization error.
+
 #### Configuring token exchange in the Admin UI
 
 Platform admins can create and edit token-exchange gateways from the Admin UI. Select **OAuth 2.0** as the authentication type and **Token Exchange (RFC 8693 On-Behalf-Of)** as the grant type. The option is rendered only for platform admins; the server also rejects a token-exchange submission from any other user with `403`, including a `team_admin` of the gateway's own team.
@@ -202,7 +235,18 @@ Platform admins can create and edit token-exchange gateways from the Admin UI. S
 | Subject Token Source (`subject_token_source`) | no | `inbound_user_jwt` |
 | Scopes (`scopes`) | no | — |
 
-UI submissions pass through the same validation as `POST /gateways`, including the SSRF check on `token_url`.
+The token-exchange section also has a **Use a discovery credential (client credentials)** checkbox. When you select it, these fields appear:
+
+| Field | Required | Default |
+|-------|----------|---------|
+| Discovery Scopes (`discovery.scopes`) | no | Parent `scopes` |
+| Discovery Token URL (`discovery.token_url`) | no | Parent `token_url` |
+| Discovery Client ID (`discovery.client_id`) | no | Parent `client_id` |
+| Discovery Client Secret (`discovery.client_secret`) | no | Parent `client_secret` |
+
+Selecting the checkbox with scopes `mcp.discover` stores `{"grant_type": "client_credentials", "scopes": ["mcp.discover"]}`. The UI does not expose `discovery.token_endpoint_auth_method`; set it through the REST API.
+
+UI submissions pass through the same validation as `POST /gateways`, including the SSRF check on `token_url` and `discovery.token_url`.
 
 The Admin UI does not upload `private_key_jwt` key material. Configure `private_key`, `private_key_jwt_kid`, and `token_endpoint_auth_signing_alg` through the REST API. The edit form then shows the stored `private_key_jwt` method and keeps the key.
 
@@ -211,7 +255,8 @@ When you edit a token-exchange gateway and keep the grant type:
 - Settings the form does not show, such as `private_key`, keep their stored values.
 - The client secret shows as `*****`. Leave it unchanged, or clear it, to keep the stored secret. Type a new value to replace it.
 - Any other field you clear is removed from `oauth_config`.
-- Tools, resources, and prompts discovered earlier stay in the catalog. A gateway update cannot run discovery without a user subject token, so it no longer prunes the catalog.
+- The stored discovery settings fill the discovery fields, and the discovery client secret shows as `*****`. Saving an unrelated change keeps the `discovery` object, its encrypted secret, and its API-only `token_endpoint_auth_method`. Clear the checkbox to remove the `discovery` object.
+- Without a discovery credential, tools, resources, and prompts discovered earlier stay in the catalog, because a gateway update cannot run discovery without a user subject token. With a discovery credential, the update re-discovers and reconciles the catalog. A failed discovery token request leaves the catalog unchanged.
 
 Changing the grant type away from `token-exchange` replaces `oauth_config` with the submitted fields only, so the token-exchange settings are removed.
 
