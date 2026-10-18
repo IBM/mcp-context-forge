@@ -397,7 +397,10 @@ export function loadAuthHeaders(containerId, headers, options = {}) {
  * @param {string} gatewayName - Name of the gateway for display purposes
  */
 export async function fetchToolsForGateway(gatewayId, gatewayName) {
-  const button = safeGetElement(`fetch-tools-${gatewayId}`);
+  // Token-exchange gateway rows render the button as `fetch-tools-te-{id}`.
+  const button =
+    safeGetElement(`fetch-tools-${gatewayId}`, true) ||
+    safeGetElement(`fetch-tools-te-${gatewayId}`, true);
   if (!button) {
     return;
   }
@@ -589,6 +592,47 @@ export function handleAuthTypeChange() {
   }
 }
 
+const TOKEN_EXCHANGE_DEFAULTS = {
+  "oauth-token-endpoint-auth-method": "client_secret_post",
+  "oauth-subject-token-type": "urn:ietf:params:oauth:token-type:jwt",
+  "oauth-requested-token-type": "urn:ietf:params:oauth:token-type:access_token",
+  "oauth-subject-token-source": "inbound_user_jwt",
+};
+
+/**
+ * Show or hide the token-exchange field group for a gateway form and toggle
+ * its required inputs. Blank inputs receive the RFC 8693 defaults.
+ * @param {string} prefix - "gw" (add form) or "gw-edit" (edit form)
+ * @param {string} grantType - Selected OAuth grant type
+ */
+export function toggleTokenExchangeFields(prefix, grantType) {
+  const group = safeGetElement(`oauth-token-exchange-fields-${prefix}`, true);
+  if (!group) {
+    return;
+  }
+  const isTokenExchange = grantType === "token-exchange";
+  group.style.display = isTokenExchange ? "block" : "none";
+
+  const audience = safeGetElement(`oauth-target-audience-${prefix}`, true);
+  if (audience) {
+    audience.required = isTokenExchange;
+  }
+  const form = group.closest("form");
+  const tokenUrl = form?.querySelector('input[name="oauth_token_url"]');
+  if (tokenUrl) {
+    tokenUrl.required = isTokenExchange;
+  }
+
+  if (isTokenExchange) {
+    Object.entries(TOKEN_EXCHANGE_DEFAULTS).forEach(([idBase, value]) => {
+      const field = safeGetElement(`${idBase}-${prefix}`, true);
+      if (field && !field.value) {
+        field.value = value;
+      }
+    });
+  }
+}
+
 export function handleOAuthGrantTypeChange() {
   const grantType = this.value;
 
@@ -600,6 +644,10 @@ export function handleOAuthGrantTypeChange() {
   const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
   const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
   const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+
+  if (!isA2A) {
+    toggleTokenExchangeFields(prefix, grantType);
+  }
 
   // Handle Authorization Code flow
   if (authCodeFields) {
@@ -667,6 +715,10 @@ export function handleEditOAuthGrantTypeChange() {
   const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
   const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
   const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+
+  if (prefix === "gw-edit") {
+    toggleTokenExchangeFields(prefix, grantType);
+  }
 
   // === Handle Authorization Code grant ===
   if (authCodeFields) {

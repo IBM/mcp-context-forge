@@ -241,6 +241,20 @@ the structured `token-exchange` event with the request's correlation id.
 There is no `🔐 Authorize` step for token-exchange gateways — no user
 consent flow exists, and the Admin UI hides that action for them.
 
+`🔧 Fetch Tools` in the Admin UI sends the `jwt_token` session cookie as the
+subject token. That cookie always holds a ContextForge-issued JWT, also after
+an SSO login. The button therefore works only when the Authorization Server at
+`token_url` trusts the ContextForge JWT issuer. An external Authorization Server
+that trusts only its own tokens (for example IBM Security Verify) rejects the
+exchange. In that case, call `POST /gateways/{gateway_id}/tools/refresh` with a
+bearer token that the Authorization Server accepts.
+
+Gateway updates (`PUT /gateways/{gateway_id}` and the Admin UI edit form) and
+reactivation re-initialize the gateway without a user request, so they cannot
+run discovery for a token-exchange gateway. These paths keep the existing
+tools, resources, and prompts instead of pruning the catalog against the empty
+result. Only an authenticated refresh reconciles the catalog.
+
 ### `subject_token_type`
 
 Per RFC 8693 §3, `subject_token_type` tells the Authorization Server how to interpret `subject_token`:
