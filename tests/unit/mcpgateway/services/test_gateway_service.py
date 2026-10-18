@@ -2144,6 +2144,85 @@ class TestGatewayService:
         gateway_service._initialize_gateway.assert_called_once()
         test_db.commit.assert_called_once()
 
+    @staticmethod
+    def _token_exchange_update_setup(mock_gateway, test_db, oauth_config):
+        """Prepare a gateway with three tools for a token-exchange update test."""
+        mock_gateway.team_id = 1
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.oauth_config = oauth_config
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+        mock_gateway.tools = [MagicMock(spec=DbTool, id=400 + i, name=f"te-tool-{i}", original_name=f"te-tool-{i}") for i in range(3)]
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)])
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+
+    @pytest.mark.asyncio
+    async def test_initialize_skips_discovery_predicate(self):
+        """Only token-exchange configs report skipped discovery."""
+        assert GatewayService._initialize_skips_discovery({"grant_type": "token-exchange"}) is True
+        assert GatewayService._initialize_skips_discovery({"grant_type": "client_credentials"}) is False
+        assert GatewayService._initialize_skips_discovery({"grant_type": "authorization_code"}) is False
+        assert GatewayService._initialize_skips_discovery({}) is False
+        assert GatewayService._initialize_skips_discovery(None) is False
+        te_gateway = MagicMock(oauth_config={"grant_type": "token-exchange"})
+        assert GatewayService._discovery_result_is_unusable(te_gateway, [], [], []) is True
+        assert GatewayService._discovery_result_is_unusable(te_gateway, [MagicMock()], [], []) is False
+        assert GatewayService._discovery_result_is_unusable(MagicMock(oauth_config=None), [], [], []) is False
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_token_exchange_description_only_keeps_tools(self, gateway_service, mock_gateway, test_db):
+        """A description-only update of a token-exchange gateway keeps every discovered tool."""
+        self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "token-exchange", "target_audience": "mcp", "token_url": "https://as.example.com/token"})
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(description="new description"))
+
+        assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_convert_to_token_exchange_keeps_tools(self, gateway_service, mock_gateway, test_db):
+        """Converting a client_credentials gateway to token-exchange keeps its discovered tools."""
+        self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "client_credentials", "client_id": "cid", "token_url": "https://as.example.com/token"})
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._enforce_token_exchange_admin_only = AsyncMock()
+        gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
+
+        te_config = {"grant_type": "token-exchange", "client_id": "cid", "token_url": "https://as.example.com/token", "target_audience": "mcp"}
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read),
+            patch("mcpgateway.services.gateway_service.SecurityValidator.validate_url", return_value="https://as.example.com/token"),
+        ):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(oauth_config=te_config, auth_type="oauth"), user_email="admin@example.com")
+
+        assert mock_gateway.oauth_config["grant_type"] == "token-exchange"
+        assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_client_credentials_empty_result_still_prunes(self, gateway_service, mock_gateway, test_db):
+        """The token-exchange guard does not stop pruning for other grants."""
+        self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "client_credentials", "client_id": "cid", "token_url": "https://as.example.com/token"})
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None), Mock(), Mock(), Mock()])
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(description="new description"))
+
+        assert mock_gateway.tools == []
+
     @pytest.mark.asyncio
     async def test_update_gateway_url_initialization_failure(self, gateway_service, mock_gateway, test_db):
         """Test updating gateway URL when initialization fails.
@@ -2888,6 +2967,40 @@ class TestGatewayService:
         # All existing tools must be preserved
         assert len(mock_gateway.tools) == len(tool_names)
         assert {t.id for t in mock_gateway.tools} == {100, 101, 102, 103, 104}
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_token_exchange_empty_result_preserves_tools(self, gateway_service, mock_gateway, test_db):
+        """Reactivating a token-exchange gateway must not delete tools, since initialization cannot discover."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = {"grant_type": "token-exchange", "target_audience": "mcp", "token_url": "https://as.example.com/token"}
+        mock_gateway.auth_type = "oauth"
+
+        tools = [MagicMock(spec=DbTool, id=300 + i, name=f"te-tool-{i}", original_name=f"te-tool-{i}") for i in range(3)]
+        mock_gateway.tools = tools
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                _make_execute_result(rowcount=len(tools)),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        assert test_db.execute.call_count == 2  # SELECT + UPDATE tools reachable (no DELETE)
+        assert {t.id for t in mock_gateway.tools} == {300, 301, 302}
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_non_authcode_empty_result_still_cleans(self, gateway_service, mock_gateway, test_db):

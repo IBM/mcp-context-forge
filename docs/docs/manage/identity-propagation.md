@@ -186,6 +186,37 @@ Existing gateways configured with `grant_type: "client_credentials"`, `"authoriz
 
 See the [worked configuration example](../architecture/oauth-design.md#example-configuration) in the OAuth design doc.
 
+#### Configuring token exchange in the Admin UI
+
+Platform admins can create and edit token-exchange gateways from the Admin UI. Select **OAuth 2.0** as the authentication type and **Token Exchange (RFC 8693 On-Behalf-Of)** as the grant type. The option is rendered only for platform admins; the server also rejects a token-exchange submission from any other user with `403`, including a `team_admin` of the gateway's own team.
+
+| Field | Required | Default |
+|-------|----------|---------|
+| Token URL (`token_url`) | yes | — |
+| Client ID (`client_id`) | yes | — |
+| Client Secret (`client_secret`) | yes, unless the auth method is `private_key_jwt` or `none` | — |
+| Token Endpoint Auth Method (`token_endpoint_auth_method`) | no | `client_secret_post` |
+| Target Audience (`target_audience`) | yes | — |
+| Subject Token Type (`subject_token_type`) | no | `urn:ietf:params:oauth:token-type:jwt` |
+| Requested Token Type (`requested_token_type`) | no | `urn:ietf:params:oauth:token-type:access_token` |
+| Subject Token Source (`subject_token_source`) | no | `inbound_user_jwt` |
+| Scopes (`scopes`) | no | — |
+
+UI submissions pass through the same validation as `POST /gateways`, including the SSRF check on `token_url`.
+
+The Admin UI does not upload `private_key_jwt` key material. Configure `private_key`, `private_key_jwt_kid`, and `token_endpoint_auth_signing_alg` through the REST API. The edit form then shows the stored `private_key_jwt` method and keeps the key.
+
+When you edit a token-exchange gateway and keep the grant type:
+
+- Settings the form does not show, such as `private_key`, keep their stored values.
+- The client secret shows as `*****`. Leave it unchanged, or clear it, to keep the stored secret. Type a new value to replace it.
+- Any other field you clear is removed from `oauth_config`.
+- Tools, resources, and prompts discovered earlier stay in the catalog. A gateway update cannot run discovery without a user subject token, so it no longer prunes the catalog.
+
+Changing the grant type away from `token-exchange` replaces `oauth_config` with the submitted fields only, so the token-exchange settings are removed.
+
+A user who is not a platform admin sees the OAuth settings of a token-exchange gateway as read-only.
+
 ### Data and Audit Impact
 
 No database migration is required for this MVP — token exchange is config-only. Audit events are recorded via the structured logging sink and persisted as `StructuredLogEntry` rows with `is_security_event=True`. Typed audit columns (dedicated token-exchange audit table/fields) are planned as a Phase 2 follow-up with its own Alembic migration.

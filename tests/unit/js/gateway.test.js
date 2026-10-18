@@ -17,10 +17,13 @@ import {
 } from "../../../mcpgateway/admin_ui/gateways.js";
 import { fetchWithTimeout, showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils";
 import { openModal } from "../../../mcpgateway/admin_ui/modals";
+import { toggleTokenExchangeFields } from "../../../mcpgateway/admin_ui/auth.js";
+import { isAdminUser } from "../../../mcpgateway/admin_ui/utils";
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
   getAuthHeaders: vi.fn().mockResolvedValue({ "X-CSRF-Token": "csrf-abc" }),
   loadAuthHeaders: vi.fn(),
+  toggleTokenExchangeFields: vi.fn(),
   updateAuthHeadersJSON: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/constants.js", () => ({
@@ -63,6 +66,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   fetchWithTimeout: vi.fn(),
   getCurrentTeamId: vi.fn(() => null),
   handleFetchError: vi.fn((e) => e.message),
+  isAdminUser: vi.fn(() => true),
   isInactiveChecked: vi.fn(() => false),
   makeCopyIdButton: vi.fn(() => document.createElement("button")),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
@@ -2101,5 +2105,138 @@ describe("refreshToolsForSelectedGateways", () => {
     expect(showErrorMessage).toHaveBeenCalledWith(
       "1 gateway(s) failed. No changes detected"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// editGateway - token-exchange
+// ---------------------------------------------------------------------------
+describe("editGateway - token-exchange", () => {
+  const TE_CONFIG = {
+    grant_type: "token-exchange",
+    client_id: "te-client",
+    client_secret: "*****",
+    token_url: "https://as.example.com/token",
+    token_endpoint_auth_method: "private_key_jwt",
+    target_audience: "downstream-mcp",
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    subject_token_source: "inbound_user_jwt",
+    scopes: ["openid", "mcp.tools"],
+  };
+
+  function createTokenExchangeEditHTML() {
+    return `
+      <form id="edit-gateway-form"></form>
+      <input id="edit-gateway-name" />
+      <input id="edit-gateway-url" />
+      <textarea id="edit-gateway-description"></textarea>
+      <input id="edit-gateway-tags" />
+      <select id="edit-gateway-transport"><option value="SSE">SSE</option></select>
+      <select id="auth-type-gw-edit"><option value="oauth">OAuth</option></select>
+      <div id="auth-oauth-fields-gw-edit" style="display:none">
+        <select id="oauth-grant-type-gw-edit">
+          <option value="client_credentials">CC</option>
+          <option value="token-exchange">TE</option>
+        </select>
+        <input id="oauth-client-id-gw-edit" />
+        <input id="oauth-client-secret-gw-edit" />
+        <input id="oauth-token-url-gw-edit" />
+        <input id="oauth-scopes-gw-edit" />
+        <input id="oauth-target-audience-gw-edit" />
+        <select id="oauth-token-endpoint-auth-method-gw-edit">
+          <option value="client_secret_post">client_secret_post</option>
+          <option value="private_key_jwt" hidden disabled>private_key_jwt</option>
+        </select>
+        <input id="oauth-subject-token-type-gw-edit" />
+        <input id="oauth-requested-token-type-gw-edit" />
+        <select id="oauth-subject-token-source-gw-edit">
+          <option value="inbound_user_jwt">inbound_user_jwt</option>
+        </select>
+      </div>
+      <div id="oauth-auth-code-fields-gw-edit" style="display:none"></div>
+      <input id="edit-gateway-passthrough-headers" />
+      <div id="gateway-edit-modal" class="hidden"></div>
+    `;
+  }
+
+  function mockGateway(oauthConfig) {
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "TE GW",
+          url: "https://mcp.example.com",
+          visibility: "team",
+          transport: "SSE",
+          authType: "oauth",
+          oauthConfig,
+          tags: [],
+        }),
+    });
+  }
+
+  test("populates every stored token-exchange value and the masked secret", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway(TE_CONFIG);
+
+    await editGateway("gw-te");
+
+    const value = (id) => document.getElementById(id).value;
+    expect(value("oauth-grant-type-gw-edit")).toBe("token-exchange");
+    expect(value("oauth-client-id-gw-edit")).toBe("te-client");
+    expect(value("oauth-client-secret-gw-edit")).toBe("*****");
+    expect(value("oauth-token-url-gw-edit")).toBe("https://as.example.com/token");
+    expect(value("oauth-scopes-gw-edit")).toBe("openid mcp.tools");
+    expect(value("oauth-target-audience-gw-edit")).toBe("downstream-mcp");
+    expect(value("oauth-token-endpoint-auth-method-gw-edit")).toBe("private_key_jwt");
+    expect(value("oauth-subject-token-type-gw-edit")).toBe("urn:ietf:params:oauth:token-type:jwt");
+    expect(value("oauth-requested-token-type-gw-edit")).toBe("urn:ietf:params:oauth:token-type:access_token");
+    expect(value("oauth-subject-token-source-gw-edit")).toBe("inbound_user_jwt");
+    expect(toggleTokenExchangeFields).toHaveBeenLastCalledWith("gw-edit", "token-exchange");
+    expect(document.getElementById("oauth-client-id-gw-edit").disabled).toBe(false);
+  });
+
+  test("leaves the secret blank for other grants and clears token-exchange inputs", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    document.getElementById("oauth-target-audience-gw-edit").value = "stale";
+    mockGateway({ grant_type: "client_credentials", client_id: "cid", client_secret: "*****" }); // pragma: allowlist secret
+
+    await editGateway("gw-cc");
+
+    expect(document.getElementById("oauth-client-secret-gw-edit").value).toBe("");
+    expect(document.getElementById("oauth-target-audience-gw-edit").value).toBe("");
+  });
+
+  test("non-admin sees a read-only notice and disabled OAuth inputs", async () => {
+    window.ROOT_PATH = "";
+    isAdminUser.mockReturnValue(false);
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway(TE_CONFIG);
+
+    await editGateway("gw-te");
+
+    expect(document.getElementById("oauth-token-exchange-readonly-gw-edit").style.display).toBe("block");
+    document.querySelectorAll("#auth-oauth-fields-gw-edit input, #auth-oauth-fields-gw-edit select").forEach((field) => {
+      expect(field.disabled).toBe(true);
+    });
+    isAdminUser.mockReturnValue(true);
+  });
+
+  test("a later admin-editable gateway re-enables the inputs", async () => {
+    window.ROOT_PATH = "";
+    isAdminUser.mockReturnValue(false);
+    document.body.innerHTML = createTokenExchangeEditHTML();
+    mockGateway(TE_CONFIG);
+    await editGateway("gw-te");
+
+    mockGateway({ grant_type: "client_credentials", client_id: "cid" });
+    await editGateway("gw-cc");
+
+    expect(document.getElementById("oauth-client-id-gw-edit").disabled).toBe(false);
+    expect(document.getElementById("oauth-token-exchange-readonly-gw-edit").style.display).toBe("none");
+    isAdminUser.mockReturnValue(true);
   });
 });

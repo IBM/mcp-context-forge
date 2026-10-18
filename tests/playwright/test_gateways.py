@@ -906,3 +906,84 @@ class TestGatewayVisibility:
         expect(gateways_page.visibility_private_radio).to_be_checked()
         expect(gateways_page.visibility_public_radio).not_to_be_checked()
         expect(gateways_page.visibility_team_radio).not_to_be_checked()
+
+
+@pytest.mark.ui
+@pytest.mark.gateways
+class TestTokenExchangeGatewayUI:
+    """Create and edit a token-exchange gateway through the Admin UI."""
+
+    _MCP_URL = "http://fast_time_server:9080/mcp"
+    _TOKEN_URL = "https://example.com/oauth2/token"
+
+    def _gateway_by_name(self, admin_api, name: str) -> dict:
+        response = admin_api.get("/gateways?include_inactive=true&limit=0")
+        assert response.ok, f"GET /gateways failed: HTTP {response.status}"
+        body = response.json()
+        items = body if isinstance(body, list) else body.get("items", body.get("data", []))
+        matches = [g for g in items if g.get("name") == name]
+        assert matches, f"Gateway '{name}' not found"
+        return matches[0]
+
+    def test_create_then_description_only_edit_keeps_oauth_config_and_tools(self, gateways_page: GatewaysPage, admin_api):
+        """A description-only edit leaves oauth_config and the tool list unchanged."""
+        name = f"te-ui-{uuid.uuid4().hex[:8]}"
+        gateways_page.navigate_to_gateways_tab()
+        page = gateways_page.page
+
+        gateways_page.fill_locator(gateways_page.gateway_name_input, name)
+        gateways_page.fill_locator(gateways_page.gateway_url_input, self._MCP_URL)
+        gateways_page.transport_select.select_option("STREAMABLEHTTP")
+        gateways_page.click_locator(gateways_page.visibility_private_radio)
+        gateways_page.auth_type_select.select_option("oauth")
+        gateways_page.oauth_grant_type_select.select_option("token-exchange")
+        expect(page.locator("#oauth-token-exchange-fields-gw")).to_be_visible()
+        expect(page.locator("#oauth-auth-code-fields-gw")).to_be_hidden()
+        gateways_page.fill_locator(gateways_page.oauth_token_url_input, self._TOKEN_URL)
+        gateways_page.fill_locator(gateways_page.oauth_client_id_input, "te-ui-client")
+        gateways_page.fill_locator(gateways_page.oauth_client_secret_input, "te-ui-secret")  # pragma: allowlist secret
+        page.locator("#oauth-target-audience-gw").fill("te-ui-audience")
+
+        # The success handler navigates to the gateways panel after the POST returns.
+        with page.expect_navigation(timeout=60000):
+            with page.expect_response(lambda r: r.url.endswith("/admin/gateways") and r.request.method == "POST", timeout=60000) as created:
+                gateways_page.click_locator(gateways_page.add_gateway_btn)
+        assert created.value.status < 400, f"Create failed: HTTP {created.value.status} {created.value.text()}"
+
+        try:
+            before = self._gateway_by_name(admin_api, name)
+            oauth_before = before["oauthConfig"] if "oauthConfig" in before else before["oauth_config"]
+            assert oauth_before["grant_type"] == "token-exchange"
+            assert oauth_before["target_audience"] == "te-ui-audience"
+            assert oauth_before["subject_token_type"] == "urn:ietf:params:oauth:token-type:jwt"
+            assert oauth_before["client_secret"] != "te-ui-secret"  # pragma: allowlist secret
+            tools_before = admin_api.get(f"/tools?gateway_id={before['id']}&limit=0").json()
+
+            gateways_page.navigate_to_gateways_tab()
+            gateways_page.wait_for_gateways_table_loaded()
+            gateways_page.search_gateways(name)
+            row_index = 0
+            gateways_page.open_edit_modal(row_index)
+            expect(gateways_page.edit_modal_oauth_grant_type_select).to_have_value("token-exchange")
+            expect(page.locator("#oauth-target-audience-gw-edit")).to_have_value("te-ui-audience")
+            expect(page.locator("#oauth-client-secret-gw-edit")).to_have_value("*****")
+
+            gateways_page.edit_modal_description_input.fill("description-only edit")
+            with page.expect_response(lambda r: "/admin/gateways/" in r.url and r.request.method == "POST", timeout=60000) as edited:
+                gateways_page.edit_modal_save_btn.click()
+            assert edited.value.status < 400, f"Edit failed: HTTP {edited.value.status} {edited.value.text()}"
+            page.wait_for_load_state("domcontentloaded")
+
+            after = self._gateway_by_name(admin_api, name)
+            oauth_after = after["oauthConfig"] if "oauthConfig" in after else after["oauth_config"]
+            assert after["description"] == "description-only edit"
+            assert oauth_after == oauth_before
+            assert admin_api.get(f"/tools?gateway_id={after['id']}&limit=0").json() == tools_before
+        finally:
+            gateway = None
+            try:
+                gateway = self._gateway_by_name(admin_api, name)
+            except AssertionError:
+                pass
+            if gateway:
+                admin_api.delete(f"/gateways/{gateway['id']}")

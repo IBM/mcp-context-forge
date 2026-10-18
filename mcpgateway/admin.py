@@ -202,7 +202,7 @@ from mcpgateway.services.team_management_service import JoinRequestNotFoundError
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
-from mcpgateway.utils.error_formatter import ErrorFormatter, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
+from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
@@ -968,6 +968,29 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+_TOKEN_EXCHANGE_FORM_FIELDS: Dict[str, str] = {
+    "oauth_target_audience": "target_audience",
+    "oauth_subject_token_type": "subject_token_type",
+    "oauth_requested_token_type": "requested_token_type",
+    "oauth_subject_token_source": "subject_token_source",
+    "oauth_token_endpoint_auth_method": "token_endpoint_auth_method",
+}
+
+_CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
+    "oauth_issuer": "issuer",
+    "oauth_token_url": "token_url",
+    "oauth_authorization_url": "authorization_url",
+    "oauth_redirect_uri": "redirect_uri",
+    "redirect_uri_after_success": "redirect_uri_after_oauth",
+    "oauth_client_id": "client_id",
+    "oauth_username": "username",
+    "oauth_scopes": "scopes",
+    "oauth_audience": "audience",
+    "oauth_resource": "resource",
+    **_TOKEN_EXCHANGE_FORM_FIELDS,
+}
+
+
 async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
     """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
 
@@ -1009,6 +1032,7 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     oauth_scopes_str = str(fields.get("oauth_scopes", ""))
     oauth_audience = str(fields.get("oauth_audience", "")).strip()
     oauth_resource = parse_oauth_resource_form(fields.get("oauth_resource")) if include_resource else None
+    token_exchange_values = {config_key: str(fields.get(form_key, "")).strip() for form_key, config_key in _TOKEN_EXCHANGE_FORM_FIELDS.items()} if oauth_grant_type == "token-exchange" else {}
 
     if not any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
         return None
@@ -1030,7 +1054,10 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["redirect_uri_after_oauth"] = oauth_redirect_uri_after_oauth
     if oauth_client_id:
         oauth_config["client_id"] = oauth_client_id
-    if oauth_client_secret:
+    if oauth_client_secret == settings.masked_auth_value and oauth_grant_type == "token-exchange":
+        # Encryption downstream swaps the masked placeholder for the stored secret.
+        oauth_config["client_secret"] = oauth_client_secret
+    elif oauth_client_secret:
         if encrypt_secret:
             encryption = get_encryption_service(settings.auth_encryption_secret)
             oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
@@ -1048,7 +1075,76 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
             oauth_config["scopes"] = scopes
     if oauth_resource:
         oauth_config["resource"] = oauth_resource
+    oauth_config.update({key: value for key, value in token_exchange_values.items() if value})
     return oauth_config
+
+
+def _require_token_exchange_client_secret(oauth_config: Any, existing_oauth_config: Any = None) -> None:
+    """Reject an Admin UI token-exchange config that has no usable client credential.
+
+    The REST API keeps accepting a token-exchange config without ``client_secret``;
+    this check applies only to the Admin UI form handlers.
+
+    Args:
+        oauth_config: Submitted oauth_config.
+        existing_oauth_config: Stored oauth_config on edit, used when the form keeps the stored secret.
+
+    Raises:
+        PublicValidationError: If ``client_secret`` is missing and the auth method needs one.
+
+    Examples:
+        >>> _require_token_exchange_client_secret({"grant_type": "client_credentials"})
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange", "token_endpoint_auth_method": "private_key_jwt"})
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"}, {"client_secret": "stored"})  # pragma: allowlist secret
+        >>> _require_token_exchange_client_secret({"grant_type": "token-exchange"})
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none
+    """
+    if not isinstance(oauth_config, dict) or oauth_config.get("grant_type") != "token-exchange":
+        return
+    if oauth_config.get("token_endpoint_auth_method") in ("private_key_jwt", "none"):
+        return
+    submitted = oauth_config.get("client_secret")
+    if submitted and submitted != settings.masked_auth_value:
+        return
+    if isinstance(existing_oauth_config, dict) and existing_oauth_config.get("client_secret"):
+        return
+    raise PublicValidationError("client_secret is required for token-exchange grant type unless token_endpoint_auth_method is private_key_jwt or none")
+
+
+def _merge_token_exchange_edit(submitted: Dict[str, Any], existing: Any, form: Any) -> Dict[str, Any]:
+    """Overlay a token-exchange edit-form submission onto the stored oauth_config.
+
+    The edit form renders only some oauth_config keys. When the stored and the
+    submitted grant are both ``token-exchange``, keys the form does not render
+    (for example ``private_key``) keep their stored value. A rendered text field
+    submitted blank clears its key. A blank secret field keeps the stored secret.
+
+    Args:
+        submitted: oauth_config assembled from the edit form fields.
+        existing: Stored oauth_config of the gateway.
+        form: Submitted form, used to tell a blank rendered field from an absent one.
+
+    Returns:
+        The merged oauth_config, or ``submitted`` unchanged when the grant changes.
+
+    Examples:
+        >>> stored = {"grant_type": "token-exchange", "private_key": "enc", "audience": "old", "target_audience": "a"}  # pragma: allowlist secret
+        >>> form = {"oauth_grant_type": "token-exchange", "oauth_audience": "", "oauth_target_audience": "b"}
+        >>> sorted(_merge_token_exchange_edit({"grant_type": "token-exchange", "target_audience": "b"}, stored, form).items())
+        [('grant_type', 'token-exchange'), ('private_key', 'enc'), ('target_audience', 'b')]
+        >>> _merge_token_exchange_edit({"grant_type": "client_credentials"}, stored, form)
+        {'grant_type': 'client_credentials'}
+    """
+    if not isinstance(existing, dict) or existing.get("grant_type") != "token-exchange" or submitted.get("grant_type") != "token-exchange":
+        return submitted
+    merged = dict(existing)
+    merged.update(submitted)
+    for form_key, config_key in _CLEARABLE_OAUTH_FORM_FIELDS.items():
+        if form_key in form and not str(form.get(form_key) or "").strip() and config_key not in submitted:
+            merged.pop(config_key, None)
+    return merged
 
 
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
@@ -12879,6 +12975,8 @@ async def admin_add_gateway(
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
+        _require_token_exchange_client_secret(gateway.oauth_config)
+
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
@@ -13268,7 +13366,8 @@ async def admin_edit_gateway(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields
-        if not oauth_config:
+        oauth_config_from_fields = not oauth_config
+        if oauth_config_from_fields:
             oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
@@ -13292,6 +13391,9 @@ async def admin_edit_gateway(
             existing_oauth: dict = existing_gateway.oauth_config or {}
             if "redirect_uri_after_success" not in form and "redirect_uri_after_oauth" not in oauth_config and "redirect_uri_after_oauth" in existing_oauth:
                 oauth_config["redirect_uri_after_oauth"] = existing_oauth["redirect_uri_after_oauth"]
+            if oauth_config_from_fields:
+                oauth_config = _merge_token_exchange_edit(oauth_config, existing_oauth, form)
+                _require_token_exchange_client_secret(oauth_config, existing_oauth)
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)

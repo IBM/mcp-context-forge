@@ -1015,6 +1015,46 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
 
     @staticmethod
+    def _initialize_skips_discovery(oauth_config: Optional[dict]) -> bool:
+        """Report whether ``_initialize_gateway()`` skips discovery for this config without pre-auth headers.
+
+        A token-exchange gateway has no subject token outside a user request, so
+        ``_initialize_gateway()`` returns empty capability and catalog lists for it.
+        Callers use this to keep the stored catalog instead of pruning it against
+        that empty result.
+
+        Args:
+            oauth_config: Stored gateway oauth_config, or ``None``.
+
+        Returns:
+            True when initialization skips discovery for this config.
+
+        Examples:
+            >>> GatewayService._initialize_skips_discovery({"grant_type": "token-exchange"})
+            True
+            >>> GatewayService._initialize_skips_discovery({"grant_type": "client_credentials"})
+            False
+            >>> GatewayService._initialize_skips_discovery(None)
+            False
+        """
+        return isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "token-exchange"
+
+    @classmethod
+    def _discovery_result_is_unusable(cls, gateway: DbGateway, tools: list, resources: list, prompts: list) -> bool:
+        """Report whether an initialization result must not drive stale-catalog cleanup.
+
+        Args:
+            gateway: Gateway whose stored oauth_config was used for initialization.
+            tools: Tools returned by initialization.
+            resources: Resources returned by initialization.
+            prompts: Prompts returned by initialization.
+
+        Returns:
+            True when initialization skipped discovery and returned nothing.
+        """
+        return not tools and not resources and not prompts and cls._initialize_skips_discovery(gateway.oauth_config)
+
+    @staticmethod
     def _validate_token_exchange_config(oauth_config: Optional[dict]) -> Optional[dict]:
         """Validate and default RFC 8693 token-exchange config. No-op for other grants.
 
@@ -3596,6 +3636,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway=gateway,
                         catalog_sync=catalog_sync,
                         log_context="gateway update",
+                        skip_stale_cleanup=self._discovery_result_is_unusable(gateway, tools, resources, prompts),
                     )
 
                     gateway.capabilities = capabilities
@@ -4158,9 +4199,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # resources, prompts, and their virtual server associations.
                         # Mirrors the guard in _refresh_gateway_tools_resources_prompts.
                         is_auth_code_gateway = gateway.oauth_config and isinstance(gateway.oauth_config, dict) and gateway.oauth_config.get("grant_type") == "authorization_code"
-                        skip_stale_cleanup = not tools and not resources and not prompts and is_auth_code_gateway
+                        skip_stale_cleanup = (not tools and not resources and not prompts and is_auth_code_gateway) or self._discovery_result_is_unusable(gateway, tools, resources, prompts)
                         if skip_stale_cleanup:
-                            logger.debug(f"Empty response from auth_code gateway {gateway.name} during reactivation, preserving existing items")
+                            logger.debug(f"Empty response from auth_code or token-exchange gateway {gateway.name} during reactivation, preserving existing items")
                         self._reconcile_gateway_catalog(
                             db,
                             gateway=gateway,
@@ -4851,6 +4892,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway lifecycle worker",
+                skip_stale_cleanup=self._discovery_result_is_unusable(gateway, tools, resources, prompts),
             )
 
             if not self._finalize_pending_gateway_success(db, gateway, capabilities):
