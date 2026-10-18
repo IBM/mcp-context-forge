@@ -59,6 +59,7 @@ from mcpgateway.services.gateway_service import (
     OAuthToolValidationError,
     _build_gateway_tool_invocation_name,
 )
+from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth
@@ -2208,6 +2209,98 @@ class TestGatewayService:
         assert mock_gateway.oauth_config["grant_type"] == "token-exchange"
         assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
 
+    _TE_WITH_DISCOVERY = {
+        "grant_type": "token-exchange",
+        "client_id": "cid",
+        "token_url": "https://as.example.com/token",
+        "target_audience": "mcp",
+        "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+    }
+
+    async def _convert_to_discovery(self, gateway_service, mock_gateway, test_db, *, token_side_effect=None):
+        """Convert a client_credentials gateway to token-exchange with discovery through ``update_gateway``.
+
+        Args:
+            gateway_service: Service under test.
+            mock_gateway: Gateway mock with three tools.
+            test_db: Session mock.
+            token_side_effect: Optional exception for the discovery token request.
+        """
+        self._token_exchange_update_setup(mock_gateway, test_db, {"grant_type": "client_credentials", "client_id": "cid", "token_url": "https://as.example.com/token"})
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None), Mock(), Mock(), Mock()])
+        test_db.rollback = Mock()
+        listed = [MagicMock(spec=ToolCreate), MagicMock(spec=ToolCreate)]
+        listed[0].name, listed[1].name = "te-tool-0", "te-tool-1"
+        gateway_service._service_token_cache = GatewayServiceTokenCache()
+        gateway_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600}, side_effect=token_side_effect)
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, listed, [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._enforce_token_exchange_admin_only = AsyncMock()
+        gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
+        gateway_service._sync_gateway_catalog = Mock(return_value=MagicMock())
+        gateway_service._reconcile_gateway_catalog = Mock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read),
+            patch("mcpgateway.services.gateway_service.SecurityValidator.validate_url", return_value="https://as.example.com/token"),
+        ):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(oauth_config=dict(self._TE_WITH_DISCOVERY), auth_type="oauth"), user_email="admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_convert_to_token_exchange_with_discovery_rediscovers(self, gateway_service, mock_gateway, test_db):
+        """With a discovery credential, the update re-discovers and reconciles against the listed tools."""
+        await self._convert_to_discovery(gateway_service, mock_gateway, test_db)
+
+        assert gateway_service.connect_to_sse_server.call_args.args[1] == {"Authorization": "Bearer svc-discovery-tok"}
+        synced_tools = gateway_service._sync_gateway_catalog.call_args.kwargs["tools"]
+        assert [t.name for t in synced_tools] == ["te-tool-0", "te-tool-1"]
+        assert gateway_service._reconcile_gateway_catalog.call_args.kwargs["skip_stale_cleanup"] is False
+        assert mock_gateway.oauth_config["discovery"]["grant_type"] == "client_credentials"
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_discovery_failure_leaves_catalog_unchanged(self, gateway_service, mock_gateway, test_db):
+        """A discovery token failure on an init-affecting update rolls back without touching the catalog."""
+        with pytest.raises(GatewayConnectionError):
+            await self._convert_to_discovery(gateway_service, mock_gateway, test_db, token_side_effect=RuntimeError("as down"))
+
+        gateway_service.connect_to_sse_server.assert_not_awaited()
+        gateway_service._sync_gateway_catalog.assert_not_called()
+        gateway_service._reconcile_gateway_catalog.assert_not_called()
+        assert {t.id for t in mock_gateway.tools} == {400, 401, 402}
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_oauth_change_invalidates_service_token_cache(self, gateway_service, mock_gateway, test_db):
+        """Changing oauth_config discards the cached discovery token; the next discovery requests a new one."""
+        cache = GatewayServiceTokenCache()
+        gateway_service._service_token_cache = cache
+        gateway_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600})
+        await gateway_service._resolve_discovery_header(dict(self._TE_WITH_DISCOVERY), gateway_id=mock_gateway.id, gateway_name="gw")
+        assert cache._mem
+        cache.invalidate = AsyncMock(wraps=cache.invalidate)
+        self._token_exchange_update_setup(mock_gateway, test_db, dict(self._TE_WITH_DISCOVERY))
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None), Mock(), Mock(), Mock()])
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._enforce_token_exchange_admin_only = AsyncMock()
+        gateway_service._auto_discover_oauth_endpoints = AsyncMock(side_effect=lambda cfg: cfg)
+        new_config = {**self._TE_WITH_DISCOVERY, "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover", "mcp.more"]}}
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read),
+            patch("mcpgateway.services.gateway_service.SecurityValidator.validate_url", return_value="https://as.example.com/token"),
+        ):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(oauth_config=new_config, auth_type="oauth"), user_email="admin@example.com")
+
+        cache.invalidate.assert_awaited_once_with(mock_gateway.id)
+        assert cache._mem == {}
+
     @pytest.mark.asyncio
     async def test_update_gateway_client_credentials_empty_result_still_prunes(self, gateway_service, mock_gateway, test_db):
         """The token-exchange guard does not stop pruning for other grants."""
@@ -3167,6 +3260,24 @@ class TestGatewayService:
         assert test_db.execute.call_count >= 2
 
     @pytest.mark.asyncio
+    async def test_delete_gateway_clears_service_token_cache(self, gateway_service, mock_gateway, test_db):
+        """Hard delete discards every cached service token of the gateway."""
+        mock_fetch_result = Mock()
+        mock_fetch_result.fetchone.return_value = (mock_gateway.id,)
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=mock_gateway)] + [Mock()] * 10 + [mock_fetch_result])
+        test_db.commit = Mock()
+        test_db.expire = Mock()
+        gateway_service._notify_gateway_deleted = AsyncMock()
+        gateway_service._service_token_cache = GatewayServiceTokenCache()
+        await gateway_service._service_token_cache.set("discovery", str(mock_gateway.id), "fp", "svc-tok", expires_in=3600)
+        await gateway_service._service_token_cache.set("discovery", "other-gw", "fp", "other-tok", expires_in=3600)
+
+        await gateway_service.delete_gateway(test_db, mock_gateway.id)
+
+        assert await gateway_service._service_token_cache.get("discovery", str(mock_gateway.id), "fp") is None
+        assert await gateway_service._service_token_cache.get("discovery", "other-gw", "fp") == "other-tok"
+
+    @pytest.mark.asyncio
     async def test_delete_gateway_async_enabled_returns_deleting(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Async lifecycle flag should mark gateway deleting without hard delete."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway, rowcount=1))
@@ -3193,9 +3304,13 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
         mock_gateway_read.status = "deleting"
 
+        gateway_service._service_token_cache = GatewayServiceTokenCache()
+        await gateway_service._service_token_cache.set("discovery", "gw-1", "fp", "svc-tok", expires_in=3600)
+
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             result = await gateway_service.delete_gateway(test_db, "gw-1")
 
+        assert await gateway_service._service_token_cache.get("discovery", "gw-1", "fp") is None
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once_with(mock_gateway)
         test_db.expire.assert_not_called()
@@ -4179,6 +4294,67 @@ class TestGatewayRefresh:
                 assert "authentication required" in result["error"]
                 mock_get_headers.assert_not_called()
                 gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_token_exchange_with_discovery_uses_discovery_token(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Fetch Tools with only a ContextForge cookie succeeds through the discovery credential; the cookie JWT is never exchanged."""
+        mock_gateway_with_relations.oauth_config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "target_audience": "aud",
+            "token_url": "https://as/token",
+            "discovery": {"grant_type": "client_credentials", "scopes": ["mcp.discover"]},
+        }
+        mock_gateway_with_relations.ca_certificate = None
+        mock_gateway_with_relations.client_cert = None
+        mock_gateway_with_relations.client_key = None
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+        cookie_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln"  # pragma: allowlist secret
+
+        gateway_service.oauth_manager.get_client_credentials_token_response = AsyncMock(return_value={"access_token": "svc-discovery-tok", "expires_in": 3600})
+        gateway_service.oauth_manager.token_exchange = AsyncMock()
+        gateway_service._service_token_cache = GatewayServiceTokenCache()
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={"success": True, "tools_added": 2, "tools_updated": 0, "tools_removed": 0, "resources_added": 0, "resources_updated": 0, "resources_removed": 0, "prompts_added": 0, "prompts_updated": 0, "prompts_removed": 0})
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            with patch("mcpgateway.services.gateway_service.get_passthrough_headers") as mock_get_headers:
+                result = await gateway_service.refresh_gateway_manually("gw-123", user_email="admin@example.com", request_headers={"cookie": f"jwt_token={cookie_jwt}"})
+
+        assert result["success"] is True
+        mock_get_headers.assert_not_called()
+        gateway_service.oauth_manager.token_exchange.assert_not_awaited()
+        _, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
+        assert kwargs["pre_auth_headers"] == {"Authorization": "Bearer svc-discovery-tok"}
+        assert cookie_jwt not in repr(gateway_service.oauth_manager.get_client_credentials_token_response.call_args)
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_discovery_failure_short_circuits(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """A failed discovery token request fails closed and does not fall back to the caller's JWT."""
+        mock_gateway_with_relations.oauth_config = {
+            "grant_type": "token-exchange",
+            "target_audience": "aud",
+            "token_url": "https://as/token",
+            "discovery": {"grant_type": "client_credentials"},
+        }
+        mock_gateway_with_relations.ca_certificate = None
+        mock_gateway_with_relations.client_cert = None
+        mock_gateway_with_relations.client_key = None
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        gateway_service._service_token_cache = GatewayServiceTokenCache()
+        gateway_service.oauth_manager.get_client_credentials_token_response = AsyncMock(side_effect=RuntimeError("as down"))
+        gateway_service._resolve_token_exchange_header = AsyncMock()
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            result = await gateway_service.refresh_gateway_manually("gw-123", user_email="admin@example.com", request_headers={"authorization": "Bearer eyJh.eyJz.c2ln"})
+
+        assert result["success"] is False
+        assert "Discovery credential token request failed" in result["error"]
+        gateway_service._resolve_token_exchange_header.assert_not_awaited()
+        gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
 
     def test_validate_tools_partial_failure(self, gateway_service):
         """Test tool validation logs errors but returns valid tools and validation errors."""

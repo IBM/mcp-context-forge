@@ -7889,6 +7889,128 @@ class TestTokenExchangeAdminForms:
         for key in ("target_audience", "subject_token_type", "requested_token_type", "subject_token_source", "private_key"):
             assert key not in submitted
 
+    async def test_assemble_discovery_when_enabled(self):
+        """The discovery checkbox builds a client_credentials discovery object."""
+        fields = dict(_TE_FORM_FIELDS, oauth_discovery_present="1", oauth_discovery_enabled="on", oauth_discovery_scopes="mcp.discover")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert config["discovery"] == {"grant_type": "client_credentials", "scopes": ["mcp.discover"]}
+
+    async def test_assemble_discovery_overrides_and_encrypted_secret(self):
+        """Overrides are kept; a new discovery secret is encrypted like the parent secret."""
+        fields = dict(
+            _TE_FORM_FIELDS,
+            oauth_discovery_present="1",
+            oauth_discovery_enabled="on",
+            oauth_discovery_scopes="mcp.discover, mcp.list",
+            oauth_discovery_token_url="https://as.example.com/discovery-token",
+            oauth_discovery_client_id="svc-discovery",
+            oauth_discovery_client_secret="disc-secret",  # pragma: allowlist secret
+        )
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(side_effect=lambda v: f"enc({v})")
+            config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=True)
+        assert config["discovery"] == {
+            "grant_type": "client_credentials",
+            "scopes": ["mcp.discover", "mcp.list"],
+            "token_url": "https://as.example.com/discovery-token",
+            "client_id": "svc-discovery",
+            "client_secret": "enc(disc-secret)",  # pragma: allowlist secret
+        }
+
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code"])
+    async def test_assemble_discovery_ignored_for_other_grants(self, grant_type):
+        """A stray discovery checkbox never adds discovery to another grant."""
+        fields = dict(_TE_FORM_FIELDS, oauth_grant_type=grant_type, oauth_discovery_enabled="on")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "discovery" not in config
+
+    async def test_assemble_without_checkbox_has_no_discovery(self):
+        """Discovery inputs without the checkbox add nothing."""
+        fields = dict(_TE_FORM_FIELDS, oauth_discovery_present="1", oauth_discovery_scopes="mcp.discover")
+        config = await _assemble_oauth_config_from_fields(FakeForm(fields), encrypt_secret=False)
+        assert "discovery" not in config
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_add_gateway_with_discovery_enabled(self, mock_register_gateway, mock_request, mock_db):
+        """Enabling discovery on the add form stores exactly the spec'd discovery object."""
+        form = {"name": "TE_Gateway", "url": "https://mcp.example.com", **_TE_FORM_FIELDS, "oauth_discovery_present": "1", "oauth_discovery_enabled": "on", "oauth_discovery_scopes": "mcp.discover"}
+        mock_request.form = AsyncMock(return_value=FakeForm(form))
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
+            mock_get_encryption.return_value.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+        assert result.status_code == 200
+        assert mock_register_gateway.call_args.args[1].oauth_config["discovery"] == {"grant_type": "client_credentials", "scopes": ["mcp.discover"]}
+
+    _TE_STORED_DISCOVERY = {
+        "grant_type": "client_credentials",
+        "scopes": ["mcp.discover"],
+        "client_id": "svc-discovery",
+        "client_secret": "stored-discovery-ciphertext",  # pragma: allowlist secret
+        "token_endpoint_auth_method": "client_secret_basic",
+    }
+
+    def _edit_form_with_discovery(self, stored_config):
+        """Build the form fields the edit UI submits for a stored config with a discovery object."""
+        discovery = stored_config["discovery"]
+        return dict(
+            self._edit_form_from_stored(stored_config),
+            oauth_discovery_present="1",
+            oauth_discovery_enabled="on",
+            oauth_discovery_scopes=" ".join(discovery["scopes"]),
+            oauth_discovery_token_url="",
+            oauth_discovery_client_id=discovery["client_id"],
+            oauth_discovery_client_secret=settings.masked_auth_value,
+        )
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_description_only_keeps_discovery(self, mock_update_gateway, mock_request, mock_db):
+        """A description-only edit keeps discovery, its encrypted secret, and its API-only auth method."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        result = await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_with_discovery(stored), stored)
+
+        assert result.status_code == 200
+        submitted = mock_update_gateway.call_args.args[2].oauth_config
+        assert submitted["discovery"]["grant_type"] == "client_credentials"
+        assert submitted["discovery"]["scopes"] == ["mcp.discover"]
+        assert submitted["discovery"]["client_id"] == "svc-discovery"
+        assert submitted["discovery"]["token_endpoint_auth_method"] == "client_secret_basic"
+        # The masked placeholder is resolved to the stored ciphertext by protect_oauth_config_for_storage().
+        assert submitted["discovery"]["client_secret"] == settings.masked_auth_value
+        # First-Party
+        from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+
+        protected = await protect_oauth_config_for_storage(submitted, existing_oauth_config=stored)
+        assert protected["discovery"]["client_secret"] == "stored-discovery-ciphertext"  # pragma: allowlist secret
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_without_discovery_fields_keeps_discovery(self, mock_update_gateway, mock_request, mock_db):
+        """A form that does not render the discovery group (older client) keeps the stored object."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        await self._edit(mock_update_gateway, mock_request, mock_db, self._edit_form_from_stored(stored), stored)
+
+        assert mock_update_gateway.call_args.args[2].oauth_config["discovery"] == self._TE_STORED_DISCOVERY
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_disable_discovery_removes_it(self, mock_update_gateway, mock_request, mock_db):
+        """Clearing the discovery checkbox removes the discovery object."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = self._edit_form_with_discovery(stored)
+        form.pop("oauth_discovery_enabled")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "discovery" not in mock_update_gateway.call_args.args[2].oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_edit_blank_discovery_override_clears_key(self, mock_update_gateway, mock_request, mock_db):
+        """A rendered discovery override submitted blank removes its key so the parent value is inherited."""
+        stored = dict(_TE_STORED_CONFIG, discovery=dict(self._TE_STORED_DISCOVERY))
+        form = dict(self._edit_form_with_discovery(stored), oauth_discovery_client_id="")
+        await self._edit(mock_update_gateway, mock_request, mock_db, form, stored)
+
+        assert "client_id" not in mock_update_gateway.call_args.args[2].oauth_config["discovery"]
+
     @patch.object(GatewayService, "update_gateway")
     async def test_edit_token_exchange_without_any_secret_rejected(self, mock_update_gateway, mock_request, mock_db):
         """Converting to token-exchange with no secret anywhere is rejected."""

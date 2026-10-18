@@ -1693,9 +1693,11 @@ async def _fetch_tools_via_token_exchange(
 ) -> Dict[str, Any]:
     """Fetch tools for a token-exchange gateway via the manual-refresh pipeline.
 
-    Token-exchange has no consent step: delegate to the manual-refresh pipeline,
-    which exchanges the caller's inbound JWT (bearer header or jwt_token cookie)
-    via ``_resolve_token_exchange_header`` (issue #5382). Exception order matters:
+    Token-exchange has no consent step: delegate to the manual-refresh pipeline.
+    With a discovery credential, the pipeline uses that client-credentials token and
+    never sends the caller's JWT. Without one, it exchanges the caller's inbound JWT
+    (bearer header or jwt_token cookie) via ``_resolve_token_exchange_header``
+    (issue #5382). Exception order matters:
     ``GatewayNotFoundError`` and ``GatewayConnectionError`` both subclass
     ``GatewayError`` — a bare ``GatewayError`` clause first would misclassify
     not-found and connection failures as 409 instead of 404/400.

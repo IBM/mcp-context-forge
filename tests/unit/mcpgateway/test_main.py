@@ -7009,3 +7009,118 @@ def test_main_vault_router_skipped_when_backend_is_not_vault():
 
     mock_app.include_router.assert_not_called()
     mock_logger.debug.assert_called_once()
+
+
+class TestTokenExchangeDiscoveryRestDenyPaths:
+    """``PUT /gateways/{id}`` deny paths for the token-exchange ``discovery`` object.
+
+    Each test seeds a real gateway row and asserts that the stored ``oauth_config`` is unchanged.
+    """
+
+    _STORED_CONFIG = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as.example.com/token", "target_audience": "https://svc"}
+
+    @staticmethod
+    def _seed_gateway(**overrides) -> str:
+        """Insert a token-exchange gateway row and return its id.
+
+        Args:
+            **overrides: Column overrides.
+
+        Returns:
+            str: Gateway id.
+        """
+        values = {
+            "name": "te-discovery-gw",
+            "slug": "te-discovery-gw",
+            "url": "https://upstream.example.com/mcp",
+            "transport": "STREAMABLEHTTP",
+            "capabilities": {},
+            "auth_type": "oauth",
+            "oauth_config": dict(TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG),
+            "owner_email": "owner@example.com",
+            "visibility": "team",
+            "team_id": "team-a",
+        }
+        values.update(overrides)
+        with db_mod.SessionLocal() as session:
+            gateway = db_mod.Gateway(**values)
+            session.add(gateway)
+            session.commit()
+            return gateway.id
+
+    @staticmethod
+    def _stored_oauth_config(gateway_id: str) -> dict:
+        """Read the stored oauth_config for a gateway.
+
+        Args:
+            gateway_id: Gateway id.
+
+        Returns:
+            dict: Stored oauth_config.
+        """
+        with db_mod.SessionLocal() as session:
+            return session.get(db_mod.Gateway, gateway_id).oauth_config
+
+    @staticmethod
+    def _update_body(discovery: dict) -> dict:
+        """Build a PUT body that adds a discovery object.
+
+        Args:
+            discovery: Discovery object.
+
+        Returns:
+            dict: Request body.
+        """
+        return {"auth_type": "oauth", "oauth_config": {**TestTokenExchangeDiscoveryRestDenyPaths._STORED_CONFIG, "discovery": discovery}}
+
+    def test_non_admin_adding_discovery_returns_403(self, test_client, auth_headers):
+        """The requester owns the gateway but is not a platform admin."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        async def deny_wildcard(self, user_email, permission, *args, **kwargs):
+            return permission != "*"
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService.check_permission", new=deny_wildcard),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"grant_type": "client_credentials", "scopes": ["mcp.discover"]}), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert "platform administrator" in response.json()["message"]
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_wrong_team_user_changing_discovery_rejected(self, test_client, auth_headers):
+        """The requester is neither the owner nor a team owner of the gateway's team."""
+        gateway_id = self._seed_gateway()
+
+        with (
+            patch("mcpgateway.services.permission_service.PermissionService._is_user_admin", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.services.permission_service.PermissionService._get_user_team_role", new=AsyncMock(return_value=None)),
+        ):
+            response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"grant_type": "client_credentials"}), headers=auth_headers)
+
+        assert response.status_code == 403
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_disallowed_discovery_token_url_rejected(self, test_client, auth_headers):
+        """A platform admin cannot save a discovery.token_url that fails egress validation."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(
+            f"/gateways/{gateway_id}",
+            json=self._update_body({"grant_type": "client_credentials", "token_url": "http://169.254.169.254/latest/meta-data/"}),
+            headers=auth_headers,
+        )
+
+        assert response.status_code in (400, 422)
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG
+
+    def test_unsupported_discovery_grant_rejected(self, test_client, auth_headers):
+        """discovery.grant_type accepts client_credentials only."""
+        gateway_id = self._seed_gateway(owner_email="test_user@example.com")
+
+        response = test_client.put(f"/gateways/{gateway_id}", json=self._update_body({"grant_type": "authorization_code"}), headers=auth_headers)
+
+        assert response.status_code in (400, 422)
+        assert self._stored_oauth_config(gateway_id) == self._STORED_CONFIG

@@ -19,6 +19,8 @@ import {
   handleOAuthGrantTypeChange,
   handleEditOAuthGrantTypeChange,
   toggleTokenExchangeFields,
+  toggleDiscoveryFields,
+  bindDiscoveryToggle,
 } from "../../../mcpgateway/admin_ui/auth.js";
 import { showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils.js";
 
@@ -1299,5 +1301,48 @@ describe("token-exchange grant fields", () => {
     handleOAuthGrantTypeChange.call({ id: "oauth-grant-type-a2a", value: "token-exchange" });
 
     expect(document.getElementById("oauth-token-exchange-fields-gw").style.display).toBe("none");
+  });
+});
+
+describe("token-exchange discovery credential fields", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function render(prefix) {
+    document.body.innerHTML = `
+      <input type="checkbox" id="oauth-discovery-enabled-${prefix}" />
+      <div id="oauth-discovery-fields-${prefix}" style="display:none"></div>
+    `;
+  }
+
+  test.each(["gw", "gw-edit"])("toggleDiscoveryFields shows and hides the %s group", (prefix) => {
+    render(prefix);
+    const group = document.getElementById(`oauth-discovery-fields-${prefix}`);
+
+    toggleDiscoveryFields(prefix, true);
+    expect(group.style.display).toBe("block");
+    toggleDiscoveryFields(prefix, false);
+    expect(group.style.display).toBe("none");
+  });
+
+  test("bindDiscoveryToggle follows the checkbox", () => {
+    render("gw");
+    bindDiscoveryToggle("gw");
+    const checkbox = document.getElementById("oauth-discovery-enabled-gw");
+    const group = document.getElementById("oauth-discovery-fields-gw");
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("block");
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(group.style.display).toBe("none");
+  });
+
+  test("is a no-op when the group is not rendered (non-admin)", () => {
+    expect(() => toggleDiscoveryFields("gw", true)).not.toThrow();
+    expect(() => bindDiscoveryToggle("gw")).not.toThrow();
   });
 });

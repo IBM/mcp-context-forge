@@ -124,7 +124,7 @@ class TestNormalizationIsTheSolePath:
         # First-Party
         from mcpgateway.services.gateway_service import GatewayService
 
-        source = self._source(GatewayService._validate_private_key_jwt_config)
+        source = self._source(GatewayService._validate_private_key_jwt_material)
         assert "normalize_token_endpoint_auth_method" in source
 
     def test_no_consumer_hardcodes_the_default(self):

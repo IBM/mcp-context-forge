@@ -976,6 +976,48 @@ _TOKEN_EXCHANGE_FORM_FIELDS: Dict[str, str] = {
     "oauth_token_endpoint_auth_method": "token_endpoint_auth_method",
 }
 
+_DISCOVERY_OVERRIDE_FORM_FIELDS: Dict[str, str] = {
+    "oauth_discovery_token_url": "token_url",
+    "oauth_discovery_client_id": "client_id",
+}
+
+
+async def _assemble_discovery_from_fields(fields: Any, *, encrypt_secret: bool) -> Optional[Dict[str, Any]]:
+    """Assemble the token-exchange ``discovery`` object from the Admin UI discovery fields.
+
+    Args:
+        fields: Mapping with ``.get()`` containing the ``oauth_discovery_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+
+    Returns:
+        The ``discovery`` dict, or ``None`` when the discovery checkbox is not set.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.run(_assemble_discovery_from_fields({"oauth_discovery_enabled": "on", "oauth_discovery_scopes": "mcp.discover"}, encrypt_secret=False))
+        {'grant_type': 'client_credentials', 'scopes': ['mcp.discover']}
+        >>> asyncio.run(_assemble_discovery_from_fields({"oauth_discovery_scopes": "mcp.discover"}, encrypt_secret=False)) is None
+        True
+    """
+    if not fields.get("oauth_discovery_enabled"):
+        return None
+    discovery: Dict[str, Any] = {"grant_type": "client_credentials"}
+    scopes = [s.strip() for s in str(fields.get("oauth_discovery_scopes", "")).replace(",", " ").split() if s.strip()]
+    if scopes:
+        discovery["scopes"] = scopes
+    for form_key, config_key in _DISCOVERY_OVERRIDE_FORM_FIELDS.items():
+        value = str(fields.get(form_key, "")).strip()
+        if value:
+            discovery[config_key] = value
+    secret = str(fields.get("oauth_discovery_client_secret", ""))
+    if secret == settings.masked_auth_value:
+        # Encryption downstream swaps the masked placeholder for the stored secret.
+        discovery["client_secret"] = secret
+    elif secret:
+        discovery["client_secret"] = await get_encryption_service(settings.auth_encryption_secret).encrypt_secret_async(secret) if encrypt_secret else secret
+    return discovery
+
+
 _CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
     "oauth_issuer": "issuer",
     "oauth_token_url": "token_url",
@@ -1076,6 +1118,10 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     if oauth_resource:
         oauth_config["resource"] = oauth_resource
     oauth_config.update({key: value for key, value in token_exchange_values.items() if value})
+    if oauth_grant_type == "token-exchange":
+        discovery = await _assemble_discovery_from_fields(fields, encrypt_secret=encrypt_secret)
+        if discovery is not None:
+            oauth_config["discovery"] = discovery
     return oauth_config
 
 
@@ -1144,7 +1190,51 @@ def _merge_token_exchange_edit(submitted: Dict[str, Any], existing: Any, form: A
     for form_key, config_key in _CLEARABLE_OAUTH_FORM_FIELDS.items():
         if form_key in form and not str(form.get(form_key) or "").strip() and config_key not in submitted:
             merged.pop(config_key, None)
+    _merge_discovery_edit(merged, submitted, existing, form)
     return merged
+
+
+def _merge_discovery_edit(merged: Dict[str, Any], submitted: Dict[str, Any], existing: Dict[str, Any], form: Any) -> None:
+    """Merge the ``discovery`` object of a token-exchange edit one level deep, in place.
+
+    A form without the discovery field group keeps the stored object. A cleared
+    checkbox removes it. Keys the form does not render (for example
+    ``token_endpoint_auth_method``) keep their stored value, and a blank secret
+    keeps the stored secret. A rendered override submitted blank clears its key.
+
+    Args:
+        merged: oauth_config being built from the stored and submitted configs.
+        submitted: oauth_config assembled from the edit form fields.
+        existing: Stored oauth_config of the gateway.
+        form: Submitted form.
+
+    Examples:
+        >>> stored = {"discovery": {"grant_type": "client_credentials", "client_secret": "enc", "client_id": "svc", "token_endpoint_auth_method": "client_secret_post"}}  # pragma: allowlist secret
+        >>> merged = {"discovery": {"grant_type": "client_credentials"}}
+        >>> _merge_discovery_edit(merged, dict(merged), stored, {"oauth_discovery_present": "1", "oauth_discovery_enabled": "on", "oauth_discovery_client_id": ""})
+        >>> sorted(merged["discovery"].items())
+        [('client_secret', 'enc'), ('grant_type', 'client_credentials'), ('token_endpoint_auth_method', 'client_secret_post')]
+        >>> merged = dict(stored)
+        >>> _merge_discovery_edit(merged, {}, stored, {"oauth_discovery_present": "1"})
+        >>> "discovery" in merged
+        False
+    """
+    if "oauth_discovery_present" not in form:
+        if isinstance(existing.get("discovery"), dict):
+            merged["discovery"] = existing["discovery"]
+        return
+    submitted_discovery = submitted.get("discovery")
+    if not isinstance(submitted_discovery, dict):
+        merged.pop("discovery", None)
+        return
+    stored_discovery = existing.get("discovery") if isinstance(existing.get("discovery"), dict) else {}
+    discovery = {**stored_discovery, **submitted_discovery}
+    for form_key, config_key in _DISCOVERY_OVERRIDE_FORM_FIELDS.items():
+        if form_key in form and config_key not in submitted_discovery:
+            discovery.pop(config_key, None)
+    if "scopes" not in submitted_discovery:
+        discovery.pop("scopes", None)
+    merged["discovery"] = discovery
 
 
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
