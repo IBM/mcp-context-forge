@@ -38,12 +38,13 @@ def audit_token_exchange(
     correlation_id: Optional[str] = None,  # L3: tie the event to the originating request
     request_id: Optional[str] = None,
     purpose: str = "invocation",
+    mode: str = "impersonation",
 ) -> None:
     """Emit a structured audit event for one token exchange attempt.
 
-    Records principal claims and outcome only — never the subject or exchanged
-    token material. ``correlation_id``/``request_id`` link the event to the
-    request for forensic correlation (Story 3).
+    Records principal claims and outcome only — never the subject, actor, or
+    exchanged token material. ``correlation_id``/``request_id`` link the event to
+    the request for forensic correlation (Story 3).
 
     Args:
         user_email: Principal the token was requested for, or ``None`` for a service token.
@@ -57,10 +58,12 @@ def audit_token_exchange(
         correlation_id: Correlation identifier of the originating request.
         request_id: Request identifier of the originating request.
         purpose: ``invocation`` for a per-user exchange, ``discovery`` for the discovery credential.
+        mode: ``impersonation`` or ``delegation`` (RFC 8693 ``actor_token`` sent).
     """
     event = {
         "event": "token-exchange",
         "purpose": purpose,
+        "mode": mode,
         "user_email": user_email,
         "gateway_id": gateway_id,
         "target_audience": target_audience,
@@ -74,8 +77,9 @@ def audit_token_exchange(
     }
     if success:
         logger.info(
-            "token-exchange succeeded purpose=%s user=%s gateway=%s audience=%s",
+            "token-exchange succeeded purpose=%s mode=%s user=%s gateway=%s audience=%s",
             purpose,
+            mode,
             user_email,
             gateway_id,
             target_audience,
@@ -83,8 +87,9 @@ def audit_token_exchange(
         )
     else:
         logger.warning(
-            "token-exchange failed purpose=%s user=%s gateway=%s audience=%s error=%s",
+            "token-exchange failed purpose=%s mode=%s user=%s gateway=%s audience=%s error=%s",
             purpose,
+            mode,
             user_email,
             gateway_id,
             target_audience,
