@@ -278,6 +278,47 @@ class TestModernListenerReconnect:
         assert connect_times[1] - connect_times[0] >= 0.04
         notification_service.notify_list_changed.assert_not_awaited()  # the first connect never refreshes
 
+    @staticmethod
+    async def _record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop):
+        waits = []
+        monkeypatch.setattr(ModernListenerService, "_backoff_with_jitter", staticmethod(lambda backoff: waits.append(backoff) or 0.0))
+        attempts = 0
+
+        @contextlib.asynccontextmanager
+        async def proxy_client(*_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts > attempts_before_stop:
+                service._shutdown_event.set()
+                raise ConnectionError("stop")
+            yield _graceful_client()
+
+        with patch.object(mls, "mcp_proxy_client", proxy_client):
+            await asyncio.wait_for(service._listen_forever(_snapshot()), timeout=5)
+        return waits
+
+    @pytest.mark.asyncio
+    async def test_immediate_graceful_close_keeps_doubling_backoff(self, monkeypatch):
+        notification_service = MagicMock()
+        notification_service.notify_list_changed = AsyncMock()
+        service = ModernListenerService(notification_service)
+
+        waits = await self._record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop=3)
+
+        initial = mls.BACKOFF_INITIAL_SECONDS
+        assert waits[:3] == [initial, initial * 2, initial * 4]
+
+    @pytest.mark.asyncio
+    async def test_stream_that_stayed_up_resets_backoff(self, monkeypatch):
+        monkeypatch.setattr(mls, "BACKOFF_MAX_SECONDS", 0.0)
+        notification_service = MagicMock()
+        notification_service.notify_list_changed = AsyncMock()
+        service = ModernListenerService(notification_service)
+
+        waits = await self._record_waits_over_immediate_closes(service, monkeypatch, attempts_before_stop=3)
+
+        assert waits[:3] == [mls.BACKOFF_INITIAL_SECONDS] * 3
+
     @pytest.mark.asyncio
     async def test_relisten_after_drop_triggers_refresh(self, monkeypatch):
         notification_service = MagicMock()
