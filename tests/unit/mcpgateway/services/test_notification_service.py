@@ -18,6 +18,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -328,6 +329,50 @@ class TestRefreshExecution:
             include_prompts=True,
         )
         assert notification_service._refreshes_triggered == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_refresh_reaches_invalidate(self, notification_service):
+        """A refresh that adds a tool reaches the registry cache invalidation."""
+        # First-Party
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.services.gateway_service import GatewayService
+
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "gw-1"
+        gateway.name = "gw"
+        gateway.url = "http://example.com"
+        gateway.enabled = True
+        gateway.reachable = True
+        gateway.tools = []
+        gateway.resources = []
+        gateway.prompts = []
+        session = MagicMock()
+        session.dirty = set()
+        session.execute.return_value.scalar_one_or_none.return_value = gateway
+        session_ctx = MagicMock()
+        session_ctx.__enter__.return_value = session
+        session_ctx.__exit__.return_value = None
+        cache = MagicMock()
+        cache.invalidate_tools = AsyncMock()
+        cache.invalidate_resources = AsyncMock()
+        cache.invalidate_prompts = AsyncMock()
+
+        gateway_service = GatewayService()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [SimpleNamespace(name="tool1")], [], [], []))
+        gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
+        gateway_service._update_or_create_resources = MagicMock(return_value=[])
+        gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+        notification_service.set_gateway_service(gateway_service)
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=session_ctx),
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=MagicMock(invalidate_gateway=AsyncMock())),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock())),
+        ):
+            await notification_service._execute_refresh(PendingRefresh(gateway_id="gw-1"))
+
+        cache.invalidate_tools.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_execute_refresh_handles_failure(self, notification_service):
