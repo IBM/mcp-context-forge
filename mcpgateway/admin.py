@@ -12685,7 +12685,7 @@ async def admin_discover_oauth(
         True
     """
     # First-Party
-    from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.dcr_service import DcrError, DcrService, validate_issuer_scoped_endpoint  # pylint: disable=import-outside-toplevel
 
     try:
         body = await request.json()
@@ -12739,11 +12739,28 @@ async def admin_discover_oauth(
             except ValueError:
                 return None
 
+        async def _issuer_scoped_endpoint(raw: str | None, name: str) -> str | None:
+            """Validate an OAuth endpoint URL against the issuer origin, or None if invalid.
+
+            Args:
+                raw: The raw endpoint URL string or None.
+                name: The name of the endpoint for validation error messages.
+
+            Returns:
+                The validated URL string if valid and on the issuer origin, None otherwise.
+            """
+            if not raw:
+                return None
+            try:
+                return await validate_issuer_scoped_endpoint(raw, issuer, name)
+            except DcrError:
+                return None
+
         return JSONResponse(
             {
                 "success": True,
-                "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
-                "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+                "token_endpoint": await _issuer_scoped_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
+                "authorization_endpoint": await _issuer_scoped_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
                 "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
                 "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
                 "dcr_available": bool(metadata.get("registration_endpoint")),
