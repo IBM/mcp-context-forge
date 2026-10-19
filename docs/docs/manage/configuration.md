@@ -990,6 +990,19 @@ Content size limits prevent DoS attacks and resource exhaustion from oversized c
     }
     ```
 
+### Metadata Size & Depth Limits
+
+Metadata limits prevent resource exhaustion and denial of service attacks (CWE-400) from excessively nested or oversized JSON-RPC request structures.
+
+| Setting | Description | Default | Range / Options |
+| --- | --- | --- | --- |
+| `META_MAX_KEYS` | Maximum number of keys in user-supplied meta_data | `16` | int > 0 |
+| `META_MAX_DEPTH` | Maximum nesting depth for user-supplied meta_data | `2` | int > 0 |
+| `META_MAX_BYTES` | Maximum JSON-encoded byte size for user-supplied meta_data | `4096` (4KB) | 1B – 1MB |
+
+!!! warning "Behavior Change"
+    The metadata limit validations (keys, depth, and bytes) now apply strictly to **every** incoming `/mcp` protocol request (including `tools/call`, `resources/read`, and `prompts/get`), whereas previously they were only checked during direct-proxy resource reads. Any request carrying custom `_meta` structures that exceed these configured limits is rejected before reaching any service layer. Note that the mandatory envelope keys (`protocolVersion`, `clientInfo`, and `clientCapabilities`) are exempted from user depth and key limits (using a fixed depth cap of 4).
+
 ### Ed25519 Certificate Signing
 
 ContextForge supports **Ed25519 digital signatures** for certificate validation and integrity verification.
