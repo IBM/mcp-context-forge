@@ -626,8 +626,7 @@ class CompletionService:
                 {"name": arg_name, "value": arg_value},
                 context,
             )
-            forward_kwargs = {k: v for k, v in (("meta", meta), ("progress_callback", progress_callback)) if v is not None}
-            return await self._forward_completion_upstream(*forward_args, **forward_kwargs)
+            return await self._forward_completion_upstream(*forward_args, meta=meta, progress_callback=progress_callback)
 
         # Find argument in schema
         arg_schema = None
@@ -754,8 +753,7 @@ class CompletionService:
                 {"name": arg_name or "uri", "value": arg_value},
                 context,
             )
-            forward_kwargs = {k: v for k, v in (("meta", meta), ("progress_callback", progress_callback)) if v is not None}
-            return await self._forward_completion_upstream(*forward_args, **forward_kwargs)
+            return await self._forward_completion_upstream(*forward_args, meta=meta, progress_callback=progress_callback)
 
         # List matching resources visible to caller
         stmt = select(DbResource).where(DbResource.enabled)
