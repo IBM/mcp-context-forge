@@ -19650,6 +19650,59 @@ class TestProgressRelay:
             relay = tr._downstream_progress_relay()
         await relay(1.0, None, None)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("era", "expect_relay"), [("2026-07-28", True), ("2025-11-25", False)])
+    async def test_direct_proxy_gets_modern_only_relay(self, monkeypatch, era, expect_relay):
+        """The direct-proxy branch relays progress for modern peers only."""
+        gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy")
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=gateway)))
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield db
+
+        direct = AsyncMock(return_value=MagicMock())
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        monkeypatch.setattr(tr, "extract_gateway_id_from_headers", lambda _headers: "gw-direct")
+        monkeypatch.setattr(tr, "check_gateway_access", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr, "_check_scoped_permission", lambda *_a, **_k: True)
+        monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
+        monkeypatch.setattr(tr.settings, "mcpgateway_direct_proxy_enabled", True)
+        monkeypatch.setattr(tr.tool_service, "invoke_tool_direct", direct)
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@test.com", "teams": ["team1"], "is_admin": False, "is_authenticated": True})
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=self._ctx(era)):
+            await call_tool("any_tool", {})
+
+        relay = direct.await_args.kwargs["progress_callback"]
+        assert callable(relay) if expect_relay else relay is None
+
+    @pytest.mark.asyncio
+    async def test_complete_passes_modern_progress_relay(self, monkeypatch):
+        """The completion handler hands the modern-only relay to the service."""
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield MagicMock()
+
+        relay = object()
+        relay_calls = []
+
+        def fake_relay(**kwargs):
+            relay_calls.append(kwargs)
+            return relay
+
+        monkeypatch.setattr(tr, "get_db", fake_get_db)
+        monkeypatch.setattr(tr, "_downstream_progress_relay", fake_relay)
+        with patch.object(tr, "completion_service") as mock_cs:
+            mock_cs.handle_completion = AsyncMock(return_value={"completion": {"values": [], "total": 0, "hasMore": False}})
+            await tr.complete(types.PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": "v"})
+
+        assert mock_cs.handle_completion.await_args.kwargs["progress_callback"] is relay
+        assert relay_calls == [{}]
+
 
 class TestMrtrElicitation:
     """Modern-era MRTR elicitation pass-through in call_tool."""
