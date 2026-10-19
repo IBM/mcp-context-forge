@@ -1747,6 +1747,74 @@ class TestEnqueueRefreshDebounceEdge:
         assert notification_service._trailing_refresh_tasks == {}
         assert notification_service._refresh_queue.qsize() == 0
 
+    @staticmethod
+    async def _drain_backlog_then_schedule_trailing(service: NotificationService) -> asyncio.Task[None]:
+        """Run two refreshes that waited in the queue past the window, then trigger trailing refreshes."""
+        tools = NotificationType.TOOLS_LIST_CHANGED
+        await service._enqueue_refresh("gw-1", tools)
+        await asyncio.sleep(0.25)
+        await service._enqueue_refresh("gw-1", tools)
+        assert service._refresh_queue.qsize() == 2
+        await service._execute_refresh(service._refresh_queue.get_nowait())
+        await service._enqueue_refresh("gw-1", tools)
+        assert service._trailing_refresh_tasks == {}, "the newer queued refresh absorbs this event"
+        await service._execute_refresh(service._refresh_queue.get_nowait())
+        await service._enqueue_refresh("gw-1", tools)
+        task = service._trailing_refresh_tasks["gw-1"]
+        await service._enqueue_refresh("gw-1", tools)
+        assert service._trailing_refresh_tasks == {"gw-1": task}
+        return task
+
+    @pytest.mark.asyncio
+    async def test_queue_backlog_keeps_one_tracked_trailing_refresh(self, notification_service):
+        """Refreshes that wait past the window only clear their own tracking, so one trailing refresh queues."""
+        notification_service.debounce_seconds = 0.2
+        await self._drain_backlog_then_schedule_trailing(notification_service)
+
+        await asyncio.sleep(0.3)
+
+        assert notification_service._refresh_queue.qsize() == 1
+        assert notification_service._trailing_refresh_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_queue_backlog_trailing_refresh_cancelled_on_shutdown(self, notification_service):
+        """The single tracked trailing refresh after a backlog is the one shutdown cancels."""
+        notification_service.debounce_seconds = 0.2
+        task = await self._drain_backlog_then_schedule_trailing(notification_service)
+
+        await notification_service.shutdown()
+        await asyncio.sleep(0.3)
+
+        assert task.cancelled()
+        assert notification_service._refresh_queue.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_trailing_refresh_leaves_slot_it_does_not_own(self, notification_service):
+        """A firing trailing task does not untrack a newer task in its gateway slot."""
+        notification_service.debounce_seconds = 0.1
+        await self._refresh_already_ran(notification_service, "gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
+        newer = asyncio.create_task(asyncio.sleep(10))
+        notification_service._trailing_refresh_tasks["gw-1"] = newer
+
+        await asyncio.sleep(0.2)
+
+        assert notification_service._trailing_refresh_tasks == {"gw-1": newer}
+        await notification_service.shutdown()
+        assert newer.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_execute_refresh_keeps_newer_pending_entry(self, notification_service):
+        """Executing an older refresh leaves the tracking entry of a newer one."""
+        older, newer = PendingRefresh(gateway_id="gw-1"), PendingRefresh(gateway_id="gw-1")
+        notification_service._pending_refresh_flags["gw-1"] = newer
+
+        await notification_service._execute_refresh(older)
+        assert notification_service._pending_refresh_flags["gw-1"] is newer
+
+        await notification_service._execute_refresh(newer)
+        assert "gw-1" not in notification_service._pending_refresh_flags
+
 
 class TestMessageHandlerServerNotification:
     """Cover the ServerNotification branch of ``create_message_handler`` (lines 513-517)."""
