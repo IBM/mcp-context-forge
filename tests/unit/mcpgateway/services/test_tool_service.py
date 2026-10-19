@@ -3465,18 +3465,17 @@ class TestToolService:
             enabled=True,
             deprecated=False,
             reachable=True,
-            auth_type="bearer",  # attribute your error complained about
+            auth_type="bearer",
             auth_value="Bearer abc123",
             capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
             transport="STREAMABLEHTTP",
             passthrough_headers=[],
         )
-        # Configure tool as REST
         mock_tool.integration_type = "MCP"
         mock_tool.request_type = "StreamableHTTP"
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_type = None
-        mock_tool.auth_value = None  # No auth
+        mock_tool.auth_value = None
         mock_tool.original_name = "dummy_tool"
         mock_tool.headers = {}
         mock_tool.name = "test-gateway-dummy-tool"
@@ -3489,7 +3488,7 @@ class TestToolService:
             if returns:
                 value = returns.pop(0)
             else:
-                value = None  # Or whatever makes sense as a default
+                value = None
 
             m = Mock()
             m.scalar_one_or_none.return_value = value
@@ -3517,34 +3516,12 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
-            # ------------------------------------------------------------------
-            # 4.  Act
-            # ------------------------------------------------------------------
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None, progress_callback=callback)
 
         session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None, progress_callback=callback, allow_input_required=True, input_responses=None, request_state=None)
 
-        # Our ToolResult bubbled back out
         assert result.content[0].text == "MCP response"
-
-        # Set a concrete ID
-        mock_tool.id = "1"
-
-        # Final mock object with tool_id
-        mock_metric = Mock()
-        mock_metric.tool_id = mock_tool.id
-        mock_metric.is_success = True
-        mock_metric.error_message = None
-        mock_metric.response_time = 1
-
-        # Setup the chain for test_db.query().filter_by().first()
-        query_mock = Mock()
-        test_db.query = Mock(return_value=query_mock)
-        query_mock.filter_by.return_value.first.return_value = mock_metric
-
-        # ----------------------------------------
-        # Now, simulate the actual method call
 
     @pytest.mark.asyncio
     async def test_invoke_tool_streamablehttp_falls_back_when_registry_not_initialized(self, tool_service, mock_tool, test_db):

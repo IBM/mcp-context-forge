@@ -637,7 +637,7 @@ async def test_federated_prompt_completion_is_answered_by_upstream(monkeypatch):
     prompt = _DummyPromptForForwarding("upstream-prompt", {"properties": {}}, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         assert gw is gateway
         return SimpleNamespace(completion={"values": ["from-upstream"], "total": 1, "hasMore": False})
 
@@ -656,7 +656,7 @@ async def test_federated_prompt_raises_not_supported_without_fallback(monkeypatc
     prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         raise CompletionNotSupportedError("nope")
 
     monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
@@ -673,7 +673,7 @@ async def test_federated_prompt_internal_error_does_not_fall_back(monkeypatch):
     prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
     db = _db_returning(prompt)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         raise CompletionInternalError("boom")
 
     monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
@@ -726,7 +726,7 @@ async def test_federated_resource_template_is_forwarded(monkeypatch):
     owner = _DummyResourceForForwarding("file://tmpl", uri_template="template://", gateway_id="gw-1", gateway=gateway)
     db = _db_resource(owner=owner)
 
-    async def fake_forward(self, gw, ref, argument, context=None):
+    async def fake_forward(self, gw, ref, argument, context=None, meta=None, progress_callback=None):
         assert gw is gateway
         return SimpleNamespace(completion={"values": ["x"], "total": 1, "hasMore": False})
 
