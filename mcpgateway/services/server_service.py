@@ -675,7 +675,6 @@ class ServerService(BaseService):
             db.refresh(db_server)
             notify_dataplane()
 
-            # Invalidate cache after successful creation
             cache = _get_registry_cache()
             await cache.invalidate_servers()
 
