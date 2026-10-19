@@ -24,11 +24,10 @@ registered with the SSE transport are skipped outright (SSE is a legacy-only
 transport). OAuth-authenticated servers are currently skipped — their
 token refresh lifecycle does not fit a single long-lived stream yet.
 
-Only one process runs listeners: the holder of a dedicated lock. With
-``CACHE_TYPE=redis`` that is a heartbeat-renewed Redis key (one holder per
-cluster); otherwise a non-blocking ``FileLock`` (one holder per host).
-Non-holders retry acquisition on every reconcile pass, so a crashed holder
-fails over.
+Only the primary worker runs listeners (``is_primary_worker()``, selected by
+``PRIMARY_WORKER_ELECTION_BACKEND``: ``filelock`` is one per host, ``redis``
+is one per cluster). Other workers check again on every reconcile pass and
+cancel their listeners when they are not primary.
 
 Naming note: registered upstream MCP servers live in the ``gateways`` DB
 table (the ``Gateway`` model) for historical federation reasons, so
@@ -42,34 +41,20 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import logging
-import os
 import random
-import tempfile
 import time
 from typing import Callable, Dict, List, Optional
-import uuid
 
 # Third-Party
-from filelock import FileLock, Timeout
 from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ResourcesListChanged, ResourceUpdated, ToolsListChanged
 from sqlalchemy import select
 
-try:
-    # Third-Party
-    import redis.asyncio as _aioredis  # noqa: F401  # pylint: disable=unused-import
-
-    REDIS_AVAILABLE = True
-    del _aioredis  # Only needed for availability check
-except ImportError:
-    REDIS_AVAILABLE = False
-
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.notification_service import NotificationService, NotificationType
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
-from mcpgateway.utils.redis_client import get_redis_client
+from mcpgateway.utils.primary_worker import is_primary_worker
 from mcpgateway.utils.services_auth import decode_auth
 
 logger = logging.getLogger(__name__)
@@ -83,8 +68,6 @@ BACKOFF_INITIAL_SECONDS = 5.0
 BACKOFF_MAX_SECONDS = 300.0
 # How long to leave a server alone after it negotiated a pre-2026 protocol.
 UNSUPPORTED_REPROBE_SECONDS = 3600.0
-# Appended to REDIS_LEADER_KEY to form the listener holder key.
-HOLDER_KEY_SUFFIX = ":modern_listener"
 
 
 @dataclass
@@ -120,11 +103,6 @@ class ModernListenerService:
         self._unsupported_until: Dict[str, float] = {}
         self._reconcile_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
-        self._instance_id = str(uuid.uuid4())
-        self._holder_key = settings.redis_leader_key + HOLDER_KEY_SUFFIX
-        self._redis_client = None
-        self._file_lock: Optional[FileLock] = None
-        self._heartbeat_task: Optional[asyncio.Task] = None
 
     async def initialize(self) -> None:
         """Start the reconcile loop."""
@@ -137,7 +115,7 @@ class ModernListenerService:
         )
 
     async def shutdown(self) -> None:
-        """Stop the reconcile loop, cancel all listener tasks, then release the holder lock."""
+        """Stop the reconcile loop and cancel all listener tasks."""
         self._shutdown_event.set()
         tasks = list(self._listener_tasks.values())
         if self._reconcile_task is not None:
@@ -150,7 +128,6 @@ class ModernListenerService:
             except (asyncio.CancelledError, Exception):  # pylint: disable=broad-except
                 pass
         self._listener_tasks.clear()
-        await self._release_holder()
         logger.info("ModernListenerService shut down")
 
     async def _reconcile_loop(self) -> None:
@@ -165,69 +142,6 @@ class ModernListenerService:
             except asyncio.TimeoutError:
                 continue
 
-    async def _try_acquire_holder(self) -> bool:
-        """Take or confirm the single-holder lock without blocking.
-
-        The backend is chosen once: Redis when ``CACHE_TYPE=redis`` and a
-        client is obtainable, otherwise a ``FileLock`` kept until shutdown.
-
-        Returns:
-            True if this instance holds the lock.
-        """
-        if self._redis_client is None and self._file_lock is None:
-            if settings.cache_type == "redis" and REDIS_AVAILABLE:
-                self._redis_client = await get_redis_client()
-            if self._redis_client is None:
-                self._file_lock = FileLock(os.path.join(tempfile.gettempdir(), settings.filelock_name + ".modern_listener"))
-
-        if self._redis_client is not None:
-            if await self._redis_client.get(self._holder_key) == self._instance_id:
-                return True
-            return bool(await self._redis_client.set(self._holder_key, self._instance_id, nx=True, ex=settings.redis_leader_ttl))
-
-        if self._file_lock.is_locked:
-            return True
-        try:
-            self._file_lock.acquire(timeout=0)
-        except Timeout:
-            return False
-        return True
-
-    async def _holder_heartbeat(self) -> None:
-        """Renew the Redis holder key; on loss, cancel all listeners and stop.
-
-        Renewal runs on its own interval because the reconcile interval is
-        longer than the key TTL.
-        """
-        while True:
-            await asyncio.sleep(settings.redis_leader_heartbeat_interval)
-            try:
-                if await self._redis_client.get(self._holder_key) != self._instance_id:
-                    logger.warning("Lost the modern listener holder key; stopping all listeners")
-                    self._cancel_listeners()
-                    return
-                await self._redis_client.expire(self._holder_key, settings.redis_leader_ttl)
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("Modern listener holder heartbeat failed: %s", exc)
-
-    async def _release_holder(self) -> None:
-        """Stop the heartbeat and release the holder lock if this instance owns it."""
-        if self._heartbeat_task is not None:
-            self._heartbeat_task.cancel()
-            try:
-                await self._heartbeat_task
-            except (asyncio.CancelledError, Exception):  # pylint: disable=broad-except
-                pass
-            self._heartbeat_task = None
-        if self._redis_client is not None:
-            try:
-                if await self._redis_client.get(self._holder_key) == self._instance_id:
-                    await self._redis_client.delete(self._holder_key)
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("Failed to release the modern listener holder key: %s", exc)
-        if self._file_lock is not None:
-            self._file_lock.release(force=True)
-
     def _cancel_listeners(self) -> None:
         """Cancel every running listener task."""
         for task in self._listener_tasks.values():
@@ -237,15 +151,13 @@ class ModernListenerService:
     async def _reconcile(self) -> None:
         """Start missing listeners, drop listeners for gone servers.
 
-        Runs listeners only while this instance holds the holder lock.
+        Runs listeners only on the primary worker.
         """
-        if not await self._try_acquire_holder():
+        if not is_primary_worker():
             if self._listener_tasks:
-                logger.info("Not the modern listener holder; stopping %d listener(s)", len(self._listener_tasks))
+                logger.info("Not the primary worker; stopping %d modern listener(s)", len(self._listener_tasks))
                 self._cancel_listeners()
             return
-        if self._redis_client is not None and (self._heartbeat_task is None or self._heartbeat_task.done()):
-            self._heartbeat_task = asyncio.create_task(self._holder_heartbeat(), name="modern-listener-holder-heartbeat")
 
         snapshots = {gw.id: gw for gw in self._load_eligible_gateways()}
 
