@@ -673,7 +673,6 @@ class ServerService(BaseService):
             db.commit()
             db.refresh(db_server)
 
-            # Invalidate cache after successful creation
             cache = _get_registry_cache()
             await cache.invalidate_servers()
 
