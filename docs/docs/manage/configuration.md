@@ -1211,7 +1211,7 @@ Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `GATEWAY_AUTO_REFRESH_INTERVAL` | Default upstream refresh interval (secs); also the catalog `ttlMs` sent to modern clients | `300` | int >= 60 |
-| `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to 2026-era upstream servers for change-driven refresh; one holder per cluster (Redis) or per host (file lock) | `false` | bool |
+| `GATEWAY_MODERN_LISTENERS_ENABLED` | Hold standing `subscriptions/listen` streams to 2026-era upstream servers for change-driven refresh; runs on the primary worker chosen by `PRIMARY_WORKER_ELECTION_BACKEND` (`filelock`: one per host, `redis`: one per cluster) | `false` | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
 | `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
