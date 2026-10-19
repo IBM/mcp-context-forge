@@ -52,6 +52,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.dispatcher import ProgressFnT
 from mcp.shared.exceptions import MCPError
+from mcp.shared.jsonrpc_dispatcher import progress_token_from_params
 import mcp_types as types
 from mcp_types import JSONRPCMessage
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
@@ -4369,6 +4370,55 @@ def _accepts_event_stream(accept_header: str) -> bool:
     return False
 
 
+def _requests_progress_stream(body: bytes | None) -> bool:
+    """Return whether a request body is one JSON-RPC message that carries a valid ``_meta.progressToken``.
+
+    Args:
+        body: Raw POST body, or ``None`` when the body could not be read.
+
+    Returns:
+        ``True`` when the body is a single JSON object whose ``params._meta.progressToken`` is a string or integer.
+
+    Examples:
+        >>> _requests_progress_stream(b'{"params": {"_meta": {"progressToken": "a"}}}')
+        True
+        >>> _requests_progress_stream(b'{"params": {"_meta": {"progressToken": true}}}')
+        False
+        >>> _requests_progress_stream(b'{"params": {}}')
+        False
+        >>> _requests_progress_stream(None)
+        False
+    """
+    if body is None or b"progressToken" not in body:
+        return False
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and progress_token_from_params(payload.get("params")) is not None
+
+
+def _has_single_modern_protocol_version(scope: Scope) -> bool:
+    """Return whether the request carries exactly one ``mcp-protocol-version`` header with a modern value.
+
+    Args:
+        scope: ASGI scope with raw ``headers``.
+
+    Returns:
+        ``True`` for one header whose value is not a handshake-era version; ``False`` for none, several, or a legacy value.
+
+    Examples:
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2026-07-28")]})
+        True
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2025-11-25")]})
+        False
+        >>> _has_single_modern_protocol_version({"headers": [(b"mcp-protocol-version", b"2026-07-28")] * 2})
+        False
+    """
+    values = [item[1] for item in scope.get("headers") or [] if isinstance(item, (tuple, list)) and len(item) == 2 and item[0] == b"mcp-protocol-version"]
+    return len(values) == 1 and isinstance(values[0], bytes) and values[0].decode("latin-1") not in HANDSHAKE_PROTOCOL_VERSIONS
+
+
 def _bucket_method_label(method: Optional[str]) -> str:
     """Map an MCP method name to a bounded Prometheus label value."""
     if not isinstance(method, str) or not method:
@@ -4733,6 +4783,10 @@ class SessionManagerWrapper:
             json_response=settings.json_response_enabled,
             stateless=stateless,
         )
+        # JSON mode answers in one body, so progress has no channel. Modern requests that ask for progress use this SSE manager instead.
+        self.progress_session_manager: StreamableHTTPSessionManager | None = None
+        if settings.json_response_enabled:
+            self.progress_session_manager = StreamableHTTPSessionManager(app=mcp_app, event_store=None, json_response=False, stateless=True)
         self.stack = AsyncExitStack()
 
     async def initialize(self) -> None:
@@ -4749,6 +4803,8 @@ class SessionManagerWrapper:
         """
         logger.debug("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
+        if self.progress_session_manager is not None:
+            await self.stack.enter_async_context(self.progress_session_manager.run())
 
     async def shutdown(self) -> None:
         """
@@ -5551,10 +5607,25 @@ class SessionManagerWrapper:
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
+        session_manager = self.session_manager
+        if (
+            self.progress_session_manager is not None
+            and method == "POST"
+            and not is_internally_forwarded
+            and _has_single_modern_protocol_version(scope)
+            and _accepts_event_stream(headers.get("accept", ""))
+        ):
+            peek = await _drain_request_body(receive)
+            outcome, receive = await _dispatch_peek_outcome(peek, receive, send, accepted_body=b"", log_label="progress stream routing", log_context=path)
+            if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
+                return
+            if not peek.too_large and _requests_progress_stream(peek.body):
+                session_manager = self.progress_session_manager
+
         span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
 
         try:
-            await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
+            await session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
             # Register ownership for the session we just handled
