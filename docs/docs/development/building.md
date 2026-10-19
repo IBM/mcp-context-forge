@@ -158,7 +158,7 @@ WEB_UI_IMAGE=contextforge-web-ui:local docker compose --profile ui up -d
 
 ```bash
 make eslint        # lint JavaScript with ESLint
-make lint-web      # ESLint + HTMLHint + Stylelint
+make lint-web      # ESLint + HTMLHint + Biome (CSS)
 make format-web    # format with Prettier
 ```
 
@@ -168,9 +168,8 @@ make format-web    # format with Prettier
 |------|---------|
 | ESLint | JavaScript linting (neostandard + prettier) |
 | Prettier | Code formatting |
-| Stylelint | CSS linting |
 | HTMLHint | HTML linting |
-| Biome | Fast JS/TS formatter/linter |
+| Biome | CSS linting |
 | Retire.js | Dependency vulnerability scanning |
 
 ### UI Testing

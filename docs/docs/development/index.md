@@ -35,7 +35,7 @@ Development tools:
 
 Frontend tools (Admin UI):
 
-* Linters: ESLint, Stylelint, HTMLHint, Biome
+* Linters: ESLint, HTMLHint, Biome
 * Formatting: Prettier
 * Security: Retire.js (vulnerability scanning)
 
@@ -43,7 +43,7 @@ Code style and consistency is enforced via:
 
 ```bash
 make lint          # runs ruff, mypy
-make lint-web      # runs ESLint, HTMLHint, Stylelint
+make lint-web      # runs ESLint, HTMLHint, Biome (CSS)
 make pre-commit    # runs pre-commit hooks on staged files
 ```
 
