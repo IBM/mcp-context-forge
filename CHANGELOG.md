@@ -43,6 +43,12 @@
 
 - **2026-07-28 capabilities no longer advertise `resources.subscribe`** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - The gateway serves catalog change notifications through `subscriptions/listen` and does not honor `resourceSubscriptions`. 2026-07-28 clients use `subscriptions/listen` to track list changes. Handshake-era capabilities and `resources/subscribe` behavior stay unchanged.
 
+- **Health-check and auto-refresh jitter** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Health-loop ticks are now up to 10% shorter than the configured interval. Scheduled gateway auto-refresh can run up to 10% before its interval, and never later. The jitter keeps workers and gateways from refreshing in lockstep.
+
+- **Failed auto-refresh backs off** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - A failed scheduled gateway auto-refresh now backs off exponentially, capped at the gateway's refresh interval. Before, the gateway retried on every health-loop tick.
+
+- **Modern listeners run on the primary worker** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - With `GATEWAY_MODERN_LISTENERS_ENABLED=true`, only the primary worker holds `subscriptions/listen` streams to upstream servers. `PRIMARY_WORKER_ELECTION_BACKEND=filelock` elects one primary per host or pod. `PRIMARY_WORKER_ELECTION_BACKEND=redis` elects one primary per cluster.
+
 ### Security
 
 - **Configuration import ownership enforcement** - `POST /v1/import` with `conflict_strategy=update` no longer overwrites tools, resources, prompts, or gateways that the importer does not own. Bulk registration now runs `check_resource_ownership()` before it modifies an existing row and reports `Permission denied` for rows the caller does not own. Bulk update without a caller identity changes nothing. The import call to `update_gateway()` now passes the importer identity. The `admin.import` routes use `global_only=True`, so a team-scoped role no longer satisfies them. The Admin UI import now passes the authenticated email as `imported_by`. Deployments that grant `admin.import` through a team-scoped role must move that grant to a global role.
@@ -56,6 +62,12 @@
 - **Frontend email routes** - Invitation and password emails include the React `/app` mount prefix. `UI_BASE_URL` accepts a deployment base or a full frontend root ending in `/app`. Full roots produce a startup warning and have only the final mount segment removed during normalization. For a deployment prefix `/contextforge/app`, set the full root `https://ui.example.com/contextforge/app/app` to preserve both segments in emailed links. The invitation frontend route remains tracked by #6776.
 
 - **Modern MCP clients no longer see the deprecated logging capability** ([#6630](https://github.com/IBM/mcp-context-forge/issues/6630), [#6631](https://github.com/IBM/mcp-context-forge/issues/6631)) - `server/discover` responses for `2026-07-28` clients now omit `capabilities.logging`. MCP 2026-07-28 deprecates that capability (SEP-2577), and ContextForge sends no request-scoped log messages. Clients on `2025-11-25` and older still receive the capability and can call `logging/setLevel`. Use OpenTelemetry and structured logging for gateway observability. Modern clients reach the gateway only when `MCP_INBOUND_PROTOCOL_MODE=auto`; `docker-compose.yml` now passes that variable to the gateway, with a `legacy` default.
+
+- **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
+
+- **Stale catalog lists after writes** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Resource, prompt, and server create, gateway update, delete, and ownership transfer, import team assignment, and gRPC service tool changes now invalidate the registry cache. Before, lists stayed stale for up to the cache TTL.
+
+- **Debounced upstream `list_changed` no longer dropped** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - An upstream `list_changed` notification inside the 5-second debounce window now schedules one trailing refresh. Before, the gateway dropped the notification and missed the change.
 
 ### Breaking Changes
 
