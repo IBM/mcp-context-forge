@@ -19501,34 +19501,78 @@ class TestProgressRelay:
         monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=capture_invoke_kwargs))
         return captured
 
+    @staticmethod
+    def _ctx(protocol_version="2026-07-28"):
+        """Build a fake request context with an awaitable downstream session."""
+        ctx = MagicMock()
+        ctx.meta = None
+        ctx.protocol_version = protocol_version
+        ctx.session.report_progress = AsyncMock()
+        return ctx
+
     @pytest.mark.asyncio
     async def test_tool_invoke_receives_progress_callback(self, monkeypatch):
-        """invoke_tool gets a callable relay; outside a live request context it is a safe no-op."""
+        """Outside a live request context, invoke_tool gets no relay."""
         self._patch_db(monkeypatch)
         captured = self._patch_invoke_tool(monkeypatch)
 
         result = await call_tool("any_tool", {})
         assert result == []
 
-        relay = captured.get("progress_callback")
-        assert relay is not None
-        await relay(1.0, 2.0, "halfway")  # must not raise without a request context
+        assert captured["progress_callback"] is None
 
     @pytest.mark.asyncio
     async def test_relay_forwards_to_downstream_session(self, monkeypatch):
-        """With a live request context, the relay hands updates to session.report_progress."""
+        """A legacy tools/call keeps relaying to session.report_progress."""
         self._patch_db(monkeypatch)
         captured = self._patch_invoke_tool(monkeypatch)
 
-        downstream_ctx = MagicMock()
-        downstream_ctx.meta = None
-        downstream_ctx.session.report_progress = AsyncMock()
+        downstream_ctx = self._ctx("2025-11-25")
 
         with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=downstream_ctx):
             await call_tool("any_tool", {})
             await captured["progress_callback"](2.0, 8.0, "step 2 of 8")
 
         downstream_ctx.session.report_progress.assert_awaited_once_with(2.0, 8.0, "step 2 of 8")
+
+    def test_relay_none_without_request_context(self):
+        """No request context yields no relay."""
+        assert tr._downstream_progress_relay() is None
+
+    def test_relay_none_for_legacy_by_default(self):
+        """Legacy peers get a relay only when include_legacy is set."""
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=self._ctx("2025-11-25")):
+            assert tr._downstream_progress_relay() is None
+            assert callable(tr._downstream_progress_relay(include_legacy=True))
+
+    @pytest.mark.asyncio
+    async def test_relay_forwards_for_modern(self):
+        """A modern peer's relay forwards progress, total and message verbatim."""
+        ctx = self._ctx()
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
+            relay = tr._downstream_progress_relay()
+        await relay(2.0, 8.0, "step 2 of 8")
+        ctx.session.report_progress.assert_awaited_once_with(2.0, 8.0, "step 2 of 8")
+
+    @pytest.mark.asyncio
+    async def test_relay_uses_captured_session(self):
+        """The relay keeps the session it was built with, not the current request context."""
+        first, second = self._ctx(), self._ctx()
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=first):
+            relay = tr._downstream_progress_relay()
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=second):
+            await relay(1.0, None, None)
+        first.session.report_progress.assert_awaited_once_with(1.0, None, None)
+        second.session.report_progress.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_relay_swallows_report_errors(self):
+        """A closed downstream stream never fails the request."""
+        ctx = self._ctx()
+        ctx.session.report_progress = AsyncMock(side_effect=RuntimeError("closed"))
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=ctx):
+            relay = tr._downstream_progress_relay()
+        await relay(1.0, None, None)
 
 
 class TestMrtrElicitation:
